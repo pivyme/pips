@@ -12,6 +12,8 @@ export interface ChartBox {
   lower: number
   upper: number
   tint?: 'up' | 'down' | 'neutral'
+  // Active (placed) box: stronger fill/stroke so it reads over the faint candidate grid.
+  strong?: boolean
 }
 
 export interface ChartOverlays {
@@ -28,6 +30,9 @@ interface ChartProps {
   className?: string
   onPrice?: (price: number) => void
   onError?: () => void
+  // Tap hit-test: maps a pointer-down to the price at that height. The canvas owns the
+  // price<->y mapping (live, eased), so it is the only place this can be resolved correctly.
+  onTap?: (price: number) => void
 }
 
 const WINDOW_MS = 30_000 // visible time span on the continuous axis
@@ -46,7 +51,7 @@ function readColor(name: string): string {
   return v || '#ffffff'
 }
 
-export function Chart({ asset, overlays, height, className, onPrice, onError }: ChartProps) {
+export function Chart({ asset, overlays, height, className, onPrice, onError, onTap }: ChartProps) {
   const reduced = useReducedMotion()
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -61,10 +66,26 @@ export function Chart({ asset, overlays, height, className, onPrice, onError }: 
   const reducedRef = useRef(reduced)
   const sizeRef = useRef<{ w: number; h: number }>({ w: 0, h: height ?? 0 })
   const onPriceRef = useRef(onPrice)
+  const onTapRef = useRef(onTap)
 
   overlaysRef.current = overlays
   reducedRef.current = reduced
   onPriceRef.current = onPrice
+  onTapRef.current = onTap
+
+  // Pointer-down -> price at that height, using the live eased range. Only y matters: a tap
+  // selects a price band, time (x) is irrelevant to which box is hit.
+  const handleTap = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!onTapRef.current) return
+    const yPx = e.clientY - e.currentTarget.getBoundingClientRect().top
+    const { h } = sizeRef.current
+    const plotH = h - TOP_PAD - BOT_PAD
+    if (plotH <= 0) return
+    const r = range.current
+    const span = r.max - r.min || 1
+    const price = r.max - ((yPx - TOP_PAD) / plotH) * span
+    if (Number.isFinite(price)) onTapRef.current(price)
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -254,7 +275,12 @@ export function Chart({ asset, overlays, height, className, onPrice, onError }: 
 
   return (
     <div ref={wrapRef} className={cnm('relative w-full', className)} style={height != null ? { height } : undefined}>
-      <canvas ref={canvasRef} className="block h-full w-full" />
+      <canvas
+        ref={canvasRef}
+        className="block h-full w-full"
+        style={onTap ? { touchAction: 'manipulation', cursor: 'crosshair' } : undefined}
+        onPointerDown={onTap ? handleTap : undefined}
+      />
       {!hasData && (
         <div className="shimmer pointer-events-none absolute inset-x-3 top-1/2 h-px -translate-y-1/2 rounded-full" />
       )}
@@ -304,10 +330,10 @@ function drawOverlays(
       const top = y(b.upper)
       const bot = y(b.lower)
       const tint = b.tint === 'up' ? C.up : b.tint === 'down' ? C.down : C.text
-      ctx.fillStyle = withAlpha(tint, 0.08)
+      ctx.fillStyle = withAlpha(tint, b.strong ? 0.2 : 0.07)
       ctx.fillRect(nowX, top, w - nowX, bot - top)
-      ctx.strokeStyle = withAlpha(tint, 0.35)
-      ctx.lineWidth = 1
+      ctx.strokeStyle = withAlpha(tint, b.strong ? 0.85 : 0.28)
+      ctx.lineWidth = b.strong ? 1.5 : 1
       ctx.strokeRect(nowX + 0.5, top + 0.5, w - nowX - 1, bot - top - 1)
     }
   }
