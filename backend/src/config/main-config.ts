@@ -42,6 +42,14 @@ export const PYTH_HERMES_URL: string = process.env.PYTH_HERMES_URL || 'https://h
 // Free DUSDC starting balance per new user, in display units (6dp DUSDC).
 export const STARTING_BALANCE: number = Number(process.env.PIPS_STARTING_BALANCE) || 1000;
 
+// Demo override, OFF by default. When set to a valid leverage bucket (2/5/10/25/100), I Feel
+// Lucky forces that bucket instead of the fair RNG draw so a rehearsed demo reliably lands a
+// mid-bucket green swing (08-DEMO-FLOW.md says never demo a 100x lotto live). Asset and side
+// stay random so it still feels alive. Leave empty for fair play. Optionally also pin the round
+// duration so the climb has room to develop on camera.
+export const DEMO_LUCKY_LEVERAGE: number = Number(process.env.PIPS_DEMO_LUCKY_LEVERAGE) || 0;
+export const DEMO_LUCKY_DURATION: number = Number(process.env.PIPS_DEMO_LUCKY_DURATION) || 0;
+
 // Stake bounds per play, display DUSDC. The knob and the play endpoints enforce these.
 export const MIN_STAKE: number = Number(process.env.PIPS_MIN_STAKE) || 1;
 export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || 100;
@@ -56,6 +64,9 @@ export const GAME_DURATIONS: number[] = (process.env.PIPS_GAME_DURATIONS || '10,
 // testnet gas continuously, so only enable when the operator wallet is funded for a
 // run. The UI gets high-frequency prices from Pyth via SSE, so on-chain pushes only
 // need to keep oracles inside the 30s freshness gate, hence the conservative default.
+// This flag also IS the single-leader switch: if the backend is scaled to several
+// instances, set it true on exactly ONE (the operator/leader) so oracles are not
+// double-pushed; every other instance keeps it false and just serves the API.
 export const OPERATOR_ENABLED: boolean = process.env.PIPS_OPERATOR_ENABLED === 'true';
 export const PRICE_PUSH_CRON: string = process.env.PIPS_PRICE_PUSH_CRON || '*/15 * * * * *';
 export const ORACLE_ROLL_CRON: string = process.env.PIPS_ORACLE_ROLL_CRON || '*/30 * * * * *';
@@ -101,6 +112,8 @@ export default {
   JWT_EXPIRES_IN,
   ALLOWED_ORIGIN,
   AUTH_MODE,
+  DEMO_LUCKY_LEVERAGE,
+  DEMO_LUCKY_DURATION,
   MIN_STAKE,
   MAX_STAKE,
   GAME_DURATIONS,

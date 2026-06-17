@@ -158,14 +158,14 @@
   }
 
   .pips-switch-control-on {
-    border-color: #7d4d05;
+    border-color: #c17a08;
     background:
-      linear-gradient(180deg, #f4b12a 0%, #d8890c 50%, #985704 100%), #c87808;
+      linear-gradient(180deg, #ffdc68 0%, #ffc016 48%, #e99b0d 100%), #ffc016;
     box-shadow:
-      inset 0 1px 0 #ffd977,
-      inset 0 2px 5px rgba(79, 42, 0, 0.2),
-      inset 0 -1px 3px rgba(65, 33, 0, 0.46),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+      inset 0 1px 0 #fff0aa,
+      inset 0 2px 5px rgba(255, 255, 255, 0.08),
+      inset 0 -1px 3px rgba(82, 43, 0, 0.32),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.12),
       0 1px 0 #353532;
   }
 

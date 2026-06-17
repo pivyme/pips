@@ -3,7 +3,14 @@
 // sized so the real mint cost lands at the stake. Everything is quoted against the live
 // oracle via the Predict preview, so the reported multiplier is honest, never invented.
 
-import { EXPIRY_SAFETY_MS, MIN_STAKE, MAX_STAKE, GAME_DURATIONS } from '../config/main-config.ts';
+import {
+  EXPIRY_SAFETY_MS,
+  MIN_STAKE,
+  MAX_STAKE,
+  GAME_DURATIONS,
+  DEMO_LUCKY_LEVERAGE,
+  DEMO_LUCKY_DURATION,
+} from '../config/main-config.ts';
 import {
   DUSDC_DECIMALS,
   FLOAT_SCALING,
@@ -246,8 +253,13 @@ export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
   const seed = newSeed();
   const asset = assets[Math.floor(seedFloat(seed, 0) * assets.length)];
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
-  const leverage = pickLeverage(seedFloat(seed, 2));
-  const duration = GAME_DURATIONS[Math.floor(seedFloat(seed, 3) * GAME_DURATIONS.length)] ?? GAME_DURATIONS[0];
+  // Fair RNG by default; a rehearsed demo can pin the leverage/duration via env (see config).
+  const leverage = LEVERAGE_BUCKETS.includes(DEMO_LUCKY_LEVERAGE as (typeof LEVERAGE_BUCKETS)[number])
+    ? DEMO_LUCKY_LEVERAGE
+    : pickLeverage(seedFloat(seed, 2));
+  const duration = GAME_DURATIONS.includes(DEMO_LUCKY_DURATION)
+    ? DEMO_LUCKY_DURATION
+    : GAME_DURATIONS[Math.floor(seedFloat(seed, 3) * GAME_DURATIONS.length)] ?? GAME_DURATIONS[0];
 
   const market = pickMarket(asset);
   const spot = await freshSpot(market);
