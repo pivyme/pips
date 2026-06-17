@@ -242,14 +242,23 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
     const onTick = (tick: PriceTick) => {
       const p = parseFloat(tick.price)
       if (!Number.isFinite(p)) return
+      const tNow = performance.now()
       if (!hasData) {
         // First price seeds the view so the line starts flat instead of sweeping in.
         display.current = p
         range.current = { min: p * 0.999, max: p * 1.001 }
+        // Backfill a flat baseline at the current price across the visible window so the chart
+        // reads as a line from the first tick, not a lone dot while ~1s ticks accrue. Honest:
+        // it is the live price held flat (no fabricated movement); real ticks scroll in over it
+        // and the seed is gone within WINDOW_MS.
+        const SEED_N = 32
+        for (let i = SEED_N; i >= 1; i--) {
+          points.current.push({ t: tNow - (i / SEED_N) * WINDOW_MS, p })
+        }
         setHasData(true)
       }
       target.current = p
-      points.current.push({ t: performance.now(), p })
+      points.current.push({ t: tNow, p })
       if (points.current.length > 600) points.current.splice(0, points.current.length - 600)
       onPriceRef.current?.(p)
       if (reducedRef.current) {
