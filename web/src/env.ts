@@ -11,6 +11,11 @@ export const env = createEnv({
     VITE_AUTH_MODE: z.enum(['dev', 'enoki']).default('dev'),
     VITE_SUI_NETWORK: z.enum(['testnet', 'mainnet', 'devnet']).default('testnet'),
     VITE_SUI_FULLNODE_URL: z.string().url().optional(),
+    // Public Predict ids the client needs for reads. Written by the bootstrap into
+    // web/.env (mirrors backend deployed.json). Optional so the app can boot pre-deploy.
+    VITE_PREDICT_PACKAGE_ID: z.string().optional(),
+    VITE_PREDICT_OBJECT_ID: z.string().optional(),
+    VITE_DUSDC_TYPE: z.string().optional(),
     // enoki mode only: public Enoki key + Google OAuth client id.
     VITE_ENOKI_API_KEY: z.string().optional(),
     VITE_GOOGLE_CLIENT_ID: z.string().optional(),
@@ -23,6 +28,9 @@ export const env = createEnv({
     VITE_AUTH_MODE: import.meta.env.VITE_AUTH_MODE,
     VITE_SUI_NETWORK: import.meta.env.VITE_SUI_NETWORK,
     VITE_SUI_FULLNODE_URL: import.meta.env.VITE_SUI_FULLNODE_URL,
+    VITE_PREDICT_PACKAGE_ID: import.meta.env.VITE_PREDICT_PACKAGE_ID,
+    VITE_PREDICT_OBJECT_ID: import.meta.env.VITE_PREDICT_OBJECT_ID,
+    VITE_DUSDC_TYPE: import.meta.env.VITE_DUSDC_TYPE,
     VITE_ENOKI_API_KEY: import.meta.env.VITE_ENOKI_API_KEY,
     VITE_GOOGLE_CLIENT_ID: import.meta.env.VITE_GOOGLE_CLIENT_ID,
     VITE_APP_NAME: import.meta.env.VITE_APP_NAME,

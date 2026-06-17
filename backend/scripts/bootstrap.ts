@@ -44,6 +44,7 @@ const MIN_SUI = 1_200_000_000n; // floor for two publishes (~0.4 SUI) + the boot
 const CONTRACTS = path.resolve(import.meta.dir, '../../contracts');
 const DEPLOYED_PATH = path.resolve(import.meta.dir, '../src/lib/sui/deployed.json');
 const ENV_PATH = path.resolve(import.meta.dir, '../.env');
+const WEB_ENV_PATH = path.resolve(import.meta.dir, '../../web/.env');
 
 const client = new SuiJsonRpcClient({ url: getJsonRpcFullnodeUrl(NETWORK), network: NETWORK });
 
@@ -206,8 +207,28 @@ async function preflight(): Promise<void> {
 // bootstrap
 // ---------------------------------------------------------------------------
 
+// Idempotency: if we already published and the package is alive on-chain, a re-run is
+// a no-op (protects scarce testnet gas). Oracle freshness is the oracle-roll worker's
+// job, not the bootstrap's. Pass --force to redeploy from scratch.
+async function alreadyDeployed(): Promise<boolean> {
+  if (process.argv.includes('--force') || !fs.existsSync(DEPLOYED_PATH)) return false;
+  try {
+    const prev = JSON.parse(fs.readFileSync(DEPLOYED_PATH, 'utf-8')) as { packageId?: string };
+    if (!prev.packageId) return false;
+    const pkg = await client.getObject({ id: prev.packageId, options: { showType: true } });
+    if (pkg.data) {
+      console.log(`Already deployed (package ${prev.packageId}). Re-run with --force to redeploy.`);
+      return true;
+    }
+  } catch {
+    // unreadable/partial deployed.json -> treat as not deployed and bootstrap fresh
+  }
+  return false;
+}
+
 async function main(): Promise<void> {
   console.log('=== Pips Predict bootstrap (testnet) ===');
+  if (await alreadyDeployed()) return;
   await preflight();
 
   // --- 1. publish our own DUSDC, then promote its Currency to shared ---
@@ -439,26 +460,32 @@ async function main(): Promise<void> {
   fs.writeFileSync(DEPLOYED_PATH, JSON.stringify(deployed, null, 2) + '\n');
   console.log(`  wrote ${path.relative(process.cwd(), DEPLOYED_PATH)}`);
 
-  // reflect the headline ids into .env for visibility
-  updateEnv({
+  // reflect the headline ids into backend/.env for visibility (config reads deployed.json)
+  updateEnv(ENV_PATH, {
     PREDICT_PACKAGE_ID: packageId,
     PREDICT_REGISTRY_ID: registryId,
     PREDICT_OBJECT_ID: predictId,
     PREDICT_ADMIN_CAP_ID: adminCapId,
   });
+  // mirror the public ids the client needs into web/.env (reads only, no secrets)
+  updateEnv(WEB_ENV_PATH, {
+    VITE_PREDICT_PACKAGE_ID: packageId,
+    VITE_PREDICT_OBJECT_ID: predictId,
+    VITE_DUSDC_TYPE: DUSDC_TYPE,
+  });
 
   console.log('\n=== Bootstrap complete. Spike is GREEN. ===');
 }
 
-function updateEnv(vars: Record<string, string>): void {
-  if (!fs.existsSync(ENV_PATH)) return;
-  let env = fs.readFileSync(ENV_PATH, 'utf-8');
+function updateEnv(envPath: string, vars: Record<string, string>): void {
+  if (!fs.existsSync(envPath)) return;
+  let env = fs.readFileSync(envPath, 'utf-8');
   for (const [k, v] of Object.entries(vars)) {
     const re = new RegExp(`^${k}=.*$`, 'm');
     env = re.test(env) ? env.replace(re, `${k}=${v}`) : env + `\n${k}=${v}`;
   }
-  fs.writeFileSync(ENV_PATH, env);
-  console.log(`  updated ${path.relative(process.cwd(), ENV_PATH)} headline ids`);
+  fs.writeFileSync(envPath, env);
+  console.log(`  updated ${path.relative(process.cwd(), envPath)} ids`);
 }
 
 main().catch((e) => {
