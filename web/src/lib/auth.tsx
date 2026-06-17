@@ -6,6 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 
 import { env } from '@/env'
 import { api, ApiError, setAuthToken, type UserDTO } from '@/lib/api'
+import { isDemo, demoUser } from '@/lib/demo'
 import { setHapticsEnabled } from '@/lib/haptics'
 
 const TOKEN_KEY = 'pips_token'
@@ -86,13 +87,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signIn = useCallback(async () => {
+    if (isDemo()) {
+      apply('demo-token', demoUser())
+      return
+    }
     if (env.VITE_AUTH_MODE === 'dev') {
       await devLogin()
       return
     }
     const { enokiSignIn } = await import('./sui/enoki')
     await enokiSignIn(env.VITE_APP_URL ?? window.location.origin)
-  }, [devLogin])
+  }, [apply, devLogin])
 
   const signOut = useCallback(() => {
     saveToken(null)
@@ -109,6 +114,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (started.current) return
     started.current = true
+
+    // Demo mode: no network, no chain. Drop straight into an authed mock session.
+    if (isDemo()) {
+      apply('demo-token', demoUser())
+      return
+    }
 
     void (async () => {
       const token = loadToken()
@@ -155,7 +166,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setStatus('anon')
     })()
-  }, [devLogin, enokiHandshake])
+  }, [apply, devLogin, enokiHandshake])
 
   return <AuthContext.Provider value={{ status, user, signIn, signOut, refresh }}>{children}</AuthContext.Provider>
 }

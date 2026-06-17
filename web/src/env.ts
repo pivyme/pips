@@ -7,6 +7,9 @@ export const env = createEnv({
 
   client: {
     VITE_API_URL: z.string().url(),
+    // Demo mode: the whole app runs on an in-memory mock (no backend, no Sui, play money).
+    // Lets anyone poke at the full UI with zero setup. A localStorage flag can override it.
+    VITE_DEMO_MODE: z.enum(['true', 'false']).default('false'),
     // Mirrors the backend PIPS_AUTH_MODE so the UI shows the right door.
     VITE_AUTH_MODE: z.enum(['dev', 'enoki']).default('dev'),
     VITE_SUI_NETWORK: z.enum(['testnet', 'mainnet', 'devnet']).default('testnet'),
@@ -25,6 +28,7 @@ export const env = createEnv({
 
   runtimeEnv: {
     VITE_API_URL: import.meta.env.VITE_API_URL,
+    VITE_DEMO_MODE: import.meta.env.VITE_DEMO_MODE,
     VITE_AUTH_MODE: import.meta.env.VITE_AUTH_MODE,
     VITE_SUI_NETWORK: import.meta.env.VITE_SUI_NETWORK,
     VITE_SUI_FULLNODE_URL: import.meta.env.VITE_SUI_FULLNODE_URL,

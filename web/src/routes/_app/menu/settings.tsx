@@ -5,6 +5,7 @@ import { MenuScreen } from '@/components/menu/shared'
 import { Switch } from '@/ui/Switch'
 import { api, type UserDTO } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { isDemo, resetDemo } from '@/lib/demo'
 import { haptic } from '@/lib/haptics'
 
 // Sound, haptics, reduced motion. No save button: each toggle persists immediately (PATCH
@@ -65,6 +66,24 @@ function SettingsScreen() {
           <div className="text-[15px] font-bold">About Pips</div>
           <div className="mt-0.5 text-sm text-text-3">Built on Sui, powered by DeepBook Predict.</div>
         </div>
+
+        {isDemo() && (
+          <div className="card-neo p-4">
+            <div className="text-[15px] font-bold">Demo mode</div>
+            <div className="mt-0.5 text-sm text-text-3">Play money, nothing on chain. Reset to restore the starting balance and record.</div>
+            <button
+              type="button"
+              onClick={() => {
+                haptic('rigid')
+                resetDemo()
+                window.location.reload()
+              }}
+              className="mt-3 rounded-full border border-line bg-surface px-4 py-1.5 text-xs font-bold uppercase tracking-wide text-text-2 active:scale-[0.97]"
+            >
+              Reset demo data
+            </button>
+          </div>
+        )}
       </div>
     </MenuScreen>
   )

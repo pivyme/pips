@@ -3,6 +3,7 @@
 // code to a friendly toast. DTO shapes mirror backend/src/types/api.ts.
 
 import { env } from '@/env'
+import { isDemo, demoApi, demoStreamPrices, demoStreamPlay } from './demo'
 
 const BASE = env.VITE_API_URL
 
@@ -153,7 +154,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 // === Endpoints ===
 
-export const api = {
+const realApi = {
   // auth
   authDev: () => request<{ token: string; user: UserDTO }>('POST', '/auth/dev', {}),
   authNonce: (address: string) => request<{ nonce: string }>('POST', '/auth/nonce', { address }),
@@ -181,6 +182,18 @@ export const api = {
   patchSettings: (body: Partial<UserDTO['settings']>) => request<{ settings: UserDTO['settings'] }>('PATCH', '/settings', body),
 }
 
+// Demo mode swaps the whole client for an in-memory mock (no server, no chain). Resolved per
+// call so a runtime toggle takes effect without rebuilding the api binding everyone imported.
+export const api: typeof realApi = new Proxy(realApi, {
+  get(target, prop, receiver) {
+    if (isDemo()) {
+      const mock = (demoApi as Record<string | symbol, unknown>)[prop]
+      if (typeof mock === 'function') return mock.bind(demoApi)
+    }
+    return Reflect.get(target, prop, receiver)
+  },
+})
+
 // === SSE ===
 
 // EventSource cannot set headers, so the token rides the query string. Returns an unsubscribe.
@@ -206,7 +219,11 @@ export type PriceTick = { price: string; ts: number }
 export type PlayTick = { markValue: string; pnl: string; multiplier: number; status: PlayStatus; ts: number }
 
 export const streamPrices = (asset: string, onTick: (t: PriceTick) => void, onError?: () => void): (() => void) =>
-  stream<PriceTick>(`/stream/prices?asset=${encodeURIComponent(asset)}`, onTick, onError)
+  isDemo()
+    ? demoStreamPrices(asset, onTick)
+    : stream<PriceTick>(`/stream/prices?asset=${encodeURIComponent(asset)}`, onTick, onError)
 
 export const streamPlay = (playId: string, onTick: (t: PlayTick) => void, onError?: () => void): (() => void) =>
-  stream<PlayTick>(`/stream/plays/${playId}`, onTick, onError)
+  isDemo()
+    ? demoStreamPlay(playId, onTick, onError)
+    : stream<PlayTick>(`/stream/plays/${playId}`, onTick, onError)

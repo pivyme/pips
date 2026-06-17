@@ -24,6 +24,14 @@ This is the **Pips** frontend: the gamified trading console. Pips makes trading 
 - Env is typed/validated in `src/env.ts`. Add `VITE_SUI_NETWORK`, `VITE_ENOKI_API_KEY` etc there, import from `env.ts`, not `import.meta.env`.
 - **Bun + WASM gotcha:** the Sui crypto stack pulls WASM and `vite-plugin-wasm` can fail when the Vite dev server runs through Bun. If you hit a WASM load error, run the dev server on Node (bun stays the package manager).
 
+## Demo mode (intentional, user-requested)
+
+`VITE_DEMO_MODE=true` (or the landing-page toggle, stored under localStorage `pips_demo`) runs the **entire app on an in-memory mock**: no backend, no Sui, play money. It exists so anyone can play the full UI with zero setup. This is the ONE sanctioned exception to the "no sim, Predict is the engine" rule, and it is fully isolated: `src/lib/demo.ts` is the only sim, and the real product is always real Predict.
+
+- One seam: `src/lib/api.ts` routes the `api` client + `streamPrices`/`streamPlay` through `demo.ts` when `isDemo()`, and `src/lib/auth.tsx` drops straight into a mock authed session. Games, screens, and `predict.ts` are untouched, they never know.
+- It is always clearly badged (the `Demo` chip in the status strip, the landing chip + toggle, a reset in Settings). Keep it that way.
+- Do NOT wire demo state into the real backend or chain, and do NOT leak it into the real path. If you add a new `api` method or stream, add its demo twin in `demo.ts` so demo stays complete.
+
 ## Tech Stack
 
 - **Framework**: TanStack Start (React 19 meta-framework)

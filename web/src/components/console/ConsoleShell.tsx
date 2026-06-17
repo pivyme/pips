@@ -7,6 +7,7 @@ import type { ReactNode } from 'react'
 import { cnm } from '@/utils/style'
 import { haptic } from '@/lib/haptics'
 import { useAuth } from '@/lib/auth'
+import { isDemo } from '@/lib/demo'
 import { formatStringToNumericDecimals } from '@/utils/format'
 import { useConsoleView } from './controls'
 import type { ButtonColor, ConsoleView } from './controls'
@@ -94,11 +95,18 @@ function StatusStrip({ status, balance }: { status: ConsoleView['status']; balan
   return (
     <div className="flex h-8 items-center justify-between px-5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-3">
       <span className="flex items-center gap-1.5">
-        {status?.left ?? (
+        {isDemo() ? (
           <>
-            <span className="h-1.5 w-1.5 rounded-full bg-up" />
-            Testnet
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
+            Demo
           </>
+        ) : (
+          status?.left ?? (
+            <>
+              <span className="h-1.5 w-1.5 rounded-full bg-up" />
+              Testnet
+            </>
+          )
         )}
       </span>
       <span className="tnum text-text-2">

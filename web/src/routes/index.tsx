@@ -5,6 +5,7 @@ import { Illo } from '@/ui/Illo'
 import { config } from '@/config'
 import { env } from '@/env'
 import { haptic } from '@/lib/haptics'
+import { isDemo, setDemoOverride } from '@/lib/demo'
 import { useAuth } from '@/lib/auth'
 
 // Landing is the one full-width surface: hero + footer, one screen, no scroll. The door in.
@@ -28,7 +29,15 @@ function Landing() {
   const { status, signIn } = useAuth()
   const navigate = useNavigate()
   const [connecting, setConnecting] = useState(false)
+  const demo = isDemo()
   const isEnoki = env.VITE_AUTH_MODE === 'enoki'
+
+  // Flip demo mode and reload so the api client, streams, and auth all re-resolve cleanly.
+  const toggleDemo = useCallback((on: boolean) => {
+    haptic('selection')
+    setDemoOverride(on)
+    window.location.reload()
+  }, [])
 
   const enter = useCallback(() => {
     welcomeOnce()
@@ -59,7 +68,7 @@ function Landing() {
   }, [status, signIn, enter])
 
   const busy = connecting || status === 'loading'
-  const label = busy ? 'Signing you in...' : isEnoki ? 'Continue with Google' : 'Enter'
+  const label = busy ? 'Signing you in...' : demo ? 'Enter demo' : isEnoki ? 'Continue with Google' : 'Enter'
 
   return (
     <div className="flex min-h-dvh flex-col bg-black">
@@ -68,6 +77,12 @@ function Landing() {
         <h1 className="mt-7 text-5xl font-extrabold tracking-tight sm:text-6xl">Pips</h1>
         <p className="mt-3 max-w-sm text-lg text-text-2">{config.tagline}</p>
         <p className="mt-1 max-w-xs text-sm text-text-3">No charts to read. No jargon. Just plays.</p>
+        {demo && (
+          <span className="mt-5 inline-flex items-center gap-1.5 rounded-full border border-brand-500/30 bg-brand-500/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.08em] text-brand-500">
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
+            Demo mode · play money, nothing on chain
+          </span>
+        )}
         <button
           type="button"
           onClick={() => void onCta()}
@@ -75,6 +90,13 @@ function Landing() {
           className="btn-primary mt-9 flex h-14 w-full max-w-xs items-center justify-center rounded-full text-base disabled:opacity-70"
         >
           {label}
+        </button>
+        <button
+          type="button"
+          onClick={() => toggleDemo(!demo)}
+          className="mt-4 text-sm font-semibold text-text-3 underline underline-offset-4 transition-colors hover:text-text-2"
+        >
+          {demo ? 'Connect for real instead' : 'Just exploring? Try demo mode'}
         </button>
       </main>
       <footer className="flex items-center justify-between px-6 py-5 text-xs text-text-3">
