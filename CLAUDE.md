@@ -140,6 +140,7 @@ The full v1 build (auth, the three games, menu, backend, indexer, the Predict in
 | `bigdev/plans/07-DESIGN-SYSTEM.md` | Screen states + verbatim copy (defers to `docs/DESIGN.md`) |
 | `bigdev/plans/08-DEMO-FLOW.md` | The 2-min arc, seed data, achievements, fallbacks |
 | `bigdev/plans/09-DEPLOYMENT.md` | Local run, the Predict bootstrap, deploy, mainnet re-point |
+| `bigdev/plans/10-LEVERAGE.md` | Real margin-loop leverage: verified testnet ids, the atomic PTB, LTV/liquidation/repay, the open product decision (Phase L) |
 
 `docs/DESIGN.md` remains the canonical visual system. Demo-grade quality bar: `bigdev/plans/07-DESIGN-SYSTEM.md` + `bigdev/plans/08-DEMO-FLOW.md`.
 
