@@ -6,6 +6,7 @@ import { useConsoleControls } from '@/components/console/controls'
 import { Chart } from '@/components/game/Chart'
 import { ResultOverlay, ScreenMessage } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
+import { Illo } from '@/ui/Illo'
 import { Modal, useOverlayState } from '@/ui/Modal'
 import { haptic } from '@/lib/haptics'
 import { api, streamPlay, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
@@ -359,8 +360,26 @@ function HistorySheet({ state, open }: { state: ReturnType<typeof useOverlayStat
             <div key={i} className="shimmer h-12 rounded-xl" />
           ))}
         </div>
+      ) : q.isError ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+          <span className="h-1.5 w-1.5 rounded-full bg-down" />
+          <p className="text-sm text-text-2">Could not load your plays</p>
+          <button
+            type="button"
+            onClick={() => void q.refetch()}
+            className="card-neo rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide text-text-2"
+          >
+            Retry
+          </button>
+        </div>
       ) : plays.length === 0 ? (
-        <p className="py-6 text-center text-sm text-text-3">No plays yet. Make your first play.</p>
+        <div className="flex flex-col items-center justify-center gap-4 py-10 text-center">
+          <Illo name="vault" size={72} />
+          <div>
+            <div className="text-lg font-extrabold">No plays yet</div>
+            <div className="mt-1 text-sm text-text-2">Make your first play.</div>
+          </div>
+        </div>
       ) : (
         <div className="flex flex-col gap-2">
           {plays.map((p) => (
