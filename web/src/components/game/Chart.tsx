@@ -23,6 +23,7 @@ export interface ChartOverlays {
 interface ChartProps {
   asset: string
   overlays?: ChartOverlays
+  // Fixed pixel height, or omit to fill the parent (caller sizes the wrapper, e.g. flex-1).
   height?: number
   className?: string
   onPrice?: (price: number) => void
@@ -45,7 +46,7 @@ function readColor(name: string): string {
   return v || '#ffffff'
 }
 
-export function Chart({ asset, overlays, height = 220, className, onPrice, onError }: ChartProps) {
+export function Chart({ asset, overlays, height, className, onPrice, onError }: ChartProps) {
   const reduced = useReducedMotion()
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -58,7 +59,7 @@ export function Chart({ asset, overlays, height = 220, className, onPrice, onErr
   const range = useRef<{ min: number; max: number }>({ min: 0, max: 1 })
   const overlaysRef = useRef<ChartOverlays | undefined>(overlays)
   const reducedRef = useRef(reduced)
-  const sizeRef = useRef<{ w: number; h: number }>({ w: 0, h: height })
+  const sizeRef = useRef<{ w: number; h: number }>({ w: 0, h: height ?? 0 })
   const onPriceRef = useRef(onPrice)
 
   overlaysRef.current = overlays
@@ -84,7 +85,7 @@ export function Chart({ asset, overlays, height = 220, className, onPrice, onErr
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
       const w = wrap.clientWidth
-      const h = height
+      const h = height ?? wrap.clientHeight
       sizeRef.current = { w, h }
       canvas.width = Math.round(w * dpr)
       canvas.height = Math.round(h * dpr)
@@ -252,7 +253,7 @@ export function Chart({ asset, overlays, height = 220, className, onPrice, onErr
   }, [asset])
 
   return (
-    <div ref={wrapRef} className={cnm('relative w-full', className)} style={{ height }}>
+    <div ref={wrapRef} className={cnm('relative w-full', className)} style={height != null ? { height } : undefined}>
       <canvas ref={canvasRef} className="block h-full w-full" />
       {!hasData && (
         <div className="shimmer pointer-events-none absolute inset-x-3 top-1/2 h-px -translate-y-1/2 rounded-full" />
