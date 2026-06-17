@@ -59,6 +59,8 @@ bun dev                         # :3200
 
 In dev mode the landing shows "Enter" and drops you straight into the console with a funded dev wallet, every play hitting real Predict on testnet. For the Google sign-in flow, set `AUTH_MODE=enoki` and the Enoki keys (see `.env.example`).
 
+The local config ships with `PIPS_OPERATOR_ENABLED=true`: the backend runs the live markets (price-pusher, oracle ladder, settle). On a multi-instance deploy, set it `true` on exactly one backend (the leader) and `false` on the rest so oracles are not double-pushed. Before recording a demo, run `cd backend && bun run scripts/preflight.ts --play` to rehearse a real round end to end and confirm the explorer links resolve.
+
 > Bun + Sui note: the Sui crypto stack uses WASM, and `vite-plugin-wasm` can fail when the Vite dev server runs through Bun. If the frontend throws a WASM load error, run the Vite dev server on Node (bun stays the package manager).
 
 ## Build it (autonomous loop)

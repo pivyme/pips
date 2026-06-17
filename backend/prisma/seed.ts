@@ -1,14 +1,16 @@
 // Seed: the machine-checkable achievement catalog (always) + staged demo data for the dev
-// wallet user so Stats and history are populated on first open. Idempotent upserts, never
-// deletes, safe to re-run between demo takes. It does NOT fabricate chain positions, only DB
-// history for display; live plays during the demo are real. Run: `bun run prisma/seed.ts`.
-// Exact values from bigdev/plans/08-DEMO-FLOW.md.
+// wallet user so Stats and history are populated on first open, plus a real DUSDC top-up so
+// the wallet can actually play. Idempotent upserts, never deletes, safe to re-run between
+// demo takes. The play rows are DB history for display only (no fake tx digests); live plays
+// during the demo are real. Run: `bun run prisma/seed.ts`. Values from 08-DEMO-FLOW.md.
 
 import '../dotenv.ts';
 
 import { prismaQuery } from '../src/lib/prisma.ts';
 import { operatorAddress } from '../src/lib/sui/signer.ts';
 import { ORACLES } from '../src/lib/sui/config.ts';
+import { STARTING_BALANCE } from '../src/config/main-config.ts';
+import { getDusdcBalance, mintDusdc } from '../src/lib/sui/dusdc.ts';
 
 // DUSDC display units -> 6dp base units.
 const D = (n: number): bigint => BigInt(Math.round(n * 1_000_000));
@@ -66,13 +68,31 @@ async function main(): Promise<void> {
   }
   console.log(`[seed] ${ACHIEVEMENTS.length} achievements upserted`);
 
-  // The dev wallet user. Mark funded so /auth/dev does not re-mint the starting balance
-  // (the operator already holds bootstrap DUSDC). Leave predictManagerId untouched.
+  // The dev wallet user. Leave predictManagerId untouched (onboarding creates it). We mint
+  // real chips below, so dusdcFunded only goes true once the wallet actually holds them.
   const user = await prismaQuery.user.upsert({
     where: { address: operatorAddress },
-    update: { dusdcFunded: true },
-    create: { address: operatorAddress, provider: 'dev', displayName: 'Lucky Otter', dusdcFunded: true },
+    update: {},
+    create: { address: operatorAddress, provider: 'dev', displayName: 'Lucky Otter' },
   });
+
+  // Fund the demo wallet for real, idempotently. The bootstrap drains the operator's DUSDC
+  // into the vault, so it boots at ~0; without chips every play fails with INSUFFICIENT_DUSDC.
+  // Top up the shortfall to STARTING_BALANCE (never stacks), then mark funded so /auth/dev
+  // skips its own mint. Chain hiccups warn but never fail the DB seed.
+  try {
+    const have = await getDusdcBalance(operatorAddress);
+    const shortfall = STARTING_BALANCE - have;
+    if (shortfall > 1) {
+      const digest = await mintDusdc(operatorAddress, shortfall);
+      console.log(`[seed] minted ${shortfall.toFixed(2)} DUSDC chips to the dev wallet (${digest})`);
+    } else {
+      console.log(`[seed] dev wallet already holds ${have.toFixed(2)} DUSDC, no top-up needed`);
+    }
+    await prismaQuery.user.update({ where: { id: user.id }, data: { dusdcFunded: true } });
+  } catch (e) {
+    console.warn('[seed] DUSDC top-up skipped (chain unreachable?):', e instanceof Error ? e.message : e);
+  }
 
   // The shareable stats card numbers (denormalized).
   const stats = {
