@@ -8,12 +8,22 @@ import path from 'path';
 
 import { SUI_NETWORK } from '../../config/main-config.ts';
 
+// Pure money math lives in math.ts (chain-free, unit-tested). Re-exported here so the
+// rest of the backend keeps importing scaling helpers from the one Sui config surface.
+export {
+  FLOAT_SCALING,
+  DUSDC_DECIMALS,
+  usd1e9,
+  toDusdcRaw,
+  fromDusdcRaw,
+  mulScaled,
+  quantityForStake,
+  multiplier,
+} from './math.ts';
+import { usd1e9 } from './math.ts';
+
 export const CLOCK = '0x6';
 export const COIN_REGISTRY = '0xc';
-
-// Two scales live in the protocol: prices/strikes are 1e9-scaled, DUSDC is 6dp.
-export const FLOAT_SCALING = 1_000_000_000n;
-export const DUSDC_DECIMALS = 1_000_000n;
 
 export type DeployedOracle = {
   oracleId: string;
@@ -89,13 +99,6 @@ export const ASSET_TICK_USD: Record<string, number> = {
   SOL: 0.5,
   SUI: 0.01,
 };
-
-// display USD -> 1e9-scaled u64 (prices, strikes)
-export const usd1e9 = (n: number): bigint => BigInt(Math.round(n * 1e9));
-// display DUSDC -> 6dp raw u64 (coin amounts)
-export const toDusdcRaw = (n: number): bigint => BigInt(Math.round(n * 1_000_000));
-// 6dp raw DUSDC -> display number
-export const fromDusdcRaw = (raw: bigint): number => Number(raw) / 1_000_000;
 
 // Build a grid (minStrike, tickSize) centered on the current spot so strikes near the
 // money exist. Both 1e9-scaled. minStrike is floored to the grid and kept > 0; tickSize

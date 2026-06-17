@@ -1,16 +1,17 @@
 // The one server-side Predict wrapper. Every Predict moveCall on the backend is built
-// here so a mainnet re-point or id change touches only config.ts. This file currently
-// holds the OPERATOR surface the workers need (oracle lifecycle + price pushes + reads);
-// the user trade surface (previewMint/buildMint/buildRedeem/...) lands in the play phase.
-// All on-chain prices/strikes are 1e9-scaled; coin amounts are 6dp DUSDC (config helpers).
+// here so a mainnet re-point or id change touches only config.ts. It holds both the
+// OPERATOR surface the workers use (oracle lifecycle + price pushes + reads) and the USER
+// trade surface (preview + mint/redeem/manager/deposit PTB builders) the play flow uses.
+// All on-chain prices/strikes are 1e9-scaled; coin amounts and quantities are 6dp.
 
-import { Transaction } from '@mysten/sui/transactions';
+import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import { suiClient } from './client.ts';
 import { operatorAddress } from './signer.ts';
 import {
   ADMIN_CAP_ID,
   CLOCK,
+  DUSDC_TYPE,
   PREDICT_ID,
   REGISTRY_ID,
   target,
@@ -131,3 +132,128 @@ export async function readOracle(oracleId: string): Promise<OracleState | null> 
     timestampMs: Number(f.timestamp),
   };
 }
+
+// === User trade surface ===
+
+export type Side = 'up' | 'down';
+
+// A binary play: above/below a strike at the oracle's expiry. quantity is 6dp (max payout).
+export type BinaryParams = {
+  oracleId: string;
+  expiryMs: number;
+  strike1e9: bigint;
+  side: Side;
+  quantity: bigint;
+};
+
+// A range play: inside the (lower, higher) band. lower < higher asserted on-chain.
+export type RangeParams = {
+  oracleId: string;
+  expiryMs: number;
+  lower1e9: bigint;
+  higher1e9: bigint;
+  quantity: bigint;
+};
+
+export type TradeAmounts = { cost: bigint; payout: bigint };
+
+const binaryKey = (tx: Transaction, p: BinaryParams): TransactionObjectArgument =>
+  tx.moveCall({
+    target: target('market_key', p.side === 'up' ? 'up' : 'down'),
+    arguments: [tx.pure.id(p.oracleId), tx.pure.u64(BigInt(p.expiryMs)), tx.pure.u64(p.strike1e9)],
+  });
+
+const rangeKey = (tx: Transaction, p: RangeParams): TransactionObjectArgument =>
+  tx.moveCall({
+    target: target('range_key', 'new'),
+    arguments: [
+      tx.pure.id(p.oracleId),
+      tx.pure.u64(BigInt(p.expiryMs)),
+      tx.pure.u64(p.lower1e9),
+      tx.pure.u64(p.higher1e9),
+    ],
+  });
+
+// Decode a devInspect u64 return value (little-endian BCS bytes) into a bigint.
+const decodeU64 = (bytes: number[]): bigint => {
+  let v = 0n;
+  for (let i = bytes.length - 1; i >= 0; i--) v = (v << 8n) | BigInt(bytes[i]);
+  return v;
+};
+
+// devInspect get_trade_amounts / get_range_trade_amounts -> (mint cost, redeem payout), 6dp.
+async function tradeAmounts(buildKey: (tx: Transaction) => TransactionObjectArgument, getter: string, oracleId: string, quantity: bigint): Promise<TradeAmounts> {
+  const tx = new Transaction();
+  tx.moveCall({
+    target: target('predict', getter),
+    arguments: [tx.object(PREDICT_ID), tx.object(oracleId), buildKey(tx), tx.pure.u64(quantity), tx.object(CLOCK)],
+  });
+  const res = await suiClient.devInspectTransactionBlock({ sender: operatorAddress, transactionBlock: tx });
+  if (res.effects?.status?.status !== 'success') {
+    throw new Error(`preview failed: ${res.effects?.status?.error ?? 'devInspect error'}`);
+  }
+  const rv = res.results?.[res.results.length - 1]?.returnValues;
+  if (!rv || rv.length < 2) throw new Error('preview returned no amounts');
+  return { cost: decodeU64(rv[0][0] as number[]), payout: decodeU64(rv[1][0] as number[]) };
+}
+
+// Preview a binary mint/cash-out. cost = enter now, payout = redeem value now (live mark,
+// or $1*quantity once settled ITM). Same devInspect serves both directions.
+export const previewMint = (p: BinaryParams): Promise<TradeAmounts> =>
+  tradeAmounts((tx) => binaryKey(tx, p), 'get_trade_amounts', p.oracleId, p.quantity);
+export const previewRedeem = previewMint;
+
+export const previewRange = (p: RangeParams): Promise<TradeAmounts> =>
+  tradeAmounts((tx) => rangeKey(tx, p), 'get_range_trade_amounts', p.oracleId, p.quantity);
+
+// Create a per-user PredictManager (shared, once per user). Id read from effects on confirm.
+export const buildCreateManager = (tx: Transaction): void => {
+  tx.moveCall({ target: target('predict', 'create_manager') });
+};
+
+// Deposit an existing DUSDC coin argument into the manager (funds it for minting).
+export const buildDeposit = (tx: Transaction, managerId: string, coin: TransactionObjectArgument): void => {
+  tx.moveCall({ target: target('predict_manager', 'deposit'), typeArguments: [DUSDC_TYPE], arguments: [tx.object(managerId), coin] });
+};
+
+export const buildMint = (tx: Transaction, managerId: string, p: BinaryParams): void => {
+  tx.moveCall({
+    target: target('predict', 'mint'),
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(PREDICT_ID), tx.object(managerId), tx.object(p.oracleId), binaryKey(tx, p), tx.pure.u64(p.quantity), tx.object(CLOCK)],
+  });
+};
+
+export const buildRedeem = (tx: Transaction, managerId: string, p: BinaryParams): void => {
+  tx.moveCall({
+    target: target('predict', 'redeem'),
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(PREDICT_ID), tx.object(managerId), tx.object(p.oracleId), binaryKey(tx, p), tx.pure.u64(p.quantity), tx.object(CLOCK)],
+  });
+};
+
+export const buildMintRange = (tx: Transaction, managerId: string, p: RangeParams): void => {
+  tx.moveCall({
+    target: target('predict', 'mint_range'),
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(PREDICT_ID), tx.object(managerId), tx.object(p.oracleId), rangeKey(tx, p), tx.pure.u64(p.quantity), tx.object(CLOCK)],
+  });
+};
+
+export const buildRedeemRange = (tx: Transaction, managerId: string, p: RangeParams): void => {
+  tx.moveCall({
+    target: target('predict', 'redeem_range'),
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(PREDICT_ID), tx.object(managerId), tx.object(p.oracleId), rangeKey(tx, p), tx.pure.u64(p.quantity), tx.object(CLOCK)],
+  });
+};
+
+// Settled-only sweep into a user's manager with no owner check; the settle path uses this
+// to redeem expired in-the-money positions on the user's behalf.
+export const buildRedeemPermissionless = (tx: Transaction, managerId: string, p: BinaryParams): void => {
+  tx.moveCall({
+    target: target('predict', 'redeem_permissionless'),
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(PREDICT_ID), tx.object(managerId), tx.object(p.oracleId), binaryKey(tx, p), tx.pure.u64(p.quantity), tx.object(CLOCK)],
+  });
+};
