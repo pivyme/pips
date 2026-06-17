@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
 import { JWT_SECRET } from '../config/main-config.ts';
 import { handleError } from '../utils/errorHandler.ts';
@@ -10,14 +11,7 @@ interface JwtPayload {
 
 declare module 'fastify' {
   interface FastifyRequest {
-    user?: {
-      id: string;
-      walletAddress: string;
-      nonce: string | null;
-      lastSignIn: Date | null;
-      createdAt: Date;
-      updatedAt: Date;
-    };
+    user?: User;
   }
 }
 
