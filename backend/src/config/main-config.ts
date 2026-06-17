@@ -42,6 +42,34 @@ export const PYTH_HERMES_URL: string = process.env.PYTH_HERMES_URL || 'https://h
 // Free DUSDC starting balance per new user, in display units (6dp DUSDC).
 export const STARTING_BALANCE: number = Number(process.env.PIPS_STARTING_BALANCE) || 1000;
 
+// Operator workers (price-pusher / oracle-roll / settle). OFF by default: they spend
+// testnet gas continuously, so only enable when the operator wallet is funded for a
+// run. The UI gets high-frequency prices from Pyth via SSE, so on-chain pushes only
+// need to keep oracles inside the 30s freshness gate, hence the conservative default.
+export const OPERATOR_ENABLED: boolean = process.env.PIPS_OPERATOR_ENABLED === 'true';
+export const PRICE_PUSH_CRON: string = process.env.PIPS_PRICE_PUSH_CRON || '*/15 * * * * *';
+export const ORACLE_ROLL_CRON: string = process.env.PIPS_ORACLE_ROLL_CRON || '*/30 * * * * *';
+export const SETTLE_CRON: string = process.env.PIPS_SETTLE_CRON || '*/5 * * * * *';
+// Stop streaming live prices within this window before expiry so an in-flight mint
+// cannot race settlement (gotcha #3 in 05-SUI-PREDICT.md).
+export const EXPIRY_SAFETY_MS: number = Number(process.env.PIPS_EXPIRY_SAFETY_MS) || 5000;
+
+// Oracle ladder. Creating an oracle pre-allocates its strike matrix (~0.24 SUI with our
+// 500-tick constant), so on gas-scarce testnet we keep a SMALL set of long-lived oracles
+// per asset and route every play to the nearest live one. Plays realize short durations
+// via cash-out (redeem at the live mark), never one oracle per play (gotcha #11).
+export const ORACLE_ASSETS: string[] = (process.env.PIPS_ORACLE_ASSETS || 'BTC')
+  .split(',')
+  .map((s) => s.trim().toUpperCase())
+  .filter(Boolean);
+// New oracles expire this far out. Long enough that one oracle serves many plays.
+export const ORACLE_LIFETIME_MS: number = Number(process.env.PIPS_ORACLE_LIFETIME_MS) || 300_000;
+// Keep this many live, far-from-expiry oracles per asset at all times.
+export const ORACLE_LADDER_DEPTH: number = Number(process.env.PIPS_ORACLE_LADDER_DEPTH) || 2;
+// An oracle counts toward the ladder only while it has at least this much life left;
+// once it drops below, oracle-roll rolls a fresh one in ahead of need.
+export const ORACLE_MIN_REMAINING_MS: number = Number(process.env.PIPS_ORACLE_MIN_REMAINING_MS) || 90_000;
+
 // Predict instance ids. Written by the bootstrap, never hardcoded. Unstable pre-mainnet.
 export const PREDICT_PACKAGE_ID: string = process.env.PREDICT_PACKAGE_ID || '';
 export const PREDICT_REGISTRY_ID: string = process.env.PREDICT_REGISTRY_ID || '';
@@ -69,6 +97,15 @@ export default {
   ENOKI_PRIVATE_API_KEY,
   PYTH_HERMES_URL,
   STARTING_BALANCE,
+  OPERATOR_ENABLED,
+  PRICE_PUSH_CRON,
+  ORACLE_ROLL_CRON,
+  SETTLE_CRON,
+  EXPIRY_SAFETY_MS,
+  ORACLE_ASSETS,
+  ORACLE_LIFETIME_MS,
+  ORACLE_LADDER_DEPTH,
+  ORACLE_MIN_REMAINING_MS,
   PREDICT_PACKAGE_ID,
   PREDICT_REGISTRY_ID,
   PREDICT_OBJECT_ID,

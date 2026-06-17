@@ -75,9 +75,42 @@ export const ORACLES = deployed.oracles;
 export const target = (mod: string, fn: string): `${string}::${string}::${string}` =>
   `${PACKAGE_ID}::${mod}::${fn}`;
 
+// Number of strike ticks an oracle covers, mirrored from our vendored
+// constants.move (oracle_strike_grid_ticks). The grid spans tickSize * this.
+export const ORACLE_STRIKE_GRID_TICKS = 500n;
+// Tick granularity unit: every 1e9-scaled tickSize must be a multiple of this.
+const TICK_SIZE_UNIT = 10_000n;
+
+// Per-asset tick size in display USD, chosen so 500 ticks covers a sensible band
+// around spot (BTC: $200*500 = $100k). Keep each a clean multiple of the tick unit.
+export const ASSET_TICK_USD: Record<string, number> = {
+  BTC: 200,
+  ETH: 5,
+  SOL: 0.5,
+  SUI: 0.01,
+};
+
 // display USD -> 1e9-scaled u64 (prices, strikes)
 export const usd1e9 = (n: number): bigint => BigInt(Math.round(n * 1e9));
 // display DUSDC -> 6dp raw u64 (coin amounts)
 export const toDusdcRaw = (n: number): bigint => BigInt(Math.round(n * 1_000_000));
 // 6dp raw DUSDC -> display number
 export const fromDusdcRaw = (raw: bigint): number => Number(raw) / 1_000_000;
+
+// Build a grid (minStrike, tickSize) centered on the current spot so strikes near the
+// money exist. Both 1e9-scaled. minStrike is floored to the grid and kept > 0; tickSize
+// is snapped to the protocol's tick unit. The oracle covers 500 ticks from minStrike.
+export function gridForSpot(asset: string, spotUsd: number): { minStrike: bigint; tickSize: bigint } {
+  const tickUsd = ASSET_TICK_USD[asset];
+  if (!tickUsd) throw new Error(`No tick size configured for asset ${asset}`);
+  let tickSize = usd1e9(tickUsd);
+  tickSize -= tickSize % TICK_SIZE_UNIT; // snap to unit (assert_valid_strike_grid)
+  if (tickSize <= 0n) throw new Error(`Tick size for ${asset} rounds to zero`);
+
+  const span = tickSize * ORACLE_STRIKE_GRID_TICKS;
+  const spot = usd1e9(spotUsd);
+  // floor((spot - span/2) / tick) * tick, clamped above zero to the first whole tick.
+  let minStrike = ((spot - span / 2n) / tickSize) * tickSize;
+  if (minStrike < tickSize) minStrike = tickSize;
+  return { minStrike, tickSize };
+}

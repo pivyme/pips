@@ -9,6 +9,9 @@ import { exampletRoute } from './src/routes/exampleRoutes.ts';
 
 // Workers
 import { startErrorLogCleanupWorker } from './src/workers/errorLogCleanup.ts';
+import { startPricePusher } from './src/workers/price-pusher.ts';
+import { startOracleRoll } from './src/workers/oracle-roll.ts';
+import { startSettleWorker } from './src/workers/settle.ts';
 
 console.log(
   '======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n'
@@ -43,6 +46,11 @@ const start = async (): Promise<void> => {
   try {
     // Start workers
     startErrorLogCleanupWorker();
+    // Predict operator: roll the oracle ladder, keep prices fresh, settle expiries.
+    // All three no-op unless PIPS_OPERATOR_ENABLED=true (they spend testnet gas).
+    startOracleRoll();
+    startPricePusher();
+    startSettleWorker();
 
     await fastify.listen({
       port: APP_PORT,
