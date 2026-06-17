@@ -81,6 +81,23 @@
     font-family: ui-monospace, 'JetBrains Mono', Menlo, monospace;
   }
 
+  /* One designed focus ring for every interactive control, keyboard only.
+     Specificity 0 so component rings (the switch) override it. Outline follows
+     the element radius, so it hugs the pills, buttons, and the knob. */
+  :where(
+    button,
+    [role='button'],
+    [role='slider'],
+    a,
+    select,
+    summary,
+    [type='button'],
+    [type='submit']
+  ):focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.32);
+    outline-offset: 2px;
+  }
+
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;

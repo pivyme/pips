@@ -26,7 +26,7 @@ export function Button({ variant = 'primary', loading, disabled, className, chil
       type="button"
       disabled={off}
       className={cnm(
-        'inline-flex h-12 items-center justify-center gap-2 rounded-2xl px-5 text-sm font-extrabold uppercase tracking-wide transition-transform',
+        'inline-flex h-12 items-center justify-center gap-2 rounded-md px-5 text-sm font-extrabold uppercase tracking-wide transition-transform',
         VARIANTS[variant],
         off ? 'opacity-60' : 'active:scale-[0.98]',
         className,

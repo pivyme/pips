@@ -295,7 +295,7 @@ function TapScreen() {
       <div className="screen relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-card">
         {marketsQ.isLoading ? (
           <div className="flex flex-1 items-center justify-center p-6">
-            <div className="shimmer h-24 w-full rounded-2xl" />
+            <div className="shimmer h-24 w-full rounded-md" />
           </div>
         ) : marketsQ.isError ? (
           <ScreenMessage title="Could not load markets" action="Retry" onAction={() => void marketsQ.refetch()} />

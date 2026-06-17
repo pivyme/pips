@@ -378,7 +378,7 @@ function DesignSystemPage() {
                   sub="Make your first play."
                 />
                 <div className="card-neo flex items-center gap-3 p-4">
-                  <div className="shimmer h-12 w-12 rounded-2xl" />
+                  <div className="shimmer h-12 w-12 rounded-md" />
                   <div className="min-w-0 flex-1 space-y-2">
                     <div className="shimmer h-3 w-28 rounded-full" />
                     <div className="shimmer h-3 w-40 rounded-full" />
@@ -693,7 +693,7 @@ function StateBlock({
     <div className="card-neo flex items-center gap-3 p-4">
       <div
         className={cnm(
-          'flex h-12 w-12 items-center justify-center rounded-2xl',
+          'flex h-12 w-12 items-center justify-center rounded-md',
           tone === 'down'
             ? 'bg-down/10 text-down'
             : 'bg-surface-2 text-brand-500',
@@ -1220,7 +1220,7 @@ function LabTile({
 }) {
   return (
     <div>
-      <div className="screen relative aspect-[8/5] overflow-hidden rounded-2xl border border-line">
+      <div className="screen relative aspect-[8/5] overflow-hidden rounded-md border border-line">
         {children}
         <div className="viz-vignette pointer-events-none absolute inset-0" />
         <span className="pointer-events-none absolute left-2 top-2 h-2.5 w-2.5 border-l border-t border-white/15" />

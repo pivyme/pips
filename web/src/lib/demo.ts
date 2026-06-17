@@ -59,8 +59,14 @@ const DEMO_HANDLE = 'demo-otter'
 const SEED_PRICES: Record<string, number> = { BTC: 104_000, ETH: 3_900, SUI: 4.2, SOL: 195, DEEP: 0.182 }
 const ASSETS = Object.keys(SEED_PRICES)
 const DURATIONS = [10, 30, 60]
-const TICK_MS = 600
-const VOL = 0.0009 // per-tick shock magnitude, enough wiggle that leverage swings read live
+const TICK_MS = 300 // denser ticks read as continuous motion
+const VOL = 0.0004 // per-tick impulse on velocity (not price), small so trends stay smooth
+const MOMENTUM = 0.92 // velocity persistence: turns white-noise jitter into smooth trending paths
+const REVERT = 0.018 // pull price back toward its seed so a long session stays believable
+const MAX_VEL = 0.003 // clamp a run so the line never bolts off-screen
+const SPIKE_PROB = 0.08 // chance per tick of a sharp wick: the "hammer" reversal
+const SPIKE_MAG = 0.005 // wick size as a fraction of price
+const TRANSIENT_DECAY = 0.3 // how fast a wick snaps back, sharp and gone within a couple ticks
 
 const CATALOG = [
   { slug: 'first_play', name: 'First Play', description: 'Make your first play.', illo: 'bolt', metric: 'games_played', threshold: 1 },
@@ -74,15 +80,24 @@ const CATALOG = [
 ] as const
 
 // === Price engine ===
-// One shared random walk per asset, lightly mean-reverting so a long session never drifts away
-// from a believable level. Lazily started in the browser; every game reads the same prices.
+// A smooth momentum walk per asset (the trend) with the occasional sharp wick layered on top
+// (the "hammer": a quick spike that snaps right back). Lightly mean-reverting so a long session
+// never drifts away from a believable level. Lazily started in the browser; every game reads the
+// same emitted price, so chart and settlement always agree.
 
-const prices = new Map<string, number>()
+const prices = new Map<string, number>() // emitted price = base * (1 + transient)
+const bases = new Map<string, number>() // smooth momentum walk under the wicks
+const vels = new Map<string, number>() // per-asset velocity, carries momentum between ticks
+const transients = new Map<string, number>() // sharp wick offset, decays fast
 const priceSubs = new Map<string, Set<(p: number) => void>>()
 let priceTimer: ReturnType<typeof setInterval> | null = null
 
 function ensurePrice(asset: string): void {
-  if (!prices.has(asset)) prices.set(asset, SEED_PRICES[asset] ?? 1)
+  if (!prices.has(asset)) {
+    const s = SEED_PRICES[asset] ?? 1
+    prices.set(asset, s)
+    bases.set(asset, s)
+  }
 }
 
 function startEngine(): void {
@@ -90,12 +105,26 @@ function startEngine(): void {
   for (const a of ASSETS) ensurePrice(a)
   priceTimer = setInterval(() => {
     for (const a of ASSETS) {
-      const cur = prices.get(a) as number
-      const seed = SEED_PRICES[a] ?? cur
-      const shock = (Math.random() - 0.5) * 2 * VOL
-      const revert = ((seed - cur) / seed) * 0.01
-      const next = cur * (1 + shock + revert)
-      prices.set(a, next > 0 ? next : cur)
+      const base0 = bases.get(a) as number
+      const seed = SEED_PRICES[a] ?? base0
+      // Velocity carries momentum, so consecutive ticks move together: smooth trends, not jitter.
+      let vel = (vels.get(a) ?? 0) * MOMENTUM + (Math.random() - 0.5) * 2 * VOL
+      if (vel > MAX_VEL) vel = MAX_VEL
+      else if (vel < -MAX_VEL) vel = -MAX_VEL
+      vels.set(a, vel)
+      // Pull toward seed, bounded so a long drift can't snap back harder than a normal step.
+      let revert = ((seed - base0) / seed) * REVERT
+      if (revert > MAX_VEL) revert = MAX_VEL
+      else if (revert < -MAX_VEL) revert = -MAX_VEL
+      let base = base0 * (1 + vel + revert)
+      if (base <= 0) base = base0
+      bases.set(a, base)
+      // Sharp wick on top of the smooth base: an occasional hammer that reverts within a few ticks.
+      let tr = (transients.get(a) ?? 0) * TRANSIENT_DECAY
+      if (Math.random() < SPIKE_PROB) tr += (Math.random() < 0.5 ? -1 : 1) * SPIKE_MAG
+      transients.set(a, tr)
+      const next = base * (1 + tr)
+      prices.set(a, next > 0 ? next : base)
       const subs = priceSubs.get(a)
       if (subs) for (const cb of subs) cb(prices.get(a) as number)
     }

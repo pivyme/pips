@@ -42,7 +42,7 @@ function ActionButton({
       onPointerDown={() => !disabled && haptic('medium')}
       onClick={() => !disabled && onPress()}
       className={cnm(
-        'flex h-full w-full items-center justify-center rounded-2xl text-center text-sm font-bold uppercase tracking-wide transition-transform',
+        'flex h-full w-full items-center justify-center rounded-md text-center text-sm font-bold uppercase tracking-wide transition-transform',
         colorClasses(spec?.color, disabled),
       )}
     >
@@ -66,7 +66,7 @@ function MainButton({
       onPointerDown={() => !disabled && haptic('rigid')}
       onClick={() => !disabled && onPress()}
       className={cnm(
-        'flex h-[68px] w-full items-center justify-center rounded-3xl text-center text-base font-extrabold uppercase tracking-wide transition-transform',
+        'flex h-[68px] w-full items-center justify-center rounded-card text-center text-base font-extrabold uppercase tracking-wide transition-transform',
         colorClasses(spec?.color ?? 'amber', disabled),
       )}
     >

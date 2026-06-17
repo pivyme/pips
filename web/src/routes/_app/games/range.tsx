@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
-import { Chart } from '@/components/game/Chart'
+import { Chart, type BandOverlay } from '@/components/game/Chart'
 import { ResultOverlay, ScreenMessage } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { haptic } from '@/lib/haptics'
@@ -73,12 +73,14 @@ function RangeScreen() {
   const liveMult = live?.multiplier ?? play?.multiplier
   const mult = phase === 'idle' ? estimateMultiplier(halfPct, duration) : (liveMult ?? estimateMultiplier(halfPct, duration))
 
-  // Band overlay: live (knob + current spot) while idle, locked to the play once open.
-  const band =
+  // Band overlay: a live ±halfPct zone while idle (the chart centers it on the smoothed price),
+  // locked to the play's strike bounds once open. The chart animates the lock from a right-side
+  // zone to full width.
+  const band: BandOverlay | undefined =
     play && play.market.lower && play.market.upper
-      ? { lower: parseFloat(play.market.lower), upper: parseFloat(play.market.upper) }
+      ? { lower: parseFloat(play.market.lower), upper: parseFloat(play.market.upper), locked: true }
       : spot != null
-        ? { lower: spot * (1 - halfPct / 100), upper: spot * (1 + halfPct / 100) }
+        ? { pct: halfPct }
         : undefined
   const showBand = phase !== 'result' || play != null
 
@@ -200,7 +202,7 @@ function RangeScreen() {
       disabled: phase !== 'idle' && phase !== 'result',
     },
     action1: { label: durationLabel(duration), color: 'neutral', onPress: cycleDuration, disabled: isOpen || phase === 'cashing' },
-    action2: { label: asset ?? '—', color: 'neutral', onPress: cycleAsset, disabled: isOpen || phase === 'cashing' },
+    action2: { label: asset ?? '·', color: 'neutral', onPress: cycleAsset, disabled: isOpen || phase === 'cashing' },
     main: isOpen
       ? { label: 'CASH OUT', color: 'up', onPress: () => void doCashOut() }
       : phase === 'cashing'
@@ -228,7 +230,7 @@ function RangeScreen() {
       <div className="screen relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-card">
         {marketsQ.isLoading ? (
           <div className="flex flex-1 items-center justify-center p-6">
-            <div className="shimmer h-24 w-full rounded-2xl" />
+            <div className="shimmer h-24 w-full rounded-md" />
           </div>
         ) : marketsQ.isError ? (
           <ScreenMessage title="Could not load markets" action="Retry" onAction={() => void marketsQ.refetch()} />

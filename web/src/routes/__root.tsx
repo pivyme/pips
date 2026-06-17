@@ -76,16 +76,17 @@ function RootDocument({ children }: { children: React.ReactNode }) {
           position="bottom-center"
           toastOptions={{
             style: {
-              background: '#242424',
-              color: '#dfdfdf',
-              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'var(--color-surface)',
+              color: 'var(--color-text)',
+              border: '1px solid var(--color-line-strong)',
               borderRadius: '14px',
               fontSize: '14px',
               fontWeight: 600,
               fontFamily: '"Gabarito Variable", ui-sans-serif, sans-serif',
             },
-            success: { iconTheme: { primary: '#ffc016', secondary: '#1a1200' } },
-            error: { iconTheme: { primary: '#ff5a4d', secondary: '#fff' } },
+            // secondary is the icon-internal cutout color (no semantic token); primary tracks the brand/down tokens.
+            success: { iconTheme: { primary: 'var(--color-brand-500)', secondary: '#1a1200' } },
+            error: { iconTheme: { primary: 'var(--color-down)', secondary: 'white' } },
           }}
         />
         <AuthProvider>{children}</AuthProvider>

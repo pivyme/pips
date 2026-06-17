@@ -45,8 +45,37 @@ export function Knob({ spec, onChange }: { spec: KnobView; onChange: (v: number)
     } catch {}
   }
 
+  // Keyboard operability for the slider role: arrows step, Home/End jump.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (disabled || !spec) return
+    let next: number
+    switch (e.key) {
+      case 'ArrowUp':
+      case 'ArrowRight':
+        next = clampSnap(spec.value + spec.step)
+        break
+      case 'ArrowDown':
+      case 'ArrowLeft':
+        next = clampSnap(spec.value - spec.step)
+        break
+      case 'Home':
+        next = spec.min
+        break
+      case 'End':
+        next = spec.max
+        break
+      default:
+        return
+    }
+    e.preventDefault()
+    if (next !== spec.value) {
+      haptic('selection')
+      onChange(next)
+    }
+  }
+
   const pct = spec && spec.max > spec.min ? (spec.value - spec.min) / (spec.max - spec.min) : 0
-  const display = spec ? (spec.format ? spec.format(spec.value) : String(spec.value)) : '—'
+  const display = spec ? (spec.format ? spec.format(spec.value) : String(spec.value)) : '·'
 
   return (
     <div className="flex flex-1 flex-col items-center justify-end gap-1">
@@ -55,12 +84,14 @@ export function Knob({ spec, onChange }: { spec: KnobView; onChange: (v: number)
         onPointerMove={onPointerMove}
         onPointerUp={end}
         onPointerCancel={end}
+        onKeyDown={onKeyDown}
         className={cnm(
-          'relative w-full flex-1 touch-none overflow-hidden rounded-2xl border border-line-strong',
+          'relative w-full flex-1 touch-none overflow-hidden rounded-md border border-line-strong',
           disabled ? 'opacity-40' : 'cursor-ns-resize',
         )}
         style={{ background: 'linear-gradient(180deg,#2a2a2a,#161616)' }}
         role="slider"
+        tabIndex={disabled ? -1 : 0}
         aria-valuenow={spec?.value}
         aria-valuemin={spec?.min}
         aria-valuemax={spec?.max}

@@ -217,7 +217,7 @@ function LuckyScreen() {
       <div className="screen relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-card">
         {marketsQ.isLoading ? (
           <div className="flex flex-1 items-center justify-center p-6">
-            <div className="shimmer h-24 w-full rounded-2xl" />
+            <div className="shimmer h-24 w-full rounded-md" />
           </div>
         ) : marketsQ.isError ? (
           <ScreenMessage title="Could not load markets" action="Retry" onAction={() => void marketsQ.refetch()} />
@@ -280,7 +280,7 @@ function Reel({
   stopAt: number
   tone?: Side
 }) {
-  const [shown, setShown] = useState<string>('—')
+  const [shown, setShown] = useState<string>('?')
   const poolRef = useRef(pool)
   poolRef.current = pool
 
@@ -306,7 +306,7 @@ function Reel({
   }, [spinning, target, stopAt])
 
   useEffect(() => {
-    if (!spinning) setShown(target ?? '—')
+    if (!spinning) setShown(target ?? '?')
   }, [spinning, target])
 
   return (
@@ -359,7 +359,7 @@ function HistorySheet({ state, open }: { state: ReturnType<typeof useOverlayStat
       {q.isLoading ? (
         <div className="flex flex-col gap-2">
           {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="shimmer h-12 rounded-xl" />
+            <div key={i} className="shimmer h-12 rounded-sm" />
           ))}
         </div>
       ) : q.isError ? (
