@@ -4,12 +4,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
 import { Chart } from '@/components/game/Chart'
+import { ResultOverlay, ScreenMessage } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { Modal, useOverlayState } from '@/ui/Modal'
 import { haptic } from '@/lib/haptics'
 import { api, streamPlay, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
-import { explorerTxUrl } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
@@ -245,7 +245,9 @@ function LuckyScreen() {
           </>
         )}
 
-        {phase === 'result' && play && <ResultOverlay play={play} onDismiss={() => setPhase('idle')} />}
+        {phase === 'result' && play && (
+          <ResultOverlay {...luckyResult(play)} onDismiss={() => setPhase('idle')} />
+        )}
       </div>
 
       <HelpSheet state={help} />
@@ -316,7 +318,8 @@ function Reel({
   )
 }
 
-function ResultOverlay({ play, onDismiss }: { play: PlayDTO; onDismiss: () => void }) {
+// Lucky's result copy (07-DESIGN-SYSTEM.md), fed into the shared ResultOverlay.
+function luckyResult(play: PlayDTO): { title: string; tone: 'up' | 'down'; digest?: string } {
   const payout = parseFloat(play.payout ?? '0')
   const pnl = parseFloat(play.pnl ?? '0')
   const tone: 'up' | 'down' = play.status === 'lost' ? 'down' : pnl >= 0 ? 'up' : 'down'
@@ -326,45 +329,7 @@ function ResultOverlay({ play, onDismiss }: { play: PlayDTO; onDismiss: () => vo
       : play.status === 'cashed_out'
         ? `Cashed out +$${money(Math.max(pnl, 0))}`
         : 'Missed it.'
-  const digest = play.txRedeem ?? play.txMint
-
-  return (
-    <button
-      type="button"
-      onClick={onDismiss}
-      className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur-sm"
-    >
-      <div className={cnm('text-3xl font-extrabold', tone === 'up' ? 'text-up' : 'text-down')}>{title}</div>
-      {digest && (
-        <a
-          href={explorerTxUrl(digest)}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="text-xs font-semibold text-text-3 underline underline-offset-4 transition-colors hover:text-text-2"
-        >
-          View on explorer
-        </a>
-      )}
-      <span className="text-[11px] uppercase tracking-[0.1em] text-text-3">Tap to continue</span>
-    </button>
-  )
-}
-
-function ScreenMessage({ title, action, onAction }: { title: string; action: string; onAction: () => void }) {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-      <span className="h-1.5 w-1.5 rounded-full bg-down" />
-      <p className="text-sm text-text-2">{title}</p>
-      <button
-        type="button"
-        onClick={onAction}
-        className="card-neo rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide text-text-2"
-      >
-        {action}
-      </button>
-    </div>
-  )
+  return { title, tone, digest: play.txRedeem ?? play.txMint }
 }
 
 function HelpSheet({ state }: { state: ReturnType<typeof useOverlayState> }) {
