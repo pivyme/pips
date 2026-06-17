@@ -114,7 +114,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     ]
     // knob pocket config — w/h must stay in sync with kp.height / kp.radius*2 below
     // cylinder is rotated on Z so from the front it reads as w=height, h=radius*2
-    const knobPocket = { px: 975, py: 1960, w: 1, h: 2.5, r: 0.02, pad: 0.04 }
+    const knobPocket = { px: 975, py: 1960, w: 1, h: 2.4, r: 0.1, pad: 0.08 }
 
     // screen L-shape in pixel coords — mirrors screenPts used for the screen mesh
     // screenMesh.position.y = 0.13 is baked in here as a world-space offset before converting to body-local
@@ -129,11 +129,18 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     // edge and the whole control deck stay put. 0 = natural device.
     let screenExt = 0
 
+    // Everything physical hangs off the `device` group, shifted toward the camera by DEVICE_Z so the
+    // device mid-plane sits on the deck origin. That makes the "flip to back" rotation
+    // (deck.rotation.y) symmetric and lets the back panel show. The camera and the screen projection
+    // add the same offset, so the front view stays pixel-identical to the un-grouped device.
+    const DEVICE_Z = 1.06
+
     // Screen L-shape corners in world space, with the top edge raised by screenExt. Drives both the
     // body cutout and the projected HTML layer, so they always agree.
     function screenWorldPts() {
       const yOf = (py: number) => wy(py) + SCREEN_MESH_Y_OFFSET + (py === 30 ? screenExt : 0)
-      return SCREEN_PX.map((p) => new THREE.Vector3(wx(p.x), yOf(p.y), 0.06))
+      // z carries the device-group offset so the projected HTML layer lands on the actual cutout.
+      return SCREEN_PX.map((p) => new THREE.Vector3(wx(p.x), yOf(p.y), DEVICE_Z + 0.06))
     }
 
     function buildBodyShape() {
@@ -179,12 +186,33 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const deck = new THREE.Group()
     scene.add(deck)
 
+    // The flip group. Deck stays the rotation pivot; `device` centers the geometry on it (see DEVICE_Z).
+    const device = new THREE.Group()
+    device.position.z = DEVICE_Z
+    deck.add(device)
+
     /* body */
     const body = new THREE.Mesh(frontZeroed(buildBodyShape(), 0.6, 0.08), matBody)
     body.position.set(wx(585), wy(1130), 0)
     body.receiveShadow = true
     body.castShadow = true
-    deck.add(body)
+    device.add(body)
+
+    /* back panel — solid cream shell behind the body. Covers the open back (button + knob undersides)
+       when the device is flipped; the slab is deep enough to swallow the deepest button and the knob.
+       Same outline as the body, so it never peeks past the front silhouette. Grows with screenExt. */
+    const matBack = new THREE.MeshStandardMaterial({ color: CREAM, roughness: 0.88, metalness: 0 })
+    const backPanel = new THREE.Mesh(
+      frontZeroed(roundedRect(6.2, 11.95 + screenExt, deviceCfg.corner), 1.2, 0.08),
+      matBack,
+    )
+    backPanel.position.set(wx(585), wy(1130) + screenExt / 2, -0.76)
+    backPanel.castShadow = true
+    backPanel.receiveShadow = true
+    // Hidden until the device is flipped. main's screen is an HTML layer behind the canvas, shown
+    // through the body's screen hole; a solid panel here would occlude it. The flip toggle reveals it.
+    backPanel.visible = false
+    device.add(backPanel)
 
     /* screen mesh */
     const screenPts = [
@@ -204,7 +232,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     // The live HTML screen sits behind the device and shows through this cutout, so the panel mesh
     // would only occlude it. Keep it for the debug playground; hide it when a screen is bound.
     screenMesh.visible = debug
-    deck.add(screenMesh)
+    device.add(screenMesh)
 
     // Screen cutout in world space — projected to pixels each resize to place the HTML layer.
     // Reassigned by relayout() when the screen stretches to fill a tall frame.
@@ -226,7 +254,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       mesh.castShadow = true
       mesh.receiveShadow = true
       mesh.userData = { kind: 'button', baseZ, pressedZ, depth, pressed: false, glow: 0, hover: 0 }
-      deck.add(mesh)
+      device.add(mesh)
       interactive.push(mesh)
       return mesh
     }
@@ -252,7 +280,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const floor = new THREE.Mesh(geo, matPocket)
       floor.position.set(btn.position.x, btn.position.y, -0.04)
       floor.receiveShadow = true
-      deck.add(floor)
+      device.add(floor)
     })
     // knob pocket floor
     const kfw = knobPocket.w + knobPocket.pad * 2 - 0.04
@@ -261,7 +289,49 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const knobFloor = new THREE.Mesh(knobFloorGeo, matPocket)
     knobFloor.position.set(wx(knobPocket.px), wy(knobPocket.py), body.position.z - 0.04)
     knobFloor.receiveShadow = true
-    deck.add(knobFloor)
+    device.add(knobFloor)
+
+    // knob pocket bevel — chamfered ring sloping from the body front face inward into the pocket, so
+    // the rim reads as a real machined recess. Outer ring matches the body hole (pocket pad), inner
+    // ring sits at the pocket edge one `pad` deep (45° slope).
+    {
+      const ow = knobPocket.w + knobPocket.pad * 2
+      const oh = knobPocket.h + knobPocket.pad * 2
+      const or_ = Math.min(knobPocket.r + knobPocket.pad, ow / 2, oh / 2)
+      const iw = knobPocket.w, ih = knobPocket.h, ir = knobPocket.r
+      const bD = knobPocket.pad // depth = pad → 45° slope
+      const S = 12
+
+      function ringPts(w: number, h: number, r: number, z: number): number[] {
+        const hw = w / 2, hh = h / 2, v: number[] = []
+        const corners: [number, number, number][] = [
+          [hw - r, hh - r, 0], [-hw + r, hh - r, Math.PI / 2],
+          [-hw + r, -hh + r, Math.PI], [hw - r, -hh + r, 3 * Math.PI / 2],
+        ]
+        for (const [cx, cy, a0] of corners)
+          for (let i = 0; i < S; i++) {
+            const a = a0 + (i / S) * (Math.PI / 2)
+            v.push(cx + r * Math.cos(a), cy + r * Math.sin(a), z)
+          }
+        return v
+      }
+
+      const N = S * 4
+      const verts = [...ringPts(ow, oh, or_, 0), ...ringPts(iw, ih, ir, -bD)]
+      const idx: number[] = []
+      for (let i = 0; i < N; i++) {
+        const j = (i + 1) % N
+        idx.push(i, N + i, j, j, N + i, N + j)
+      }
+      const bevelGeo = new THREE.BufferGeometry()
+      bevelGeo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3))
+      bevelGeo.setIndex(idx)
+      bevelGeo.computeVertexNormals()
+      const knobBevel = new THREE.Mesh(bevelGeo, matPocket)
+      knobBevel.position.set(wx(knobPocket.px), wy(knobPocket.py), 0)
+      knobBevel.receiveShadow = true
+      device.add(knobBevel)
+    }
 
     // Canvas-texture label. Static caption (makeLabel) or live, updatable (makeDynLabel).
     function drawLabel(c: HTMLCanvasElement, g: CanvasRenderingContext2D, text: string, color: string, fs = 64) {
@@ -288,7 +358,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
       )
       plane.position.set(cx, cy, 0.06)
-      deck.add(plane)
+      device.add(plane)
       return plane
     }
 
@@ -348,7 +418,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     bm[2].add(a2Lbl.plane)
     const knobLbl = makeDynLabel(0.42, '#2c2722')
     knobLbl.plane.position.set(wx(knobPocket.px), wy(knobPocket.py) - 1.55, 0.07)
-    deck.add(knobLbl.plane)
+    device.add(knobLbl.plane)
 
     // View state mirrored from the registry, read by the input handlers for gating.
     const state = {
@@ -403,9 +473,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const kp = {
       ridgeWidth: 120, grooveWidth: 50, bumpScale: 45, ridgeRepeat: 20,
       cornerCurve: 0.2,
-      radius: 1.25, height: 0.95,
+      radius: 1.25, height: 0.95, edgeCurve: 0.1,
       dragSensitivity: 0.5, pxPerStep: 22, ridgePhase: 0,
       snapInterval: 20, snapSpeed: 5,
+      ridgeLength: 0.825,
     }
 
     const bumpc = document.createElement('canvas')
@@ -418,15 +489,19 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     function redrawBump() {
       const img = bx.createImageData(128, 128)
       const pitch = kp.ridgeWidth + kp.grooveWidth
-      for (let x = 0; x < 128; x++) {
-        const phase = x % pitch
-        let v = 255
-        if (phase < kp.grooveWidth) {
-          const t = phase / kp.grooveWidth
-          const valley = 1 - Math.sin(t * Math.PI)
-          v = Math.round(valley * kp.cornerCurve * 255)
-        }
-        for (let y = 0; y < 128; y++) {
+      // ridges occupy a centered fraction (ridgeLength) of the V range; the rounded ends stay flat (255)
+      const margin = (1 - kp.ridgeLength) / 2
+      const lo = margin * 128, hi = (1 - margin) * 128
+      for (let y = 0; y < 128; y++) {
+        for (let x = 0; x < 128; x++) {
+          let v = 255
+          if (y >= lo && y <= hi) {
+            const phase = x % pitch
+            if (phase < kp.grooveWidth) {
+              const t = phase / kp.grooveWidth
+              v = Math.round((1 - Math.sin(t * Math.PI)) * kp.cornerCurve * 255)
+            }
+          }
           const i = (y * 128 + x) * 4
           img.data[i] = img.data[i + 1] = img.data[i + 2] = v
           img.data[i + 3] = 255
@@ -443,17 +518,38 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     matKnobSlab.roughness = 0.88
     knobBump.repeat.set(kp.ridgeRepeat, 1)
 
-    const knobSlab = new THREE.Mesh(
-      new THREE.CylinderGeometry(kp.radius, kp.radius, kp.height, 64, 4),
-      matKnobSlab,
-    )
+    // Quarter-circle rounds at each end of the profile. LatheGeometry has no flat cap faces, so the
+    // ridge bump never bleeds a UV stripe across a hard edge the way a capped cylinder does.
+    function knobProfile(): THREE.Vector2[] {
+      const { radius, height, edgeCurve: r } = kp
+      const pts: THREE.Vector2[] = []
+      pts.push(new THREE.Vector2(0, -height / 2))
+      for (let i = 0; i <= 12; i++) {
+        const a = -Math.PI / 2 + (i / 12) * (Math.PI / 2)
+        pts.push(new THREE.Vector2(radius - r + r * Math.cos(a), -height / 2 + r + r * Math.sin(a)))
+      }
+      pts.push(new THREE.Vector2(radius, height / 2 - r))
+      for (let i = 1; i <= 12; i++) {
+        const a = (i / 12) * (Math.PI / 2)
+        pts.push(new THREE.Vector2(radius - r + r * Math.cos(a), height / 2 - r + r * Math.sin(a)))
+      }
+      pts.push(new THREE.Vector2(0, height / 2))
+      return pts
+    }
+
+    const knobSlab = new THREE.Mesh(new THREE.LatheGeometry(knobProfile(), 64), matKnobSlab)
     knobSlab.rotation.z = Math.PI / 2
-    knobSlab.position.set(wx(975), wy(1960), -0.3)
+    knobSlab.position.set(wx(975), wy(1960), -0.5)
     knobSlab.castShadow = true
     knobSlab.receiveShadow = true
     knobSlab.userData = { kind: 'knob', hover: 0 }
-    deck.add(knobSlab)
+    device.add(knobSlab)
     interactive.push(knobSlab)
+
+    function rebuildKnobGeo() {
+      knobSlab.geometry.dispose()
+      knobSlab.geometry = new THREE.LatheGeometry(knobProfile(), 64)
+    }
 
     let knobOffset = 0
     let knobTarget = 0
@@ -462,6 +558,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       body.geometry.dispose()
       body.geometry = frontZeroed(buildBodyShape(), 0.6, 0.08)
       body.position.y = wy(1130) + screenExt / 2
+      // back panel tracks the body so it stays a full cover when the screen stretches
+      backPanel.geometry.dispose()
+      backPanel.geometry = frontZeroed(roundedRect(6.2, 11.95 + screenExt, deviceCfg.corner), 1.2, 0.08)
+      backPanel.position.y = wy(1130) + screenExt / 2
     }
 
     // Stretch the screen + body top to `ext` world units past natural, then refresh the projection
@@ -476,11 +576,13 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     /* dev GUI — only when explicitly debugging (e.g. the /console playground) */
     const gui = debug
       ? createConsoleGui({
-          kp, buttons, knobPocket, deviceCfg, bm, knobSlab, matKnobSlab, knobBump, matScreen, deck,
+          kp, buttons, knobPocket, deviceCfg, bm, matKnobSlab, knobBump, matScreen, deck, backPanel,
           lights: { key, fill, hemi, ambient },
           onRedrawBump: redrawBump,
           onRebuildBodyGeo: rebuildBodyGeo,
           onRebuildBtnGeo: rebuildBtnGeo,
+          onRebuildKnobGeo: rebuildKnobGeo,
+          requestRender: () => { dirty = true },
         })
       : null
 
@@ -608,7 +710,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         relayout(0)
         const fitH = (11.95 * 0.5 * 1.06) / tanHalf
         const fitW = (6.2 * 0.5 * 1.06) / (tanHalf * camera.aspect)
-        camera.position.set(0, 0, Math.max(fitH, fitW))
+        camera.position.set(0, 0, Math.max(fitH, fitW) + DEVICE_Z)
         camera.lookAt(0, 0, 0)
       } else {
         // Always fill the width. A frame taller than the device's ratio grows the screen to fill
@@ -622,7 +724,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
           ext > 0
             ? (6.2 * 0.5) / (tanHalf * camera.aspect) // fill width
             : (11.95 * 0.5) / tanHalf // contain by height (wider frame)
-        camera.position.set(0, cy, d)
+        camera.position.set(0, cy, d + DEVICE_Z)
         camera.lookAt(0, cy, 0)
       }
       camera.updateProjectionMatrix()

@@ -1,9 +1,10 @@
 import GUI from 'lil-gui'
-import * as THREE from 'three'
+import type * as THREE from 'three'
 
 interface KnobParams {
   ridgeWidth: number; grooveWidth: number; bumpScale: number; cornerCurve: number
-  ridgeRepeat: number; ridgePhase: number; radius: number; height: number
+  ridgeRepeat: number; ridgePhase: number; radius: number; height: number; edgeCurve: number
+  ridgeLength: number
   dragSensitivity: number; pxPerStep: number; snapInterval: number; snapSpeed: number
 }
 
@@ -17,11 +18,11 @@ interface GuiParams {
   knobPocket: { pad: number; r: number }
   deviceCfg: { corner: number }
   bm: THREE.Mesh[]
-  knobSlab: THREE.Mesh
   matKnobSlab: THREE.MeshStandardMaterial
   knobBump: THREE.CanvasTexture
   matScreen: THREE.MeshStandardMaterial
   deck: THREE.Group
+  backPanel: THREE.Mesh
   lights: {
     key: THREE.DirectionalLight
     fill: THREE.DirectionalLight
@@ -31,10 +32,12 @@ interface GuiParams {
   onRedrawBump: () => void
   onRebuildBodyGeo: () => void
   onRebuildBtnGeo: (i: number) => void
+  onRebuildKnobGeo: () => void
+  requestRender: () => void
 }
 
 export function createConsoleGui(p: GuiParams): GUI {
-  const { kp, buttons, knobPocket, deviceCfg, bm, knobSlab, matKnobSlab, knobBump, matScreen, deck, lights } = p
+  const { kp, buttons, knobPocket, deviceCfg, bm, matKnobSlab, knobBump, matScreen, deck, backPanel, lights } = p
 
   const gui = new GUI({ title: 'Console', width: 280 })
 
@@ -45,18 +48,14 @@ export function createConsoleGui(p: GuiParams): GUI {
   gRidges.add(kp, 'grooveWidth', 5, 120, 1).name('groove').onChange(p.onRedrawBump)
   gRidges.add(kp, 'bumpScale', 0, 30, 0.5).name('depth').onChange((v: number) => { matKnobSlab.bumpScale = v })
   gRidges.add(kp, 'cornerCurve', 0, 1, 0.01).name('curviness').onChange(p.onRedrawBump)
+  gRidges.add(kp, 'ridgeLength', 0, 1, 0.01).name('length').onChange(p.onRedrawBump)
   gRidges.add(kp, 'ridgeRepeat', 1, 20, 0.5).name('repeat ×').onChange((v: number) => { knobBump.repeat.set(v, 1) })
   gRidges.add(kp, 'ridgePhase', 0, 1, 0.01).name('phase')
 
   const gKShape = gKnob.addFolder('Shape')
-  function rebuildKnob() {
-    knobSlab.geometry.dispose()
-    const g = new THREE.CylinderGeometry(kp.radius, kp.radius, kp.height, 64, 4)
-    g.computeVertexNormals()
-    knobSlab.geometry = g
-  }
-  gKShape.add(kp, 'radius', 0.3, 3, 0.05).name('radius').onChange(rebuildKnob)
-  gKShape.add(kp, 'height', 0.1, 3, 0.05).name('height').onChange(rebuildKnob)
+  gKShape.add(kp, 'radius', 0.3, 3, 0.05).name('radius').onChange(p.onRebuildKnobGeo)
+  gKShape.add(kp, 'height', 0.1, 3, 0.05).name('height').onChange(p.onRebuildKnobGeo)
+  gKShape.add(kp, 'edgeCurve', 0, 0.5, 0.01).name('edge round').onChange(p.onRebuildKnobGeo)
 
   const gKFeel = gKnob.addFolder('Feel')
   gKFeel.add(kp, 'dragSensitivity', 0.01, 0.5, 0.005).name('ridges / px')
@@ -84,6 +83,8 @@ export function createConsoleGui(p: GuiParams): GUI {
   const flipState = { flipped: false }
   gui.add(flipState, 'flipped').name('flip to back').onChange((v: boolean) => {
     deck.rotation.y = v ? Math.PI : 0
+    backPanel.visible = v // solid back only when we're looking at it (hidden it occludes the screen)
+    p.requestRender() // single click, no drag to nudge the on-demand loop, so paint it now
   })
 
   const gScreen = gui.addFolder('Screen')
