@@ -826,7 +826,17 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
   }, [view])
 
   return (
-    <div ref={rootRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#000' }}>
+    <div
+      ref={rootRef}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        overflow: 'hidden',
+        // Playground sits the device on a warm backdrop to inspect the model; the real app stays
+        // black so the device reads as a product shot in the AppFrame.
+        background: debug ? 'radial-gradient(circle at 50% 38%, #f4ead6 0%, #decdab 82%)' : '#000',
+      }}
+    >
       {/* screen content sits behind the device; the body's hole cuts it to the L-shape and the
           beveled rim frames it. Total black so any rim seam reads as screen, not a gap. */}
       <div
@@ -838,7 +848,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
           width: 0,
           height: 0,
           zIndex: 1,
-          background: '#000',
+          // Real app: black backing so any rim seam reads as screen. Playground: transparent so the
+          // empty layer doesn't show as a black strip when the device is rotated (screenMesh is the screen).
+          background: debug ? 'transparent' : '#000',
           overflow: 'hidden',
         }}
       >

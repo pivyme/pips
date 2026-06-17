@@ -80,11 +80,13 @@ export function createConsoleGui(p: GuiParams): GUI {
     f.close()
   })
 
-  const flipState = { flipped: false }
-  gui.add(flipState, 'flipped').name('flip to back').onChange((v: boolean) => {
-    deck.rotation.y = v ? Math.PI : 0
-    backPanel.visible = v // solid back only when we're looking at it (hidden it occludes the screen)
-    p.requestRender() // single click, no drag to nudge the on-demand loop, so paint it now
+  // Free Y rotation to inspect the model from any angle. The solid back fades in once it faces the
+  // camera (past 90°) and stays hidden up front so it never occludes the screen.
+  const spin = { y: 0 }
+  gui.add(spin, 'y', -180, 180, 1).name('rotate').onChange((deg: number) => {
+    deck.rotation.y = (deg * Math.PI) / 180
+    backPanel.visible = Math.abs(deg) > 90
+    p.requestRender()
   })
 
   const gScreen = gui.addFolder('Screen')
