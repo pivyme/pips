@@ -15,7 +15,7 @@ The twist that makes Pips Pips: the whole interface looks and behaves like a **p
 1. This is a **monorepo** with three pillars: `web/` (frontend), `backend/` (API), `contracts/` (Sui Move). Working in a pillar? Read its own `CLAUDE.md` too.
 2. The chain is **Sui**. The trading mechanic is **DeepBook Predict** (an on-chain prediction-market protocol, currently testnet only, see below).
 3. The frontend is **not a normal dashboard**. It is a persistent console shell with a swappable screen. Read [`docs/DESIGN.md`](./docs/DESIGN.md) before touching UI.
-4. Auth ships in two phases: **Suiet wallet connect first**, then **Sui zkLogin (via Enoki)** second.
+4. Auth is **Sui zkLogin via Enoki (Google sign-in)** plus a **dev auto-login** for local and the build loop. Suiet wallet connect is not in v1. See [`bigdev/plans/04-AUTH.md`](./bigdev/plans/04-AUTH.md).
 5. The Sui SDK surface moves fast. The package names and APIs in this file were verified mid 2026. When you write integration code, confirm the current API before coding, never guess from memory.
 
 ---
@@ -83,17 +83,20 @@ This is what every Pips game settles against. The fun, game-like front layer tra
 **Critical constraints:**
 - **Testnet only** as of mid 2026 (launched ~May 2026). Mainnet is expected later. Build for testnet now, plan a clean mainnet re-point.
 - **Package IDs and object layouts are explicitly unstable** and will change before mainnet. **Never hardcode them.** Read them from config or from the SDK's constants, behind one abstraction layer.
-- Integrate via the `@mysten/deepbook-v3` SDK (`DeepBookClient` built from a `SuiClient` + sender + environment). Verify whether the published SDK exposes Predict helpers (supply/mint/redeem) or whether those Move calls must be built as raw PTBs against the Predict modules. Confirm against the live docs, do not assume.
+- The published `@mysten/deepbook-v3` SDK has **no Predict support** (verified against source). We hand-build raw PTBs against the predict modules with `@mysten/sui`, and for fast short-expiry games we **publish our own copy of `packages/predict`** to testnet and operate our own markets, vault, and oracles (seeded with free DUSDC). Full verified recipe in [`bigdev/plans/05-SUI-PREDICT.md`](./bigdev/plans/05-SUI-PREDICT.md). Everything stays behind the one wrapper.
 
 **Architecture rule:** all Predict interaction goes through one wrapper module (`web/src/lib/sui/predict.*` on the client, `backend/src/lib/sui/*` on the server). Games call that wrapper. When mainnet lands or IDs change, we touch one place.
 
 ---
 
-## Auth roadmap
+## Auth (v1)
 
-**Phase 1, Suiet wallet connect.** Connect with `@suiet/wallet-kit`. To authenticate to our backend: server issues a nonce, client signs it with `signPersonalMessage`, server verifies with `verifyPersonalMessageSignature({ address })` and mints a JWT. The existing backend JWT plumbing stays, only the verification step becomes Sui native.
+Two modes behind one JWT plumbing, selected by `AUTH_MODE`. Full spec in [`bigdev/plans/04-AUTH.md`](./bigdev/plans/04-AUTH.md).
 
-**Phase 2, Sui zkLogin via Enoki.** Add social login (Google to start) so users get a real Sui address without a wallet. Register Enoki wallets into the wallet layer so zkLogin appears as just another connect option. Use two keys: a client side key for zkLogin auth, a backend only key for sponsored (gasless) transactions. zkLogin lowers the onboarding wall, which matters for the "anyone can play" goal.
+- **`enoki` (product + demo):** Google sign-in via **Sui zkLogin (Enoki)**, so users get a real Sui address with no wallet or seed phrase. The client signs its own plays; the backend sponsors gas (Enoki server key) so plays are gasless. To auth our backend: nonce, client signs a personal message, server verifies (`verifyPersonalMessageSignature({ address })`, and zkLogin sigs on testnet need a testnet `SuiGraphQLClient`), mints the JWT.
+- **`dev` (local + build loop):** auto-login the testing wallet (`TESTING_WALLET_PK`); the backend signs txs directly. No OAuth, real Predict on testnet.
+
+Suiet wallet connect is not in v1 (`@suiet/wallet-kit` stays available but unused).
 
 ---
 
@@ -117,6 +120,38 @@ This is what every Pips game settles against. The fun, game-like front layer tra
 - Reads like the surrounding code: match existing naming and idioms.
 
 ---
+
+## v1 build (BigDev)
+
+The full v1 build (auth, the three games, menu, backend, indexer, the Predict integration) is planned under [`bigdev/`](./bigdev/) and built by an autonomous loop (`./bigdev/autobuild`). Durable steering lives in [`bigdev/claude/requirements-log.md`](./bigdev/claude/requirements-log.md) (committed, read every iteration); one-shot corrections go to `bigdev/claude/inject.md` (gitignored). Use `./bigdev/autobuild say "rule"` for durable, `./bigdev/autobuild fix "msg"` for transient.
+
+**The spine (decided):** Pips runs its **own** DeepBook Predict deployment on testnet (we publish `packages/predict` ourselves, seed the vault with free DUSDC, run short-expiry oracles via a backend price-pusher). Every play is a real `mint`/`redeem`. No sim. Gasless via Enoki, dev mode backend-signs. Fast paced is the priority. The why and how: `bigdev/plans/01-ARCHITECTURE.md` and `05-SUI-PREDICT.md`.
+
+**Plans (source of truth, read the relevant one before each phase):**
+
+| File | Covers |
+|---|---|
+| `bigdev/plans/01-ARCHITECTURE.md` | System overview, the settlement spine, modes, data flow, risks |
+| `bigdev/plans/02-API.md` | Backend routes, DTOs, SSE streams, error codes |
+| `bigdev/plans/03-DATABASE.md` | Prisma schema, queries, seed |
+| `bigdev/plans/04-AUTH.md` | dev + Enoki zkLogin, JWT, sponsorship, onboarding |
+| `bigdev/plans/05-SUI-PREDICT.md` | The verified Predict recipe, wrappers, operator workers, gotchas |
+| `bigdev/plans/06-GAMES.md` | The three games, console bindings, the 60fps chart |
+| `bigdev/plans/07-DESIGN-SYSTEM.md` | Screen states + verbatim copy (defers to `docs/DESIGN.md`) |
+| `bigdev/plans/08-DEMO-FLOW.md` | The 2-min arc, seed data, achievements, fallbacks |
+| `bigdev/plans/09-DEPLOYMENT.md` | Local run, the Predict bootstrap, deploy, mainnet re-point |
+
+`docs/DESIGN.md` remains the canonical visual system. Demo-grade quality bar: `bigdev/plans/07-DESIGN-SYSTEM.md` + `bigdev/plans/08-DEMO-FLOW.md`.
+
+**Build + run commands:**
+
+```bash
+cd web && bunx tsc --noEmit        # fast typecheck gate (the loop's baseline check)
+cd backend && bun run typecheck    # backend typecheck gate
+cd backend && bun dev              # API on :3700
+cd web && bun dev                  # console on :3200
+cd backend && bun run db:push      # USER runs this after schema changes (never the loop)
+```
 
 ## Working on something big?
 

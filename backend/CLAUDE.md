@@ -8,7 +8,9 @@
 
 ## Pips context
 
-This is the **Pips** backend (gamified trading on Sui via DeepBook Predict). Read the root [`../CLAUDE.md`](../CLAUDE.md) for product and Sui stack context. Its job: auth (Sui wallet signature, later zkLogin), game state, indexing, and any server side Sui reads/sponsorship.
+This is the **Pips** backend (gamified trading on Sui via DeepBook Predict). Read the root [`../CLAUDE.md`](../CLAUDE.md) for product and Sui stack context. Its job: auth (zkLogin via Enoki + a dev auto-login), game engine, the Predict operator (price-pusher, oracle ladder, settle), indexing, and sponsored Sui txs.
+
+**v1 build:** planned in [`../bigdev/plans/`](../bigdev/plans/). Read `05-SUI-PREDICT.md` (we publish + operate our own Predict instance: the verified bootstrap recipe, the wrappers, and the price-pusher / oracle-roll / settle workers), `02-API.md` (routes + SSE streams), `03-DATABASE.md` (schema + seed), `04-AUTH.md` (dev + Enoki, sponsorship, onboarding). All Sui ids come from config, never hardcode.
 
 **Sui (verified mid 2026, reconfirm before coding):**
 - Use `@mysten/sui` (v2.x, ESM only). RPC via `SuiGrpcClient` (`@mysten/sui/grpc`) preferred, `SuiClient` is legacy.

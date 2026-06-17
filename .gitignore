@@ -4,11 +4,12 @@ node_modules/
 .pnp.*
 
 # ── Environment ────────────────────────────────────────────
-# Never commit real secrets. .env.example files stay tracked.
+# Never commit real secrets. .env.example + .env.local-stub stay tracked.
 .env
 .env.*
 !.env.example
 !.env.*.example
+!.env.local-stub
 
 # ── Frontend build artifacts (TanStack Start / Nitro / Vite) ─
 .output/
@@ -59,3 +60,10 @@ ehthumbs.db
 .cache/
 .temp/
 .tmp/
+
+# ── BigDev autonomous build loop ───────────────────────────
+# plans/, TODO.md, the scripts, and requirements-log.md ARE tracked (project memory).
+# Only the transient runtime artifacts are ignored.
+bigdev/claude/auto-build-logs/
+bigdev/claude/auto-build.lock
+bigdev/claude/inject.md

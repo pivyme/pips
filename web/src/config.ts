@@ -1,49 +1,17 @@
-interface AppConfig {
-  appName: string
-  appDescription: string
-  links: {
-    twitter: string
-    github: string
-    telegram: string
-    discord: string
-    docs: string
-    buy: string
-  }
-  contracts: {
-    main: string
-    token: string
-  }
-  features: {
-    darkMode: boolean
-    smoothScroll: boolean
-  }
-}
+// App-level brand and links. Sui package/object IDs live in src/lib/sui/config.ts
+// (read from env, never inlined), per the monorepo rule.
 
-export const config: AppConfig = {
-  appName: 'Web Starter',
-  appDescription: 'A modern web starter template by Kwek Labs',
+export const config = {
+  appName: 'Pips',
+  tagline: 'Trading, but a game.',
+  description:
+    'The simplest, most fun way to trade. A gamified trading console on Sui, powered by DeepBook Predict.',
 
-  // Social links
   links: {
     twitter: '',
-    github: '',
-    telegram: '',
-    discord: '',
-    docs: '',
-    buy: '',
+    github: 'https://github.com/kelvinkn17/pips',
+    docs: 'https://docs.sui.io/onchain-finance/deepbook-predict/',
   },
+} as const
 
-  // Contract/wallet related (if needed)
-  contracts: {
-    main: '',
-    token: '',
-  },
-
-  // Feature flags
-  features: {
-    darkMode: true,
-    smoothScroll: true,
-  },
-}
-
-export type Config = AppConfig
+export type Config = typeof config

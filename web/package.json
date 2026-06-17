@@ -13,9 +13,12 @@
   },
   "dependencies": {
     "@faker-js/faker": "^10.4.0",
+    "@fontsource-variable/gabarito": "^5.2.8",
     "@fontsource-variable/inter": "^5.2.8",
     "@heroui/react": "^3.0.4",
     "@heroui/styles": "^3.0.4",
+    "@mysten/enoki": "^1.1.0",
+    "@mysten/sui": "^2.18.0",
     "@t3-oss/env-core": "^0.13.11",
     "@tailwindcss/vite": "^4.3.0",
     "@tanstack/match-sorter-utils": "^8.19.4",
@@ -39,6 +42,7 @@
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.0",
     "vite-tsconfig-paths": "^6.1.1",
+    "web-haptics": "^0.0.6",
     "zod": "^4.4.3"
   },
   "devDependencies": {

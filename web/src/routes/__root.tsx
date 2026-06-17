@@ -4,7 +4,6 @@ import {
   createRootRouteWithContext,
 } from '@tanstack/react-router'
 import LenisSmoothScrollProvider from '../providers/LenisSmoothScrollProvider'
-import { ThemeProvider } from '../providers/ThemeProvider'
 import { Toaster } from 'react-hot-toast'
 import ErrorPage from '../components/ErrorPage'
 import NotFoundPage from '../components/NotFoundPage'
@@ -22,26 +21,42 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
   errorComponent: ({ error, reset }) => <ErrorPage error={error} reset={reset} />,
   head: () => ({
     meta: [
-      {
-        charSet: 'utf-8',
-      },
+      { charSet: 'utf-8' },
       {
         name: 'viewport',
-        content: 'width=device-width, initial-scale=1',
+        content:
+          'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover',
       },
-      {
-        title: 'Kwek Labs Web Starter',
-      },
+      { title: 'Pips' },
       {
         name: 'description',
-        content: 'A modern web starter template by Kwek Labs',
+        content:
+          'Pips makes trading simple, intuitive, and addictive, like a game. A gamified trading console on Sui.',
       },
+      { name: 'theme-color', content: '#000000' },
+      // Social previews
+      { property: 'og:title', content: 'Pips' },
+      {
+        property: 'og:description',
+        content: 'Trading made simple, intuitive, and addictive, like a game.',
+      },
+      { property: 'og:type', content: 'website' },
+      { property: 'og:image', content: '/assets/logos/pips-512.png' },
+      { name: 'twitter:card', content: 'summary' },
+      { name: 'twitter:title', content: 'Pips' },
+      {
+        name: 'twitter:description',
+        content: 'Trading made simple, intuitive, and addictive, like a game.',
+      },
+      { name: 'twitter:image', content: '/assets/logos/pips-512.png' },
     ],
     links: [
-      {
-        rel: 'stylesheet',
-        href: appCss,
-      },
+      { rel: 'stylesheet', href: appCss },
+      // Favicon + app icons. SVG first for crisp scaling, .ico as the legacy fallback.
+      { rel: 'icon', type: 'image/svg+xml', href: '/assets/logos/pips-yellow-quare.svg' },
+      { rel: 'icon', href: '/favicon.ico', sizes: '32x32' },
+      { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' },
+      { rel: 'manifest', href: '/manifest.json' },
     ],
   }),
 
@@ -50,51 +65,29 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         <HeadContent />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                try {
-                  var theme = localStorage.getItem('theme');
-                  if (theme) {
-                    theme = JSON.parse(theme);
-                  }
-                  document.documentElement.classList.add(theme || 'dark');
-                } catch (e) {
-                  document.documentElement.classList.add('dark');
-                }
-              })();
-            `,
+      </head>
+      <body className="bg-canvas text-text antialiased">
+        <LenisSmoothScrollProvider />
+        <Toaster
+          position="bottom-center"
+          toastOptions={{
+            style: {
+              background: '#242424',
+              color: '#dfdfdf',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '14px',
+              fontSize: '14px',
+              fontWeight: 600,
+              fontFamily: '"Gabarito Variable", ui-sans-serif, sans-serif',
+            },
+            success: { iconTheme: { primary: '#ffc016', secondary: '#1a1200' } },
+            error: { iconTheme: { primary: '#ff5a4d', secondary: '#fff' } },
           }}
         />
-      </head>
-      <body className="bg-neutral-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100 antialiased transition-colors duration-300">
-        <ThemeProvider>
-          <LenisSmoothScrollProvider />
-          <Toaster
-            position="bottom-center"
-            toastOptions={{
-              style: {
-                background: 'var(--toast-bg)',
-                color: 'var(--toast-color)',
-                border: '1px solid var(--toast-border)',
-                borderRadius: '0px',
-                fontSize: '13px',
-                fontFamily: 'monospace',
-              },
-              success: {
-                iconTheme: {
-                  primary: '#f59e0b',
-                  secondary: '#fff',
-                },
-              },
-            }}
-          />
-          {children}
-        </ThemeProvider>
+        {children}
         <Scripts />
       </body>
     </html>

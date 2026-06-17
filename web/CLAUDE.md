@@ -10,6 +10,8 @@ This repo is simple minded - no overengineering, no code poison, no early abstra
 
 This is the **Pips** frontend: the gamified trading console. Pips makes trading simple, intuitive, and addictive, like a game, on Sui via DeepBook Predict. Read the root [`../CLAUDE.md`](../CLAUDE.md) for product context and the Sui stack, and [`../docs/DESIGN.md`](../docs/DESIGN.md) for the design language. This was forked from a React starter, so reframe anything still labeled "starter".
 
+**v1 build:** frontend work is planned in [`../bigdev/plans/`](../bigdev/plans/). Read `06-GAMES.md` (the three games + the 60fps chart, bound to the existing console controls), `07-DESIGN-SYSTEM.md` (screen states + verbatim copy; `../docs/DESIGN.md` is canonical), `05-SUI-PREDICT.md` (the thin client Predict wrapper), `04-AUTH.md` (dev + Enoki zkLogin), `02-API.md` (the backend contract). The console shell, Knob, `useConsoleControls`, and `Illo` are already built, do not rebuild them.
+
 ## Pips frontend specifics
 
 **The UI is a device, not a dashboard.** Everything renders inside a persistent **ConsoleShell** (the handheld console) with a swappable **Screen**. The physical controls (Main Action Button, Action Buttons 1/2, Knob, Menu/Games tabs) belong to the shell, but each game binds their behavior via a controls registration (`useConsoleControls()`). Build the shell in high fidelity CSS/SVG first, not WebGL. Use `web-haptics` for tactile feedback. Full spec and layout in [`../docs/DESIGN.md`](../docs/DESIGN.md). If a screen could pass for any other trading app, it is wrong.

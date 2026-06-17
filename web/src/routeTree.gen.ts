@@ -9,38 +9,111 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
+import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
+import { Route as AppGamesTapRouteImport } from './routes/_app/games/tap'
+import { Route as AppGamesRangeRouteImport } from './routes/_app/games/range'
+import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
 
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppMenuIndexRoute = AppMenuIndexRouteImport.update({
+  id: '/menu/',
+  path: '/menu/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppGamesIndexRoute = AppGamesIndexRouteImport.update({
+  id: '/games/',
+  path: '/games/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppGamesTapRoute = AppGamesTapRouteImport.update({
+  id: '/games/tap',
+  path: '/games/tap',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppGamesRangeRoute = AppGamesRangeRouteImport.update({
+  id: '/games/range',
+  path: '/games/range',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppGamesLuckyRoute = AppGamesLuckyRouteImport.update({
+  id: '/games/lucky',
+  path: '/games/lucky',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/games/lucky': typeof AppGamesLuckyRoute
+  '/games/range': typeof AppGamesRangeRoute
+  '/games/tap': typeof AppGamesTapRoute
+  '/games/': typeof AppGamesIndexRoute
+  '/menu/': typeof AppMenuIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/games/lucky': typeof AppGamesLuckyRoute
+  '/games/range': typeof AppGamesRangeRoute
+  '/games/tap': typeof AppGamesTapRoute
+  '/games': typeof AppGamesIndexRoute
+  '/menu': typeof AppMenuIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/_app': typeof AppRouteWithChildren
+  '/_app/games/lucky': typeof AppGamesLuckyRoute
+  '/_app/games/range': typeof AppGamesRangeRoute
+  '/_app/games/tap': typeof AppGamesTapRoute
+  '/_app/games/': typeof AppGamesIndexRoute
+  '/_app/menu/': typeof AppMenuIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/games/lucky'
+    | '/games/range'
+    | '/games/tap'
+    | '/games/'
+    | '/menu/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/games/lucky' | '/games/range' | '/games/tap' | '/games' | '/menu'
+  id:
+    | '__root__'
+    | '/'
+    | '/_app'
+    | '/_app/games/lucky'
+    | '/_app/games/range'
+    | '/_app/games/tap'
+    | '/_app/games/'
+    | '/_app/menu/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AppRoute: typeof AppRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -48,11 +121,65 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/menu/': {
+      id: '/_app/menu/'
+      path: '/menu'
+      fullPath: '/menu/'
+      preLoaderRoute: typeof AppMenuIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/games/': {
+      id: '/_app/games/'
+      path: '/games'
+      fullPath: '/games/'
+      preLoaderRoute: typeof AppGamesIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/games/tap': {
+      id: '/_app/games/tap'
+      path: '/games/tap'
+      fullPath: '/games/tap'
+      preLoaderRoute: typeof AppGamesTapRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/games/range': {
+      id: '/_app/games/range'
+      path: '/games/range'
+      fullPath: '/games/range'
+      preLoaderRoute: typeof AppGamesRangeRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/games/lucky': {
+      id: '/_app/games/lucky'
+      path: '/games/lucky'
+      fullPath: '/games/lucky'
+      preLoaderRoute: typeof AppGamesLuckyRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
+interface AppRouteChildren {
+  AppGamesLuckyRoute: typeof AppGamesLuckyRoute
+  AppGamesRangeRoute: typeof AppGamesRangeRoute
+  AppGamesTapRoute: typeof AppGamesTapRoute
+  AppGamesIndexRoute: typeof AppGamesIndexRoute
+  AppMenuIndexRoute: typeof AppMenuIndexRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppGamesLuckyRoute: AppGamesLuckyRoute,
+  AppGamesRangeRoute: AppGamesRangeRoute,
+  AppGamesTapRoute: AppGamesTapRoute,
+  AppGamesIndexRoute: AppGamesIndexRoute,
+  AppMenuIndexRoute: AppMenuIndexRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AppRoute: AppRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

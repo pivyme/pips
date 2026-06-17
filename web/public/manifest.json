@@ -1,25 +1,39 @@
 {
-  "short_name": "Web Starter",
-  "name": "Kwek Labs Web Starter",
+  "short_name": "Pips",
+  "name": "Pips",
+  "description": "Trading made simple, intuitive, and addictive, like a game.",
   "icons": [
     {
-      "src": "favicon.ico",
-      "sizes": "64x64 32x32 24x24 16x16",
+      "src": "/favicon.ico",
+      "sizes": "48x48 32x32 16x16",
       "type": "image/x-icon"
     },
     {
-      "src": "/assets/images/logo192.png",
-      "type": "image/png",
-      "sizes": "192x192"
+      "src": "/assets/logos/pips-yellow-quare.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
     },
     {
-      "src": "/assets/images/logo512.png",
+      "src": "/assets/logos/pips-192.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/logos/pips-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/logos/pips-512-maskable.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
     }
   ],
-  "start_url": ".",
+  "start_url": "/",
   "display": "standalone",
-  "theme_color": "#171717",
-  "background_color": "#171717"
+  "theme_color": "#000000",
+  "background_color": "#000000"
 }
