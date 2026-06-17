@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import * as THREE from 'three'
+import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
 import { createConsoleGui } from './consoleGui'
 import { roundedRect, roundedPoly, frontZeroed, setBoxUVs, roundedRectPath, roundedPolyPath } from './consoleGeo'
 import { createAudio } from './consoleAudio'
@@ -214,6 +215,49 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     backPanel.visible = false
     device.add(backPanel)
 
+    /* embossed logo on the back panel — child of backPanel so it inherits the flip rotation and the
+       hide-until-flipped visibility. The panel has no own rotation; the deck supplies the flip, which
+       mirrors local +X → world -X (negate scale.x) and leaves Y alone. SVG Y is down, so negate scale.y
+       too. The face we see once flipped is the extrusion's back, at the geometry's local min.z. */
+    backPanel.geometry.computeBoundingBox()
+    const backFaceLocalZ = backPanel.geometry.boundingBox!.min.z
+
+    const SVG_W = 1539, SVG_H = 629
+    const logoScale = 3.6 / SVG_W
+    const logoW = SVG_W * logoScale
+    const logoH = SVG_H * logoScale
+
+    const logoGroup = new THREE.Group()
+    logoGroup.scale.set(-logoScale, -logoScale, 1)
+    // SVG center (769.5, 314.5) maps to panel-local (0,0) once the mirrored scale is undone.
+    logoGroup.position.set(logoW / 2, logoH / 2, backFaceLocalZ)
+    backPanel.add(logoGroup)
+
+    const logoGeo: THREE.BufferGeometry[] = []
+    const matLogoDark = new THREE.MeshStandardMaterial({ color: 0xff4444, roughness: 0.93, metalness: 0 })
+    const matLogoWhite = new THREE.MeshStandardMaterial({ color: 0x4488ff, roughness: 0.8, metalness: 0 })
+    // How far each level stands off the back face toward the viewer (panel-local -Z = outward when flipped).
+    const logoProtrude = { white: -0.06, dark: -0.01 }
+
+    new SVGLoader().load('/assets/pips-horizontal-black.svg', ({ paths }) => {
+      for (const path of paths) {
+        const fillStr = (path.userData?.style?.fill as string) ?? ''
+        const isWhite = /^(white|#fff(fff)?|rgb\(\s*255,\s*255,\s*255\s*\))$/i.test(fillStr)
+        const zOff = isWhite ? logoProtrude.white : logoProtrude.dark
+        for (const svgShape of SVGLoader.createShapes(path)) {
+          const g = new THREE.ExtrudeGeometry(svgShape, { depth: 0.02, bevelEnabled: false })
+          g.computeBoundingBox()
+          g.translate(0, 0, -g.boundingBox!.max.z)
+          g.computeVertexNormals()
+          logoGeo.push(g)
+          const mesh = new THREE.Mesh(g, isWhite ? matLogoWhite : matLogoDark)
+          mesh.position.z = zOff
+          logoGroup.add(mesh)
+        }
+      }
+      dirty = true
+    }, undefined, (e) => console.error('[ConsoleCanvas] back logo SVG failed:', e))
+
     /* screen mesh */
     const screenPts = [
       { x: wx(30), y: wy(1680) },
@@ -230,8 +274,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     screenMesh.position.y = SCREEN_MESH_Y_OFFSET
     screenMesh.receiveShadow = true
     // The live HTML screen sits behind the device and shows through this cutout, so the panel mesh
-    // would only occlude it. Keep it for the debug playground; hide it when a screen is bound.
-    screenMesh.visible = debug
+    // would only occlude it. Always hidden: the playground wants a clean empty aperture, not a black slab.
+    screenMesh.visible = false
     device.add(screenMesh)
 
     // Screen cutout in world space — projected to pixels each resize to place the HTML layer.
@@ -578,6 +622,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       ? createConsoleGui({
           kp, buttons, knobPocket, deviceCfg, bm, matKnobSlab, knobBump, matScreen, deck, backPanel,
           lights: { key, fill, hemi, ambient },
+          logo: { group: logoGroup, darkMat: matLogoDark, whiteMat: matLogoWhite, protrude: logoProtrude },
           onRedrawBump: redrawBump,
           onRebuildBodyGeo: rebuildBodyGeo,
           onRebuildBtnGeo: rebuildBtnGeo,
@@ -613,7 +658,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const obj = pick()
       if (!obj) return
       if (obj.userData.kind === 'knob') {
-        if (state.knobDisabled) return
+        // In the standalone playground no game binds a view, so everything reads disabled. Let the
+        // controls still respond physically there (press + turn) so the device is testable on its own.
+        if (state.knobDisabled && !debug) return
         canvas.setPointerCapture(e.pointerId)
         knobDrag = true
         knobStartY = e.clientY
@@ -624,7 +671,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         return
       }
       const bi = bm.indexOf(obj)
-      if (isBtnDisabled(bi)) return
+      if (isBtnDisabled(bi) && !debug) return
       canvas.setPointerCapture(e.pointerId)
       obj.userData.pressed = true
       obj.userData.pressedAt = performance.now()
@@ -813,6 +860,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       pressTimers.forEach(clearTimeout)
       applyViewRef.current = () => {}
       gui?.destroy()
+      logoGeo.forEach((g) => g.dispose())
+      matLogoDark.dispose()
+      matLogoWhite.dispose()
       renderer.dispose()
       audio.dispose()
     }

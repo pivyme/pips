@@ -23,6 +23,12 @@ interface GuiParams {
   matScreen: THREE.MeshStandardMaterial
   deck: THREE.Group
   backPanel: THREE.Mesh
+  logo: {
+    group: THREE.Group
+    darkMat: THREE.MeshStandardMaterial
+    whiteMat: THREE.MeshStandardMaterial
+    protrude: { white: number; dark: number }
+  }
   lights: {
     key: THREE.DirectionalLight
     fill: THREE.DirectionalLight
@@ -37,7 +43,7 @@ interface GuiParams {
 }
 
 export function createConsoleGui(p: GuiParams): GUI {
-  const { kp, buttons, knobPocket, deviceCfg, bm, matKnobSlab, knobBump, matScreen, deck, backPanel, lights } = p
+  const { kp, buttons, knobPocket, deviceCfg, bm, matKnobSlab, knobBump, matScreen, deck, backPanel, logo, lights } = p
 
   const gui = new GUI({ title: 'Console', width: 280 })
 
@@ -88,6 +94,22 @@ export function createConsoleGui(p: GuiParams): GUI {
     backPanel.visible = Math.abs(deg) > 90
     p.requestRender()
   })
+
+  // Embossed back logo — tune how far each stamp level stands off the panel (local -Z = outward).
+  const gLogo = gui.addFolder('Back logo')
+  const setProtrude = (mat: THREE.MeshStandardMaterial, v: number) => {
+    logo.group.children.forEach((c) => {
+      if ((c as THREE.Mesh).material === mat) c.position.z = v
+    })
+    p.requestRender()
+  }
+  gLogo.add(logo.protrude, 'dark', -0.2, 0, 0.001).name('dark protrude').onChange((v: number) => setProtrude(logo.darkMat, v))
+  gLogo.add(logo.protrude, 'white', -0.2, 0, 0.001).name('white protrude').onChange((v: number) => setProtrude(logo.whiteMat, v))
+  const gLogoPos = gLogo.addFolder('position')
+  gLogoPos.add(logo.group.position, 'x', -5, 5, 0.01).onChange(p.requestRender)
+  gLogoPos.add(logo.group.position, 'y', -5, 5, 0.01).onChange(p.requestRender)
+  gLogoPos.add(logo.group.position, 'z', -3, 0, 0.01).onChange(p.requestRender)
+  gLogo.close()
 
   const gScreen = gui.addFolder('Screen')
   gScreen.add(matScreen, 'opacity', 0, 1, 0.01).name('tint opacity')
