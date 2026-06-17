@@ -67,3 +67,14 @@ ehthumbs.db
 bigdev/claude/auto-build-logs/
 bigdev/claude/auto-build.lock
 bigdev/claude/inject.md
+
+# ── BigDev autonomous review loop ──────────────────────────
+# plans/review/, REVIEW-TODO.md, the scripts, and review-requirements-log.md ARE
+# tracked (project memory). Only transient runtime artifacts are ignored.
+bigdev/claude/auto-review-logs/
+bigdev/claude/auto-review.lock
+bigdev/claude/review-inject.md
+bigdev/claude/review-state.json
+bigdev/claude/review-dirty.json
+bigdev/claude/audit-cache/
+bigdev/e2e-screenshots/

@@ -157,3 +157,15 @@ cd backend && bun run db:push      # USER runs this after schema changes (never 
 ## Working on something big?
 
 Track it in [`.claude/progress.md`](./.claude/progress.md). That file holds the live roadmap, the build phases, and the quick reference values (network, package IDs once known, env keys) so context is not lost between sessions.
+
+## Review mode
+
+/bigdev-review setup. Run `./bigdev/autoreview` to start the autonomous review loop (games-first: chart + the three games are the priority, web3 is test-if-reachable, security runs last).
+- `./bigdev/autoreview` full pass with state.json skip-on-pass
+- `./bigdev/autoreview --diff` re-audit only items whose deps changed
+- `./bigdev/autoreview --phase 2` run a single phase (2 = games)
+- `BUDGET=15 ./bigdev/autoreview` stop at cumulative cost
+- `./bigdev/autoreview say "rule"` durable steering, `fix "msg"` one-shot
+- `./bigdev/autoreview status | kill | logs | watch`
+
+Spec in `bigdev/plans/review/`. Tasks in `bigdev/REVIEW-TODO.md`. State in `bigdev/claude/review-state.json`. The loop drives the UI in demo mode (`VITE_DEMO_MODE=true`), no backend or wallet needed.
