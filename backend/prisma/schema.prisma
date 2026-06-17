@@ -11,12 +11,104 @@ datasource db {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  walletAddress String   @unique
-  nonce        String?   // For signature verification
-  lastSignIn   DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id               String    @id @default(cuid())
+  address          String    @unique          // Sui address (zkLogin or dev wallet). renamed from walletAddress
+  provider         String    @default("dev")  // 'enoki' | 'dev'
+  email            String?
+  displayName      String                     // generated handle, e.g. "Lucky Otter"
+  nonce            String?                     // auth challenge (enoki personal-message sign)
+  predictManagerId String?                     // their PredictManager object id (lazily created)
+  dusdcFunded      Boolean   @default(false)   // free starting balance minted
+
+  soundEnabled     Boolean   @default(true)
+  hapticsEnabled   Boolean   @default(true)
+  reducedMotion    Boolean   @default(false)
+
+  lastSignIn       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  plays            Play[]
+  achievements     UserAchievement[]
+  stats            UserStats?
+}
+
+model Play {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id])
+
+  game         String                          // 'lucky' | 'range' | 'tap'
+  status       String    @default("pending")   // pending|open|won|lost|cashed_out|error
+
+  asset        String                          // 'BTC' | 'ETH' | 'SOL' | 'SUI'
+  oracleId     String                          // our oracle object for this market
+  marketKey    String                          // serialized MarketKey/RangeKey for redeem (base64 BCS)
+  side         String?                         // 'up' | 'down' (binary games)
+  leverage     Int?                            // lucky strike-distance bucket (2/5/10/25/100)
+  strike       String?                         // binary strike (display units)
+  lower        String?                         // range lower bound (display units)
+  upper        String?                         // range upper bound (display units)
+  widthPct     Float?                          // range band width
+  durationSec  Int
+  expiry       BigInt                          // oracle expiry, unix ms
+
+  stake        BigInt                          // DUSDC base units
+  entryCost    BigInt    @default(0)           // mint cost base units
+  markValue    BigInt?                         // last known live mark
+  payout       BigInt?                         // set on settle / cashout
+  pnl          BigInt?                         // signed: payout - stake
+  multiplier   Float?                          // potential payout multiple at mint
+
+  txMint       String?
+  txRedeem     String?
+  rngSeed      String?                         // lucky: server RNG seed, for fairness audit
+
+  openedAt     DateTime?
+  settledAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId, status])
+  @@index([createdAt])
+  @@index([status, expiry])                    // settle worker scans open plays by expiry
+}
+
+model Achievement {
+  slug             String   @id                // 'first_play', 'win_streak_5', ...
+  name             String
+  description      String                       // human, understandable condition
+  illo             String                       // Illo name for the sticker slot
+  metric           String                       // 'games_played'|'wins'|'win_streak'|'volume'|'cashouts'|'big_multiplier'
+  threshold        Float
+  sortOrder        Int      @default(0)
+  userAchievements UserAchievement[]
+}
+
+model UserAchievement {
+  id               String      @id @default(cuid())
+  userId           String
+  user             User        @relation(fields: [userId], references: [id])
+  achievementSlug  String
+  achievement      Achievement @relation(fields: [achievementSlug], references: [slug])
+  unlockedAt       DateTime    @default(now())
+
+  @@unique([userId, achievementSlug])
+}
+
+model UserStats {
+  userId        String    @id
+  user          User      @relation(fields: [userId], references: [id])
+  gamesPlayed   Int       @default(0)
+  wins          Int       @default(0)
+  losses        Int       @default(0)
+  currentStreak Int       @default(0)           // signed: + win streak, - loss streak
+  maxStreak     Int       @default(0)
+  totalVolume   BigInt    @default(0)
+  netPnl        BigInt    @default(0)           // signed
+  firstPlayAt   DateTime?
+  lastPlayAt    DateTime?
+  favoriteGame  String?
+  updatedAt     DateTime  @updatedAt
 }
 
 model ErrorLog {
