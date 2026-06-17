@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { LogOut } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
-import { MenuHeader } from '@/components/menu/shared'
+import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
 import { StatsCard, StatsCardSkeleton } from '@/components/menu/StatsCard'
 import { Button } from '@/ui/Button'
 import { Illo } from '@/ui/Illo'
@@ -87,7 +87,11 @@ function StatsSection() {
   return (
     <Link
       to="/menu/stats"
-      onClick={() => haptic('selection')}
+      viewTransition
+      onClick={() => {
+        prepareMenuTransition('forward')
+        haptic('selection')
+      }}
       className="block transition-transform active:scale-[0.99]"
     >
       <StatsCard
@@ -137,7 +141,14 @@ function AchievementsSection() {
           <AchievementCard key={a.slug} a={a} />
         ))}
       </div>
-      <Link to="/menu/achievements" onClick={() => haptic('selection')}>
+      <Link
+        to="/menu/achievements"
+        viewTransition
+        onClick={() => {
+          prepareMenuTransition('forward')
+          haptic('selection')
+        }}
+      >
         <div className="surface-skeuo flex items-center justify-between rounded-card p-4 transition-transform active:scale-[0.99]">
           <span className="text-[15px] font-bold">All Achievements</span>
           <span className="text-lg text-text-3">›</span>
@@ -240,7 +251,11 @@ function MenuRow({
   return (
     <Link
       to={to}
-      onClick={() => haptic('selection')}
+      viewTransition
+      onClick={() => {
+        prepareMenuTransition('forward')
+        haptic('selection')
+      }}
       className="surface-skeuo flex min-h-24 items-center gap-3 rounded-card px-3 py-1 transition-transform active:scale-[0.99]"
     >
       <img

@@ -17,7 +17,7 @@ This is the **Pips** backend (gamified trading on Sui via DeepBook Predict). Rea
 - **Auth:** verify wallet signatures with `verifyPersonalMessageSignature` from `@mysten/sui/verify`, pass `{ address }` so it throws on mismatch, then mint the existing JWT. For zkLogin signatures on testnet, pass a testnet `SuiGraphQLClient` to the verifier.
 - All Sui code lives in `src/lib/sui/`. Read package IDs and addresses from config, never hardcode (DeepBook Predict IDs are unstable pre mainnet).
 
-**Legacy deps to remove:** this backend was forked from a generic starter and still ships EVM (`ethers`) and Solana (`@solana/web3.js`, `bs58`, `@solana/wallet-standard-util`) packages. Pips is Sui only. Do not build on them, they are slated for removal.
+**Sui only:** the EVM (`ethers`) and Solana (`@solana/web3.js`, `bs58`) starter deps have been removed. If any `ethers` / `@solana/*` reference survives, it is dead, delete it, do not build on it.
 
 ---
 
@@ -28,11 +28,15 @@ Runtime is **Bun**, not Node. Framework is **Fastify**. All scripts run via `bun
 ```bash
 bun dev              # Start with file watcher on :3700
 bun start            # Production start (no watch)
+bun run typecheck    # tsc --noEmit (the build loop's gate)
+bun test             # Run tests (*.test.ts: math, rng, achievements)
+bun run bootstrap    # Publish + seed our Predict deployment, writes deployed.json
 bun run lint         # ESLint
 bun run db:push      # Push schema + regenerate client
 bun run db:pull      # Pull schema from existing DB
 bun run db:generate  # Regenerate Prisma client only
 bun run db:migrate   # Create a new migration
+bun run db:seed      # Seed the database (prisma/seed.ts)
 ```
 
 Env is loaded by `dotenv.ts`, which is imported at the top of `index.ts` before any other module. Copy `.env.example` to `.env`. Required: `DATABASE_URL`, `JWT_SECRET`. Optional: `APP_PORT` (default 3700), `ALLOWED_ORIGIN` (required in production for CORS).
@@ -46,27 +50,35 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 ```
 /
 ├── index.ts                 # Entry point - registers all routes & workers
-├── dotenv.ts                # Environment loader
-├── tsconfig.json            # TypeScript configuration
+├── dotenv.ts                # Environment loader (imported first, before any module)
 ├── prisma/
-│   └── schema.prisma        # Database schema
+│   ├── schema.prisma        # Database schema
+│   └── seed.ts              # Seed data (bun run db:seed)
+├── scripts/
+│   └── bootstrap.ts         # Publishes + seeds our Predict deployment (bun run bootstrap)
 ├── src/
-│   ├── config/
-│   │   └── main-config.ts   # Centralized env config
-│   ├── routes/              # Route handlers (grouped by prefix)
-│   │   └── exampleRoutes.ts
-│   ├── workers/             # Cron jobs / background tasks
-│   │   └── errorLogCleanup.ts
-│   ├── middlewares/         # Request middlewares
-│   │   └── authMiddleware.ts
-│   ├── utils/               # Low-level utilities
-│   │   ├── errorHandler.ts
-│   │   ├── validationUtils.ts
-│   │   ├── miscUtils.ts
-│   │   └── timeUtils.ts
-│   └── lib/                 # External integrations
+│   ├── config/main-config.ts    # Centralized env config (import from here, not process.env)
+│   ├── routes/              # Fastify plugins, grouped by prefix
+│   │   ├── authRoutes.ts    # /auth: dev login, nonce, verify, me
+│   │   ├── gameRoutes.ts    # /games/* play, /plays/* confirm + cashout
+│   │   ├── menuRoutes.ts    # /stats, /achievements, /settings
+│   │   ├── streamRoutes.ts  # SSE: /stream/prices, /stream/plays/:id
+│   │   └── exampleRoutes.ts # starter sample
+│   ├── services/            # Business logic, called by routes
+│   │   └── auth, games, plays, stats, achievements, rng (+ *.test.ts)
+│   ├── workers/             # node-cron jobs (isRunning guard)
+│   │   ├── price-pusher.ts  # pushes oracle prices for short-expiry markets
+│   │   ├── oracle-roll.ts   # rolls the oracle ladder forward
+│   │   ├── settle.ts        # settles expired plays
+│   │   └── errorLogCleanup.ts (+ exampleWorkers.ts)
+│   ├── middlewares/authMiddleware.ts
+│   ├── types/api.ts         # DTO contract (mirrors web/src/lib/api.ts)
+│   ├── utils/               # errorHandler, validationUtils, miscUtils, timeUtils
+│   └── lib/
 │       ├── prisma.ts        # Database client
-│       └── evm/             # Example: EVM integrations
+│       ├── pyth.ts          # Pyth price reads
+│       ├── price-cache.ts   # In-memory price cache
+│       └── sui/             # client, predict, markets, math, signer, verify, dusdc, execute, config, deployed.json
 ```
 
 ---

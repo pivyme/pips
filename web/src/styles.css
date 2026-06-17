@@ -274,6 +274,98 @@
   }
 }
 
+.menu-page-transition {
+  view-transition-name: menu-page;
+}
+
+::view-transition-group(menu-page) {
+  overflow: clip;
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+::view-transition-image-pair(menu-page),
+::view-transition-old(menu-page),
+::view-transition-new(menu-page) {
+  animation-fill-mode: both;
+  mix-blend-mode: normal;
+  transform-origin: center left;
+}
+
+html[data-menu-transition='forward']::view-transition-old(menu-page) {
+  z-index: 1;
+  animation-name: menu-page-old-forward;
+}
+
+html[data-menu-transition='forward']::view-transition-new(menu-page) {
+  z-index: 2;
+  animation-name: menu-page-new-forward;
+  box-shadow: -18px 0 42px rgba(0, 0, 0, 0.72);
+}
+
+html[data-menu-transition='back']::view-transition-old(menu-page) {
+  z-index: 2;
+  animation-name: menu-page-old-back;
+  box-shadow: -18px 0 42px rgba(0, 0, 0, 0.72);
+}
+
+html[data-menu-transition='back']::view-transition-new(menu-page) {
+  z-index: 1;
+  animation-name: menu-page-new-back;
+}
+
+@keyframes menu-page-old-forward {
+  from {
+    opacity: 1;
+    filter: brightness(1);
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0.72;
+    filter: brightness(0.72);
+    transform: translateX(-22%) scale(0.985);
+  }
+}
+
+@keyframes menu-page-new-forward {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes menu-page-old-back {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes menu-page-new-back {
+  from {
+    opacity: 0.72;
+    filter: brightness(0.72);
+    transform: translateX(-22%) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    filter: brightness(1);
+    transform: translateX(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(menu-page),
+  ::view-transition-old(menu-page),
+  ::view-transition-new(menu-page) {
+    animation-duration: 0.001ms;
+  }
+}
+
 @layer utilities {
   .tnum {
     font-variant-numeric: tabular-nums;

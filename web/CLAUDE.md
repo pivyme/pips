@@ -14,13 +14,25 @@ This is the **Pips** frontend: the gamified trading console. Pips makes trading 
 
 ## Pips frontend specifics
 
-**The UI is a device, not a dashboard.** Everything renders inside a persistent **ConsoleShell** (the handheld console) with a swappable **Screen**. The physical controls (Main Action Button, Action Buttons 1/2, Knob, Menu/Games tabs) belong to the shell, but each game binds their behavior via a controls registration (`useConsoleControls()`). Build the shell in high fidelity CSS/SVG first, not WebGL. Use `web-haptics` for tactile feedback. Full spec and layout in [`../docs/DESIGN.md`](../docs/DESIGN.md). If a screen could pass for any other trading app, it is wrong.
+**The UI is a device, not a dashboard.** Everything renders inside a persistent console shell with a swappable **Screen**. The physical controls (Main Action Button, Action Buttons 1/2, Knob, Menu/Games tabs) belong to the shell, but each game binds their behavior via a controls registration (`useConsoleControls()`). The shell exists in two forms today: a CSS/DOM `ConsoleShell`, and the real 3D **WebGL handheld** `ConsoleCanvas` (Three.js). Range runs on the 3D device; the other routes are still on the CSS shell until their screens are laid out for the L-shaped aperture. Use `web-haptics` for tactile feedback. Full spec and layout in [`../docs/DESIGN.md`](../docs/DESIGN.md). If a screen could pass for any other trading app, it is wrong.
+
+### Menu drawer page transitions
+
+The `/menu/*` routes use a native-style push/pop transition inside the persistent drawer. Preserve this behavior:
+
+- Forward navigation pushes the new page in from the right over the current page. The old page recedes left, dims, and scales down slightly.
+- Back navigation reverses it: the current page slides right while the menu page is revealed underneath.
+- The transition uses TanStack Router's `viewTransition` option and the browser View Transition API. The drawer's scroll surface is named `menu-page` in `MenuDrawer.tsx`; direction is set with `prepareMenuTransition('forward' | 'back')` before navigation; animation keyframes live in `styles.css`.
+- Keep the full page, including its sticky header, inside the named transition surface. Do not animate separate route fragments.
+- Do not implement this with two live `<Outlet>` instances or keyed wrappers around the same `<Outlet>`. TanStack resolves both to the new route, causing duplicated pages during the overlap. Browser snapshots are required to preserve the real outgoing page.
+- Every menu-hub link to a sub-screen and every menu back link must enable `viewTransition` and set the correct direction first.
+- Keep the 420ms fluid easing, dark overlap shadow, and reduced-motion fallback unless the user explicitly requests a different feel.
 
 **Sui (verified mid 2026, reconfirm before coding):**
 - Core SDK `@mysten/sui` (v2.x, ESM only). PTBs use `Transaction` from `@mysten/sui/transactions` (renamed from `TransactionBlock`).
 - Wallet connect phase 1: `@suiet/wallet-kit` (`<WalletProvider>`, `<ConnectButton/>`, `useWallet`). The official standard is now the split `@mysten/dapp-kit-react` + `@mysten/dapp-kit-core`, both ride the same Wallet Standard.
 - zkLogin phase 2: Enoki `@mysten/enoki` (`/react`), registered into the wallet layer so Google login shows up as a connectable wallet.
-- DeepBook Predict via `@mysten/deepbook-v3`. **Testnet only, package IDs are unstable.** All Predict calls go through one wrapper in `src/lib/sui/`, never inline IDs.
+- Predict is hand-built PTBs via `@mysten/sui` against our own published predict package (the `@mysten/deepbook-v3` SDK has no Predict support). **Testnet only, ids unstable.** All Predict calls go through `src/lib/sui/predict.ts`; ids come from `src/lib/sui/config.ts` (fed by `env.ts`), never inline.
 - Env is typed/validated in `src/env.ts`. Add `VITE_SUI_NETWORK`, `VITE_ENOKI_API_KEY` etc there, import from `env.ts`, not `import.meta.env`.
 - **Bun + WASM gotcha:** the Sui crypto stack pulls WASM and `vite-plugin-wasm` can fail when the Vite dev server runs through Bun. If you hit a WASM load error, run the dev server on Node (bun stays the package manager).
 
@@ -60,12 +72,14 @@ Game screens (`/games/*`) render as an HTML layer **behind** the 3D device and s
 
 ## Tech Stack
 
-- **Framework**: TanStack Start (React 19 meta-framework)
-- **Routing**: TanStack Router (file-based routing)
+- **Framework**: TanStack Start (React 19 meta-framework, SSR-capable)
+- **Routing**: TanStack Router (file-based, see Routing below)
 - **State/Data**: TanStack Query for server state
 - **Styling**: Tailwind CSS 4 + HeroUI v3 component library
-- **Animations**: GSAP + Lenis smooth scroll
-- **Build**: Vite 7 + Nitro
+- **3D console**: Three.js (the WebGL handheld, `components/console/ConsoleCanvas.tsx`)
+- **Animation**: Motion (Motion One, the `motion` package) + GSAP; Lenis smooth scroll on the landing page
+- **Icons / toasts**: lucide-react, react-hot-toast
+- **Build**: Vite 8 + Nitro
 - **Language**: TypeScript (strict mode)
 - **Package Manager**: bun
 
@@ -73,35 +87,57 @@ Game screens (`/games/*`) render as an HTML layer **behind** the 3D device and s
 
 ```
 src/
-├── ui/                   # Flat HeroUI v3 wrappers (Modal, Card, TextField, Tooltip, ...)
-├── components/           # Shared components
-│   └── elements/         # Reusable UI elements (AnimateComponent, etc.)
-├── routes/               # File-based routes (TanStack Router)
-│   ├── __root.tsx        # Root layout, providers, meta tags
-│   ├── index.tsx         # Home page
-│   └── demo/             # Demo routes
-├── providers/            # React context providers
-│   └── LenisSmoothScrollProvider.tsx
-├── hooks/                # Custom React hooks
-├── utils/                # Pure helper functions
-│   ├── style.ts          # cnm() - clsx + tailwind-merge
-│   └── format.ts         # Number/string formatting utilities
-├── lib/                  # External integrations (APIs, contracts)
-├── integrations/         # Framework integrations
-├── data/                 # Static/mock data
-├── config.ts             # App configuration constants
-├── router.tsx            # Router setup
-└── styles.css            # Global styles
+├── routes/                   # File-based routes (TanStack Router)
+│   ├── __root.tsx            # Root providers, meta, query client
+│   ├── index.tsx             # Landing / sign-in door (outside the console shell)
+│   ├── console.tsx           # Standalone 3D console route
+│   ├── design-system.tsx     # Living UI-kit reference (/design-system)
+│   └── _app/                 # Pathless layout: everything "inside the device"
+│       ├── games/            # index, lucky, range, tap
+│       └── menu/             # index, stats, achievements, customize, settings
+├── components/
+│   ├── console/              # The device shell (the heart of the app)
+│   │   ├── ConsoleCanvas.tsx # 3D WebGL handheld (Three.js) + screen-cutout projection
+│   │   ├── ConsoleShell.tsx  # CSS/DOM shell (routes not yet on the 3D aperture)
+│   │   ├── AppFrame.tsx      # Phone-sized frame wrapper
+│   │   ├── MenuDrawer.tsx    # Menu as a drawer over the device
+│   │   ├── Knob.tsx          # The physical knob
+│   │   ├── controls.tsx      # useConsoleControls + provider (the binding registry)
+│   │   ├── consoleGeo.ts     # Three.js geometry for the device body
+│   │   ├── consoleGui.ts     # lil-gui tuning panel (dev)
+│   │   └── consoleAudio.ts   # Console SFX
+│   ├── game/                 # Chart.tsx (live chart), screen.tsx, instruments.tsx
+│   ├── menu/                 # StatsCard.tsx, shared.tsx
+│   └── elements/             # AnimateComponent (starter residue, currently unused)
+├── ui/                       # HeroUI v3 wrappers + Illo (Button, Card, Modal, TextField, Tooltip, Switch)
+├── lib/                      # Integrations + app logic
+│   ├── api.ts                # Typed backend client + SSE; the demo seam lives here
+│   ├── auth.tsx              # Auth context (dev auto-login / Enoki zkLogin)
+│   ├── demo.ts               # The ONE sanctioned in-memory sim (demo mode)
+│   ├── achievements.ts, haptics.ts, sound.ts, shareCard.ts, errors.ts, polyfills.ts
+│   └── sui/                  # predict.ts (the one Predict wrapper), config.ts (ids from env), enoki.ts
+├── hooks/                    # useLocalStorage, useReducedMotion
+├── utils/                    # style.ts (cnm), format.ts, motion.ts
+├── integrations/             # tanstack-query root provider
+├── providers/                # LenisSmoothScrollProvider
+└── config.ts, env.ts, router.tsx, styles.css
 ```
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/config.ts` | App-wide configuration (links, feature flags) |
-| `src/routes/__root.tsx` | Root layout with providers and meta tags |
-| `src/components/elements/AnimateComponent.tsx` | GSAP-powered scroll animations |
-| `src/components/WebstarterOnboarding.tsx` | Starter template landing page |
+| `src/routes/_app.tsx` | Pathless layout: mounts the persistent shell (3D `ConsoleCanvas` for Range, CSS `ConsoleShell` otherwise), the menu drawer, and the auth gate |
+| `src/components/console/controls.tsx` | `useConsoleControls()` (a screen registers Main / Action 1·2 / Knob / status) + provider. The console binding contract |
+| `src/components/console/ConsoleCanvas.tsx` | The 3D WebGL handheld (Three.js): device body + screen-cutout projection (`screenExt`) behind the HTML screen layer |
+| `src/components/console/ConsoleShell.tsx` | The CSS/DOM console shell |
+| `src/components/game/Chart.tsx` | The live price chart on the screen |
+| `src/lib/api.ts` | Typed backend client + SSE streams; the demo-mode seam |
+| `src/lib/auth.tsx` | Auth context (dev auto-login + Enoki zkLogin) |
+| `src/lib/demo.ts` | The in-memory mock for demo mode (the only sim) |
+| `src/lib/sui/predict.ts` | The one client-side Predict wrapper. All Predict calls route here |
+| `src/lib/sui/config.ts` | Predict / package ids, read from `env.ts` (never inline) |
+| `src/ui/Illo.tsx` | The illustration set (game + achievement art). Already built, do not rebuild |
 | `src/env.ts` | Typed/validated env via `@t3-oss/env-core` + zod. Import from here, not `import.meta.env` |
 | `src/utils/style.ts` | `cnm()` utility for className merging |
 | `src/utils/format.ts` | Number/currency/date formatting |
@@ -109,6 +145,7 @@ src/
 ## Commands
 
 ```bash
+bunx tsc --noEmit   # Typecheck gate (the build loop's baseline check)
 bun dev        # Start dev server on port 3200
 bun build      # Production build
 bun preview    # Preview production build
@@ -122,11 +159,16 @@ bun test       # Run Vitest tests
 
 ### Component Organization
 
-1. **Use AnimateComponent for scroll animations**
+1. **A game screen registers the console controls when it mounts** (`src/components/console/controls.tsx`). The core pattern: the screen declares what Main / Action 1·2 / Knob / status do, the shell renders them.
    ```tsx
-   <AnimateComponent onScroll entry="fadeInUp" delay={200}>
-     <YourContent />
-   </AnimateComponent>
+   import { useConsoleControls } from '@/components/console/controls'
+
+   useConsoleControls({
+     main:    { label: 'PLAY',  onPress: play, loading: isPending },
+     action1: { label: 'LONG',  color: 'up',   onPress: () => setSide('up') },
+     action2: { label: 'SHORT', color: 'down', onPress: () => setSide('down') },
+     knob:    { min: 1, max: 100, step: 1, value: bet, onChange: setBet, label: 'BET' },
+   })
    ```
 
 2. **Use cnm() for conditional classes**
@@ -209,10 +251,10 @@ bun test       # Run Vitest tests
 
 ### Routing (TanStack Router)
 
-- Routes are file-based in `src/routes/`
-- Use `createFileRoute` for page components
-- Root layout is in `__root.tsx`
-- Nested routes use folder structure: `routes/dashboard/settings.tsx` → `/dashboard/settings`
+- Routes are file-based in `src/routes/`; use `createFileRoute`. Root layout is `__root.tsx`.
+- `_app.tsx` is a **pathless layout route**: everything "inside the device" (games + menu) renders through one persistent console shell. The landing `/` lives outside it and owns the full viewport.
+- Games: `/games/{lucky,range,tap}`. Menu: `/menu/*` renders as a **drawer over** the device, not a screen inside it.
+- Two shells today: **Range** runs on the 3D WebGL handheld (`ConsoleCanvas`), the others on the CSS `ConsoleShell` until their screens are migrated to the L-shaped aperture. One `ConsoleCanvas` stays mounted across range↔menu so the WebGL scene builds once.
 
 ### Styling
 
@@ -229,9 +271,10 @@ bun test       # Run Vitest tests
 
 ### Animations
 
-- **GSAP** for complex animations (AnimateComponent)
-- **Lenis** for smooth scrolling (auto-initialized in root)
-- **Framer Motion** available for component animations
+- **Motion** (Motion One, the `motion` package) for component animations
+- **GSAP** for complex/timeline animations where needed
+- **Lenis** smooth scrolling on the landing page
+- `AnimateComponent` (in `components/elements/`) is leftover starter and currently unused, it is not the house pattern
 
 ## Code Style
 
@@ -251,24 +294,21 @@ bun test       # Run Vitest tests
 
 ## Common Patterns
 
-### Page with animations
+### A game screen (binds the device, renders on the screen)
 ```tsx
 import { createFileRoute } from '@tanstack/react-router'
-import AnimateComponent from '@/components/elements/AnimateComponent'
+import { useConsoleControls } from '@/components/console/controls'
 
-export const Route = createFileRoute('/example')({ component: ExamplePage })
+export const Route = createFileRoute('/_app/games/lucky')({ component: LuckyScreen })
 
-function ExamplePage() {
-  return (
-    <div className="min-h-screen bg-neutral-900">
-      <AnimateComponent>
-        <h1>Title</h1>
-      </AnimateComponent>
-      <AnimateComponent onScroll delay={100}>
-        <p>Content that animates on scroll</p>
-      </AnimateComponent>
-    </div>
-  )
+function LuckyScreen() {
+  const [bet, setBet] = useState(10)
+  useConsoleControls({
+    main: { label: 'PLAY', onPress: play },
+    knob: { min: 1, max: 100, step: 1, value: bet, onChange: setBet, label: 'BET' },
+  })
+  // Render the screen content only. The shell draws the buttons / knob / status.
+  return <div className="relative flex h-full flex-col">{/* top bar · chart · readouts */}</div>
 }
 ```
 

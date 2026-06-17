@@ -65,7 +65,7 @@ These are the packages and patterns we standardize on. The Mysten SDK had a 2.0 
 | Wallet connect (phase 1) | `@suiet/wallet-kit` | `<WalletProvider>` + `<ConnectButton/>` + `useWallet`. Maintained, rides the Sui Wallet Standard. |
 | Official dApp kit | `@mysten/dapp-kit-react` + `@mysten/dapp-kit-core` | The single `@mysten/dapp-kit` is now legacy. The split packages are the current standard (gRPC based). Both kits share the same Wallet Standard, so wallets are interchangeable. |
 | zkLogin (phase 2) | **Enoki**: `@mysten/enoki` (+ `@mysten/enoki/react`) | Managed zkLogin. `registerEnokiWallets({ apiKey, providers: ['google'] })` surfaces Google login as a connectable wallet. Non custodial, ephemeral key stays in the browser. Avoid hand rolling a prover. |
-| Trading mechanic | DeepBook Predict via `@mysten/deepbook-v3` | See DeepBook Predict section below. |
+| Trading mechanic | Hand-built Predict PTBs via `@mysten/sui` | The `@mysten/deepbook-v3` SDK has no Predict support. See DeepBook Predict section below. |
 | Backend signature verify | `verifyPersonalMessageSignature` from `@mysten/sui/verify` | Pass `{ address }` so it throws on mismatch. For zkLogin sigs on testnet, pass a testnet `SuiGraphQLClient`. |
 
 **Runtime versions:** target Bun/Node >= 22 (the SDK 2.0 tooling requires it).
@@ -108,7 +108,7 @@ Suiet wallet connect is not in v1 (`@suiet/wallet-kit` stays available but unuse
 - **Ports:** backend `:3700`, web `:3200`.
 - Frontend talks to backend via `VITE_API_URL` (validated in `web/src/env.ts`). Backend CORS is locked to `ALLOWED_ORIGIN` in production.
 - **Sui IDs and package addresses live in config, never inline.** This applies to DeepBook Predict, our own published Move packages, and any pool/object IDs.
-- **Legacy starter cleanup:** the backend was forked from a generic starter and still carries EVM (`ethers`) and Solana (`@solana/web3.js`, `bs58`) dependencies. Pips is Sui only. These are slated for removal as the Sui stack lands. Do not build new features on them.
+- **Sui only:** Pips is Sui only. The EVM (`ethers`) and Solana (`@solana/web3.js`, `bs58`) starter deps have been removed from the backend. If any `ethers` / `@solana/*` reference survives, it is dead, do not build on it.
 
 ---
 

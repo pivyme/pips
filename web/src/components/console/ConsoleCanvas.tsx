@@ -55,8 +55,15 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    // The device is static unless touched, so we render on demand (see the loop). Shadows only need
+    // recomputing when geometry actually moves, so drive them by hand instead of every frame.
+    renderer.shadowMap.autoUpdate = false
     renderer.outputColorSpace = THREE.SRGBColorSpace
     const MAXANISO = renderer.capabilities.getMaxAnisotropy()
+
+    // Render-on-demand gate: set true whenever the device changes (label/view update, resize) so the
+    // loop paints once; live animation (hover/press/knob) drives its own frames. Idle = no GPU work.
+    let dirty = true
 
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100)
@@ -363,6 +370,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       state.knob = k
       state.knobDisabled = !k || !!k.disabled
       knobLbl.set(k ? (k.format ? k.format(k.value) : String(k.value)) : '', state.knobDisabled ? 0.4 : 1)
+      dirty = true // labels/state moved, repaint once
     }
     applyViewRef.current = applyView
 
@@ -578,6 +586,11 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)
+    // Returning to the tab can drop the drawing buffer; force one repaint so the device never
+    // shows a blank frame after we have been idle (not rendering).
+    const onVisible = () => { dirty = true }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
 
     /* resize — fits the device to the container, then projects the cutout onto the screen layer */
     function resize() {
@@ -635,6 +648,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         el.style.width = `${maxX - minX + M * 2}px`
         el.style.height = `${maxY - minY + M * 2}px`
       }
+      dirty = true // camera/geometry moved, repaint once
     }
     const ro = new ResizeObserver(() => resize())
     if (rootRef.current) ro.observe(rootRef.current)
@@ -648,28 +662,40 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     function loop() {
       rafId = requestAnimationFrame(loop)
       const dt = Math.min(clock.getDelta(), 0.05)
+      let animating = false
 
       interactive.forEach((o) => {
         const d = o.userData
-        d.hover += ((hovered === o ? 1 : 0) - d.hover) * Math.min(1, dt * 12)
+        const hoverTarget = hovered === o ? 1 : 0
+        if (Math.abs(hoverTarget - d.hover) > 0.001) animating = true
+        d.hover += (hoverTarget - d.hover) * Math.min(1, dt * 12)
         if (d.kind === 'knob') return
         const lift = !d.pressed ? d.hover * 0.035 : 0
         const targetZ = (d.pressed ? d.pressedZ : d.baseZ) + lift
+        if (Math.abs(targetZ - o.position.z) > 0.0002) animating = true
         o.position.z += (targetZ - o.position.z) * Math.min(1, dt * 20)
-        if (d.pressed) d.glow = Math.min(1, d.glow + dt * 9)
-        else d.glow *= Math.pow(0.015, dt)
+        if (d.pressed) { d.glow = Math.min(1, d.glow + dt * 9); animating = true }
+        else { if (d.glow > 0.002) animating = true; d.glow *= Math.pow(0.015, dt) }
           ; (o.material as THREE.MeshStandardMaterial).emissiveIntensity = d.glow * 0.95 + d.hover * 0.05
       })
 
       if (knobDrag) {
         knobTarget = knobOffset
+        animating = true
       } else {
+        if (Math.abs(knobTarget - knobOffset) > 0.001) animating = true
         knobOffset += (knobTarget - knobOffset) * Math.min(1, dt * kp.snapSpeed)
         if (Math.abs(knobTarget - knobOffset) < 0.001) knobOffset = knobTarget
       }
       knobBump.offset.x = knobOffset / kp.ridgeRepeat
 
-      renderer.render(scene, camera)
+      // Only touch the GPU when something actually changed. An idle device paints nothing; the
+      // shadow pass (the heavy bit) runs only on the frames we render.
+      if (dirty || animating) {
+        renderer.shadowMap.needsUpdate = true
+        renderer.render(scene, camera)
+        dirty = false
+      }
     }
     loop()
 
@@ -679,6 +705,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', release)
       window.removeEventListener('pointercancel', release)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
       ro.disconnect()
       pressTimers.forEach(clearTimeout)
       applyViewRef.current = () => {}

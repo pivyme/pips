@@ -5,6 +5,11 @@ import { Illo } from '@/ui/Illo'
 import { Button } from '@/ui/Button'
 import { haptic } from '@/lib/haptics'
 
+export function prepareMenuTransition(direction: 'forward' | 'back') {
+  if (typeof document === 'undefined') return
+  document.documentElement.dataset.menuTransition = direction
+}
+
 // Shared chrome for the menu sub-screens (Stats, Achievements, Settings, Customize). Each is a
 // titled screen with the same sticky fade header, then its body. The empty and error states match
 // the screen state matrix in 07-DESIGN-SYSTEM.md.
@@ -36,7 +41,11 @@ export function MenuHeader({
       {showBack && (
         <Link
           to="/menu"
-          onClick={() => haptic('selection')}
+          viewTransition
+          onClick={() => {
+            prepareMenuTransition('back')
+            haptic('selection')
+          }}
           aria-label="Back to menu"
           className="absolute left-4 top-1 flex h-12 w-12 items-center justify-center rounded-full border border-white/[0.09] bg-white/[0.12] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_10px_28px_-14px_rgba(0,0,0,1)] backdrop-blur-sm transition-transform active:scale-95"
         >
