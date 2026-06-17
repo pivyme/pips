@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
+import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
@@ -25,6 +26,11 @@ import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
 const DesignSystemRoute = DesignSystemRouteImport.update({
   id: '/design-system',
   path: '/design-system',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConsoleRoute = ConsoleRouteImport.update({
+  id: '/console',
+  path: '/console',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppRoute = AppRouteImport.update({
@@ -84,6 +90,7 @@ const AppGamesLuckyRoute = AppGamesLuckyRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/range': typeof AppGamesRangeRoute
@@ -97,6 +104,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/range': typeof AppGamesRangeRoute
@@ -112,6 +120,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
+  '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
   '/_app/games/lucky': typeof AppGamesLuckyRoute
   '/_app/games/range': typeof AppGamesRangeRoute
@@ -127,6 +136,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/console'
     | '/design-system'
     | '/games/lucky'
     | '/games/range'
@@ -140,6 +150,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/console'
     | '/design-system'
     | '/games/lucky'
     | '/games/range'
@@ -154,6 +165,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_app'
+    | '/console'
     | '/design-system'
     | '/_app/games/lucky'
     | '/_app/games/range'
@@ -169,6 +181,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
+  ConsoleRoute: typeof ConsoleRoute
   DesignSystemRoute: typeof DesignSystemRoute
 }
 
@@ -179,6 +192,13 @@ declare module '@tanstack/react-router' {
       path: '/design-system'
       fullPath: '/design-system'
       preLoaderRoute: typeof DesignSystemRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/console': {
+      id: '/console'
+      path: '/console'
+      fullPath: '/console'
+      preLoaderRoute: typeof ConsoleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app': {
@@ -290,6 +310,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
+  ConsoleRoute: ConsoleRoute,
   DesignSystemRoute: DesignSystemRoute,
 }
 export const routeTree = rootRouteImport
