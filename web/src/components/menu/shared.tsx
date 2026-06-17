@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { Illo } from '@/ui/Illo'
+import { Button } from '@/ui/Button'
 import { haptic } from '@/lib/haptics'
 
 // Shared chrome for the menu sub-screens (Stats, Achievements, Settings, Customize). Each is a
@@ -31,13 +32,9 @@ export function ScreenError({ message, onRetry }: { message: string; onRetry: ()
     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
       <span className="h-1.5 w-1.5 rounded-full bg-down" />
       <p className="text-sm text-text-2">{message}</p>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="card-neo rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide text-text-2"
-      >
+      <Button variant="secondary" onClick={onRetry} className="h-9 rounded-full px-4 text-xs text-text-2">
         Retry
-      </button>
+      </Button>
     </div>
   )
 }

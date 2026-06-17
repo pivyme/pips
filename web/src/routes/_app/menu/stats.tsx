@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
+import { Button } from '@/ui/Button'
 import { api, type UserStatsDTO } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { shareStatsCard } from '@/lib/shareCard'
@@ -57,14 +58,9 @@ function StatsScreen() {
       ) : (
         <div className="flex flex-col gap-4">
           <StatsCard stats={stats} displayName={user?.displayName ?? 'Player'} address={user?.address ?? ''} />
-          <button
-            type="button"
-            disabled={sharing}
-            onClick={() => void onShare()}
-            className="btn-primary flex h-12 w-full items-center justify-center rounded-2xl text-sm font-extrabold uppercase tracking-wide disabled:opacity-60"
-          >
+          <Button disabled={sharing} onClick={() => void onShare()} className="w-full">
             {sharing ? 'Making your card...' : 'Share card'}
-          </button>
+          </Button>
         </div>
       )}
     </MenuScreen>
