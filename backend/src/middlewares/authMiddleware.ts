@@ -27,6 +27,20 @@ export const authMiddleware = async (request: FastifyRequest, reply: FastifyRepl
     return handleError(reply, 401, 'Token not provided', 'TOKEN_MISSING');
   }
 
+  // Dev-only review-harness bypass. Inactive unless NODE_ENV !== 'production' AND TESTING_TOKEN
+  // is set AND the bearer equals it. Resolves to the seeded dev user (oldest row, the operator)
+  // so protected routes work for the harness without the zkLogin handshake. Refused under prod.
+  // Delete by grepping TESTING_TOKEN.
+  if (process.env.NODE_ENV !== 'production' && process.env.TESTING_TOKEN && token === process.env.TESTING_TOKEN) {
+    const devUser = await prismaQuery.user.findFirst({ orderBy: { createdAt: 'asc' } });
+    if (devUser) {
+      console.warn(`[TESTING_TOKEN] auth bypassed for ${request.method} ${request.url}`);
+      request.user = devUser;
+      return true;
+    }
+    return handleError(reply, 401, 'No dev user to resolve. Seed the DB or sign in once.', 'TESTING_TOKEN_NO_USER');
+  }
+
   let authData: JwtPayload | null = null;
   try {
     authData = jwt.verify(token, JWT_SECRET) as JwtPayload;

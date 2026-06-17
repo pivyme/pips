@@ -70,6 +70,11 @@ const start = async (): Promise<void> => {
 
     console.log(`Server started successfully on port ${port}`);
     console.log(`http://localhost:${port}`);
+
+    // Loud, dev-only notice that the review-harness auth bypass is live. Refused under prod.
+    if (!IS_PROD && process.env.TESTING_TOKEN) {
+      console.warn('[TESTING_TOKEN] dev auth bypass ENABLED. Any Bearer == TESTING_TOKEN resolves to the dev user. Never ship this token.');
+    }
   } catch (error) {
     console.log('Error starting server: ', error);
     process.exit(1);
