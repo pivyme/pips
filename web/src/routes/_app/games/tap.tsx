@@ -10,6 +10,7 @@ import { haptic } from '@/lib/haptics'
 import { api, streamPlay, type PlayDTO, type PlayStatus } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { toastError } from '@/lib/errors'
+import { notifyUnlocks } from '@/lib/achievements'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
 
@@ -89,7 +90,7 @@ function TapScreen() {
       if (play.status === 'won') toast.success(`Caught it. +$${money(payout)}`)
       else if (play.status === 'cashed_out') toast.success(`Cashed out +$${money(Math.max(pnl, 0))}`)
       else toast('Missed it.')
-      if (unlocked.length) toast.success(unlocked.length > 1 ? `${unlocked.length} achievements unlocked` : 'Achievement unlocked')
+      notifyUnlocks(unlocked)
       void refresh()
       const t = setTimeout(() => {
         setBoxes((bs) => bs.filter((b) => b.key !== key))

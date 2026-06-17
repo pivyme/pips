@@ -10,6 +10,7 @@ import { haptic } from '@/lib/haptics'
 import { api, streamPlay, type PlayDTO, type PlayStatus } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { toastError } from '@/lib/errors'
+import { notifyUnlocks } from '@/lib/achievements'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
 
@@ -91,7 +92,7 @@ function RangeScreen() {
       setLive({ markValue: final.markValue, pnl: final.pnl, multiplier: final.multiplier, status: final.status })
       setPhase('result')
       haptic(final.status === 'lost' ? 'error' : 'success')
-      if (unlocked.length) toast.success(unlocked.length > 1 ? `${unlocked.length} achievements unlocked` : 'Achievement unlocked')
+      notifyUnlocks(unlocked)
       void refresh()
       clearResetTimer()
       resetTimer.current = setTimeout(() => setPhase('idle'), RESULT_MS)

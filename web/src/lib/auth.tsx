@@ -6,6 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 
 import { env } from '@/env'
 import { api, ApiError, setAuthToken, type UserDTO } from '@/lib/api'
+import { setHapticsEnabled } from '@/lib/haptics'
 
 const TOKEN_KEY = 'pips_token'
 const loadToken = (): string | null => {
@@ -99,6 +100,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null)
     setStatus('anon')
   }, [])
+
+  // Keep haptics in step with the user's setting, app-wide, from the moment the user loads.
+  useEffect(() => {
+    setHapticsEnabled(user?.settings.haptics ?? true)
+  }, [user?.settings.haptics])
 
   useEffect(() => {
     if (started.current) return

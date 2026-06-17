@@ -9,14 +9,24 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
 import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
+import { Route as AppMenuStatsRouteImport } from './routes/_app/menu/stats'
+import { Route as AppMenuSettingsRouteImport } from './routes/_app/menu/settings'
+import { Route as AppMenuCustomizeRouteImport } from './routes/_app/menu/customize'
+import { Route as AppMenuAchievementsRouteImport } from './routes/_app/menu/achievements'
 import { Route as AppGamesTapRouteImport } from './routes/_app/games/tap'
 import { Route as AppGamesRangeRouteImport } from './routes/_app/games/range'
 import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
 
+const DesignSystemRoute = DesignSystemRouteImport.update({
+  id: '/design-system',
+  path: '/design-system',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppRoute = AppRouteImport.update({
   id: '/_app',
   getParentRoute: () => rootRouteImport,
@@ -34,6 +44,26 @@ const AppMenuIndexRoute = AppMenuIndexRouteImport.update({
 const AppGamesIndexRoute = AppGamesIndexRouteImport.update({
   id: '/games/',
   path: '/games/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMenuStatsRoute = AppMenuStatsRouteImport.update({
+  id: '/menu/stats',
+  path: '/menu/stats',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMenuSettingsRoute = AppMenuSettingsRouteImport.update({
+  id: '/menu/settings',
+  path: '/menu/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMenuCustomizeRoute = AppMenuCustomizeRouteImport.update({
+  id: '/menu/customize',
+  path: '/menu/customize',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMenuAchievementsRoute = AppMenuAchievementsRouteImport.update({
+  id: '/menu/achievements',
+  path: '/menu/achievements',
   getParentRoute: () => AppRoute,
 } as any)
 const AppGamesTapRoute = AppGamesTapRouteImport.update({
@@ -54,17 +84,27 @@ const AppGamesLuckyRoute = AppGamesLuckyRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/design-system': typeof DesignSystemRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/range': typeof AppGamesRangeRoute
   '/games/tap': typeof AppGamesTapRoute
+  '/menu/achievements': typeof AppMenuAchievementsRoute
+  '/menu/customize': typeof AppMenuCustomizeRoute
+  '/menu/settings': typeof AppMenuSettingsRoute
+  '/menu/stats': typeof AppMenuStatsRoute
   '/games/': typeof AppGamesIndexRoute
   '/menu/': typeof AppMenuIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/design-system': typeof DesignSystemRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/range': typeof AppGamesRangeRoute
   '/games/tap': typeof AppGamesTapRoute
+  '/menu/achievements': typeof AppMenuAchievementsRoute
+  '/menu/customize': typeof AppMenuCustomizeRoute
+  '/menu/settings': typeof AppMenuSettingsRoute
+  '/menu/stats': typeof AppMenuStatsRoute
   '/games': typeof AppGamesIndexRoute
   '/menu': typeof AppMenuIndexRoute
 }
@@ -72,9 +112,14 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
+  '/design-system': typeof DesignSystemRoute
   '/_app/games/lucky': typeof AppGamesLuckyRoute
   '/_app/games/range': typeof AppGamesRangeRoute
   '/_app/games/tap': typeof AppGamesTapRoute
+  '/_app/menu/achievements': typeof AppMenuAchievementsRoute
+  '/_app/menu/customize': typeof AppMenuCustomizeRoute
+  '/_app/menu/settings': typeof AppMenuSettingsRoute
+  '/_app/menu/stats': typeof AppMenuStatsRoute
   '/_app/games/': typeof AppGamesIndexRoute
   '/_app/menu/': typeof AppMenuIndexRoute
 }
@@ -82,20 +127,41 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/design-system'
     | '/games/lucky'
     | '/games/range'
     | '/games/tap'
+    | '/menu/achievements'
+    | '/menu/customize'
+    | '/menu/settings'
+    | '/menu/stats'
     | '/games/'
     | '/menu/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/games/lucky' | '/games/range' | '/games/tap' | '/games' | '/menu'
+  to:
+    | '/'
+    | '/design-system'
+    | '/games/lucky'
+    | '/games/range'
+    | '/games/tap'
+    | '/menu/achievements'
+    | '/menu/customize'
+    | '/menu/settings'
+    | '/menu/stats'
+    | '/games'
+    | '/menu'
   id:
     | '__root__'
     | '/'
     | '/_app'
+    | '/design-system'
     | '/_app/games/lucky'
     | '/_app/games/range'
     | '/_app/games/tap'
+    | '/_app/menu/achievements'
+    | '/_app/menu/customize'
+    | '/_app/menu/settings'
+    | '/_app/menu/stats'
     | '/_app/games/'
     | '/_app/menu/'
   fileRoutesById: FileRoutesById
@@ -103,10 +169,18 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
+  DesignSystemRoute: typeof DesignSystemRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/design-system': {
+      id: '/design-system'
+      path: '/design-system'
+      fullPath: '/design-system'
+      preLoaderRoute: typeof DesignSystemRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app': {
       id: '/_app'
       path: ''
@@ -133,6 +207,34 @@ declare module '@tanstack/react-router' {
       path: '/games'
       fullPath: '/games/'
       preLoaderRoute: typeof AppGamesIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/menu/stats': {
+      id: '/_app/menu/stats'
+      path: '/menu/stats'
+      fullPath: '/menu/stats'
+      preLoaderRoute: typeof AppMenuStatsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/menu/settings': {
+      id: '/_app/menu/settings'
+      path: '/menu/settings'
+      fullPath: '/menu/settings'
+      preLoaderRoute: typeof AppMenuSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/menu/customize': {
+      id: '/_app/menu/customize'
+      path: '/menu/customize'
+      fullPath: '/menu/customize'
+      preLoaderRoute: typeof AppMenuCustomizeRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/menu/achievements': {
+      id: '/_app/menu/achievements'
+      path: '/menu/achievements'
+      fullPath: '/menu/achievements'
+      preLoaderRoute: typeof AppMenuAchievementsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/games/tap': {
@@ -163,6 +265,10 @@ interface AppRouteChildren {
   AppGamesLuckyRoute: typeof AppGamesLuckyRoute
   AppGamesRangeRoute: typeof AppGamesRangeRoute
   AppGamesTapRoute: typeof AppGamesTapRoute
+  AppMenuAchievementsRoute: typeof AppMenuAchievementsRoute
+  AppMenuCustomizeRoute: typeof AppMenuCustomizeRoute
+  AppMenuSettingsRoute: typeof AppMenuSettingsRoute
+  AppMenuStatsRoute: typeof AppMenuStatsRoute
   AppGamesIndexRoute: typeof AppGamesIndexRoute
   AppMenuIndexRoute: typeof AppMenuIndexRoute
 }
@@ -171,6 +277,10 @@ const AppRouteChildren: AppRouteChildren = {
   AppGamesLuckyRoute: AppGamesLuckyRoute,
   AppGamesRangeRoute: AppGamesRangeRoute,
   AppGamesTapRoute: AppGamesTapRoute,
+  AppMenuAchievementsRoute: AppMenuAchievementsRoute,
+  AppMenuCustomizeRoute: AppMenuCustomizeRoute,
+  AppMenuSettingsRoute: AppMenuSettingsRoute,
+  AppMenuStatsRoute: AppMenuStatsRoute,
   AppGamesIndexRoute: AppGamesIndexRoute,
   AppMenuIndexRoute: AppMenuIndexRoute,
 }
@@ -180,6 +290,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
+  DesignSystemRoute: DesignSystemRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
