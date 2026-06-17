@@ -2,7 +2,7 @@
 // /illustrations/<name>.webp when it lands, else a clean neumorphic placeholder
 // with the right glow and footprint, so layouts never shift when assets arrive.
 // Placeholders use emoji for now; swap the folder in, nothing else changes.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cnm } from '@/utils/style'
 
 type Glow = 'amber' | 'violet' | 'up' | 'down' | 'neutral'
@@ -54,9 +54,18 @@ export function Illo({
   className,
   showGlow = true,
 }: IlloProps) {
+  const [mounted, setMounted] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
   const def = LIBRARY[name] ?? { emoji: '✦', glow: 'neutral' }
   const g = glow ?? def.glow
+
+  // Only attempt the asset on the client. Rendering the <img> during SSR risks a permanent
+  // broken-image icon: the file can 404 before hydration attaches onError, so the fallback
+  // never fires. We mount first, keep the placeholder underneath, and reveal the image only
+  // once it actually loads. No assets yet means the placeholder simply stays.
+  useEffect(() => setMounted(true), [])
+  const showPlaceholder = !loaded || failed
 
   return (
     <div
@@ -73,16 +82,18 @@ export function Illo({
           style={{ background: GLOW[g], transform: 'scale(0.9)' }}
         />
       )}
-      {!failed ? (
+      {mounted && !failed && (
         <img
           src={`/illustrations/${name}.webp`}
           alt={alt ?? name}
           width={size}
           height={size}
-          className="relative z-10 object-contain"
+          className={cnm('relative z-10 object-contain', !loaded && 'hidden')}
+          onLoad={() => setLoaded(true)}
           onError={() => setFailed(true)}
         />
-      ) : (
+      )}
+      {showPlaceholder && (
         <div
           className="card-neo relative z-10 flex items-center justify-center rounded-[28%]"
           style={{

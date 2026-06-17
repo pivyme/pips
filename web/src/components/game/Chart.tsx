@@ -274,7 +274,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
   }, [asset])
 
   return (
-    <div ref={wrapRef} className={cnm('relative w-full', className)} style={height != null ? { height } : undefined}>
+    <div ref={wrapRef} className={cnm('relative w-full min-h-0', className)} style={height != null ? { height } : undefined}>
       <canvas
         ref={canvasRef}
         className="block h-full w-full"
