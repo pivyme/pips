@@ -38,8 +38,8 @@ const CLOCK = '0x6';
 const COIN_REGISTRY = '0xc';
 const FLOAT_SCALING = 1_000_000_000n; // on-chain prices/strikes are 1e9 scaled
 const DUSDC_DECIMALS = 1_000_000n; // DUSDC is 6dp
-const MIN_SUI = 2_000_000_000n; // ~2 SUI needed for the publishes
-const PUBLISH_GAS = 3_000_000_000n;
+const PUBLISH_GAS = 1_000_000_000n; // per-publish gas ceiling; real cost ~0.35 SUI, must fit available balance
+const MIN_SUI = 1_200_000_000n; // floor for two publishes (~0.4 SUI) + the bootstrap txs, with headroom
 
 const CONTRACTS = path.resolve(import.meta.dir, '../../contracts');
 const DEPLOYED_PATH = path.resolve(import.meta.dir, '../src/lib/sui/deployed.json');
@@ -73,6 +73,21 @@ function sui(args: string[]): string {
   return execFileSync('sui', args, { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }).trim();
 }
 
+// Strip the `[published.<NETWORK>]` table from a package's Published.toml so the CLI
+// will publish it again. Leaves other environments (e.g. mainnet) untouched.
+function clearTestnetPublication(pkgDir: string): void {
+  const file = path.join(CONTRACTS, pkgDir, 'Published.toml');
+  if (!fs.existsSync(file)) return;
+  const lines = fs.readFileSync(file, 'utf-8').split('\n');
+  const out: string[] = [];
+  let skipping = false;
+  for (const line of lines) {
+    if (line.startsWith('[')) skipping = line.trim() === `[published.${NETWORK}]`;
+    if (!skipping) out.push(line);
+  }
+  fs.writeFileSync(file, out.join('\n'));
+}
+
 type ObjectChange = {
   type: string;
   objectId?: string;
@@ -84,9 +99,18 @@ type ObjectChange = {
 
 // publish a vendored package via the CLI (it owns framework caching + multi-package
 // publish of unpublished deps) and return its objectChanges. The CLI signs with the
-// active address, which must equal our keypair address.
+// active address, which must equal our keypair address. `sui client publish` always
+// builds for the active client env (testnet), so do NOT pass --build-env here, it is
+// rejected. --skip-dependency-verification avoids a false dep-mismatch when the CLI
+// protocol version lags the network's; we publish our own source so there is nothing
+// third-party to verify.
 function publish(pkgDir: string, withUnpublishedDeps: boolean): ObjectChange[] {
-  const args = ['client', 'publish', '--build-env', NETWORK, '--json', '--gas-budget', String(PUBLISH_GAS)];
+  // The CLI records each publish in the package's Published.toml and refuses to
+  // republish while a testnet entry exists. We always want a fresh publish here, so
+  // drop our own package's testnet entry first. Only touches the package we publish,
+  // never its deps (deepbook keeps its canonical testnet publication).
+  clearTestnetPublication(pkgDir);
+  const args = ['client', 'publish', '--json', '--skip-dependency-verification', '--gas-budget', String(PUBLISH_GAS)];
   if (withUnpublishedDeps) args.push('--with-unpublished-dependencies');
   args.push(path.join(CONTRACTS, pkgDir));
   const out = sui(args);
@@ -117,7 +141,7 @@ const address = keypair.getPublicKey().toSuiAddress();
 
 async function run(tx: Transaction, label: string): Promise<ObjectChange[]> {
   tx.setSender(address);
-  tx.setGasBudget(500_000_000n);
+  tx.setGasBudget(800_000_000n); // headroom for create_oracle (matrix-page storage)
   const res = await client.signAndExecuteTransaction({
     transaction: tx,
     signer: keypair,
@@ -256,7 +280,7 @@ async function main(): Promise<void> {
   // --- 4. stand up one live short-expiry BTC oracle ---
   console.log('\n[4/6] Standing up a live BTC oracle...');
   const minStrike = usd1e9(50_000); // grid floor $50k
-  const tickSize = usd1e9(1); // $1 tick, 100k ticks -> covers $50k..$150k
+  const tickSize = usd1e9(200); // $200 tick, 500 ticks -> covers $50k..$150k (single matrix page)
   const expiryMs = Date.now() + 5 * 60 * 1000; // 5 min out, ample for the round trip
 
   const capId = findCreated(

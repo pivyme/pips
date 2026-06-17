@@ -56,7 +56,11 @@ public macro fun min_curve_interval(): u64 { 1_000_000 }
 // === Oracle Strike Grid ===
 
 /// Fixed number of strike ticks each oracle must cover.
-public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
+/// Pips runs its own Predict instance on gas-scarce testnet. Oracle creation
+/// pre-allocates the full strike matrix, so storage cost scales linearly with this
+/// count. Mysten's 100_000 ticks costs ~38 SUI per oracle. We use 500 (one 512-slot
+/// page, ~0.24 SUI) and widen tick_size per asset to keep the same USD range.
+public macro fun oracle_strike_grid_ticks(): u64 { 500 }
 
 /// Granularity unit for oracle tick sizes; every tick_size must be a multiple of this value.
 public macro fun oracle_tick_size_unit(): u64 { 10_000 }

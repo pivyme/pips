@@ -1,0 +1,28 @@
+{
+  "network": "testnet",
+  "packageId": "0xa64e02c3cab4c0347ad1a040427e4407ce90ca11d79afe537db5097683540337",
+  "upgradeCapId": "0x500ec8650ab94b7e3ae1cbcd26edbed17f57ffdbf4a328ad1bcd0ad6731953e5",
+  "adminCapId": "0xf40cae1b010216e9d7aa75afe2bef386725584cba974815a5797611e30c5a734",
+  "registryId": "0xd8b354ed1a218493a78a9e1566216b339425dac14ba019e14fc2cb2d80031d13",
+  "predictId": "0xabcfb806dc874691f0a1d03c484c0fd3eb3d02432b428b6074a2c05d05f38c6e",
+  "plpTreasuryCapId": "0xf62baba846f479867ca4efb6f851181215d87cb73c76d74ddcb6dfa12b3acb1f",
+  "dusdc": {
+    "packageId": "0xf67170299c4365c9e7eb10d71650a0746ee9c7898a8f4553c68ad05d9245cf8e",
+    "type": "0xf67170299c4365c9e7eb10d71650a0746ee9c7898a8f4553c68ad05d9245cf8e::dusdc::DUSDC",
+    "treasuryCapId": "0xa9976271ae9be55f710d80625658ca76a4df8a01506a2b934ef1a13109207f64",
+    "currencyId": "0xd04ade6da4f1b34c158e357bc2f6a238a6f453f1baacd66a7f4a721e0c60e6ab"
+  },
+  "oracleCapIds": [
+    "0x3181b5fa83f6da3ee3549bfc8dbcbcd31273c3e98bf2b96d8b24cdc611cf6cf4"
+  ],
+  "oracles": [
+    {
+      "oracleId": "0x8d7637cbf78dffcc67f35af302adf9b4f745447e4a2d5824c7b2e3eabc56c659",
+      "underlying": "BTC",
+      "expiryMs": 1781697491142,
+      "minStrike": "50000000000000",
+      "tickSize": "200000000000"
+    }
+  ],
+  "bootstrappedAt": "2026-06-17T11:53:45.358Z"
+}
