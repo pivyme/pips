@@ -84,6 +84,18 @@ export async function setNonce(address: string): Promise<string> {
 export const mintToken = (user: User): string =>
   jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions);
 
+// Resolve a user from a raw JWT. Used by the SSE routes, where EventSource cannot set an
+// Authorization header so the token arrives in the query string. Returns null if invalid.
+export async function userFromToken(token: string): Promise<User | null> {
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as { userId?: string };
+    if (!payload.userId) return null;
+    return await prismaQuery.user.findUnique({ where: { id: payload.userId } });
+  } catch {
+    return null;
+  }
+}
+
 // Fresh public view of a user, including the live on-chain DUSDC balance. Chips live in the
 // wallet (onboarding mint) and migrate into the PredictManager as plays run, so the
 // spendable balance is the sum of both.

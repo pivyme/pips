@@ -47,6 +47,26 @@ export class PlayError extends Error {
   }
 }
 
+// HTTP status for each play error so routes return a sensible code, never a raw 500.
+export const httpStatusForPlayError = (code: PlayErrorCode): number => {
+  switch (code) {
+    case 'INVALID_PARAMS':
+    case 'INSUFFICIENT_DUSDC':
+      return 400;
+    case 'MARKET_UNAVAILABLE':
+    case 'ORACLE_STALE':
+    case 'PREDICT_VAULT_CAPACITY':
+    case 'PLAY_NOT_OPEN':
+    case 'MANAGER_NOT_READY':
+      return 409;
+    case 'MINT_FAILED':
+    case 'REDEEM_FAILED':
+      return 502;
+    default:
+      return 500;
+  }
+};
+
 // === Leverage buckets (Lucky) ===
 
 export const LEVERAGE_BUCKETS = RNG_BUCKETS;

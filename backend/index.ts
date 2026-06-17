@@ -7,6 +7,9 @@ import { APP_PORT, IS_PROD, ALLOWED_ORIGIN } from './src/config/main-config.ts';
 // Routes
 import { exampletRoute } from './src/routes/exampleRoutes.ts';
 import { authRoutes } from './src/routes/authRoutes.ts';
+import { gameRoutes } from './src/routes/gameRoutes.ts';
+import { streamRoutes } from './src/routes/streamRoutes.ts';
+import { menuRoutes } from './src/routes/menuRoutes.ts';
 
 // Workers
 import { startErrorLogCleanupWorker } from './src/workers/errorLogCleanup.ts';
@@ -43,6 +46,9 @@ fastify.get('/', async (_request: FastifyRequest, reply: FastifyReply) => {
 // Example: fastify.register(userRoutes, { prefix: '/user' })
 fastify.register(exampletRoute, { prefix: '/example' });
 fastify.register(authRoutes, { prefix: '/auth' });
+fastify.register(gameRoutes);
+fastify.register(menuRoutes);
+fastify.register(streamRoutes, { prefix: '/stream' });
 
 const start = async (): Promise<void> => {
   try {
