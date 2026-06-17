@@ -7,6 +7,7 @@ import LenisSmoothScrollProvider from '../providers/LenisSmoothScrollProvider'
 import { Toaster } from 'react-hot-toast'
 import ErrorPage from '../components/ErrorPage'
 import NotFoundPage from '../components/NotFoundPage'
+import { AuthProvider } from '@/lib/auth'
 
 import appCss from '../styles.css?url'
 
@@ -87,7 +88,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
             error: { iconTheme: { primary: '#ff5a4d', secondary: '#fff' } },
           }}
         />
-        {children}
+        <AuthProvider>{children}</AuthProvider>
         <Scripts />
       </body>
     </html>
