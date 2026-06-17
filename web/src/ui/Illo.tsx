@@ -42,24 +42,37 @@ export interface IlloProps {
   emoji?: string
   alt?: string
   className?: string
+  showGlow?: boolean
 }
 
-export function Illo({ name, glow, size = 88, emoji, alt, className }: IlloProps) {
+export function Illo({
+  name,
+  glow,
+  size = 88,
+  emoji,
+  alt,
+  className,
+  showGlow = true,
+}: IlloProps) {
   const [failed, setFailed] = useState(false)
-  const def = LIBRARY[name] ?? { emoji: '✦', glow: 'neutral' as Glow }
+  const def = LIBRARY[name] ?? { emoji: '✦', glow: 'neutral' }
   const g = glow ?? def.glow
 
   return (
     <div
-      className={cnm('relative inline-flex items-center justify-center', className)}
+      className={cnm(
+        'relative inline-flex items-center justify-center',
+        className,
+      )}
       style={{ width: size, height: size }}
       aria-label={alt ?? name}
     >
-      {/* the hue halo that lights the black around it */}
-      <div
-        className="pointer-events-none absolute inset-0 rounded-full blur-2xl"
-        style={{ background: GLOW[g], transform: 'scale(0.9)' }}
-      />
+      {showGlow && (
+        <div
+          className="pointer-events-none absolute inset-0 rounded-full blur-2xl"
+          style={{ background: GLOW[g], transform: 'scale(0.9)' }}
+        />
+      )}
       {!failed ? (
         <img
           src={`/illustrations/${name}.webp`}
@@ -72,7 +85,12 @@ export function Illo({ name, glow, size = 88, emoji, alt, className }: IlloProps
       ) : (
         <div
           className="card-neo relative z-10 flex items-center justify-center rounded-[28%]"
-          style={{ width: size, height: size, fontSize: size * 0.46, lineHeight: 1 }}
+          style={{
+            width: size,
+            height: size,
+            fontSize: size * 0.46,
+            lineHeight: 1,
+          }}
         >
           <span>{emoji ?? def.emoji}</span>
         </div>

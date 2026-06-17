@@ -13,6 +13,7 @@ import {
   Volume2,
   Zap,
 } from 'lucide-react'
+import { useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Illo } from '@/ui/Illo'
@@ -60,6 +61,26 @@ const TOKENS = [
 ] as const
 
 function DesignSystemPage() {
+  const [activeMenu, setActiveMenu] = useState('Achievements')
+  const [achievementView, setAchievementView] = useState<'all' | 'unlocked'>(
+    'all',
+  )
+  const [selectedAchievement, setSelectedAchievement] = useState('First win')
+  const [settings, setSettings] = useState({
+    sound: true,
+    haptics: true,
+    reducedMotion: false,
+  })
+
+  const visibleAchievements =
+    achievementView === 'all'
+      ? ACHIEVEMENTS
+      : ACHIEVEMENTS.filter((achievement) => achievement.tone !== 'locked')
+
+  const toggleSetting = (key: keyof typeof settings) => {
+    setSettings((current) => ({ ...current, [key]: !current[key] }))
+  }
+
   return (
     <div className="min-h-dvh bg-canvas text-text">
       <header className="sticky top-0 z-20 border-b border-line bg-black/86 px-5 py-4 backdrop-blur-xl">
@@ -86,7 +107,7 @@ function DesignSystemPage() {
       <main className="mx-auto flex max-w-7xl flex-col gap-16 px-5 py-8 sm:px-8 lg:py-12">
         <section className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
           <div>
-            <Illo name="console" size={112} />
+            <DesignIllo name="console" size={112} />
             <p className="mt-6 text-[11px] font-bold uppercase tracking-[0.1em] text-brand-500">
               North star
             </p>
@@ -100,13 +121,18 @@ function DesignSystemPage() {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-lg border border-line bg-white/[0.025] p-4">
+            <div className="surface-skeuo rounded-lg p-4">
               <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-3">
                 App Surface
               </p>
               <div className="space-y-3">
                 {MENU_ITEMS.slice(0, 3).map((item) => (
-                  <MenuCard key={item.title} {...item} />
+                  <MenuCard
+                    key={item.title}
+                    {...item}
+                    selected={activeMenu === item.title}
+                    onPress={() => setActiveMenu(item.title)}
+                  />
                 ))}
               </div>
             </div>
@@ -120,10 +146,7 @@ function DesignSystemPage() {
         <Section eyebrow="Tokens" title="Color, Type, Material">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {TOKENS.map((token) => (
-              <div
-                key={token.name}
-                className="rounded-lg border border-line bg-white/[0.025] p-3"
-              >
+              <div key={token.name} className="surface-skeuo rounded-lg p-3">
                 <div
                   className={cnm(
                     'h-16 rounded-md border border-white/10',
@@ -181,7 +204,7 @@ function DesignSystemPage() {
               </button>
             </div>
 
-            <div className="rounded-lg border border-line bg-white/[0.025] p-5">
+            <div className="surface-skeuo rounded-lg p-5">
               <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-3">
                 Flat Screen Rules
               </p>
@@ -202,7 +225,12 @@ function DesignSystemPage() {
             <PreviewShell title="Menu">
               <div className="space-y-3">
                 {MENU_ITEMS.map((item) => (
-                  <MenuCard key={item.title} {...item} />
+                  <MenuCard
+                    key={item.title}
+                    {...item}
+                    selected={activeMenu === item.title}
+                    onPress={() => setActiveMenu(item.title)}
+                  />
                 ))}
               </div>
             </PreviewShell>
@@ -210,18 +238,30 @@ function DesignSystemPage() {
             <PreviewShell title="Achievements">
               <div className="mb-4 flex items-center justify-between">
                 <p className="text-sm font-semibold text-text-2">
-                  7 of 20 unlocked
+                  {achievementView === 'all'
+                    ? '7 of 20 unlocked'
+                    : 'Unlocked only'}
                 </p>
                 <button
                   type="button"
-                  className="rounded-full border border-line px-3 py-1.5 text-xs font-bold text-text-2"
+                  onClick={() =>
+                    setAchievementView((current) =>
+                      current === 'all' ? 'unlocked' : 'all',
+                    )
+                  }
+                  className="rounded-full border border-line px-3 py-1.5 text-xs font-bold text-text-2 transition-colors active:bg-surface-2"
                 >
-                  All achievements
+                  {achievementView === 'all' ? 'Unlocked' : 'All achievements'}
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {ACHIEVEMENTS.map((achievement) => (
-                  <AchievementTile key={achievement.title} {...achievement} />
+                {visibleAchievements.map((achievement) => (
+                  <AchievementTile
+                    key={achievement.title}
+                    {...achievement}
+                    selected={selectedAchievement === achievement.title}
+                    onPress={() => setSelectedAchievement(achievement.title)}
+                  />
                 ))}
               </div>
             </PreviewShell>
@@ -234,21 +274,39 @@ function DesignSystemPage() {
                   icon={Volume2}
                   title="Sound"
                   sub="Beeps and wins"
-                  control={<Toggle on />}
+                  control={
+                    <Toggle
+                      label="Sound"
+                      on={settings.sound}
+                      onToggle={() => toggleSetting('sound')}
+                    />
+                  }
                 />
                 <Divider />
                 <SettingRow
                   icon={Vibrate}
                   title="Haptics"
                   sub="Buzz on taps and wins"
-                  control={<Toggle on />}
+                  control={
+                    <Toggle
+                      label="Haptics"
+                      on={settings.haptics}
+                      onToggle={() => toggleSetting('haptics')}
+                    />
+                  }
                 />
                 <Divider />
                 <SettingRow
                   icon={Sparkles}
                   title="Reduced motion"
                   sub="Calmer animations"
-                  control={<Toggle />}
+                  control={
+                    <Toggle
+                      label="Reduced motion"
+                      on={settings.reducedMotion}
+                      onToggle={() => toggleSetting('reducedMotion')}
+                    />
+                  }
                 />
               </div>
             </PreviewShell>
@@ -337,7 +395,7 @@ function DesignSystemPage() {
               </div>
             </GameScreen>
 
-            <div className="rounded-lg border border-line bg-white/[0.025] p-5">
+            <div className="surface-skeuo rounded-lg p-5">
               <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-3">
                 Screen Components
               </p>
@@ -399,36 +457,59 @@ function PreviewShell({
   children: ReactNode
 }) {
   return (
-    <div className="rounded-lg border border-line bg-white/[0.025] p-4">
+    <div className="surface-skeuo rounded-lg p-4">
       <div className="mb-4 flex items-center justify-between">
         <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-3">
           {title}
         </p>
-        <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
       </div>
       {children}
     </div>
   )
 }
 
+function DesignIllo({
+  name,
+  size,
+  className,
+}: {
+  name: string
+  size: number
+  className?: string
+}) {
+  return <Illo name={name} size={size} className={className} showGlow={false} />
+}
+
 function MenuCard({
   illo,
   title,
   sub,
+  selected = false,
+  onPress,
 }: {
   illo: string
   title: string
   sub: string
+  selected?: boolean
+  onPress?: () => void
 }) {
   return (
-    <div className="card-neo flex items-center gap-3 p-3 transition-transform active:scale-[0.99]">
-      <Illo name={illo} size={56} />
+    <button
+      type="button"
+      onClick={onPress}
+      aria-pressed={selected}
+      className={cnm(
+        'flex w-full items-center gap-3 p-3 text-left transition-transform active:scale-[0.99]',
+        selected ? 'card-neo-active rounded-card' : 'card-neo',
+      )}
+    >
+      <DesignIllo name={illo} size={56} />
       <div className="min-w-0 flex-1">
         <span className="text-[17px] font-bold">{title}</span>
         <div className="truncate text-sm text-text-2">{sub}</div>
       </div>
       <ChevronRight size={18} className="text-text-3" strokeWidth={2.3} />
-    </div>
+    </button>
   )
 }
 
@@ -438,21 +519,29 @@ function AchievementTile({
   status,
   tone,
   progress,
+  selected = false,
+  onPress,
 }: {
   illo: string
   title: string
   status: string
   tone: 'up' | 'amber' | 'locked'
   progress?: number
+  selected?: boolean
+  onPress?: () => void
 }) {
   return (
-    <div
+    <button
+      type="button"
+      onClick={onPress}
+      aria-pressed={selected}
       className={cnm(
-        'card-neo flex min-h-36 flex-col items-center gap-2 p-3 text-center',
+        'flex min-h-36 flex-col items-center gap-2 p-3 text-center transition-transform active:scale-[0.98]',
+        selected ? 'card-neo-active rounded-card' : 'card-neo',
         tone === 'locked' && 'opacity-45',
       )}
     >
-      <Illo
+      <DesignIllo
         name={illo}
         size={50}
         className={tone === 'locked' ? 'grayscale' : undefined}
@@ -478,27 +567,31 @@ function AchievementTile({
           />
         </div>
       )}
-    </div>
+    </button>
   )
 }
 
-function Toggle({ on = false }: { on?: boolean }) {
+function Toggle({
+  label,
+  on = false,
+  onToggle,
+}: {
+  label: string
+  on?: boolean
+  onToggle: () => void
+}) {
   return (
-    <span
-      className={cnm(
-        'relative h-7 w-12 rounded-full transition-colors',
-        on
-          ? 'bg-gradient-to-b from-brand-400 to-brand-600 shadow-[0_4px_16px_-2px_rgba(255,192,22,0.45)]'
-          : 'bg-surface-2',
-      )}
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={on}
+      onClick={onToggle}
+      className={cnm('pips-switch-control', on && 'pips-switch-control-on')}
     >
       <span
-        className={cnm(
-          'absolute top-1 h-5 w-5 rounded-full bg-text transition-transform',
-          on ? 'translate-x-6' : 'translate-x-1',
-        )}
+        className={cnm('pips-switch-thumb', on && 'pips-switch-thumb-on')}
       />
-    </span>
+    </button>
   )
 }
 
@@ -634,8 +727,7 @@ function GameScreen({
           </p>
           <h3 className="text-lg font-black tracking-tight">{title}</h3>
         </div>
-        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.1em] text-brand-500">
-          <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
+        <div className="text-[10px] font-black uppercase tracking-[0.1em] text-brand-500">
           {status}
         </div>
       </div>
@@ -645,21 +737,36 @@ function GameScreen({
 }
 
 function LuckyPreview() {
+  const [side, setSide] = useState<'LONG' | 'SHORT'>('LONG')
+  const isLong = side === 'LONG'
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-2">
         <Reel label="Leverage" value="25x" />
         <Reel label="Asset" value="BTC" />
-        <Reel label="Side" value="LONG" tone="up" />
+        <Reel
+          label="Side"
+          value={side}
+          tone={isLong ? 'up' : 'down'}
+          onPress={() =>
+            setSide((current) => (current === 'LONG' ? 'SHORT' : 'LONG'))
+          }
+        />
       </div>
-      <MiniChart tone="up" />
+      <MiniChart tone={isLong ? 'up' : 'down'} />
       <div className="flex items-end justify-between">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.12em] text-text-3">
             Live
           </p>
-          <p className="tnum text-4xl font-black leading-none text-up">
-            +$18.42
+          <p
+            className={cnm(
+              'tnum text-4xl font-black leading-none',
+              isLong ? 'text-up' : 'text-down',
+            )}
+          >
+            {isLong ? '+$18.42' : '-$6.10'}
           </p>
         </div>
         <div className="text-right">
@@ -674,26 +781,34 @@ function LuckyPreview() {
 }
 
 function RangePreview() {
+  const durations = ['10s', '30s', '60s'] as const
+  const [duration, setDuration] = useState<(typeof durations)[number]>('30s')
+  const multiplier =
+    duration === '10s' ? '7.6x' : duration === '30s' ? '12.4x' : '18.8x'
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2">
         <ScreenMetric label="Range" value="±0.8%" tone="amber" />
-        <ScreenMetric label="Multiplier" value="12.4x" tone="amber" />
+        <ScreenMetric label="Multiplier" value={multiplier} tone="amber" />
       </div>
       <MiniChart tone="amber" band />
       <div className="grid grid-cols-3 gap-2">
-        {['10s', '30s', '60s'].map((duration) => (
-          <div
-            key={duration}
+        {durations.map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => setDuration(option)}
+            aria-pressed={duration === option}
             className={cnm(
-              'rounded-md border px-3 py-2 text-center text-xs font-black',
-              duration === '30s'
+              'rounded-md border px-3 py-2 text-center text-xs font-black transition-transform active:scale-95',
+              duration === option
                 ? 'border-brand-500 bg-brand-500 text-black'
                 : 'border-line text-text-2',
             )}
           >
-            {duration}
-          </div>
+            {option}
+          </button>
         ))}
       </div>
     </div>
@@ -701,30 +816,46 @@ function RangePreview() {
 }
 
 function TapPreview() {
-  const boxes = [
-    'border-up/50 bg-up/12',
-    'border-line bg-white/[0.025]',
-    'border-brand-500/60 bg-brand-500/12',
-    'border-line bg-white/[0.025]',
-    'border-down/50 bg-down/12',
-    'border-line bg-white/[0.025]',
-  ]
+  const [activeBoxes, setActiveBoxes] = useState([0, 2, 4])
+  const toggleBox = (index: number) => {
+    setActiveBoxes((current) =>
+      current.includes(index)
+        ? current.filter((active) => active !== index)
+        : [...current, index],
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <ScreenMetric label="Tap $" value="$5" tone="amber" />
-        <ScreenMetric label="Open" value="3/6" />
+        <ScreenMetric label="Open" value={`${activeBoxes.length}/6`} />
       </div>
       <div className="grid h-44 grid-cols-3 gap-2">
-        {boxes.map((box, index) => (
-          <div key={index} className={cnm('rounded-md border', box)} />
+        {[0, 1, 2, 3, 4, 5].map((index) => (
+          <button
+            key={index}
+            type="button"
+            onClick={() => toggleBox(index)}
+            aria-pressed={activeBoxes.includes(index)}
+            className={cnm(
+              'rounded-md border transition-transform active:scale-95',
+              activeBoxes.includes(index)
+                ? index % 2 === 0
+                  ? 'border-up/50 bg-up/12'
+                  : 'border-down/50 bg-down/12'
+                : 'border-line bg-white/[0.025]',
+            )}
+          />
         ))}
       </div>
       <div className="flex items-center justify-between">
         <p className="text-xs font-bold text-text-3">
           Tap a box. Catch the move.
         </p>
-        <p className="tnum text-lg font-black text-up">+$8.10</p>
+        <p className="tnum text-lg font-black text-up">
+          +${(activeBoxes.length * 2.7).toFixed(2)}
+        </p>
       </div>
     </div>
   )
@@ -734,13 +865,15 @@ function Reel({
   label,
   value,
   tone,
+  onPress,
 }: {
   label: string
   value: string
   tone?: 'up' | 'down' | 'amber'
+  onPress?: () => void
 }) {
-  return (
-    <div className="rounded-md border border-line bg-white/[0.025] p-3">
+  const content = (
+    <>
       <p className="text-[9px] font-black uppercase tracking-[0.1em] text-text-3">
         {label}
       </p>
@@ -754,6 +887,24 @@ function Reel({
       >
         {value}
       </p>
+    </>
+  )
+
+  if (onPress) {
+    return (
+      <button
+        type="button"
+        onClick={onPress}
+        className="rounded-md border border-line bg-white/[0.025] p-3 text-left transition-transform active:scale-95"
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return (
+    <div className="rounded-md border border-line bg-white/[0.025] p-3">
+      {content}
     </div>
   )
 }
@@ -853,7 +1004,14 @@ function MiniChart({
       <div className="absolute left-4 top-4 rounded-full border border-line bg-black/70 px-3 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-text-2">
         Live mark
       </div>
-      <div className="absolute bottom-4 right-4 h-2 w-2 rounded-full bg-brand-500 shadow-[0_0_18px_rgba(255,192,22,0.75)]" />
+      <div
+        className={cnm(
+          'absolute bottom-4 right-4 h-6 w-px',
+          tone === 'up' && 'bg-up',
+          tone === 'down' && 'bg-down',
+          tone === 'amber' && 'bg-brand-500',
+        )}
+      />
     </div>
   )
 }
