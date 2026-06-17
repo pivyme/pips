@@ -7,6 +7,7 @@ import { Chart } from '@/components/game/Chart'
 import { ResultOverlay, ScreenMessage } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { haptic } from '@/lib/haptics'
+import { sound } from '@/lib/sound'
 import { api, streamPlay, type PlayDTO, type PlayStatus } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { toastError } from '@/lib/errors'
@@ -93,6 +94,7 @@ function RangeScreen() {
       setLive({ markValue: final.markValue, pnl: final.pnl, multiplier: final.multiplier, status: final.status })
       setPhase('result')
       haptic(final.status === 'lost' ? 'error' : 'success')
+      sound(final.status === 'lost' ? 'lose' : 'win')
       notifyUnlocks(unlocked)
       void refresh()
       // Settle/cashout moved the record: freshen stats, achievements, and history.

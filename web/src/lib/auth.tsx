@@ -8,6 +8,7 @@ import { env } from '@/env'
 import { api, ApiError, setAuthToken, type UserDTO } from '@/lib/api'
 import { isDemo, demoUser } from '@/lib/demo'
 import { setHapticsEnabled } from '@/lib/haptics'
+import { setSoundEnabled } from '@/lib/sound'
 
 const TOKEN_KEY = 'pips_token'
 const loadToken = (): string | null => {
@@ -106,10 +107,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStatus('anon')
   }, [])
 
-  // Keep haptics in step with the user's setting, app-wide, from the moment the user loads.
+  // Keep haptics + sound in step with the user's settings, app-wide, from the moment they load.
   useEffect(() => {
     setHapticsEnabled(user?.settings.haptics ?? true)
   }, [user?.settings.haptics])
+
+  useEffect(() => {
+    setSoundEnabled(user?.settings.sound ?? true)
+  }, [user?.settings.sound])
 
   useEffect(() => {
     if (started.current) return

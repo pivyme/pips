@@ -9,6 +9,7 @@ import { Stat } from '@/components/Stat'
 import { Illo } from '@/ui/Illo'
 import { Modal, useOverlayState } from '@/ui/Modal'
 import { haptic } from '@/lib/haptics'
+import { sound } from '@/lib/sound'
 import { api, streamPlay, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { toastError } from '@/lib/errors'
@@ -75,6 +76,7 @@ function LuckyScreen() {
       setLive({ markValue: final.markValue, pnl: final.pnl, multiplier: final.multiplier, status: final.status })
       setPhase('result')
       haptic(final.status === 'lost' ? 'error' : 'success')
+      sound(final.status === 'lost' ? 'lose' : 'win')
       notifyUnlocks(unlocked)
       void refresh()
       // Settle/cashout moved the record: freshen stats, achievements, and history.

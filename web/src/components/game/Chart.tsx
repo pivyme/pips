@@ -116,8 +116,6 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       if (reducedRef.current) paint(performance.now())
     }
     const ro = new ResizeObserver(resize)
-    ro.observe(wrap)
-    resize()
 
     const targetRange = (now: number): { min: number; max: number } => {
       let lo = Infinity
@@ -227,6 +225,11 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       ctx.fill()
       ctx.restore()
     }
+
+    // Observe + initial size now that paint exists. In reduced motion resize() paints
+    // immediately, so it must run after paint is declared (was a TDZ crash on mount).
+    ro.observe(wrap)
+    resize()
 
     let raf = 0
     const loop = (now: number) => {

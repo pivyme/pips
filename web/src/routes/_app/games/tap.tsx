@@ -7,6 +7,7 @@ import { Chart, type ChartBox } from '@/components/game/Chart'
 import { ScreenMessage } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { haptic } from '@/lib/haptics'
+import { sound } from '@/lib/sound'
 import { api, streamPlay, type PlayDTO, type PlayStatus } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { toastError } from '@/lib/errors'
@@ -77,7 +78,9 @@ function TapScreen() {
   if (asset && seedSpot > 0 && bandRef.current?.asset !== asset) {
     bandRef.current = { asset, height: seedSpot * BOX_PCT }
   }
-  const bandHeight = bandRef.current?.asset === asset ? bandRef.current.height : 0
+  // Guard `asset` truthy: before markets load it is undefined, and `null?.asset === undefined`
+  // would slip past the comparison and deref a null bandRef. (Crashed the screen on first paint.)
+  const bandHeight = asset && bandRef.current?.asset === asset ? bandRef.current.height : 0
 
   const finalizeBox = useCallback(
     (key: string, play: PlayDTO, unlocked: string[] = []) => {
@@ -88,6 +91,7 @@ function TapScreen() {
       setBoxes((bs) => bs.map((b) => (b.key === key ? { ...b, status: 'settling', pnl } : b)))
       const won = play.status === 'won' || (play.status === 'cashed_out' && pnl >= 0)
       haptic(won ? 'success' : 'error')
+      sound(won ? 'win' : 'lose')
       if (play.status === 'won') toast.success(`Caught it. +$${money(payout)}`)
       else if (play.status === 'cashed_out') toast.success(`Cashed out +$${money(Math.max(pnl, 0))}`)
       else toast('Missed it.')
