@@ -2,7 +2,7 @@ import './dotenv.ts';
 
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import FastifyCors from '@fastify/cors';
-import { APP_PORT, IS_PROD } from './src/config/main-config.ts';
+import { APP_PORT, IS_PROD, ALLOWED_ORIGIN } from './src/config/main-config.ts';
 
 // Routes
 import { exampletRoute } from './src/routes/exampleRoutes.ts';
@@ -19,7 +19,7 @@ const fastify = Fastify({
 });
 
 fastify.register(FastifyCors, {
-  origin: IS_PROD ? (process.env.ALLOWED_ORIGIN || '') : '*',
+  origin: IS_PROD ? ALLOWED_ORIGIN : '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'token'],
 });
