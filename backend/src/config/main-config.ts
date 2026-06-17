@@ -42,6 +42,16 @@ export const PYTH_HERMES_URL: string = process.env.PYTH_HERMES_URL || 'https://h
 // Free DUSDC starting balance per new user, in display units (6dp DUSDC).
 export const STARTING_BALANCE: number = Number(process.env.PIPS_STARTING_BALANCE) || 1000;
 
+// Stake bounds per play, display DUSDC. The knob and the play endpoints enforce these.
+export const MIN_STAKE: number = Number(process.env.PIPS_MIN_STAKE) || 1;
+export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || 100;
+// Game-round durations offered to the player (seconds). The on-chain expiry is the
+// oracle's; the round duration is the UX timer / when the screen auto-cashes out.
+export const GAME_DURATIONS: number[] = (process.env.PIPS_GAME_DURATIONS || '10,30,60')
+  .split(',')
+  .map((s) => Number(s.trim()))
+  .filter((n) => Number.isFinite(n) && n > 0);
+
 // Operator workers (price-pusher / oracle-roll / settle). OFF by default: they spend
 // testnet gas continuously, so only enable when the operator wallet is funded for a
 // run. The UI gets high-frequency prices from Pyth via SSE, so on-chain pushes only
@@ -91,6 +101,9 @@ export default {
   JWT_EXPIRES_IN,
   ALLOWED_ORIGIN,
   AUTH_MODE,
+  MIN_STAKE,
+  MAX_STAKE,
+  GAME_DURATIONS,
   SUI_NETWORK,
   SUI_FULLNODE_URL,
   TESTING_WALLET_PK,

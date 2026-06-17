@@ -71,6 +71,9 @@ export async function executeForUser(tx: Transaction, ctx: UserContext): Promise
   }
 
   // enoki: build the kind bytes, let Enoki own gas, return bytes for the client to sign.
+  // Sender must be set so coin-selection intents (coinWithBalance) resolve the user's
+  // DUSDC, even though the sender is not encoded into the kind-only bytes.
+  tx.setSenderIfNotSet(ctx.address);
   const kindBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
   const sponsored = await enokiClient().createSponsoredTransaction({
     network: ENOKI_NETWORK,

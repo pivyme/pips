@@ -10,9 +10,10 @@ import type { User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
 import { AUTH_MODE, JWT_SECRET, JWT_EXPIRES_IN, STARTING_BALANCE } from '../config/main-config.ts';
 import { getAlphanumericId } from '../utils/miscUtils.ts';
-import { mintDusdc, getDusdcBalance } from '../lib/sui/dusdc.ts';
+import { mintDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { executeAsOperator } from '../lib/sui/execute.ts';
-import { buildCreateManager } from '../lib/sui/predict.ts';
+import { buildCreateManager, getManagerBalanceRaw } from '../lib/sui/predict.ts';
+import { fromDusdcRaw } from '../lib/sui/config.ts';
 import type { UserDTO } from '../types/api.ts';
 
 // Friendly two-word handle, e.g. "Lucky Otter". displayName is not unique, collisions are fine.
@@ -83,15 +84,20 @@ export async function setNonce(address: string): Promise<string> {
 export const mintToken = (user: User): string =>
   jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions);
 
-// Fresh public view of a user, including the live on-chain DUSDC balance.
+// Fresh public view of a user, including the live on-chain DUSDC balance. Chips live in the
+// wallet (onboarding mint) and migrate into the PredictManager as plays run, so the
+// spendable balance is the sum of both.
 export async function toUserDTO(user: User): Promise<UserDTO> {
-  const balance = await getDusdcBalance(user.address);
+  const [wallet, manager] = await Promise.all([
+    getDusdcBalanceRaw(user.address),
+    user.predictManagerId ? getManagerBalanceRaw(user.predictManagerId) : Promise.resolve(0n),
+  ]);
   return {
     id: user.id,
     address: user.address,
     displayName: user.displayName,
     provider: user.provider === 'enoki' ? 'enoki' : 'dev',
-    balance: balance.toFixed(2),
+    balance: fromDusdcRaw(wallet + manager).toFixed(2),
     managerReady: Boolean(user.predictManagerId),
     settings: {
       sound: user.soundEnabled,

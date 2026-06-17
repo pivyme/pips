@@ -197,6 +197,23 @@ async function tradeAmounts(buildKey: (tx: Transaction) => TransactionObjectArgu
   return { cost: decodeU64(rv[0][0] as number[]), payout: decodeU64(rv[1][0] as number[]) };
 }
 
+// The user's playable chips live in the PredictManager's inner BalanceManager: mint debits
+// it, redeem credits it. Read that balance (6dp) so the wallet + manager sum is the true
+// spendable balance, and so the funding step only tops up the shortfall before a mint.
+export async function getManagerBalanceRaw(managerId: string): Promise<bigint> {
+  const tx = new Transaction();
+  tx.moveCall({
+    target: target('predict_manager', 'balance'),
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(managerId)],
+  });
+  const res = await suiClient.devInspectTransactionBlock({ sender: operatorAddress, transactionBlock: tx });
+  if (res.effects?.status?.status !== 'success') return 0n;
+  const rv = res.results?.[res.results.length - 1]?.returnValues;
+  if (!rv || rv.length < 1) return 0n;
+  return decodeU64(rv[0][0] as number[]);
+}
+
 // Preview a binary mint/cash-out. cost = enter now, payout = redeem value now (live mark,
 // or $1*quantity once settled ITM). Same devInspect serves both directions.
 export const previewMint = (p: BinaryParams): Promise<TradeAmounts> =>

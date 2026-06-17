@@ -33,8 +33,13 @@ export async function mintDusdc(to: string, amount: number): Promise<string> {
   return res.digest;
 }
 
+// Read an address's wallet DUSDC balance in 6dp base units.
+export async function getDusdcBalanceRaw(owner: string): Promise<bigint> {
+  const bal = await suiClient.getBalance({ owner, coinType: DUSDC_TYPE });
+  return BigInt(bal.totalBalance);
+}
+
 // Read an address's DUSDC balance in display units.
 export async function getDusdcBalance(owner: string): Promise<number> {
-  const bal = await suiClient.getBalance({ owner, coinType: DUSDC_TYPE });
-  return Number(BigInt(bal.totalBalance)) / 1_000_000;
+  return Number(await getDusdcBalanceRaw(owner)) / 1_000_000;
 }
