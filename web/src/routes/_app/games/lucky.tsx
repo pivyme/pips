@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
@@ -39,6 +39,7 @@ const sideLabel = (s: Side): string => (s === 'up' ? 'LONG' : 'SHORT')
 
 function LuckyScreen() {
   const { refresh } = useAuth()
+  const qc = useQueryClient()
   const help = useOverlayState()
   const history = useOverlayState()
 
@@ -75,10 +76,12 @@ function LuckyScreen() {
       haptic(final.status === 'lost' ? 'error' : 'success')
       notifyUnlocks(unlocked)
       void refresh()
+      // Settle/cashout moved the record: freshen stats, achievements, and history.
+      for (const key of ['stats', 'achievements', 'plays']) void qc.invalidateQueries({ queryKey: [key] })
       clearResetTimer()
       resetTimer.current = setTimeout(() => setPhase('idle'), RESULT_MS)
     },
-    [refresh],
+    [refresh, qc],
   )
 
   // Live PnL while a play is open. Closes on a terminal frame (expiry settle); we then refetch

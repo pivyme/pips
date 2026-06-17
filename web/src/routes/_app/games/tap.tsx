@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
@@ -48,6 +48,7 @@ const durationLabel = (s: number): string => (s >= 60 ? `${s / 60}m` : `${s}s`)
 
 function TapScreen() {
   const { refresh } = useAuth()
+  const qc = useQueryClient()
 
   const [tapBet, setTapBet] = useState(5)
   const [durIdx, setDurIdx] = useState(0)
@@ -92,6 +93,8 @@ function TapScreen() {
       else toast('Missed it.')
       notifyUnlocks(unlocked)
       void refresh()
+      // Settle/cashout moved the record: freshen stats, achievements, and history.
+      for (const key of ['stats', 'achievements', 'plays']) void qc.invalidateQueries({ queryKey: [key] })
       const t = setTimeout(() => {
         setBoxes((bs) => bs.filter((b) => b.key !== key))
         removeTimers.current.delete(key)
@@ -99,7 +102,7 @@ function TapScreen() {
       }, LINGER_MS)
       removeTimers.current.set(key, t)
     },
-    [refresh],
+    [refresh, qc],
   )
 
   const doCashOut = useCallback(

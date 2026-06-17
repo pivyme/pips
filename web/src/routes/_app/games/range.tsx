@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
@@ -42,6 +42,7 @@ function estimateMultiplier(halfPct: number, durationSec: number): number {
 
 function RangeScreen() {
   const { refresh } = useAuth()
+  const qc = useQueryClient()
 
   const [widthTenths, setWidthTenths] = useState(10) // knob: half-band in tenths of a percent
   const [assetIdx, setAssetIdx] = useState(0)
@@ -94,10 +95,12 @@ function RangeScreen() {
       haptic(final.status === 'lost' ? 'error' : 'success')
       notifyUnlocks(unlocked)
       void refresh()
+      // Settle/cashout moved the record: freshen stats, achievements, and history.
+      for (const key of ['stats', 'achievements', 'plays']) void qc.invalidateQueries({ queryKey: [key] })
       clearResetTimer()
       resetTimer.current = setTimeout(() => setPhase('idle'), RESULT_MS)
     },
-    [refresh],
+    [refresh, qc],
   )
 
   useEffect(() => {
