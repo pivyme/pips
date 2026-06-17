@@ -1,9 +1,13 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
+import { LogOut } from 'lucide-react'
 import type { ReactNode } from 'react'
-import type { AchievementDTO } from '@/lib/api'
+import type { DisplayAchievement } from '@/lib/achievements'
+import { MenuHeader } from '@/components/menu/shared'
 import { StatsCard, StatsCardSkeleton } from '@/components/menu/StatsCard'
+import { Button } from '@/ui/Button'
 import { Illo } from '@/ui/Illo'
+import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
@@ -15,15 +19,40 @@ import { haptic } from '@/lib/haptics'
 export const Route = createFileRoute('/_app/menu/')({ component: MenuHome })
 
 function MenuHome() {
+  const { signOut } = useAuth()
+
   return (
-    <div className="flex flex-col gap-6 px-4 pb-8 pt-1">
-      <h1 className="px-1 text-3xl font-extrabold tracking-tight">Menu</h1>
-      <StatsSection />
-      <div className="flex flex-col gap-3">
-        <MenuRow to="/menu/customize" illo="gem" title="Customize" sub="Make it yours" />
-        <MenuRow to="/menu/settings" illo="gear" title="Settings" sub="Sound, haptics, motion" />
+    <div className="relative min-h-full bg-black px-4 pb-8">
+      <MenuHeader title="Menu" showBack={false} />
+      <div className="relative z-0 -mt-1 flex flex-col gap-6 pt-5">
+        <StatsSection />
+        <div className="flex flex-col gap-3">
+          <MenuRow
+            to="/menu/customize"
+            icon="/assets/icons/icon-customize.png"
+            title="Customize"
+            sub="Make it yours"
+          />
+          <MenuRow
+            to="/menu/settings"
+            icon="/assets/icons/icon-settings.png"
+            title="Settings"
+            sub="Sound, haptics, motion"
+          />
+        </div>
+        <AchievementsSection />
+        <Button
+          variant="danger"
+          onClick={() => {
+            haptic('rigid')
+            signOut()
+          }}
+          className="mt-16 h-14 w-full rounded-card text-sm"
+        >
+          <LogOut className="h-5 w-5" strokeWidth={2.4} />
+          Log out
+        </Button>
       </div>
-      <AchievementsSection />
     </div>
   )
 }
@@ -36,11 +65,13 @@ function StatsSection() {
   if (q.isLoading) return <StatsCardSkeleton />
   if (!stats || stats.gamesPlayed === 0) {
     return (
-      <div className="card-neo flex items-center gap-3 p-4">
+      <div className="surface-skeuo flex items-center gap-3 rounded-card p-4">
         <Illo name="vault" size={48} />
         <div className="min-w-0 flex-1">
           <div className="text-[15px] font-bold">No plays yet</div>
-          <div className="text-sm text-text-3">Make your first play to fill in your card.</div>
+          <div className="text-sm text-text-3">
+            Make your first play to fill in your card.
+          </div>
         </div>
         <Link
           to="/games"
@@ -54,14 +85,25 @@ function StatsSection() {
   }
 
   return (
-    <Link to="/menu/stats" onClick={() => haptic('selection')} className="block transition-transform active:scale-[0.99]">
-      <StatsCard stats={stats} displayName={user?.displayName ?? 'Player'} address={user?.address ?? ''} />
+    <Link
+      to="/menu/stats"
+      onClick={() => haptic('selection')}
+      className="block transition-transform active:scale-[0.99]"
+    >
+      <StatsCard
+        stats={stats}
+        displayName={user?.displayName ?? 'Player'}
+        address={user?.address ?? ''}
+      />
     </Link>
   )
 }
 
 function AchievementsSection() {
-  const q = useQuery({ queryKey: ['achievements'], queryFn: () => api.achievements() })
+  const q = useQuery({
+    queryKey: ['achievements'],
+    queryFn: () => api.achievements(),
+  })
 
   if (q.isLoading) {
     return (
@@ -69,14 +111,17 @@ function AchievementsSection() {
         <SectionLabel />
         <div className="-mx-4 flex gap-3 overflow-hidden px-4">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="shimmer h-[208px] w-[160px] shrink-0 rounded-card" />
+            <div
+              key={i}
+              className="shimmer h-[208px] w-[160px] shrink-0 rounded-card"
+            />
           ))}
         </div>
       </section>
     )
   }
 
-  const all = q.data?.achievements ?? []
+  const all = mergeCatalog(q.data?.achievements ?? [])
   // The closest in-progress badge leads (most motivating), earned badges follow.
   const inProgress = all
     .filter((a) => !a.unlocked && a.progress && a.progress.target > 0)
@@ -93,7 +138,7 @@ function AchievementsSection() {
         ))}
       </div>
       <Link to="/menu/achievements" onClick={() => haptic('selection')}>
-        <div className="card-neo flex items-center justify-between p-4 transition-transform active:scale-[0.99]">
+        <div className="surface-skeuo flex items-center justify-between rounded-card p-4 transition-transform active:scale-[0.99]">
           <span className="text-[15px] font-bold">All Achievements</span>
           <span className="text-lg text-text-3">›</span>
         </div>
@@ -103,29 +148,51 @@ function AchievementsSection() {
 }
 
 function SectionLabel() {
-  return <div className="px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">Achievements</div>
+  return (
+    <div className="px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">
+      Achievements
+    </div>
+  )
 }
 
-const pct = (a: AchievementDTO): number =>
-  a.progress && a.progress.target > 0 ? Math.min(1, a.progress.current / a.progress.target) : 0
+const pct = (a: DisplayAchievement): number =>
+  a.progress && a.progress.target > 0
+    ? Math.min(1, a.progress.current / a.progress.target)
+    : 0
 
-function AchievementCard({ a }: { a: AchievementDTO }): ReactNode {
+function AchievementCard({ a }: { a: DisplayAchievement }): ReactNode {
   const p = pct(a)
   return (
-    <div className="card-neo flex w-[160px] shrink-0 flex-col gap-3 p-4">
+    <div className="surface-skeuo flex w-[160px] shrink-0 flex-col gap-3 rounded-card p-4">
       <div className="relative mx-auto flex h-[116px] w-[116px] items-center justify-center">
         {a.unlocked ? (
-          <Illo name={a.illo} size={104} />
+          <img
+            src={achievementImage(a.slug)}
+            alt=""
+            className="h-[104px] w-[104px] object-contain drop-shadow-[0_12px_20px_rgba(0,0,0,0.34)]"
+            draggable={false}
+          />
         ) : (
           <>
+            {/* Locked badge as a black silhouette, with the progress ring + percent on top. */}
+            <img
+              src={achievementImage(a.slug)}
+              alt=""
+              className="absolute h-[80px] w-[80px] object-contain brightness-0 contrast-200 drop-shadow-[0_1px_0_rgba(255,255,255,0.04)]"
+              draggable={false}
+            />
             <ProgressRing value={p} />
-            <span className="tnum absolute text-[26px] font-extrabold leading-none">{Math.round(p * 100)}%</span>
+            <span className="tnum absolute text-[26px] font-extrabold leading-none">
+              {Math.round(p * 100)}%
+            </span>
           </>
         )}
       </div>
       <div>
         <div className="text-[15px] font-bold leading-tight">{a.name}</div>
-        <div className="mt-1 line-clamp-2 text-[13px] leading-snug text-text-2">{a.description}</div>
+        <div className="mt-1 line-clamp-2 text-[13px] leading-snug text-text-2">
+          {a.description}
+        </div>
       </div>
     </div>
   )
@@ -136,7 +203,14 @@ function ProgressRing({ value }: { value: number }) {
   const c = 2 * Math.PI * r
   return (
     <svg viewBox="0 0 120 120" className="h-full w-full -rotate-90">
-      <circle cx={60} cy={60} r={r} fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth={10} />
+      <circle
+        cx={60}
+        cy={60}
+        r={r}
+        fill="none"
+        stroke="rgba(255,255,255,0.10)"
+        strokeWidth={10}
+      />
       <circle
         cx={60}
         cy={60}
@@ -152,17 +226,34 @@ function ProgressRing({ value }: { value: number }) {
   )
 }
 
-function MenuRow({ to, illo, title, sub }: { to: string; illo: string; title: string; sub: string }): ReactNode {
+function MenuRow({
+  to,
+  icon,
+  title,
+  sub,
+}: {
+  to: string
+  icon: string
+  title: string
+  sub: string
+}): ReactNode {
   return (
-    <Link to={to} onClick={() => haptic('selection')}>
-      <div className="card-neo flex items-center gap-3 p-3 transition-transform active:scale-[0.99]">
-        <Illo name={illo} size={56} />
-        <div className="min-w-0 flex-1">
-          <span className="text-[17px] font-bold">{title}</span>
-          <div className="text-sm text-text-2">{sub}</div>
-        </div>
-        <span className="text-lg text-text-3">›</span>
+    <Link
+      to={to}
+      onClick={() => haptic('selection')}
+      className="surface-skeuo flex min-h-24 items-center gap-3 rounded-card px-3 py-1 transition-transform active:scale-[0.99]"
+    >
+      <img
+        src={icon}
+        alt=""
+        className="h-20 w-20 shrink-0 object-contain"
+        draggable={false}
+      />
+      <div className="ml-1 min-w-0 flex-1">
+        <span className="text-xl font-bold">{title}</span>
+        <div className="text-[15px] text-text-2">{sub}</div>
       </div>
+      <span className="pr-2 text-3xl text-text-3">›</span>
     </Link>
   )
 }

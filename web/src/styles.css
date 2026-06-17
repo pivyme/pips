@@ -208,6 +208,7 @@
     position: absolute;
     left: 0.125rem;
     top: 50%;
+    margin-inline-start: 0;
     height: 1.375rem;
     width: 1.375rem;
     border-radius: 9999px;
@@ -227,6 +228,19 @@
   }
 
   .pips-switch-thumb-on {
+    transform: translate(1.25rem, -50%);
+  }
+
+  .switch[aria-checked='true'] .pips-switch-thumb,
+  .switch[data-selected='true'] .pips-switch-thumb {
+    margin-inline-start: 0;
+    color: #1a1200;
+    background: radial-gradient(
+      circle at 34% 24%,
+      #ffffff 0 10%,
+      #f3f0e6 38%,
+      #d1ccbf 100%
+    );
     transform: translate(1.25rem, -50%);
   }
 

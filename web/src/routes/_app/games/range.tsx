@@ -14,6 +14,7 @@ import { toastError } from '@/lib/errors'
 import { notifyUnlocks } from '@/lib/achievements'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
+import { formatStringToNumericDecimals } from '@/utils/format'
 
 // Range: rotate the knob to size a band around spot. Tighter band, lower odds, bigger multiple.
 // A real mint_range under the hood; win if the settle price lands inside, cash out early at the
@@ -42,7 +43,7 @@ function estimateMultiplier(halfPct: number, durationSec: number): number {
 }
 
 function RangeScreen() {
-  const { refresh } = useAuth()
+  const { refresh, user } = useAuth()
   const qc = useQueryClient()
 
   const [widthTenths, setWidthTenths] = useState(10) // knob: half-band in tenths of a percent
@@ -220,58 +221,102 @@ function RangeScreen() {
   const showReadouts = play != null && (phase === 'open' || phase === 'cashing' || phase === 'result')
   const secsLeft = play && phase === 'open' ? Math.max(0, Math.ceil((play.market.expiry - nowMs) / 1000)) : null
 
+  // The device screen is the L-shaped aperture (web/CLAUDE.md "The console screen"): a top bar, the
+  // chart filling the slack height, then a notch-safe readout band the chart stops above. The
+  // bottom-right is the body (main button + knob), so the band is left-only and padded off the rim.
   return (
-    <div className="relative flex h-full flex-col gap-3 p-4">
-      <div className="flex items-baseline justify-between px-1 pt-1">
-        <h1 className="text-xl font-extrabold tracking-tight">Range</h1>
-        <div className="tnum text-sm font-bold text-brand-500">{mult.toFixed(2)}x</div>
-      </div>
-
-      <div className="screen relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-card">
-        {marketsQ.isLoading ? (
-          <div className="flex flex-1 items-center justify-center p-6">
-            <div className="shimmer h-24 w-full rounded-md" />
-          </div>
-        ) : marketsQ.isError ? (
-          <ScreenMessage title="Could not load markets" action="Retry" onAction={() => void marketsQ.refetch()} />
-        ) : noLiveMarket ? (
-          <ScreenMessage title="No live markets right now." action="Retry" onAction={() => void marketsQ.refetch()} />
-        ) : (
-          <>
+    <div className="relative flex h-full w-full flex-col overflow-hidden bg-black text-text">
+      {marketsQ.isLoading ? (
+        <div className="flex flex-1 items-center justify-center p-6">
+          <div className="shimmer h-24 w-2/3 rounded-md" />
+        </div>
+      ) : marketsQ.isError ? (
+        <ScreenMessage title="Could not load markets" action="Retry" onAction={() => void marketsQ.refetch()} />
+      ) : noLiveMarket ? (
+        <ScreenMessage title="No live markets right now." action="Retry" onAction={() => void marketsQ.refetch()} />
+      ) : (
+        <>
+          {/* top bar + chart: the chart fills the slack height, the top bar floats over its top.
+              The chart stops above the readout band below, it never runs under it. */}
+          <div className="relative min-h-0 flex-1">
             {asset ? (
               <Chart
                 asset={asset}
                 overlays={showBand && band ? { band } : undefined}
                 onPrice={(p) => setSpot(p)}
-                className="flex-1"
+                className="absolute inset-0"
               />
-            ) : (
-              <div className="flex-1" />
-            )}
+            ) : null}
 
+            {/* top bar — full width. Left: market + live price. Right: balance at rest, the expiry
+                countdown once a play is open. Padded clear of the rim. */}
+            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-4">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Range · {asset}</div>
+                <div className="tnum text-2xl font-extrabold leading-none text-text">
+                  {spot != null
+                    ? `$${spot.toLocaleString('en-US', { maximumFractionDigits: spot >= 1000 ? 0 : 2 })}`
+                    : '—'}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                  {showReadouts && secsLeft != null ? 'Ends in' : 'Balance'}
+                </div>
+                <div className="tnum text-xl font-bold leading-none text-text-2">
+                  {showReadouts && secsLeft != null
+                    ? `${secsLeft}s`
+                    : user?.balance != null
+                      ? `$${formatStringToNumericDecimals(user.balance, 2)}`
+                      : '—'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* readout band — notch-safe (bottom-right is the body: knob + PLAY). A hero number over a
+              clean two-up grid: the prize multiple + stake at rest, the live PnL once a play runs. */}
+          <div className="pointer-events-none max-w-[62%] space-y-2.5 p-4">
             {showReadouts ? (
-              <div className="flex items-end justify-between gap-3 px-4 pb-4">
+              <>
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-text-3">Live</div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Live PnL</div>
                   <div className={cnm('text-4xl font-extrabold leading-none', pnlNum >= 0 ? 'text-up' : 'text-down')}>
                     {pnlNum >= 0 ? '+' : '-'}$<Stat value={Math.abs(pnlNum)} />
                   </div>
                 </div>
-                {secsLeft != null && (
-                  <div className="text-right">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-text-3">Ends in</div>
-                    <div className="tnum text-lg font-bold text-text-2">{secsLeft}s</div>
-                  </div>
-                )}
-              </div>
+                <div className="grid grid-cols-2 gap-x-4">
+                  <Cell label="Mult" value={`${mult.toFixed(2)}x`} />
+                  <Cell label="Ends" value={secsLeft != null ? `${secsLeft}s` : '—'} />
+                </div>
+              </>
             ) : (
-              <div className="px-4 pb-4 text-center text-sm text-text-3">Tighter range, bigger prize. Win if the price lands inside.</div>
+              <>
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Pays</div>
+                  <div className="tnum text-4xl font-extrabold leading-none text-brand-500">{mult.toFixed(2)}x</div>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4">
+                  <Cell label="Stake" value={`$${RANGE_STAKE}`} />
+                  <Cell label="Band" value={`±${halfPct.toFixed(1)}%`} />
+                </div>
+              </>
             )}
-          </>
-        )}
+          </div>
+        </>
+      )}
 
-        {phase === 'result' && play && <ResultOverlay {...rangeResult(play)} onDismiss={() => setPhase('idle')} />}
-      </div>
+      {phase === 'result' && play && <ResultOverlay {...rangeResult(play)} onDismiss={() => setPhase('idle')} />}
+    </div>
+  )
+}
+
+// One readout cell in the bottom band: tiny label over a tabular value.
+function Cell({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-3">{label}</div>
+      <div className="tnum text-base font-bold leading-tight text-text">{value}</div>
     </div>
   )
 }

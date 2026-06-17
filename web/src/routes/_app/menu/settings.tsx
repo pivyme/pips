@@ -1,9 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import toast from 'react-hot-toast'
+import type { UserDTO } from '@/lib/api'
 import { MenuScreen } from '@/components/menu/shared'
 import { Switch } from '@/ui/Switch'
-import { api, type UserDTO } from '@/lib/api'
+import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { isDemo, resetDemo } from '@/lib/demo'
 import { haptic } from '@/lib/haptics'
@@ -11,7 +12,9 @@ import { haptic } from '@/lib/haptics'
 // Sound, haptics, reduced motion. No save button: each toggle persists immediately (PATCH
 // /settings) with a haptic tick, no confirm. Reduced motion flows back through the auth user, so
 // the chart and rolling numbers calm down at once (useReducedMotion reads it).
-export const Route = createFileRoute('/_app/menu/settings')({ component: SettingsScreen })
+export const Route = createFileRoute('/_app/menu/settings')({
+  component: SettingsScreen,
+})
 
 type Settings = UserDTO['settings']
 type Key = keyof Settings
@@ -48,7 +51,10 @@ function SettingsScreen() {
     <MenuScreen title="Settings">
       <div className="flex flex-col gap-3">
         {ROWS.map((row) => (
-          <div key={row.key} className="card-neo flex items-center gap-3 p-4">
+          <div
+            key={row.key}
+            className="surface-skeuo flex items-center gap-3 rounded-card p-4"
+          >
             <div className="min-w-0 flex-1">
               <div className="text-[15px] font-bold">{row.label}</div>
               <div className="text-sm text-text-3">{row.desc}</div>
@@ -62,15 +68,20 @@ function SettingsScreen() {
           </div>
         ))}
 
-        <div className="card-neo p-4">
+        <div className="surface-skeuo rounded-card p-4">
           <div className="text-[15px] font-bold">About Pips</div>
-          <div className="mt-0.5 text-sm text-text-3">Built on Sui, powered by DeepBook Predict.</div>
+          <div className="mt-0.5 text-sm text-text-3">
+            Built on Sui, powered by DeepBook Predict.
+          </div>
         </div>
 
         {isDemo() && (
-          <div className="card-neo p-4">
+          <div className="surface-skeuo rounded-card p-4">
             <div className="text-[15px] font-bold">Demo mode</div>
-            <div className="mt-0.5 text-sm text-text-3">Play money, nothing on chain. Reset to restore the starting balance and record.</div>
+            <div className="mt-0.5 text-sm text-text-3">
+              Play money, nothing on chain. Reset to restore the starting
+              balance and record.
+            </div>
             <button
               type="button"
               onClick={() => {

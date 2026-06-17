@@ -1,13 +1,46 @@
 import { useEffect, useRef } from 'react'
+import type { ReactNode } from 'react'
 import * as THREE from 'three'
 import { createConsoleGui } from './consoleGui'
 import { roundedRect, roundedPoly, frontZeroed, setBoxUVs, roundedRectPath, roundedPolyPath } from './consoleGeo'
 import { createAudio } from './consoleAudio'
-import { createScreen } from './consoleScreen'
+import type { ConsoleView } from './controls'
 
-export default function ConsoleCanvas() {
+// The 3D handheld, driven by the console controls registry. A game registers its bindings via
+// useConsoleControls(); this paints live labels on the buttons + knob and dispatches the physical
+// press/drag to those handlers. The game's screen content (the chart) renders in a black HTML layer
+// positioned on the projected screen cutout, masked to the L-shape by the device body.
+
+type HandlersRef = {
+  current: {
+    main?: () => void
+    action1?: () => void
+    action2?: () => void
+    knob?: (value: number) => void
+  }
+}
+
+interface ConsoleCanvasProps {
+  view?: ConsoleView
+  handlers?: HandlersRef
+  onNav?: (tab: 'MENU' | 'GAMES') => void
+  children?: ReactNode
+  debug?: boolean
+}
+
+export default function ConsoleCanvas({ view, handlers, onNav, children, debug = false }: ConsoleCanvasProps) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hintRef = useRef<HTMLDivElement>(null)
+  const screenLayerRef = useRef<HTMLDivElement>(null)
+
+  // Fresh per render so the scene's input handlers never read a stale binding.
+  const propsRef = useRef({ handlers, onNav })
+  propsRef.current = { handlers, onNav }
+  const viewRef = useRef(view)
+  viewRef.current = view
+  // The scene exposes its label/state updater here; the [view] effect calls it.
+  const applyViewRef = useRef<(v?: ConsoleView) => void>(() => {})
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -84,12 +117,25 @@ export default function ConsoleCanvas() {
     ]
     const SCREEN_MESH_Y_OFFSET = 0.13
 
+    // The screen stretches to fill frames taller than the device's own ratio: `screenExt` is the
+    // world height added above the natural body. The screen top + body top rise by it; the bottom
+    // edge and the whole control deck stay put. 0 = natural device.
+    let screenExt = 0
+
+    // Screen L-shape corners in world space, with the top edge raised by screenExt. Drives both the
+    // body cutout and the projected HTML layer, so they always agree.
+    function screenWorldPts() {
+      const yOf = (py: number) => wy(py) + SCREEN_MESH_Y_OFFSET + (py === 30 ? screenExt : 0)
+      return SCREEN_PX.map((p) => new THREE.Vector3(wx(p.x), yOf(p.y), 0.06))
+    }
+
     function buildBodyShape() {
-      const s = roundedRect(6.2, 11.95, deviceCfg.corner)
+      const cy = wy(1130) + screenExt / 2 // body center rises by ext/2 so the bottom edge stays fixed
+      const s = roundedRect(6.2, 11.95 + screenExt, deviceCfg.corner)
       BTN_PX.forEach((p, i) => {
-        // hole center in body-local space (body mesh sits at wx(585), wy(1130))
+        // hole center in body-local space (body mesh sits at wx(585), cy)
         const lx = wx(p.x) + buttons[i].dx - wx(585)
-        const ly = wy(p.y) + buttons[i].dy - wy(1130)
+        const ly = wy(p.y) + buttons[i].dy - cy
         const pad = buttons[i].pad
         const hw = buttons[i].w + pad * 2
         const hh = buttons[i].h + pad * 2
@@ -98,28 +144,27 @@ export default function ConsoleCanvas() {
       })
       // knob pocket — rectangular hole (cylinder lies on X-axis so front face is w×h)
       const klx = wx(knobPocket.px) - wx(585)
-      const kly = wy(knobPocket.py) - wy(1130)
+      const kly = wy(knobPocket.py) - cy
       const kw = knobPocket.w + knobPocket.pad * 2
       const kh = knobPocket.h + knobPocket.pad * 2
       s.holes.push(roundedRectPath(klx, kly, kw, kh, Math.min(knobPocket.r + knobPocket.pad, kw / 2, kh / 2)))
-      // screen cutout — same L-shape as the screen mesh, in body-local coords
+      // screen cutout — the L-shape (top raised by screenExt), converted to body-local coords
       s.holes.push(roundedPolyPath(
-        SCREEN_PX.map(p => ({ x: wx(p.x) - wx(585), y: wy(p.y) + SCREEN_MESH_Y_OFFSET - wy(1130) })),
+        screenWorldPts().map((v) => ({ x: v.x - wx(585), y: v.y - cy })),
         0.25,
       ))
       return s
     }
 
-    /* audio + screen */
+    /* audio */
     const audio = createAudio()
+
+    // Screen: a matte near-black panel set into the body. The live chart renders as an HTML
+    // layer on top (positioned to this aperture), so this mesh is just the dark backing that
+    // shows at the very edge seam.
     const matScreen = new THREE.MeshStandardMaterial({
-      color: 0x000000, roughness: 0.5, metalness: 0.6,
-      emissive: 0xffffff, emissiveIntensity: 5.0,
-      transparent: true, opacity: 0.05,
+      color: 0x050505, roughness: 0.6, metalness: 0.2,
     })
-    const screen = createScreen(MAXANISO, audio)
-    matScreen.emissiveMap = screen.tex
-    matScreen.needsUpdate = true
 
     const matBody = new THREE.MeshStandardMaterial({ color: CREAM, roughness: 0.82, metalness: 0 })
     const matKnob = new THREE.MeshStandardMaterial({ color: YELLOW, roughness: 0.55, metalness: 0 })
@@ -147,10 +192,16 @@ export default function ConsoleCanvas() {
     setBoxUVs(screenGeo)
     const screenMesh = new THREE.Mesh(screenGeo, matScreen)
     screenMesh.position.z = 0.06
-    screenMesh.position.y = 0.13
+    screenMesh.position.y = SCREEN_MESH_Y_OFFSET
     screenMesh.receiveShadow = true
-    screenMesh.visible = true
+    // The live HTML screen sits behind the device and shows through this cutout, so the panel mesh
+    // would only occlude it. Keep it for the debug playground; hide it when a screen is bound.
+    screenMesh.visible = debug
     deck.add(screenMesh)
+
+    // Screen cutout in world space — projected to pixels each resize to place the HTML layer.
+    // Reassigned by relayout() when the screen stretches to fill a tall frame.
+    let screenWorld = screenWorldPts()
 
     /* buttons */
     const interactive: THREE.Mesh[] = []
@@ -158,8 +209,7 @@ export default function ConsoleCanvas() {
     function makeButton(
       cx: number, cy: number, w: number, h: number, cornerR: number,
       baseZ: number, pressedZ: number, depth: number, color: number, glow: number,
-      onPress: () => void,
-    ) {
+    ): THREE.Mesh {
       const mat = new THREE.MeshStandardMaterial({
         color, roughness: 0.5, metalness: 0,
         emissive: new THREE.Color(glow), emissiveIntensity: 0,
@@ -168,18 +218,18 @@ export default function ConsoleCanvas() {
       mesh.position.set(cx, cy, baseZ)
       mesh.castShadow = true
       mesh.receiveShadow = true
-      mesh.userData = { kind: 'button', baseZ, pressedZ, depth, pressed: false, glow: 0, hover: 0, onPress }
+      mesh.userData = { kind: 'button', baseZ, pressedZ, depth, pressed: false, glow: 0, hover: 0 }
       deck.add(mesh)
       interactive.push(mesh)
       return mesh
     }
 
     const bm = [
-      makeButton(wx(965), wy(1490), buttons[0].w, buttons[0].h, buttons[0].r, buttons[0].baseZ, buttons[0].pressedZ, buttons[0].depth, RED, 0xff5a3c, () => screen.select()),
-      makeButton(wx(200), wy(1860), buttons[1].w, buttons[1].h, buttons[1].r, buttons[1].baseZ, buttons[1].pressedZ, buttons[1].depth, BLUE, 0x5e9bff, () => screen.moveSel(-1)),
-      makeButton(wx(589), wy(1860), buttons[2].w, buttons[2].h, buttons[2].r, buttons[2].baseZ, buttons[2].pressedZ, buttons[2].depth, BLUE, 0x5e9bff, () => screen.moveSel(+1)),
-      makeButton(wx(150), wy(2150), buttons[3].w, buttons[3].h, buttons[3].r, buttons[3].baseZ, buttons[3].pressedZ, buttons[3].depth, CREAM, 0xff7a1a, () => screen.switchTab('MENU')),
-      makeButton(wx(425), wy(2150), buttons[4].w, buttons[4].h, buttons[4].r, buttons[4].baseZ, buttons[4].pressedZ, buttons[4].depth, CREAM, 0xff7a1a, () => screen.switchTab('GAMES')),
+      makeButton(wx(965), wy(1490), buttons[0].w, buttons[0].h, buttons[0].r, buttons[0].baseZ, buttons[0].pressedZ, buttons[0].depth, RED, 0xff5a3c),
+      makeButton(wx(200), wy(1860), buttons[1].w, buttons[1].h, buttons[1].r, buttons[1].baseZ, buttons[1].pressedZ, buttons[1].depth, BLUE, 0x5e9bff),
+      makeButton(wx(589), wy(1860), buttons[2].w, buttons[2].h, buttons[2].r, buttons[2].baseZ, buttons[2].pressedZ, buttons[2].depth, BLUE, 0x5e9bff),
+      makeButton(wx(150), wy(2150), buttons[3].w, buttons[3].h, buttons[3].r, buttons[3].baseZ, buttons[3].pressedZ, buttons[3].depth, CREAM, 0xff7a1a),
+      makeButton(wx(425), wy(2150), buttons[4].w, buttons[4].h, buttons[4].r, buttons[4].baseZ, buttons[4].pressedZ, buttons[4].depth, CREAM, 0xff7a1a),
     ]
     const bmOrigin = bm.map(m => ({ x: m.position.x, y: m.position.y }))
 
@@ -206,18 +256,23 @@ export default function ConsoleCanvas() {
     knobFloor.receiveShadow = true
     deck.add(knobFloor)
 
-    function makeLabel(text: string, cx: number, cy: number, worldH: number, color: string) {
-      const c = document.createElement('canvas'), g = c.getContext('2d')!
-      const fs = 64
-      g.font = `600 ${fs}px -apple-system,"Segoe UI",system-ui,sans-serif`
-      const tw = Math.ceil(g.measureText(text).width)
+    // Canvas-texture label. Static caption (makeLabel) or live, updatable (makeDynLabel).
+    function drawLabel(c: HTMLCanvasElement, g: CanvasRenderingContext2D, text: string, color: string, fs = 64) {
+      g.font = `700 ${fs}px -apple-system,"Segoe UI",system-ui,sans-serif`
+      const tw = Math.max(1, Math.ceil(g.measureText(text || ' ').width))
       c.width = tw + 24
       c.height = fs + 24
-      g.font = `600 ${fs}px -apple-system,"Segoe UI",system-ui,sans-serif`
+      g.font = `700 ${fs}px -apple-system,"Segoe UI",system-ui,sans-serif`
+      g.clearRect(0, 0, c.width, c.height)
       g.fillStyle = color
       g.textAlign = 'center'
       g.textBaseline = 'middle'
       g.fillText(text, c.width / 2, c.height / 2)
+    }
+
+    function makeLabel(text: string, cx: number, cy: number, worldH: number, color: string) {
+      const c = document.createElement('canvas'), g = c.getContext('2d')!
+      drawLabel(c, g, text, color)
       const tex = new THREE.CanvasTexture(c)
       tex.colorSpace = THREE.SRGBColorSpace
       tex.anisotropy = MAXANISO
@@ -230,9 +285,101 @@ export default function ConsoleCanvas() {
       return plane
     }
 
+    // Updatable label that lives on a button face (or the body) and reflects the registered view.
+    function makeDynLabel(worldH: number, color: string) {
+      const W = 640, H = 128, FS = 92
+      const c = document.createElement('canvas')
+      c.width = W
+      c.height = H
+      const g = c.getContext('2d')!
+      const tex = new THREE.CanvasTexture(c)
+      tex.colorSpace = THREE.SRGBColorSpace
+      tex.anisotropy = MAXANISO
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false })
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat)
+      plane.renderOrder = 10
+      let cur = '\0'
+      let curColor = color
+      function set(text: string, opacity = 1, color2?: string) {
+        const col = color2 ?? curColor
+        if (text !== cur || col !== curColor) {
+          cur = text
+          curColor = col
+          g.clearRect(0, 0, W, H)
+          if (text) {
+            g.font = `700 ${FS}px -apple-system,"Segoe UI",system-ui,sans-serif`
+            g.fillStyle = col
+            g.textAlign = 'center'
+            g.textBaseline = 'middle'
+            g.fillText(text, W / 2, H / 2)
+            const tw = Math.min(W, g.measureText(text).width + 36)
+            tex.repeat.x = tw / W
+            tex.offset.x = (1 - tw / W) / 2
+            plane.scale.set(worldH * (tw / H), worldH, 1)
+          }
+          tex.needsUpdate = true
+        }
+        mat.opacity = text ? opacity : 0
+      }
+      set('', 0)
+      return { plane, set }
+    }
+
     const LABEL_DY = -0.45
-    const lblMenu = makeLabel('MENU', bm[3].position.x, bm[3].position.y + LABEL_DY, 0.26, '#7c7870')
-    const lblGames = makeLabel('GAMES', bm[4].position.x, bm[4].position.y + LABEL_DY, 0.26, '#7c7870')
+    makeLabel('MENU', bm[3].position.x, bm[3].position.y + LABEL_DY, 0.26, '#7c7870')
+    makeLabel('GAMES', bm[4].position.x, bm[4].position.y + LABEL_DY, 0.26, '#7c7870')
+
+    // Live labels: main / action1 / action2 on their button faces, knob value on the body.
+    const mainLbl = makeDynLabel(0.42, '#ffffff')
+    mainLbl.plane.position.set(0, 0, 0.02)
+    bm[0].add(mainLbl.plane)
+    const a1Lbl = makeDynLabel(0.5, '#ffffff')
+    a1Lbl.plane.position.set(0, 0, 0.02)
+    bm[1].add(a1Lbl.plane)
+    const a2Lbl = makeDynLabel(0.5, '#ffffff')
+    a2Lbl.plane.position.set(0, 0, 0.02)
+    bm[2].add(a2Lbl.plane)
+    const knobLbl = makeDynLabel(0.42, '#2c2722')
+    knobLbl.plane.position.set(wx(knobPocket.px), wy(knobPocket.py) - 1.55, 0.07)
+    deck.add(knobLbl.plane)
+
+    // View state mirrored from the registry, read by the input handlers for gating.
+    const state = {
+      mainDisabled: true, a1Disabled: true, a2Disabled: true, knobDisabled: true,
+      knob: null as null | NonNullable<ConsoleView['knob']>,
+    }
+
+    function applyView(v?: ConsoleView) {
+      const m = v?.main
+      state.mainDisabled = !m || !!m.disabled || !!m.loading
+      mainLbl.set(m?.loading ? '•••' : (m?.label ?? ''), state.mainDisabled ? 0.34 : 1)
+      const a1 = v?.action1
+      state.a1Disabled = !a1 || !!a1.disabled
+      a1Lbl.set(a1?.label ?? '', state.a1Disabled ? 0.34 : 1)
+      const a2 = v?.action2
+      state.a2Disabled = !a2 || !!a2.disabled
+      a2Lbl.set(a2?.label ?? '', state.a2Disabled ? 0.34 : 1)
+      const k = v?.knob ?? null
+      state.knob = k
+      state.knobDisabled = !k || !!k.disabled
+      knobLbl.set(k ? (k.format ? k.format(k.value) : String(k.value)) : '', state.knobDisabled ? 0.4 : 1)
+    }
+    applyViewRef.current = applyView
+
+    function isBtnDisabled(i: number) {
+      if (i === 0) return state.mainDisabled
+      if (i === 1) return state.a1Disabled
+      if (i === 2) return state.a2Disabled
+      return false // pills (nav) are never disabled
+    }
+    function dispatch(i: number) {
+      const h = propsRef.current.handlers?.current
+      if (i === 0) h?.main?.()
+      else if (i === 1) h?.action1?.()
+      else if (i === 2) h?.action2?.()
+      else if (i === 3) propsRef.current.onNav?.('MENU')
+      else if (i === 4) propsRef.current.onNav?.('GAMES')
+    }
 
     function rebuildBtnGeo(i: number) {
       const m = bm[i], c = buttons[i]
@@ -241,8 +388,6 @@ export default function ConsoleCanvas() {
       m.position.x = bmOrigin[i].x + c.dx
       m.position.y = bmOrigin[i].y + c.dy
       m.userData.depth = c.depth
-      if (i === 3) { lblMenu.position.x = m.position.x; lblMenu.position.y = m.position.y + LABEL_DY }
-      if (i === 4) { lblGames.position.x = m.position.x; lblGames.position.y = m.position.y + LABEL_DY }
       rebuildBodyGeo()
     }
 
@@ -251,7 +396,7 @@ export default function ConsoleCanvas() {
       ridgeWidth: 120, grooveWidth: 50, bumpScale: 45, ridgeRepeat: 20,
       cornerCurve: 0.2,
       radius: 1.25, height: 0.95,
-      dragSensitivity: 0.5, pxPerStep: 40, ridgePhase: 0,
+      dragSensitivity: 0.5, pxPerStep: 22, ridgePhase: 0,
       snapInterval: 20, snapSpeed: 5,
     }
 
@@ -308,16 +453,28 @@ export default function ConsoleCanvas() {
     function rebuildBodyGeo() {
       body.geometry.dispose()
       body.geometry = frontZeroed(buildBodyShape(), 0.6, 0.08)
+      body.position.y = wy(1130) + screenExt / 2
     }
 
-    /* dev GUI */
-    const gui = createConsoleGui({
-      kp, buttons, knobPocket, deviceCfg, bm, knobSlab, matKnobSlab, knobBump, matScreen, deck,
-      lights: { key, fill, hemi, ambient },
-      onRedrawBump: redrawBump,
-      onRebuildBodyGeo: rebuildBodyGeo,
-      onRebuildBtnGeo: rebuildBtnGeo,
-    })
+    // Stretch the screen + body top to `ext` world units past natural, then refresh the projection
+    // points. The control deck stays fixed. No-op when unchanged so resize churn stays cheap.
+    function relayout(ext: number) {
+      if (ext === screenExt) return
+      screenExt = ext
+      rebuildBodyGeo()
+      screenWorld = screenWorldPts()
+    }
+
+    /* dev GUI — only when explicitly debugging (e.g. the /console playground) */
+    const gui = debug
+      ? createConsoleGui({
+          kp, buttons, knobPocket, deviceCfg, bm, knobSlab, matKnobSlab, knobBump, matScreen, deck,
+          lights: { key, fill, hemi, ambient },
+          onRedrawBump: redrawBump,
+          onRebuildBodyGeo: rebuildBodyGeo,
+          onRebuildBtnGeo: rebuildBtnGeo,
+        })
+      : null
 
     /* pointer handling */
     const raycaster = new THREE.Raycaster()
@@ -325,7 +482,7 @@ export default function ConsoleCanvas() {
     const MIN_PRESS_MS = 120
     const pressTimers: ReturnType<typeof setTimeout>[] = []
     let hovered: THREE.Mesh | null = null, active: THREE.Mesh | null = null
-    let knobDrag = false, knobStartY = 0, knobBase = 0, knobLastStep = 0, knobLastRidge = 0
+    let knobDrag = false, knobStartY = 0, knobBase = 0, knobLastStep = 0, knobLastRidge = 0, knobStartValue = 0
 
     function toNDC(e: PointerEvent) {
       const r = renderer.domElement.getBoundingClientRect()
@@ -338,51 +495,60 @@ export default function ConsoleCanvas() {
       return hit.length ? (hit[0].object as THREE.Mesh) : null
     }
 
-    function onPointerDown(e: PointerEvent) {
+    // Arrow consts (not hoisted declarations) so the post-guard non-null narrowing of canvas/hint holds.
+    const onPointerDown = (e: PointerEvent) => {
       audio.resumeAudio()
-      hint!.style.opacity = '0'
+      hint.style.opacity = '0'
       toNDC(e)
       const obj = pick()
       if (!obj) return
-      canvas!.setPointerCapture(e.pointerId)
       if (obj.userData.kind === 'knob') {
+        if (state.knobDisabled) return
+        canvas.setPointerCapture(e.pointerId)
         knobDrag = true
         knobStartY = e.clientY
         knobBase = knobOffset
         knobLastStep = 0
         knobLastRidge = Math.round(knobOffset / kp.snapInterval)
-      } else {
-        obj.userData.pressed = true
-        obj.userData.pressedAt = performance.now()
-        obj.userData.glow = Math.max(obj.userData.glow, 0.001)
-        active = obj
-        const bi = (bm as THREE.Mesh[]).indexOf(obj)
-        if (bi === 0) audio.playSfx('mainPress')
-        else if (bi === 1 || bi === 2) audio.playSfx('actionPress')
-        else if (bi === 3 || bi === 4) audio.playSfx('pillPress')
-        obj.userData.onPress()
+        knobStartValue = state.knob?.value ?? 0
+        return
       }
+      const bi = bm.indexOf(obj)
+      if (isBtnDisabled(bi)) return
+      canvas.setPointerCapture(e.pointerId)
+      obj.userData.pressed = true
+      obj.userData.pressedAt = performance.now()
+      obj.userData.glow = Math.max(obj.userData.glow, 0.001)
+      active = obj
+      if (bi === 0) audio.playSfx('mainPress')
+      else if (bi === 1 || bi === 2) audio.playSfx('actionPress')
+      else if (bi === 3 || bi === 4) audio.playSfx('pillPress')
+      dispatch(bi)
     }
 
-    function onPointerMove(e: PointerEvent) {
+    const onPointerMove = (e: PointerEvent) => {
       toNDC(e)
       if (knobDrag) {
-        const dy = e.clientY - knobStartY
-        knobOffset = knobBase + dy * kp.dragSensitivity
+        const dyDown = e.clientY - knobStartY // down positive — drives the visual ridge scroll
+        knobOffset = knobBase + dyDown * kp.dragSensitivity
         const detent = Math.round(knobOffset / kp.snapInterval)
         if (detent !== knobLastRidge) {
           knobLastRidge = detent
           audio.playSfx('knob')
         }
-        const step = Math.round(dy / kp.pxPerStep)
-        if (step !== knobLastStep) {
-          screen.moveSel(step > knobLastStep ? 1 : -1, true)
-          knobLastStep = step
+        const k = state.knob
+        if (k && !state.knobDisabled) {
+          const steps = Math.round((knobStartY - e.clientY) / kp.pxPerStep) // up = increase
+          if (steps !== knobLastStep) {
+            knobLastStep = steps
+            const next = Math.min(k.max, Math.max(k.min, knobStartValue + steps * k.step))
+            if (next !== k.value) propsRef.current.handlers?.current.knob?.(next)
+          }
         }
         return
       }
       hovered = pick()
-      canvas!.style.cursor = hovered
+      canvas.style.cursor = hovered
         ? hovered.userData.kind === 'knob' ? 'ns-resize' : 'pointer'
         : 'default'
     }
@@ -394,7 +560,7 @@ export default function ConsoleCanvas() {
       }
       if (active) {
         const btn = active
-        const bi = (bm as THREE.Mesh[]).indexOf(btn)
+        const bi = bm.indexOf(btn)
         active = null
         const elapsed = performance.now() - (btn.userData.pressedAt ?? 0)
         const delay = Math.max(0, MIN_PRESS_MS - elapsed)
@@ -413,20 +579,67 @@ export default function ConsoleCanvas() {
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)
 
-    /* resize */
+    /* resize — fits the device to the container, then projects the cutout onto the screen layer */
     function resize() {
-      const w = window.innerWidth, h = window.innerHeight
+      const container = rootRef.current
+      if (!container) return
+      const w = container.clientWidth, h = container.clientHeight
+      if (w === 0 || h === 0) return
       renderer.setSize(w, h)
       camera.aspect = w / h
       const fov = (camera.fov * Math.PI) / 180
-      const fitH = (11.95 * 0.5 * 1.06) / Math.tan(fov / 2)
-      const fitW = (6.2 * 0.5 * 1.06) / (Math.tan(fov / 2) * camera.aspect)
-      camera.position.set(0, 0, Math.max(fitH, fitW))
-      camera.lookAt(0, 0, 0)
+      const tanHalf = Math.tan(fov / 2)
+
+      if (debug) {
+        // Playground: contain the whole device (with margin), screen at natural height.
+        relayout(0)
+        const fitH = (11.95 * 0.5 * 1.06) / tanHalf
+        const fitW = (6.2 * 0.5 * 1.06) / (tanHalf * camera.aspect)
+        camera.position.set(0, 0, Math.max(fitH, fitW))
+        camera.lookAt(0, 0, 0)
+      } else {
+        // Always fill the width. A frame taller than the device's ratio grows the screen to fill
+        // the extra height (the control deck keeps its size); a wider frame falls back to
+        // contain-by-height, so the device gaps at the sides but is never cropped.
+        const visibleH = 6.2 / camera.aspect // world height when the device width is fit edge to edge
+        const ext = Math.max(0, Math.round((visibleH - 11.95) * 100) / 100)
+        relayout(ext)
+        const cy = wy(1130) + ext / 2 // device center after the top extension
+        const d =
+          ext > 0
+            ? (6.2 * 0.5) / (tanHalf * camera.aspect) // fill width
+            : (11.95 * 0.5) / tanHalf // contain by height (wider frame)
+        camera.position.set(0, cy, d)
+        camera.lookAt(0, cy, 0)
+      }
       camera.updateProjectionMatrix()
+      camera.updateMatrixWorld()
+
+      // Screen content sits behind the device; the body's hole masks it to the L-shape and the
+      // beveled rim frames it. Oversize a touch so the chart tucks under the rim with no seam.
+      const el = screenLayerRef.current
+      if (el) {
+        const M = 4
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+        for (const v of screenWorld) {
+          const n = v.clone().project(camera)
+          const x = (n.x * 0.5 + 0.5) * w
+          const y = (-n.y * 0.5 + 0.5) * h
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+        }
+        el.style.left = `${minX - M}px`
+        el.style.top = `${minY - M}px`
+        el.style.width = `${maxX - minX + M * 2}px`
+        el.style.height = `${maxY - minY + M * 2}px`
+      }
     }
-    window.addEventListener('resize', resize)
+    const ro = new ResizeObserver(() => resize())
+    if (rootRef.current) ro.observe(rootRef.current)
     resize()
+    applyView(viewRef.current)
 
     /* render loop */
     const clock = new THREE.Clock()
@@ -456,8 +669,6 @@ export default function ConsoleCanvas() {
       }
       knobBump.offset.x = knobOffset / kp.ridgeRepeat
 
-      screen.tick(dt)
-
       renderer.render(scene, camera)
     }
     loop()
@@ -468,44 +679,67 @@ export default function ConsoleCanvas() {
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', release)
       window.removeEventListener('pointercancel', release)
-      window.removeEventListener('resize', resize)
+      ro.disconnect()
       pressTimers.forEach(clearTimeout)
-      gui.destroy()
+      applyViewRef.current = () => {}
+      gui?.destroy()
       renderer.dispose()
       audio.dispose()
     }
-  }, [])
+    // Scene is built once; live bindings flow through refs + the [view] effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debug])
+
+  // Push label/state updates into the scene whenever the registered view changes.
+  useEffect(() => {
+    applyViewRef.current(view)
+  }, [view])
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        touchAction: 'none',
-        overflow: 'hidden',
-        zIndex: 10,
-      }}
-    >
-      <canvas ref={canvasRef} style={{ display: 'block' }} />
+    <div ref={rootRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#000' }}>
+      {/* screen content sits behind the device; the body's hole cuts it to the L-shape and the
+          beveled rim frames it. Total black so any rim seam reads as screen, not a gap. */}
       <div
-        ref={hintRef}
+        ref={screenLayerRef}
         style={{
-          position: 'fixed',
-          bottom: 22,
+          position: 'absolute',
           left: 0,
-          width: '100%',
-          textAlign: 'center',
-          color: '#8a7657',
-          fontSize: 12,
-          letterSpacing: '0.16em',
-          textTransform: 'uppercase',
-          opacity: 0.65,
-          transition: 'opacity 0.8s ease',
-          pointerEvents: 'none',
-          userSelect: 'none',
-          fontFamily: '-apple-system, "Segoe UI", system-ui, sans-serif',
+          top: 0,
+          width: 0,
+          height: 0,
+          zIndex: 1,
+          background: '#000',
+          overflow: 'hidden',
         }}
-      />
+      >
+        {children}
+      </div>
+
+      {/* device canvas on top — transparent through the screen hole + outside the body */}
+      <div style={{ position: 'absolute', inset: 0, zIndex: 10, touchAction: 'none' }}>
+        <canvas ref={canvasRef} style={{ display: 'block' }} />
+        <div
+          ref={hintRef}
+          style={{
+            position: 'absolute',
+            bottom: 12,
+            left: 0,
+            width: '100%',
+            textAlign: 'center',
+            color: '#6b6b6b',
+            fontSize: 11,
+            letterSpacing: '0.16em',
+            textTransform: 'uppercase',
+            opacity: 0.6,
+            transition: 'opacity 0.8s ease',
+            pointerEvents: 'none',
+            userSelect: 'none',
+            fontFamily: '-apple-system, "Segoe UI", system-ui, sans-serif',
+          }}
+        >
+          {onNav ? 'Turn the knob · press to play' : ''}
+        </div>
+      </div>
     </div>
   )
 }

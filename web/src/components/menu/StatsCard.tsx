@@ -22,7 +22,7 @@ export function StatsCard({
   const winPct = Math.round(stats.winRate * 100)
 
   return (
-    <div className="card-neo overflow-hidden rounded-card p-5">
+    <div className="surface-skeuo overflow-hidden rounded-card p-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <img src="/assets/logos/pips-512.png" alt="" className="h-6 w-6" />
@@ -61,7 +61,7 @@ export function StatsCard({
 
 function Cell({ label, value }: { label: string; value: string }): ReactNode {
   return (
-    <div className="rounded-md bg-black/30 p-3">
+    <div className="rounded-md bg-white/[0.04] p-3">
       <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-text-3">{label}</div>
       <div className="tnum mt-1 text-xl font-extrabold">{value}</div>
     </div>
@@ -70,7 +70,7 @@ function Cell({ label, value }: { label: string; value: string }): ReactNode {
 
 export function StatsCardSkeleton() {
   return (
-    <div className="card-neo rounded-card p-5">
+    <div className="surface-skeuo rounded-card p-5">
       <div className="shimmer h-6 w-24 rounded-full" />
       <div className="shimmer mt-4 h-7 w-40 rounded-lg" />
       <div className="mt-6 flex justify-between">

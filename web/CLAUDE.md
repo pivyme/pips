@@ -24,6 +24,32 @@ This is the **Pips** frontend: the gamified trading console. Pips makes trading 
 - Env is typed/validated in `src/env.ts`. Add `VITE_SUI_NETWORK`, `VITE_ENOKI_API_KEY` etc there, import from `env.ts`, not `import.meta.env`.
 - **Bun + WASM gotcha:** the Sui crypto stack pulls WASM and `vite-plugin-wasm` can fail when the Vite dev server runs through Bun. If you hit a WASM load error, run the dev server on Node (bun stays the package manager).
 
+## The console screen (the L-shaped aperture)
+
+Game screens (`/games/*`) render as an HTML layer **behind** the 3D device and show through a cutout in the body. `ConsoleCanvas` projects that cutout on every resize and positions the layer onto it; the device body masks anything outside it. Treat the screen as a real, oddly shaped, **variable-height** display, not a plain rectangle. Three rules, always:
+
+- **The bottom-right is not screen.** The aperture is an L: full width at the top, but the bottom-right corner is the device body, where the knob and the main PLAY button physically sit. The bottom row is **left-only**, keep its content to about 60% width. Never place anything in the bottom-right, it is occluded by the body.
+- **Pad everything off the rim.** The beveled rim frames the screen, so content touching the edge reads as broken. Inset the screen content (at least `p-4`) on the top, the sides, and the notch-safe bottom-left. The chart may bleed full width, but text and readouts never touch an edge.
+- **Height is responsive, never fixed.** The device stretches the screen taller to fill frames taller than its natural ratio (`ConsoleCanvas` `screenExt`, the control deck stays put). So lay the screen out as a vertical flex stack that absorbs the extra height in the **chart**, and never assume a pixel height.
+
+**The layout contract, three zones top to bottom:**
+
+1. **Top bar** (full width, fixed height): balance, live price, asset and status. The persistent context.
+2. **Chart** (`min-h-0 flex-1`): takes all the slack height and absorbs the responsive stretch. It lives **above** zone 3, it must not run under it.
+3. **Bottom info** (notch-safe, left-only, content-height): a clean grid of the play's numbers, payout, stake, multiplier, PnL. The dedicated readout zone.
+
+```tsx
+<div className="relative flex h-full flex-col bg-black">
+  <div className="relative min-h-0 flex-1">        {/* zones 1+2: chart fills, top bar floats over it */}
+    <Chart className="absolute inset-0" />
+    <TopBar className="absolute inset-x-0 top-0 p-4" />   {/* balance · price, padded */}
+  </div>
+  <BottomInfo className="max-w-[60%] p-4" />         {/* zone 3: notch-safe readout grid */}
+</div>
+```
+
+**The mistake to prevent:** a full-bleed chart (`absolute inset-0` over the whole screen) with the readouts floating on top of it. On a tall frame the chart then eats the entire height and the numbers sit over the line. The chart must **stop above the bottom info zone**, with the readouts in their own band below it, not overlapping.
+
 ## Demo mode (intentional, user-requested)
 
 `VITE_DEMO_MODE=true` (or the landing-page toggle, stored under localStorage `pips_demo`) runs the **entire app on an in-memory mock**: no backend, no Sui, play money. It exists so anyone can play the full UI with zero setup. This is the ONE sanctioned exception to the "no sim, Predict is the engine" rule, and it is fully isolated: `src/lib/demo.ts` is the only sim, and the real product is always real Predict.
