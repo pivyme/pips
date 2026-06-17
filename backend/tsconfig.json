@@ -23,7 +23,8 @@
   "include": [
     "index.ts",
     "dotenv.ts",
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "scripts/**/*.ts"
   ],
   "exclude": [
     "node_modules",
