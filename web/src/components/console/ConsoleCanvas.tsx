@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import GUI from 'lil-gui'
 import * as THREE from 'three'
-import { roundedRect, roundedPoly, frontZeroed, setBoxUVs } from './consoleGeo'
+import { roundedRect, roundedPoly, frontZeroed, setBoxUVs, roundedRectPath, roundedPolyPath } from './consoleGeo'
 import { createAudio } from './consoleAudio'
 import { createScreen } from './consoleScreen'
 
@@ -19,8 +19,8 @@ export default function ConsoleCanvas() {
     const CREAM = 0xe9dbbf, RED = 0xd63a2e, BLUE = 0x3568c9, YELLOW = 0xefc03b
 
     /* renderer */
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
-    renderer.setClearColor(0xF4EAD6)
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
+    renderer.setClearColor(0x000000, 0)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
@@ -58,6 +58,60 @@ export default function ConsoleCanvas() {
     const wx = (px: number) => (px - CX) * SCALE
     const wy = (py: number) => (CY - py) * SCALE
 
+    /* pocket holes — shared config needed before body geometry is built */
+    const deviceCfg = { corner: 0.15 }
+    const buttons = [
+      // pad = gap between button edge and pocket rim on each side
+      // pills share a wall so their pad is capped to avoid holes touching (~0.14 max before they'd merge)
+      { w: 1.6, h: 1.5, r: 0.15, depth: 2, dx: 0, dy: 0, baseZ: 0.8, pressedZ: 0.4, pad: 0.12 },
+      { w: 1.6, h: 1.5, r: 0.15, depth: 2, dx: 0, dy: 0, baseZ: 0.5, pressedZ: 0.4, pad: 0.12 },
+      { w: 1.6, h: 1.5, r: 0.15, depth: 2, dx: 0, dy: 0, baseZ: 0.5, pressedZ: 0.4, pad: 0.12 },
+      { w: 1.07, h: 0.35, r: 0.17, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.12 },
+      { w: 1.12, h: 0.35, r: 0.17, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.12 },
+    ]
+    // button pixel centers — kept here so buildBodyShape stays in sync with makeButton calls below
+    const BTN_PX = [
+      { x: 965, y: 1490 }, { x: 200, y: 1860 }, { x: 589, y: 1860 },
+      { x: 150, y: 2150 }, { x: 425, y: 2150 },
+    ]
+    // knob pocket config — w/h must stay in sync with kp.height / kp.radius*2 below
+    // cylinder is rotated on Z so from the front it reads as w=height, h=radius*2
+    const knobPocket = { px: 975, py: 1960, w: 1, h: 2.5, r: 0.02, pad: 0.04 }
+
+    // screen L-shape in pixel coords — mirrors screenPts used for the screen mesh
+    // screenMesh.position.y = 0.13 is baked in here as a world-space offset before converting to body-local
+    const SCREEN_PX = [
+      { x: 30, y: 1680 }, { x: 760, y: 1680 }, { x: 760, y: 1325 },
+      { x: 1140, y: 1325 }, { x: 1140, y: 30 }, { x: 30, y: 30 },
+    ]
+    const SCREEN_MESH_Y_OFFSET = 0.13
+
+    function buildBodyShape() {
+      const s = roundedRect(6.2, 11.95, deviceCfg.corner)
+      BTN_PX.forEach((p, i) => {
+        // hole center in body-local space (body mesh sits at wx(585), wy(1130))
+        const lx = wx(p.x) + buttons[i].dx - wx(585)
+        const ly = wy(p.y) + buttons[i].dy - wy(1130)
+        const pad = buttons[i].pad
+        const hw = buttons[i].w + pad * 2
+        const hh = buttons[i].h + pad * 2
+        // r + pad keeps the hole perfectly concentric with the button shape
+        s.holes.push(roundedRectPath(lx, ly, hw, hh, Math.min(buttons[i].r + pad, hw / 2, hh / 2)))
+      })
+      // knob pocket — rectangular hole (cylinder lies on X-axis so front face is w×h)
+      const klx = wx(knobPocket.px) - wx(585)
+      const kly = wy(knobPocket.py) - wy(1130)
+      const kw = knobPocket.w + knobPocket.pad * 2
+      const kh = knobPocket.h + knobPocket.pad * 2
+      s.holes.push(roundedRectPath(klx, kly, kw, kh, Math.min(knobPocket.r + knobPocket.pad, kw / 2, kh / 2)))
+      // screen cutout — same L-shape as the screen mesh, in body-local coords
+      s.holes.push(roundedPolyPath(
+        SCREEN_PX.map(p => ({ x: wx(p.x) - wx(585), y: wy(p.y) + SCREEN_MESH_Y_OFFSET - wy(1130) })),
+        0.25,
+      ))
+      return s
+    }
+
     /* audio + screen */
     const audio = createAudio()
     const matScreen = new THREE.MeshStandardMaterial({
@@ -75,8 +129,7 @@ export default function ConsoleCanvas() {
     scene.add(deck)
 
     /* body */
-    const deviceCfg = { corner: 0.45 }
-    const body = new THREE.Mesh(frontZeroed(roundedRect(6.2, 11.95, deviceCfg.corner), 0.6, 0.08), matBody)
+    const body = new THREE.Mesh(frontZeroed(buildBodyShape(), 0.6, 0.08), matBody)
     body.position.set(wx(585), wy(1130), 0)
     body.receiveShadow = true
     body.castShadow = true
@@ -84,12 +137,12 @@ export default function ConsoleCanvas() {
 
     /* screen mesh */
     const screenPts = [
-      { x: wx(30),   y: wy(1680) },
-      { x: wx(760),  y: wy(1680) },
-      { x: wx(760),  y: wy(1325) },
+      { x: wx(30), y: wy(1680) },
+      { x: wx(760), y: wy(1680) },
+      { x: wx(760), y: wy(1325) },
       { x: wx(1140), y: wy(1325) },
-      { x: wx(1140), y: wy(30)   },
-      { x: wx(30),   y: wy(30)   },
+      { x: wx(1140), y: wy(30) },
+      { x: wx(30), y: wy(30) },
     ]
     const screenGeo = frontZeroed(roundedPoly(screenPts, 0.25), 0.12, 0.03)
     setBoxUVs(screenGeo)
@@ -97,6 +150,7 @@ export default function ConsoleCanvas() {
     screenMesh.position.z = 0.06
     screenMesh.position.y = 0.13
     screenMesh.receiveShadow = true
+    screenMesh.visible = false
     deck.add(screenMesh)
 
     /* buttons */
@@ -121,22 +175,37 @@ export default function ConsoleCanvas() {
       return mesh
     }
 
-    const squareButtonR = 0.15
-    const bc = [
-      { w: 1.6,  h: 1.5,  r: squareButtonR, depth: 0.45, dx: 0, dy: 0 },
-      { w: 1.6,  h: 1.5,  r: squareButtonR, depth: 0.42, dx: 0, dy: 0 },
-      { w: 1.6,  h: 1.5,  r: squareButtonR, depth: 0.42, dx: 0, dy: 0 },
-      { w: 1.07, h: 0.35, r: 0.17,          depth: 0.3,  dx: 0, dy: 0 },
-      { w: 1.12, h: 0.35, r: 0.17,          depth: 0.3,  dx: 0, dy: 0 },
-    ]
     const bm = [
-      makeButton(wx(965), wy(1490), bc[0].w, bc[0].h, bc[0].r, 0.4,  0.14, bc[0].depth, RED,   0xff5a3c, () => screen.select()),
-      makeButton(wx(200), wy(1860), bc[1].w, bc[1].h, bc[1].r, 0.34, 0.12, bc[1].depth, BLUE,  0x5e9bff, () => screen.moveSel(-1)),
-      makeButton(wx(589), wy(1860), bc[2].w, bc[2].h, bc[2].r, 0.34, 0.12, bc[2].depth, BLUE,  0x5e9bff, () => screen.moveSel(+1)),
-      makeButton(wx(150), wy(2150), bc[3].w, bc[3].h, bc[3].r, 0.26, 0.1,  bc[3].depth, CREAM, 0xff7a1a, () => screen.switchTab('MENU')),
-      makeButton(wx(425), wy(2150), bc[4].w, bc[4].h, bc[4].r, 0.26, 0.1,  bc[4].depth, CREAM, 0xff7a1a, () => screen.switchTab('GAMES')),
+      makeButton(wx(965), wy(1490), buttons[0].w, buttons[0].h, buttons[0].r, buttons[0].baseZ, buttons[0].pressedZ, buttons[0].depth, RED, 0xff5a3c, () => screen.select()),
+      makeButton(wx(200), wy(1860), buttons[1].w, buttons[1].h, buttons[1].r, buttons[1].baseZ, buttons[1].pressedZ, buttons[1].depth, BLUE, 0x5e9bff, () => screen.moveSel(-1)),
+      makeButton(wx(589), wy(1860), buttons[2].w, buttons[2].h, buttons[2].r, buttons[2].baseZ, buttons[2].pressedZ, buttons[2].depth, BLUE, 0x5e9bff, () => screen.moveSel(+1)),
+      makeButton(wx(150), wy(2150), buttons[3].w, buttons[3].h, buttons[3].r, buttons[3].baseZ, buttons[3].pressedZ, buttons[3].depth, CREAM, 0xff7a1a, () => screen.switchTab('MENU')),
+      makeButton(wx(425), wy(2150), buttons[4].w, buttons[4].h, buttons[4].r, buttons[4].baseZ, buttons[4].pressedZ, buttons[4].depth, CREAM, 0xff7a1a, () => screen.switchTab('GAMES')),
     ]
     const bmOrigin = bm.map(m => ({ x: m.position.x, y: m.position.y }))
+
+    /* pocket floors — dark inset plane visible in the gap between button edge and chamfered rim */
+    const matPocket = new THREE.MeshStandardMaterial({ color: 0x19160f, roughness: 0.95, metalness: 0 })
+    bm.forEach((btn, i) => {
+      const c = buttons[i]
+      const pad = c.pad
+      const fw = c.w + pad * 2 - 0.04
+      const fh = c.h + pad * 2 - 0.04
+      const fr = Math.min(c.r + pad, fw / 2, fh / 2)
+      const geo = new THREE.ShapeGeometry(roundedRect(fw, fh, fr), 48)
+      const floor = new THREE.Mesh(geo, matPocket)
+      floor.position.set(btn.position.x, btn.position.y, -0.04)
+      floor.receiveShadow = true
+      deck.add(floor)
+    })
+    // knob pocket floor
+    const kfw = knobPocket.w + knobPocket.pad * 2 - 0.04
+    const kfh = knobPocket.h + knobPocket.pad * 2 - 0.04
+    const knobFloorGeo = new THREE.ShapeGeometry(roundedRect(kfw, kfh, Math.min(knobPocket.r + knobPocket.pad, kfw / 2, kfh / 2)), 48)
+    const knobFloor = new THREE.Mesh(knobFloorGeo, matPocket)
+    knobFloor.position.set(wx(knobPocket.px), wy(knobPocket.py), body.position.z - 0.04)
+    knobFloor.receiveShadow = true
+    deck.add(knobFloor)
 
     function makeLabel(text: string, cx: number, cy: number, worldH: number, color: string) {
       const c = document.createElement('canvas'), g = c.getContext('2d')!
@@ -163,18 +232,19 @@ export default function ConsoleCanvas() {
     }
 
     const LABEL_DY = -0.45
-    const lblMenu  = makeLabel('MENU',  bm[3].position.x, bm[3].position.y + LABEL_DY, 0.26, '#7c7870')
+    const lblMenu = makeLabel('MENU', bm[3].position.x, bm[3].position.y + LABEL_DY, 0.26, '#7c7870')
     const lblGames = makeLabel('GAMES', bm[4].position.x, bm[4].position.y + LABEL_DY, 0.26, '#7c7870')
 
     function rebuildBtnGeo(i: number) {
-      const m = bm[i], c = bc[i]
+      const m = bm[i], c = buttons[i]
       m.geometry.dispose()
       m.geometry = frontZeroed(roundedRect(c.w, c.h, c.r), c.depth, 0.06)
       m.position.x = bmOrigin[i].x + c.dx
       m.position.y = bmOrigin[i].y + c.dy
       m.userData.depth = c.depth
-      if (i === 3) { lblMenu.position.x  = m.position.x; lblMenu.position.y  = m.position.y + LABEL_DY }
+      if (i === 3) { lblMenu.position.x = m.position.x; lblMenu.position.y = m.position.y + LABEL_DY }
       if (i === 4) { lblGames.position.x = m.position.x; lblGames.position.y = m.position.y + LABEL_DY }
+      rebuildBodyGeo()
     }
 
     /* knob */
@@ -222,11 +292,11 @@ export default function ConsoleCanvas() {
     knobBump.repeat.set(kp.ridgeRepeat, 1)
 
     const knobSlab = new THREE.Mesh(
-      new THREE.CylinderGeometry(kp.radius, kp.radius, kp.height, 64, 4),
+      new THREE.CylinderGeometry(kp.radius, kp.radius, kp.height, 64, 44),
       matKnobSlab,
     )
     knobSlab.rotation.z = Math.PI / 2
-    knobSlab.position.set(wx(947), wy(1960), -0.3)
+    knobSlab.position.set(wx(975), wy(1960), -0.3)
     knobSlab.castShadow = true
     knobSlab.receiveShadow = true
     knobSlab.userData = { kind: 'knob', hover: 0 }
@@ -241,12 +311,12 @@ export default function ConsoleCanvas() {
 
     const gKnob = gui.addFolder('Knob')
     const gRidges = gKnob.addFolder('Ridges')
-    gRidges.add(kp, 'ridgeWidth',  5,   120, 1).name('width').onChange(redrawBump)
-    gRidges.add(kp, 'grooveWidth', 5,   120, 1).name('groove').onChange(redrawBump)
-    gRidges.add(kp, 'bumpScale',   0,    30, 0.5).name('depth').onChange((v: number) => { matKnobSlab.bumpScale = v })
-    gRidges.add(kp, 'cornerCurve', 0,     1, 0.01).name('curviness').onChange(redrawBump)
-    gRidges.add(kp, 'ridgeRepeat', 1,    20, 0.5).name('repeat ×').onChange((v: number) => { knobBump.repeat.set(v, 1) })
-    gRidges.add(kp, 'ridgePhase',  0,     1, 0.01).name('phase')
+    gRidges.add(kp, 'ridgeWidth', 5, 120, 1).name('width').onChange(redrawBump)
+    gRidges.add(kp, 'grooveWidth', 5, 120, 1).name('groove').onChange(redrawBump)
+    gRidges.add(kp, 'bumpScale', 0, 30, 0.5).name('depth').onChange((v: number) => { matKnobSlab.bumpScale = v })
+    gRidges.add(kp, 'cornerCurve', 0, 1, 0.01).name('curviness').onChange(redrawBump)
+    gRidges.add(kp, 'ridgeRepeat', 1, 20, 0.5).name('repeat ×').onChange((v: number) => { knobBump.repeat.set(v, 1) })
+    gRidges.add(kp, 'ridgePhase', 0, 1, 0.01).name('phase')
     const gKShape = gKnob.addFolder('Shape')
     function rebuildKnob() {
       knobSlab.geometry.dispose()
@@ -257,36 +327,42 @@ export default function ConsoleCanvas() {
     gKShape.add(kp, 'radius', 0.3, 3, 0.05).name('radius').onChange(rebuildKnob)
     gKShape.add(kp, 'height', 0.1, 3, 0.05).name('height').onChange(rebuildKnob)
     const gKFeel = gKnob.addFolder('Feel')
-    gKFeel.add(kp, 'dragSensitivity', 0.01, 0.5,  0.005).name('ridges / px')
-    gKFeel.add(kp, 'pxPerStep',       10,  120,  5).name('px / step')
+    gKFeel.add(kp, 'dragSensitivity', 0.01, 0.5, 0.005).name('ridges / px')
+    gKFeel.add(kp, 'pxPerStep', 10, 120, 5).name('px / step')
     gKFeel.add(kp, 'snapInterval').name('snap interval')
     gKFeel.add(kp, 'snapSpeed').name('snap speed')
+    const gKPocket = gKnob.addFolder('Pocket')
+    gKPocket.add(knobPocket, 'pad').name('pad').onChange(() => rebuildBodyGeo())
+    gKPocket.add(knobPocket, 'r').name('corner').onChange(() => rebuildBodyGeo())
 
     const gBtns = gui.addFolder('Buttons')
-    ;['Select', 'Up', 'Down', 'Menu', 'Games'].forEach((name, i) => {
-      const f = gBtns.addFolder(name)
-      f.add(bc[i], 'dx',    -2, 2,    0.01).name('x').onChange(() => rebuildBtnGeo(i))
-      f.add(bc[i], 'dy',    -2, 2,    0.01).name('y').onChange(() => rebuildBtnGeo(i))
-      f.add(bc[i], 'r',      0, 0.8,  0.01).name('corner').onChange(() => rebuildBtnGeo(i))
-      f.add(bc[i], 'depth', 0.05, 1,  0.01).name('depth').onChange(() => rebuildBtnGeo(i))
-      f.close()
-    })
+      ;['Select', 'Up', 'Down', 'Menu', 'Games'].forEach((name, i) => {
+        const f = gBtns.addFolder(name)
+        f.add(buttons[i], 'dx', -2, 2, 0.01).name('x').onChange(() => rebuildBtnGeo(i))
+        f.add(buttons[i], 'dy', -2, 2, 0.01).name('y').onChange(() => rebuildBtnGeo(i))
+        f.add(buttons[i], 'r', 0, 0.8, 0.01).name('corner').onChange(() => rebuildBtnGeo(i))
+        f.add(buttons[i], 'depth').name('thickness').onChange(() => rebuildBtnGeo(i))
+        f.add(buttons[i], 'baseZ').name('z rest').onChange(() => { bm[i].userData.baseZ = buttons[i].baseZ })
+        f.add(buttons[i], 'pressedZ').name('z press').onChange(() => { bm[i].userData.pressedZ = buttons[i].pressedZ })
+        f.add(buttons[i], 'pad').name('pocket pad').onChange(() => rebuildBodyGeo())
+        f.close()
+      })
 
     const gDevice = gui.addFolder('Device')
     function rebuildBodyGeo() {
       body.geometry.dispose()
-      body.geometry = frontZeroed(roundedRect(6.2, 11.95, deviceCfg.corner), 0.6, 0.08)
+      body.geometry = frontZeroed(buildBodyShape(), 0.6, 0.08)
     }
     gDevice.add(deviceCfg, 'corner', 0, 2, 0.01).name('body corner').onChange(rebuildBodyGeo)
 
     const gLights = gui.addFolder('Lights')
-    gLights.add(key,            'intensity',    0,    6, 0.1).name('key')
-    gLights.add(fill,           'intensity',    0,    3, 0.1).name('fill')
-    gLights.add(hemi,           'intensity',    0,    4, 0.1).name('hemi')
-    gLights.add(ambient,        'intensity',    0,    2, 0.05).name('ambient')
-    gLights.add(key.shadow,     'radius',       0,   20, 0.5).name('shadow soft')
-    gLights.add(key.shadow,     'bias',    -0.002,    0, 0.00005).name('shadow bias')
-    gLights.add(key.shadow,     'normalBias',   0,  0.1, 0.001).name('shadow nBias')
+    gLights.add(key, 'intensity', 0, 6, 0.1).name('key')
+    gLights.add(fill, 'intensity', 0, 3, 0.1).name('fill')
+    gLights.add(hemi, 'intensity', 0, 4, 0.1).name('hemi')
+    gLights.add(ambient, 'intensity', 0, 2, 0.05).name('ambient')
+    gLights.add(key.shadow, 'radius', 0, 20, 0.5).name('shadow soft')
+    gLights.add(key.shadow, 'bias', -0.002, 0, 0.00005).name('shadow bias')
+    gLights.add(key.shadow, 'normalBias', 0, 0.1, 0.001).name('shadow nBias')
 
     /* pointer handling */
     const raycaster = new THREE.Raycaster()
@@ -326,7 +402,7 @@ export default function ConsoleCanvas() {
         obj.userData.glow = Math.max(obj.userData.glow, 0.001)
         active = obj
         const bi = bm.indexOf(obj)
-        if (bi === 0)          audio.playSfx('mainPress')
+        if (bi === 0) audio.playSfx('mainPress')
         else if (bi === 1 || bi === 2) audio.playSfx('actionPress')
         else if (bi === 3 || bi === 4) audio.playSfx('pillPress')
         obj.userData.onPress()
@@ -368,7 +444,7 @@ export default function ConsoleCanvas() {
         const elapsed = performance.now() - (btn.userData.pressedAt ?? 0)
         const delay = Math.max(0, MIN_PRESS_MS - elapsed)
         const t = setTimeout(() => {
-          if (bi === 0)          audio.playSfx('mainRelease')
+          if (bi === 0) audio.playSfx('mainRelease')
           else if (bi === 1 || bi === 2) audio.playSfx('actionRelease')
           else if (bi === 3 || bi === 4) audio.playSfx('pillRelease')
           btn.userData.pressed = false
@@ -414,7 +490,7 @@ export default function ConsoleCanvas() {
         o.position.z += (targetZ - o.position.z) * Math.min(1, dt * 20)
         if (d.pressed) d.glow = Math.min(1, d.glow + dt * 9)
         else d.glow *= Math.pow(0.015, dt)
-        ;(o.material as THREE.MeshStandardMaterial).emissiveIntensity = d.glow * 0.95 + d.hover * 0.05
+          ; (o.material as THREE.MeshStandardMaterial).emissiveIntensity = d.glow * 0.95 + d.hover * 0.05
       })
 
       if (knobDrag) {
@@ -454,6 +530,7 @@ export default function ConsoleCanvas() {
         background: 'radial-gradient(circle at 50% 38%, #F4EAD6 0%, #DECDAB 82%)',
         touchAction: 'none',
         overflow: 'hidden',
+        zIndex: 10,
       }}
     >
       <canvas ref={canvasRef} style={{ display: 'block' }} />

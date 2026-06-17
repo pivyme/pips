@@ -50,6 +50,50 @@ export function frontZeroed(shape: THREE.Shape, depth: number, bevel: number) {
   return geo
 }
 
+/* circle THREE.Path for use as a shape.holes entry — CW winding */
+export function circlePath(cx: number, cy: number, r: number) {
+  const p = new THREE.Path()
+  p.absarc(cx, cy, r, 0, Math.PI * 2, true)
+  return p
+}
+
+/* polygon THREE.Path for use as a shape.holes entry — reverses pts to get CW winding */
+export function roundedPolyPath(pts: { x: number; y: number }[], r: number) {
+  const rpts = [...pts].reverse()
+  const p = new THREE.Path(), n = rpts.length
+  for (let i = 0; i < n; i++) {
+    const prev = rpts[(i - 1 + n) % n], cur = rpts[i], next = rpts[(i + 1) % n]
+    let ax = cur.x - prev.x, ay = cur.y - prev.y
+    const la = Math.hypot(ax, ay); ax /= la; ay /= la
+    let bx = next.x - cur.x, by = next.y - cur.y
+    const lb = Math.hypot(bx, by); bx /= lb; by /= lb
+    const r1 = Math.min(r, la / 2), r2 = Math.min(r, lb / 2)
+    const p1 = { x: cur.x - ax * r1, y: cur.y - ay * r1 }
+    const p2 = { x: cur.x + bx * r2, y: cur.y + by * r2 }
+    if (i === 0) p.moveTo(p1.x, p1.y)
+    else p.lineTo(p1.x, p1.y)
+    p.quadraticCurveTo(cur.x, cur.y, p2.x, p2.y)
+  }
+  p.closePath()
+  return p
+}
+
+/* rounded-rect THREE.Path for use as a shape.holes entry — must wind CW (opposite the outer shape) */
+export function roundedRectPath(cx: number, cy: number, w: number, h: number, r: number) {
+  const p = new THREE.Path(), x = cx - w / 2, y = cy - h / 2
+  r = Math.min(r, w / 2, h / 2)
+  p.moveTo(x + r, y)
+  p.quadraticCurveTo(x, y, x, y + r)           // ↑ bottom-left → up
+  p.lineTo(x, y + h - r)
+  p.quadraticCurveTo(x, y + h, x + r, y + h)   // → top-left → right
+  p.lineTo(x + w - r, y + h)
+  p.quadraticCurveTo(x + w, y + h, x + w, y + h - r) // ↓ top-right → down
+  p.lineTo(x + w, y + r)
+  p.quadraticCurveTo(x + w, y, x + w - r, y)   // ← bottom-right → left
+  p.lineTo(x + r, y)
+  return p
+}
+
 /* stretches UVs across the bounding box so a notched screen shape maps a texture cleanly */
 export function setBoxUVs(geo: THREE.BufferGeometry) {
   geo.computeBoundingBox()
