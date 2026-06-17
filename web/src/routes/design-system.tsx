@@ -17,6 +17,36 @@ import { useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Illo } from '@/ui/Illo'
+import {
+  ArcGauge,
+  AssetList,
+  BetFader,
+  CountdownRing,
+  DepthLadder,
+  DepthSurface,
+  DirectionPad,
+  ExposureBars,
+  GaugeCluster,
+  LeverageLadder,
+  LiquidationBar,
+  LuckyWheel,
+  OrderTicket,
+  PayoutCurve,
+  PlayFlow,
+  PnlReadout,
+  PriceChart,
+  PriceTape,
+  RadialMeter,
+  ResultBurst,
+  RoundTimeline,
+  StatGrid,
+  StatusBadge,
+  StatusStrip,
+  StrikeReticle,
+  TapGrid,
+  VolatilityScan,
+  VolumeBars,
+} from '@/components/game/instruments'
 import { cnm } from '@/utils/style'
 
 export const Route = createFileRoute('/design-system')({
@@ -142,6 +172,8 @@ function DesignSystemPage() {
             </GameScreen>
           </div>
         </section>
+
+        <GameLab />
 
         <Section eyebrow="Tokens" title="Color, Type, Material">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1012,6 +1044,197 @@ function MiniChart({
           tone === 'amber' && 'bg-brand-500',
         )}
       />
+    </div>
+  )
+}
+
+// ── Teenage-engineering game-screen lab ────────────────────────────────────
+// A filterable bench of the vivid-line instruments. Each tile is a real screen
+// (true black, faint vignette, registration ticks) so a piece reads as it will
+// inside the console. Pick what fits a game, the rest is reference.
+
+type LabCat = 'chart' | 'gauge' | 'timer' | 'input' | 'status' | 'schematic' | 'hero'
+
+interface LabItem {
+  id: string
+  name: string
+  hint: string
+  cat: LabCat
+  render: (frozen: boolean) => ReactNode
+}
+
+const LAB_CATS: Array<{ key: LabCat | 'all'; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'chart', label: 'Charts' },
+  { key: 'gauge', label: 'Gauges' },
+  { key: 'timer', label: 'Timers' },
+  { key: 'input', label: 'Inputs' },
+  { key: 'status', label: 'Status' },
+  { key: 'schematic', label: 'Schematic' },
+  { key: 'hero', label: 'Hero' },
+]
+
+const LAB: Array<LabItem> = [
+  // Price / charts
+  { id: 'tape-up', name: 'Price tape', hint: 'Live BTC price streaming in. The signature trace.', cat: 'chart', render: (f) => <PriceTape hue="up" frozen={f} /> },
+  { id: 'tape-down', name: 'Price tape · short', hint: 'Same trace, tinted to a short.', cat: 'chart', render: (f) => <PriceTape hue="down" frozen={f} /> },
+  { id: 'chart-up', name: 'Price chart', hint: 'Price line, entry level, glowing live mark.', cat: 'chart', render: (f) => <PriceChart hue="up" frozen={f} /> },
+  { id: 'chart-down', name: 'Price chart · down', hint: 'Bearish read of the same chart.', cat: 'chart', render: (f) => <PriceChart hue="down" frozen={f} /> },
+  { id: 'payout', name: 'Payout curve', hint: 'Multiplier peaks at the strike. Range game.', cat: 'chart', render: (f) => <PayoutCurve hue="amber" frozen={f} /> },
+  { id: 'volume', name: 'Volume bars', hint: '24h volume by bucket, live.', cat: 'chart', render: (f) => <VolumeBars hue="info" frozen={f} /> },
+  { id: 'depth', name: 'Order book', hint: 'Mirrored bid / ask depth around the mid.', cat: 'chart', render: (f) => <DepthLadder frozen={f} /> },
+
+  // Gauges / meters
+  { id: 'gauge-lev', name: 'Leverage dial', hint: 'VU-style dial with a needle.', cat: 'gauge', render: (f) => <ArcGauge hue="info" value={0.5} display="25×" label="LEVERAGE" frozen={f} /> },
+  { id: 'gauge-odds', name: 'Odds dial', hint: 'Same dial, win probability.', cat: 'gauge', render: (f) => <ArcGauge hue="amber" value={0.68} display="68%" label="ODDS" frozen={f} /> },
+  { id: 'gauge-win', name: 'Win-rate dial', hint: 'Up-tinted for a positive stat.', cat: 'gauge', render: (f) => <ArcGauge hue="up" value={0.8} display="80%" label="WIN RATE" frozen={f} /> },
+  { id: 'cluster', name: 'Gauge cluster', hint: 'Four readouts at once: lev, odds, size, risk.', cat: 'gauge', render: (f) => <GaugeCluster frozen={f} /> },
+  { id: 'radial-margin', name: 'Margin meter', hint: 'Ring + big number. Margin used.', cat: 'gauge', render: (f) => <RadialMeter hue="violet" value={0.74} display="74%" sub="MARGIN" frozen={f} /> },
+  { id: 'radial-streak', name: 'Streak meter', hint: 'Win streak / progress.', cat: 'gauge', render: (f) => <RadialMeter hue="amber" value={0.6} display="x4" sub="STREAK" frozen={f} /> },
+  { id: 'betfader', name: 'Bet amount', hint: 'On-screen twin of the knob. Stake slider.', cat: 'gauge', render: (f) => <BetFader hue="amber" value={0.62} frozen={f} /> },
+  { id: 'exposure', name: 'Long / short', hint: 'Net exposure, segmented.', cat: 'gauge', render: (f) => <ExposureBars frozen={f} /> },
+
+  // Timers
+  { id: 'countdown-down', name: 'Expiry ring', hint: 'Depleting arc to settlement.', cat: 'timer', render: (f) => <CountdownRing hue="down" frozen={f} /> },
+  { id: 'countdown-amber', name: 'Expiry · amber', hint: 'Calmer countdown variant.', cat: 'timer', render: (f) => <CountdownRing hue="amber" frozen={f} /> },
+  { id: 'timeline', name: 'Round timeline', hint: 'Open → now → settle, with time left.', cat: 'timer', render: (f) => <RoundTimeline hue="amber" frozen={f} /> },
+  { id: 'scan-cyan', name: 'Volatility scan', hint: 'Sweep markets for a move. Lucky pre-spin.', cat: 'timer', render: (f) => <VolatilityScan hue="cyan" frozen={f} /> },
+  { id: 'scan-violet', name: 'Volatility · violet', hint: 'Same sweep, special moments.', cat: 'timer', render: (f) => <VolatilityScan hue="violet" frozen={f} /> },
+
+  // Inputs
+  { id: 'dpad-long', name: 'Long / short pad', hint: 'Direction select, bound to Action 1/2.', cat: 'input', render: (f) => <DirectionPad active="up" frozen={f} /> },
+  { id: 'dpad-short', name: 'Pad · short', hint: 'Short selected state.', cat: 'input', render: (f) => <DirectionPad active="down" frozen={f} /> },
+  { id: 'ladder', name: 'Leverage ladder', hint: 'Pick a rung: 2× to 100×.', cat: 'input', render: (f) => <LeverageLadder hue="amber" frozen={f} /> },
+  { id: 'tap', name: 'Tap grid', hint: 'The Tap game, sweeping playhead.', cat: 'input', render: (f) => <TapGrid hue="amber" frozen={f} /> },
+  { id: 'assets', name: 'Market picker', hint: 'Asset list with live change.', cat: 'input', render: () => <AssetList hue="amber" /> },
+  { id: 'reticle-amber', name: 'Strike reticle', hint: 'Entry / strike targeting for Range.', cat: 'input', render: (f) => <StrikeReticle hue="amber" frozen={f} /> },
+  { id: 'reticle-info', name: 'Reticle · info', hint: 'Neutral targeting variant.', cat: 'input', render: (f) => <StrikeReticle hue="info" frozen={f} /> },
+
+  // Status / readouts
+  { id: 'badge-live', name: 'Status · live', hint: 'Position open, blinking dot.', cat: 'status', render: (f) => <StatusBadge state="live" frozen={f} /> },
+  { id: 'badge-flat', name: 'Status · flat', hint: 'No position, waiting.', cat: 'status', render: (f) => <StatusBadge state="flat" frozen={f} /> },
+  { id: 'badge-placing', name: 'Status · placing', hint: 'Order going on-chain.', cat: 'status', render: (f) => <StatusBadge state="placing" frozen={f} /> },
+  { id: 'badge-armed', name: 'Status · armed', hint: 'Ready to fire, amber.', cat: 'status', render: (f) => <StatusBadge state="armed" frozen={f} /> },
+  { id: 'pnl-up', name: 'P&L readout', hint: 'Giant live P&L with payout line.', cat: 'status', render: () => <PnlReadout hue="up" value="+$18.42" label="LIVE P&L" /> },
+  { id: 'pnl-down', name: 'P&L · loss', hint: 'Negative mark.', cat: 'status', render: () => <PnlReadout hue="down" value="-$6.10" label="LIVE P&L" /> },
+  { id: 'ticket', name: 'Order ticket', hint: 'Position at a glance: side, entry, liq, P&L.', cat: 'status', render: (f) => <OrderTicket hue="up" frozen={f} /> },
+  { id: 'strip', name: 'Status strip', hint: 'Console sensor bar: network, balance, battery.', cat: 'status', render: (f) => <StatusStrip frozen={f} /> },
+  { id: 'statrow', name: 'Stat row', hint: 'Four colored stats: win, vol, lev, P&L.', cat: 'status', render: () => <StatGrid /> },
+
+  // Schematic
+  { id: 'flow', name: 'Play flow', hint: 'You → open → settle. Marching dashes.', cat: 'schematic', render: (f) => <PlayFlow hue="cyan" frozen={f} /> },
+  { id: 'liq', name: 'Liquidation bar', hint: 'Distance to liq: danger, entry, live mark.', cat: 'schematic', render: (f) => <LiquidationBar hue="down" frozen={f} /> },
+
+  // Hero
+  { id: 'depthsurf', name: 'Depth surface', hint: 'Perspective book depth over time. Hero piece.', cat: 'hero', render: (f) => <DepthSurface frozen={f} /> },
+  { id: 'burst-up', name: 'Result burst', hint: 'Win moment, radial burst + number.', cat: 'hero', render: (f) => <ResultBurst hue="up" frozen={f} /> },
+  { id: 'burst-down', name: 'Result · loss', hint: 'Down-tinted settle.', cat: 'hero', render: (f) => <ResultBurst hue="down" frozen={f} /> },
+  { id: 'wheel', name: 'Lucky wheel', hint: 'I Feel Lucky. Multiplier segments, spins to a stop.', cat: 'hero', render: (f) => <LuckyWheel frozen={f} /> },
+]
+
+function GameLab() {
+  const [cat, setCat] = useState<LabCat | 'all'>('all')
+  const [frozen, setFrozen] = useState(false)
+  const items = cat === 'all' ? LAB : LAB.filter((item) => item.cat === cat)
+  const count = (key: LabCat | 'all') =>
+    key === 'all' ? LAB.length : LAB.filter((item) => item.cat === key).length
+
+  return (
+    <section className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-brand-500">
+            Teenage Engineering
+          </p>
+          <h2 className="mt-2 text-3xl font-extrabold tracking-tight sm:text-4xl">
+            Game Screen Instruments
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-text-2">
+            Crisp, vivid line graphics for inside the console screen. Pick what
+            fits a game, ignore the rest. Each piece is a real component,
+            hue-swappable and reduced-motion aware.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setFrozen((v) => !v)}
+          aria-pressed={!frozen}
+          className={cnm(
+            'flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-bold transition-transform active:scale-95',
+            frozen
+              ? 'border-line text-text-2'
+              : 'border-brand-500/50 text-brand-500',
+          )}
+        >
+          <span
+            className={cnm(
+              'h-2 w-2 rounded-full',
+              frozen ? 'bg-text-3' : 'bg-brand-500 shadow-[0_0_8px_rgba(255,192,22,0.8)]',
+            )}
+          />
+          {frozen ? 'Motion off' : 'Motion on'}
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {LAB_CATS.map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            onClick={() => setCat(c.key)}
+            aria-pressed={cat === c.key}
+            className={cnm(
+              'rounded-full border px-3.5 py-1.5 text-xs font-bold transition-transform active:scale-95',
+              cat === c.key
+                ? 'border-brand-500 bg-brand-500 text-black'
+                : 'border-line text-text-2 hover:text-text',
+            )}
+          >
+            {c.label}
+            <span className="ml-1.5 text-[10px] opacity-60">{count(c.key)}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {items.map((item) => (
+          <LabTile key={item.id} name={item.name} hint={item.hint} cat={item.cat}>
+            {item.render(frozen)}
+          </LabTile>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function LabTile({
+  name,
+  hint,
+  cat,
+  children,
+}: {
+  name: string
+  hint: string
+  cat: LabCat
+  children: ReactNode
+}) {
+  return (
+    <div>
+      <div className="screen relative aspect-[8/5] overflow-hidden rounded-2xl border border-line">
+        {children}
+        <div className="viz-vignette pointer-events-none absolute inset-0" />
+        <span className="pointer-events-none absolute left-2 top-2 h-2.5 w-2.5 border-l border-t border-white/15" />
+        <span className="pointer-events-none absolute right-2 top-2 h-2.5 w-2.5 border-r border-t border-white/15" />
+        <span className="pointer-events-none absolute bottom-2 left-2 h-2.5 w-2.5 border-b border-l border-white/15" />
+        <span className="pointer-events-none absolute bottom-2 right-2 h-2.5 w-2.5 border-b border-r border-white/15" />
+      </div>
+      <div className="mt-2.5 flex items-baseline justify-between gap-2">
+        <span className="text-[13px] font-bold">{name}</span>
+        <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-text-3">
+          {cat}
+        </span>
+      </div>
+      <p className="mt-0.5 text-[11px] leading-snug text-text-3">{hint}</p>
     </div>
   )
 }
