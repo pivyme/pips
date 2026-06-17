@@ -6,6 +6,8 @@ import { Link } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { cnm } from '@/utils/style'
 import { haptic } from '@/lib/haptics'
+import { useAuth } from '@/lib/auth'
+import { formatStringToNumericDecimals } from '@/utils/format'
 import { useConsoleView } from './controls'
 import type { ButtonColor, ConsoleView } from './controls'
 import { Knob } from './Knob'
@@ -85,7 +87,10 @@ function TabPill({ label, active }: { label: string; active: boolean }) {
   )
 }
 
-function StatusStrip({ status }: { status: ConsoleView['status'] }) {
+// Device sensor bar: network + connection on the left, live chip balance on the right. The
+// balance is persistent chrome (it reflects the auth session, refreshed as plays settle), so
+// it wins over any screen-supplied status.right.
+function StatusStrip({ status, balance }: { status: ConsoleView['status']; balance: string | null }) {
   return (
     <div className="flex h-8 items-center justify-between px-5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-3">
       <span className="flex items-center gap-1.5">
@@ -96,17 +101,20 @@ function StatusStrip({ status }: { status: ConsoleView['status'] }) {
           </>
         )}
       </span>
-      <span className="tnum text-text-2">{status?.right ?? 'Pips'}</span>
+      <span className="tnum text-text-2">
+        {balance != null ? `$${formatStringToNumericDecimals(balance)}` : (status?.right ?? 'Pips')}
+      </span>
     </div>
   )
 }
 
 export function ConsoleShell({ children }: { children: ReactNode }) {
   const { view, handlers } = useConsoleView()
+  const { user } = useAuth()
 
   return (
     <div className="flex h-full w-full select-none flex-col bg-black">
-      <StatusStrip status={view.status} />
+      <StatusStrip status={view.status} balance={user?.balance ?? null} />
 
       {/* The screen: true black, recessed. Routed content renders inside. */}
       <div className="screen relative mx-3 min-h-0 flex-1 overflow-hidden rounded-[28px]">
