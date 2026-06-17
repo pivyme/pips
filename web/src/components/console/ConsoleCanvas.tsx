@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
-import GUI from 'lil-gui'
 import * as THREE from 'three'
+import { createConsoleGui } from './consoleGui'
 import { roundedRect, roundedPoly, frontZeroed, setBoxUVs, roundedRectPath, roundedPolyPath } from './consoleGeo'
 import { createAudio } from './consoleAudio'
 import { createScreen } from './consoleScreen'
@@ -8,12 +8,10 @@ import { createScreen } from './consoleScreen'
 export default function ConsoleCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hintRef = useRef<HTMLDivElement>(null)
-  const dbgRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
     const hint = hintRef.current
-    const dbg = dbgRef.current
     if (!canvas || !hint) return
 
     const CREAM = 0xe9dbbf, RED = 0xd63a2e, BLUE = 0x3568c9, YELLOW = 0xefc03b
@@ -59,7 +57,7 @@ export default function ConsoleCanvas() {
     const wy = (py: number) => (CY - py) * SCALE
 
     /* pocket holes — shared config needed before body geometry is built */
-    const deviceCfg = { corner: 0.15 }
+    const deviceCfg = { corner: 0.05 }
     const buttons = [
       // pad = gap between button edge and pocket rim on each side
       // pills share a wall so their pad is capped to avoid holes touching (~0.14 max before they'd merge)
@@ -117,6 +115,7 @@ export default function ConsoleCanvas() {
     const matScreen = new THREE.MeshStandardMaterial({
       color: 0x000000, roughness: 0.5, metalness: 0.6,
       emissive: 0xffffff, emissiveIntensity: 5.0,
+      transparent: true, opacity: 0.05,
     })
     const screen = createScreen(MAXANISO, audio)
     matScreen.emissiveMap = screen.tex
@@ -150,7 +149,7 @@ export default function ConsoleCanvas() {
     screenMesh.position.z = 0.06
     screenMesh.position.y = 0.13
     screenMesh.receiveShadow = true
-    screenMesh.visible = false
+    screenMesh.visible = true
     deck.add(screenMesh)
 
     /* buttons */
@@ -292,7 +291,7 @@ export default function ConsoleCanvas() {
     knobBump.repeat.set(kp.ridgeRepeat, 1)
 
     const knobSlab = new THREE.Mesh(
-      new THREE.CylinderGeometry(kp.radius, kp.radius, kp.height, 64, 44),
+      new THREE.CylinderGeometry(kp.radius, kp.radius, kp.height, 64, 4),
       matKnobSlab,
     )
     knobSlab.rotation.z = Math.PI / 2
@@ -306,63 +305,19 @@ export default function ConsoleCanvas() {
     let knobOffset = 0
     let knobTarget = 0
 
-    /* dev GUI */
-    const gui = new GUI({ title: 'Console', width: 280 })
-
-    const gKnob = gui.addFolder('Knob')
-    const gRidges = gKnob.addFolder('Ridges')
-    gRidges.add(kp, 'ridgeWidth', 5, 120, 1).name('width').onChange(redrawBump)
-    gRidges.add(kp, 'grooveWidth', 5, 120, 1).name('groove').onChange(redrawBump)
-    gRidges.add(kp, 'bumpScale', 0, 30, 0.5).name('depth').onChange((v: number) => { matKnobSlab.bumpScale = v })
-    gRidges.add(kp, 'cornerCurve', 0, 1, 0.01).name('curviness').onChange(redrawBump)
-    gRidges.add(kp, 'ridgeRepeat', 1, 20, 0.5).name('repeat ×').onChange((v: number) => { knobBump.repeat.set(v, 1) })
-    gRidges.add(kp, 'ridgePhase', 0, 1, 0.01).name('phase')
-    const gKShape = gKnob.addFolder('Shape')
-    function rebuildKnob() {
-      knobSlab.geometry.dispose()
-      const g = new THREE.CylinderGeometry(kp.radius, kp.radius, kp.height, 64, 4)
-      g.computeVertexNormals()
-      knobSlab.geometry = g
-    }
-    gKShape.add(kp, 'radius', 0.3, 3, 0.05).name('radius').onChange(rebuildKnob)
-    gKShape.add(kp, 'height', 0.1, 3, 0.05).name('height').onChange(rebuildKnob)
-    const gKFeel = gKnob.addFolder('Feel')
-    gKFeel.add(kp, 'dragSensitivity', 0.01, 0.5, 0.005).name('ridges / px')
-    gKFeel.add(kp, 'pxPerStep', 10, 120, 5).name('px / step')
-    gKFeel.add(kp, 'snapInterval').name('snap interval')
-    gKFeel.add(kp, 'snapSpeed').name('snap speed')
-    const gKPocket = gKnob.addFolder('Pocket')
-    gKPocket.add(knobPocket, 'pad').name('pad').onChange(() => rebuildBodyGeo())
-    gKPocket.add(knobPocket, 'r').name('corner').onChange(() => rebuildBodyGeo())
-
-    const gBtns = gui.addFolder('Buttons')
-      ;['Select', 'Up', 'Down', 'Menu', 'Games'].forEach((name, i) => {
-        const f = gBtns.addFolder(name)
-        f.add(buttons[i], 'dx', -2, 2, 0.01).name('x').onChange(() => rebuildBtnGeo(i))
-        f.add(buttons[i], 'dy', -2, 2, 0.01).name('y').onChange(() => rebuildBtnGeo(i))
-        f.add(buttons[i], 'r', 0, 0.8, 0.01).name('corner').onChange(() => rebuildBtnGeo(i))
-        f.add(buttons[i], 'depth').name('thickness').onChange(() => rebuildBtnGeo(i))
-        f.add(buttons[i], 'baseZ').name('z rest').onChange(() => { bm[i].userData.baseZ = buttons[i].baseZ })
-        f.add(buttons[i], 'pressedZ').name('z press').onChange(() => { bm[i].userData.pressedZ = buttons[i].pressedZ })
-        f.add(buttons[i], 'pad').name('pocket pad').onChange(() => rebuildBodyGeo())
-        f.close()
-      })
-
-    const gDevice = gui.addFolder('Device')
     function rebuildBodyGeo() {
       body.geometry.dispose()
       body.geometry = frontZeroed(buildBodyShape(), 0.6, 0.08)
     }
-    gDevice.add(deviceCfg, 'corner', 0, 2, 0.01).name('body corner').onChange(rebuildBodyGeo)
 
-    const gLights = gui.addFolder('Lights')
-    gLights.add(key, 'intensity', 0, 6, 0.1).name('key')
-    gLights.add(fill, 'intensity', 0, 3, 0.1).name('fill')
-    gLights.add(hemi, 'intensity', 0, 4, 0.1).name('hemi')
-    gLights.add(ambient, 'intensity', 0, 2, 0.05).name('ambient')
-    gLights.add(key.shadow, 'radius', 0, 20, 0.5).name('shadow soft')
-    gLights.add(key.shadow, 'bias', -0.002, 0, 0.00005).name('shadow bias')
-    gLights.add(key.shadow, 'normalBias', 0, 0.1, 0.001).name('shadow nBias')
+    /* dev GUI */
+    const gui = createConsoleGui({
+      kp, buttons, knobPocket, deviceCfg, bm, knobSlab, matKnobSlab, knobBump, matScreen, deck,
+      lights: { key, fill, hemi, ambient },
+      onRedrawBump: redrawBump,
+      onRebuildBodyGeo: rebuildBodyGeo,
+      onRebuildBtnGeo: rebuildBtnGeo,
+    })
 
     /* pointer handling */
     const raycaster = new THREE.Raycaster()
@@ -413,7 +368,7 @@ export default function ConsoleCanvas() {
       toNDC(e)
       if (knobDrag) {
         const dy = e.clientY - knobStartY
-        knobOffset = knobBase - dy * kp.dragSensitivity
+        knobOffset = knobBase + dy * kp.dragSensitivity
         const detent = Math.round(knobOffset / kp.snapInterval)
         if (detent !== knobLastRidge) {
           knobLastRidge = detent
@@ -500,7 +455,6 @@ export default function ConsoleCanvas() {
         if (Math.abs(knobTarget - knobOffset) < 0.001) knobOffset = knobTarget
       }
       knobBump.offset.x = knobOffset / kp.ridgeRepeat
-      if (dbg) dbg.textContent = `ridge: ${knobOffset.toFixed(3)}  target: ${knobTarget}  drag: ${knobDrag}`
 
       screen.tick(dt)
 
@@ -527,29 +481,12 @@ export default function ConsoleCanvas() {
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'radial-gradient(circle at 50% 38%, #F4EAD6 0%, #DECDAB 82%)',
         touchAction: 'none',
         overflow: 'hidden',
         zIndex: 10,
       }}
     >
       <canvas ref={canvasRef} style={{ display: 'block' }} />
-      <div
-        ref={dbgRef}
-        style={{
-          position: 'fixed',
-          top: 12,
-          left: 12,
-          fontFamily: 'monospace',
-          fontSize: 13,
-          color: '#1a1a1a',
-          background: 'rgba(255,255,255,0.75)',
-          padding: '4px 8px',
-          borderRadius: 4,
-          pointerEvents: 'none',
-          userSelect: 'none',
-        }}
-      />
       <div
         ref={hintRef}
         style={{
