@@ -197,6 +197,19 @@ function ThemeCard({
         outlineOffset: selected ? '-2px' : '-1px',
       }}
     >
+      {theme.cardImage && (
+        <>
+          <img
+            src={theme.cardImage}
+            alt=""
+            draggable={false}
+            className="absolute inset-0 h-full w-full object-cover object-top"
+          />
+          {/* darken the lower third so the code + name read over the busy art */}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/15 to-transparent" />
+        </>
+      )}
+
       <div className="absolute inset-0 flex flex-col justify-end p-3.5">
         <div
           className="text-[30px] font-black leading-none tracking-tight tnum"
@@ -212,7 +225,12 @@ function ThemeCard({
       {theme.badge && (
         <span
           className="absolute right-2.5 top-2.5 rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide"
-          style={{ background: theme.cardInk, color: theme.cardBg }}
+          // Over art the card ink goes light, so anchor the badge to a fixed dark chip instead.
+          style={
+            theme.cardImage
+              ? { background: '#000f1d', color: '#ffffff' }
+              : { background: theme.cardInk, color: theme.cardBg }
+          }
         >
           {theme.badge}
         </span>
