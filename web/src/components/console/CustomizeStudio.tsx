@@ -27,14 +27,14 @@ export function CustomizeStudio({
   // Once Done is tapped the device plays its snap-to-screen + power-on; the chrome bows out and
   // taps are locked until the canvas reports the outro is finished.
   const [exiting, setExiting] = useState(false)
-  // Hold the (heavy) WebGL build for a beat so the menu drawer can slide clear first, then the
-  // device drops into the empty workshop. Without this, the build janks the drawer's exit.
+  // Let the workshop paint (and the old games canvas dispose) one beat before the heavy WebGL build,
+  // so the device drops cleanly into the bench instead of janking the first frames of its intro.
   const [ready, setReady] = useState(reduced)
   const theme = THEME_BY_ID[selectedId] ?? THEMES[0]
 
   useEffect(() => {
     if (reduced) return
-    const t = setTimeout(() => setReady(true), 250)
+    const t = setTimeout(() => setReady(true), 90)
     return () => clearTimeout(t)
   }, [reduced])
 
@@ -56,6 +56,7 @@ export function CustomizeStudio({
   const commit = () => {
     if (exiting) return
     haptic('success')
+    setReady(true) // make sure the canvas is mounted so the outro can play + report completion
     setExiting(true)
   }
 
@@ -196,6 +197,19 @@ function ThemeCard({
         outlineOffset: selected ? '-2px' : '-1px',
       }}
     >
+      {theme.cardImage && (
+        <>
+          <img
+            src={theme.cardImage}
+            alt=""
+            draggable={false}
+            className="absolute inset-0 h-full w-full object-cover object-top"
+          />
+          {/* darken the lower third so the code + name read over the busy art */}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/15 to-transparent" />
+        </>
+      )}
+
       <div className="absolute inset-0 flex flex-col justify-end p-3.5">
         <div
           className="text-[30px] font-black leading-none tracking-tight tnum"
@@ -211,7 +225,12 @@ function ThemeCard({
       {theme.badge && (
         <span
           className="absolute right-2.5 top-2.5 rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide"
-          style={{ background: theme.cardInk, color: theme.cardBg }}
+          // Over art the card ink goes light, so anchor the badge to a fixed dark chip instead.
+          style={
+            theme.cardImage
+              ? { background: '#000f1d', color: '#ffffff' }
+              : { background: theme.cardInk, color: theme.cardBg }
+          }
         >
           {theme.badge}
         </span>

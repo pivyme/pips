@@ -12,6 +12,7 @@ export interface ConsoleTheme {
   // device materials
   body: string
   back?: string // defaults to body
+  skin?: string // optional SVG wrapped across the front body (overlays `body`); back stays flat
   knob: string
   main: string // big PLAY button
   action: string // the two action buttons
@@ -23,6 +24,7 @@ export interface ConsoleTheme {
   cardBg: string
   cardInk: string
   cardSub: string
+  cardImage?: string // optional art behind the card (e.g. a skin preview); text sits on a scrim
 }
 
 // Each skin is one body + one accent (knob + PLAY) + a quiet neutral for the small buttons. Keeps it
@@ -47,6 +49,27 @@ export const THEMES: ConsoleTheme[] = [
     cardBg: '#e9dbbf',
     cardInk: '#981f14',
     cardSub: 'rgba(58,42,22,0.62)',
+  },
+  {
+    // Sui Overflow 2026: the cream hackathon canvas wrapped onto the body, blue grid + scattered
+    // keycaps and all. Navy PLAY (the site's Register CTA), Sui-blue actions, a warm keycap-yellow knob.
+    id: 'overflow-2026',
+    code: '2026',
+    name: 'Overflow',
+    badge: 'SUI',
+    body: '#f2eee4', // cream base under the skin (and the floor if the SVG ever fails to load)
+    back: '#f2eee4',
+    skin: '/assets/overflow-skin.svg',
+    knob: '#f5c84b',
+    main: '#ff6600',
+    action: '#7a69fa',
+    pills: '#000f1d',
+    label: '#5b6573',
+    logo: '#000f1d',
+    cardBg: '#f2eee4',
+    cardInk: '#ffffff',
+    cardSub: 'rgba(255,255,255,0.9)',
+    cardImage: '/assets/overflow-skin.svg',
   },
   {
     id: 'overflow',

@@ -739,11 +739,67 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const { knobSlab, knobBump, matKnobSlab, redrawBump, knobProfile } =
       createKnob(device, interactive, matPocket, matKnob, kp, knobPocket, wx, wy, body.position.z)
 
+    // Body skin: some themes wrap an SVG across the front body instead of a flat color. We load it
+    // once (cached), project it onto the body front as a normalized planar map, and cover-fit it so
+    // its squares stay square at any frame height (screenExt stretches the body). Texture transform
+    // does the cover crop, so a relayout never needs to touch the loaded image.
+    const texLoader = new THREE.TextureLoader()
+    const skinCache = new Map<string, THREE.Texture>()
+    let bodySkinTex: THREE.Texture | null = null
+    let pendingSkinUrl: string | null = null
+
+    function fitBodySkin() {
+      if (!bodySkinTex) return
+      setBoxUVs(body.geometry) // normalize the front face to 0..1 across the current body box
+      const bb = body.geometry.boundingBox!
+      const bodyA = (bb.max.x - bb.min.x) / (bb.max.y - bb.min.y)
+      const img = bodySkinTex.image as { width?: number; height?: number } | undefined
+      const texA = (img?.width ?? 1400) / (img?.height ?? 2489)
+      const ratio = bodyA / texA
+      if (ratio <= 1) {
+        bodySkinTex.repeat.set(ratio, 1) // body taller than the art → crop the sides, keep full height
+        bodySkinTex.offset.set((1 - ratio) / 2, 0)
+      } else {
+        bodySkinTex.repeat.set(1, 1 / ratio) // body wider → crop top/bottom, keep full width
+        bodySkinTex.offset.set(0, (1 - 1 / ratio) / 2)
+      }
+      bodySkinTex.needsUpdate = true
+    }
+
+    function setBodySkin(url?: string) {
+      if (!url) {
+        if (matBody.map) { matBody.map = null; matBody.needsUpdate = true; dirty = true }
+        bodySkinTex = null
+        return
+      }
+      const apply = (tex: THREE.Texture) => {
+        bodySkinTex = tex
+        matBody.map = tex
+        matBody.color.set(0xffffff) // map multiplies by color, so go white to show the art true
+        matBody.needsUpdate = true
+        fitBodySkin()
+        dirty = true
+      }
+      const cached = skinCache.get(url)
+      if (cached) { apply(cached); return }
+      texLoader.load(url, (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace
+        tex.anisotropy = MAXANISO
+        tex.wrapS = THREE.ClampToEdgeWrapping
+        tex.wrapT = THREE.ClampToEdgeWrapping
+        skinCache.set(url, tex)
+        if (pendingSkinUrl === url) apply(tex) // ignore if the skin changed mid-load
+      }, undefined, (e) => console.error('[ConsoleCanvas] body skin SVG failed:', e))
+    }
+
     // Repaint the device to a skin. Colors only, no geometry touched, so it's cheap enough to run on
     // every card tap in the studio. emissive tracks the color so the press glow stays in-palette.
     function applyTheme(t?: ConsoleTheme) {
       if (!t) return
+      // Body color is the flat skin and the pre-load tint; setBodySkin overlays the SVG when present.
       matBody.color.set(t.body)
+      pendingSkinUrl = t.skin ?? null
+      setBodySkin(t.skin)
       matBack.color.set(t.back ?? t.body)
       matKnob.color.set(t.knob)
       matKnobSlab.color.set(t.knob)
@@ -785,6 +841,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     function rebuildBodyGeo() {
       body.geometry.dispose()
       body.geometry = frontZeroed(buildBodyShape(), 0.6, 0.08)
+      if (bodySkinTex) fitBodySkin() // re-project the skin onto the new (stretched) body box
       body.position.y = wy(1130) + screenExt / 2
       // back panel tracks the body so it stays a full cover when the screen stretches, keeping the cut logo
       backPanel.geometry.dispose()
@@ -1293,6 +1350,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       applyOutroRef.current = () => { }
       gui?.destroy()
       logoGeo.forEach((g) => g.dispose())
+      skinCache.forEach((t) => t.dispose())
       matLogoDark.dispose()
       matLogoWhite.dispose()
       renderer.dispose()
