@@ -70,12 +70,15 @@ export function MenuDrawer({
   }, [close])
 
   return (
-    <div className="absolute inset-0 z-50">
-      {/* The console behind, dimmed and blurred. Tap to close. */}
-      <div
+    <motion.div className="absolute inset-0 z-50">
+      {/* The console behind, dimmed and blurred. Tap to close. Fades out when the drawer is removed
+          (e.g. Customize taking over) so the studio underneath is revealed cleanly. */}
+      <motion.div
         className="absolute inset-0 bg-black/22 backdrop-blur-[9px]"
         onClick={close}
         aria-hidden
+        initial={false}
+        exit={{ opacity: 0, transition: { duration: 0.2 } }}
       />
 
       <motion.div
@@ -85,6 +88,7 @@ export function MenuDrawer({
         className="absolute inset-x-0 bottom-0 top-[10%] flex flex-col overflow-hidden rounded-t-[28px] border-x border-t border-white/10 bg-black shadow-[0_-24px_64px_-24px_rgba(0,0,0,0.95)]"
         initial={false}
         animate={{ y: closing || !opened ? '104%' : 0 }}
+        exit={{ y: '104%', transition: reduced ? { duration: 0 } : CLOSE_TRANSITION }}
         transition={
           reduced
             ? { duration: 0 }
@@ -112,6 +116,6 @@ export function MenuDrawer({
           {children}
         </div>
       </motion.div>
-    </div>
+    </motion.div>
   )
 }

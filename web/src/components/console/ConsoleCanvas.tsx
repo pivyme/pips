@@ -6,6 +6,7 @@ import { createConsoleGui } from './consoleGui'
 import { roundedRect, roundedPoly, frontZeroed, setBoxUVs, roundedRectPath, roundedPolyPath } from './consoleGeo'
 import { createAudio } from './consoleAudio'
 import type { ConsoleView } from './controls'
+import type { ConsoleTheme } from './themes'
 
 // The 3D handheld, driven by the console controls registry. A game registers its bindings via
 // useConsoleControls(); this paints live labels on the buttons + knob and dispatches the physical
@@ -28,21 +29,33 @@ interface ConsoleCanvasProps {
   onNav?: (tab: 'MENU' | 'GAMES') => void
   children?: ReactNode
   debug?: boolean
+  // Customize studio: the device floats on a transparent backdrop, screen off, free-spin to inspect
+  // front/back, and `theme` repaints the materials live. Mutually exclusive with debug.
+  customize?: boolean
+  theme?: ConsoleTheme
+  // Done sequence: flip `outro` true and the device snaps front-on, zooms to the screen and powers
+  // on, then `onOutroComplete` fires (the studio uses it to commit + leave).
+  outro?: boolean
+  onOutroComplete?: () => void
 }
 
-export default function ConsoleCanvas({ view, handlers, onNav, children, debug = false }: ConsoleCanvasProps) {
+export default function ConsoleCanvas({ view, handlers, onNav, children, debug = false, customize = false, theme, outro = false, onOutroComplete }: ConsoleCanvasProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hintRef = useRef<HTMLDivElement>(null)
   const screenLayerRef = useRef<HTMLDivElement>(null)
 
   // Fresh per render so the scene's input handlers never read a stale binding.
-  const propsRef = useRef({ handlers, onNav })
-  propsRef.current = { handlers, onNav }
+  const propsRef = useRef({ handlers, onNav, onOutroComplete })
+  propsRef.current = { handlers, onNav, onOutroComplete }
   const viewRef = useRef(view)
   viewRef.current = view
   // The scene exposes its label/state updater here; the [view] effect calls it.
   const applyViewRef = useRef<(v?: ConsoleView) => void>(() => {})
+  // Same pattern for the skin: the [theme] effect repaints the live materials, no rebuild.
+  const applyThemeRef = useRef<(t?: ConsoleTheme) => void>(() => {})
+  // And for the Done outro: the [outro] effect arms the snap-to-screen + power-on sequence.
+  const applyOutroRef = useRef<(on: boolean) => void>(() => {})
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -64,7 +77,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const MAXANISO = renderer.capabilities.getMaxAnisotropy()
 
     // Render-on-demand gate: set true whenever the device changes (label/view update, resize) so the
-    // loop paints once; live animation (hover/press/knob) drives its own frames. Idle = no GPU work.
+    // loop paints once; live animation (press/knob) drives its own frames. Idle = no GPU work.
     let dirty = true
 
     const scene = new THREE.Scene()
@@ -283,8 +296,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     screenMesh.position.y = SCREEN_MESH_Y_OFFSET
     screenMesh.receiveShadow = true
     // The live HTML screen sits behind the device and shows through this cutout, so the panel mesh
-    // would only occlude it. Always hidden: the playground wants a clean empty aperture, not a black slab.
-    screenMesh.visible = false
+    // would only occlude it. Hidden in play. In customize the device is off and free-spinning, so we
+    // show this matte panel instead: it reads as a dark powered-off screen and rotates with the body
+    // (an HTML layer couldn't follow the spin).
+    screenMesh.visible = customize
     device.add(screenMesh)
 
     // Screen cutout in world space — projected to pixels each resize to place the HTML layer.
@@ -306,7 +321,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       mesh.position.set(cx, cy, baseZ)
       mesh.castShadow = true
       mesh.receiveShadow = true
-      mesh.userData = { kind: 'button', baseZ, pressedZ, depth, pressed: false, glow: 0, hover: 0 }
+      mesh.userData = { kind: 'button', baseZ, pressedZ, depth, pressed: false, glow: 0 }
       device.add(mesh)
       interactive.push(mesh)
       return mesh
@@ -423,8 +438,6 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       color: 0x171717,
       roughness: 0.42,
       metalness: 0.18,
-      emissive: 0xffffff,
-      emissiveIntensity: 0,
     })
     const numberWheelDrum = new THREE.Mesh(
       new THREE.CylinderGeometry(0.37, 0.37, 0.76, 64, 1, false),
@@ -433,7 +446,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     numberWheelDrum.rotation.z = Math.PI / 2
     numberWheelDrum.castShadow = true
     numberWheelDrum.receiveShadow = true
-    numberWheelDrum.userData = { kind: 'numberWheel', hover: 0 }
+    numberWheelDrum.userData = { kind: 'numberWheel' }
     numberWheelRoll.add(numberWheelDrum)
     interactive.push(numberWheelDrum)
 
@@ -467,7 +480,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
 
     // Updatable label that lives on a button face (or the body) and reflects the registered view.
-    function makeDynLabel(worldH: number, color: string, opticalCenter = false) {
+    function makeDynLabel(worldH: number, color: string, opticalCenter = false, depthTest = false) {
       const W = 640, H = 128, FS = 92
       const c = document.createElement('canvas')
       c.width = W
@@ -476,7 +489,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const tex = new THREE.CanvasTexture(c)
       tex.colorSpace = THREE.SRGBColorSpace
       tex.anisotropy = MAXANISO
-      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false })
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, depthTest })
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat)
       plane.renderOrder = 10
       let cur = '\0'
@@ -510,7 +523,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         mat.opacity = text ? opacity : 0
       }
       set('', 0)
-      return { plane, set }
+      return { plane, set, mat }
     }
 
     const LABEL_DY = -0.45
@@ -531,15 +544,17 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     knobLbl.plane.position.set(wx(knobPocket.px), wy(knobPocket.py) - 1.55, 0.07)
     device.add(knobLbl.plane)
 
-    const NUMBER_LABEL_ANGLE = 0.78
-    const numberWheelLabels = [NUMBER_LABEL_ANGLE, 0, -NUMBER_LABEL_ANGLE].map((angle) => {
-      const label = makeDynLabel(0.46, '#f4f4f4', true)
-      const radius = 0.375
-      label.plane.position.set(0, Math.sin(angle) * radius, Math.cos(angle) * radius)
-      label.plane.rotation.x = -angle
+    const NUMBER_LABEL_ANGLE = 1.02
+    const NUMBER_LABEL_RADIUS = 0.375
+    const MAX_NUMBER_WHEEL_LABELS = 5
+    const numberWheelLabels = Array.from({ length: MAX_NUMBER_WHEEL_LABELS }, () => {
+      const label = makeDynLabel(0.46, '#ffffff', true, true)
       numberWheelRoll.add(label.plane)
-      return label
+      return { ...label, angle: 0, active: false }
     })
+    let numberWheelAngle = 0
+    let numberWheelTarget = 0
+    let numberWheelInitialized = false
     let debugNumberValue = 1
     const debugNumberWheel = {
       min: 0,
@@ -550,6 +565,14 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       format: (value: number) => String(value),
       disabled: false,
     }
+    // In the studio no game binds the wheel, so it would read as an empty black drum. Park a sample
+    // value on it (disabled) so the device looks complete in the product shot.
+    const customizeWheel = {
+      // Not disabled (so the digit shows full-bright); the studio's orbit grab already blocks any
+      // interaction with it.
+      min: 0, max: 9, step: 1, value: 5,
+      label: '', format: (value: number) => String(value), disabled: false,
+    }
 
     // View state mirrored from the registry, read by the input handlers for gating.
     const state = {
@@ -559,17 +582,48 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
 
     function setNumberWheelLabels(spec: NonNullable<ConsoleView['numberWheel']> | null) {
-      const values = spec
-        ? [spec.value - spec.step, spec.value, spec.value + spec.step]
-        : [0, 0, 0]
+      const count = spec ? Math.floor((spec.max - spec.min) / spec.step + 0.5) + 1 : 0
+      const visibleCount = Math.min(count, MAX_NUMBER_WHEEL_LABELS)
+      const centerIndex = spec ? Math.round(numberWheelPosition(spec)) : 0
+      const startIndex = Math.max(0, Math.min(count - visibleCount, centerIndex - 2))
+
       numberWheelLabels.forEach((label, i) => {
-        const value = values[i]
-        const visible = !!spec && value >= spec.min && value <= spec.max
-        label.set(
-          visible ? (spec.format ? spec.format(value) : String(value)) : '',
-          state.numberWheelDisabled ? 0.32 : i === 1 ? 1 : 0.38,
+        const valueIndex = startIndex + i
+        label.active = !!spec && i < visibleCount
+        if (!label.active || !spec) {
+          label.set('', 0)
+          return
+        }
+        const value = Number((spec.min + valueIndex * spec.step).toFixed(6))
+        label.angle = -valueIndex * NUMBER_LABEL_ANGLE
+        label.plane.position.set(
+          0,
+          Math.sin(label.angle) * NUMBER_LABEL_RADIUS,
+          Math.cos(label.angle) * NUMBER_LABEL_RADIUS,
         )
+        label.plane.rotation.x = -label.angle
+        label.set(spec.format ? spec.format(value) : String(value), 1)
       })
+    }
+
+    function numberWheelPosition(spec: NonNullable<ConsoleView['numberWheel']>): number {
+      return (spec.value - spec.min) / spec.step
+    }
+
+    function updateNumberWheelLighting() {
+      const disabledOpacity = state.numberWheelDisabled ? 0.36 : 1
+      for (const label of numberWheelLabels) {
+        if (!label.active) continue
+        const angle = Math.atan2(
+          Math.sin(label.angle - numberWheelAngle),
+          Math.cos(label.angle - numberWheelAngle),
+        )
+        const facing = Math.max(0, Math.cos(angle))
+        const light = Math.pow(facing, 2.2)
+        label.mat.opacity = facing > 0 ? (0.04 + 0.96 * light) * disabledOpacity : 0
+        const brightness = 0.32 + 0.68 * Math.pow(facing, 1.6)
+        label.mat.color.setRGB(brightness, brightness, brightness)
+      }
     }
 
     function applyView(v?: ConsoleView) {
@@ -586,10 +640,20 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       state.knob = k
       state.knobDisabled = !k || !!k.disabled
       knobLbl.set(k ? (k.format ? k.format(k.value) : String(k.value)) : '', state.knobDisabled ? 0.4 : 1)
-      const n = v?.numberWheel ?? (debug ? { ...debugNumberWheel, value: debugNumberValue } : null)
+      const n =
+        v?.numberWheel ??
+        (debug ? { ...debugNumberWheel, value: debugNumberValue } : customize ? customizeWheel : null)
       state.numberWheel = n
       state.numberWheelDisabled = !n || !!n.disabled
       setNumberWheelLabels(n)
+      if (n && !numberWheelDrag) {
+        numberWheelTarget = -numberWheelPosition(n) * NUMBER_LABEL_ANGLE
+        if (!numberWheelInitialized) {
+          numberWheelAngle = numberWheelTarget
+          numberWheelInitialized = true
+        }
+      }
+      updateNumberWheelLighting()
       dirty = true // labels/state moved, repaint once
     }
     applyViewRef.current = applyView
@@ -692,9 +756,36 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     knobSlab.position.set(wx(975), wy(1960), -0.5)
     knobSlab.castShadow = true
     knobSlab.receiveShadow = true
-    knobSlab.userData = { kind: 'knob', hover: 0 }
+    knobSlab.userData = { kind: 'knob' }
     device.add(knobSlab)
     interactive.push(knobSlab)
+
+    // Repaint the device to a skin. Colors only, no geometry touched, so it's cheap enough to run on
+    // every card tap in the studio. emissive tracks the color so the press glow stays in-palette.
+    function applyTheme(t?: ConsoleTheme) {
+      if (!t) return
+      matBody.color.set(t.body)
+      matBack.color.set(t.back ?? t.body)
+      matKnob.color.set(t.knob)
+      matKnobSlab.color.set(t.knob)
+      // Embossed back logo: letters + eyes. Most skins use one accent tone; Classic keeps red/blue.
+      const logoColor = t.logo ?? t.knob
+      matLogoDark.color.set(logoColor)
+      matLogoWhite.color.set(t.logoEyes ?? logoColor)
+      const paint = (m: THREE.Mesh, c: number) => {
+        const mat = m.material as THREE.MeshStandardMaterial
+        mat.color.set(c)
+        mat.emissive.set(c)
+      }
+      paint(bm[0], t.main)
+      paint(bm[1], t.action)
+      paint(bm[2], t.action)
+      paint(bm[3], t.pills)
+      paint(bm[4], t.pills)
+      dirty = true
+    }
+    applyThemeRef.current = applyTheme
+    applyTheme(theme)
 
     function rebuildKnobGeo() {
       knobSlab.geometry.dispose()
@@ -723,6 +814,80 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       screenWorld = screenWorldPts()
     }
 
+    /* customize studio — the device floats as a hero product shot you can spin. The intro eases the
+       camera from a bigger, near-front pose into a pulled-back 3/4 (it "shrinks into the center");
+       after that, drag spins the deck so you can read the front, the sides and the embossed back. */
+    const CUST = {
+      // intro: start pose → rest pose, lerped by easeOutExpo(introT). Rest sits the device small and
+      // high so the workshop breathes around it and the preset rail has room below.
+      camZ: [29, 47] as const,
+      lookY: [-0.6, -2.5] as const,
+      yaw: [-0.1, -0.5] as const,
+      pitch: [-0.03, -0.17] as const,
+      introMs: 880,
+      outroMs: 820,
+      frontLookY: 1.45, // outro target: framed on the screen
+    }
+    let introT = customize ? 0 : 1 // 0 → start, 1 → settled
+    let orbitYaw = 0 // persists, so you can park it facing back
+    let orbitPitch = 0 // eases back to level on release
+    let orbitDrag = false
+    let orbitStartX = 0, orbitStartY = 0, orbitBaseYaw = 0, orbitBasePitch = 0
+    // Done outro: 0 → product shot, 1 → snapped front-on with the screen lit.
+    let outroActive = false
+    let outroT = 0
+    let outroFired = false
+
+    const easeOutExpo = (t: number) => (t >= 1 ? 1 : 1 - Math.pow(2, -10 * t))
+    const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+
+    // Power the off screen up: a cool LCD glow ramps in so the device reads as "booting".
+    function setScreenPower(p: number) {
+      matScreen.emissive.setRGB(0.1 * p, 0.16 * p, 0.28 * p)
+      matScreen.emissiveIntensity = p * 2.6
+      const base = 0.02 + 0.06 * p
+      matScreen.color.setRGB(base, base + 0.01 * p, base + 0.04 * p)
+    }
+
+    function placeCustomizeCamera() {
+      const e = easeOutExpo(introT)
+      let lookY = lerp(CUST.lookY[0], CUST.lookY[1], e)
+      let camZ = lerp(CUST.camZ[0], CUST.camZ[1], e)
+      let yaw = lerp(CUST.yaw[0], CUST.yaw[1], e) + orbitYaw * e
+      let pitch = lerp(CUST.pitch[0], CUST.pitch[1], e) + orbitPitch * e
+      if (outroActive) {
+        // Zoom in and rotate flat to the front, framing the screen as it powers on.
+        const o = easeInOutCubic(outroT)
+        const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
+        const frontZ = (6.2 * 0.5) / (tanHalf * Math.max(camera.aspect, 0.0001)) + DEVICE_Z + 0.6
+        lookY = lerp(lookY, CUST.frontLookY, o)
+        camZ = lerp(camZ, frontZ, o)
+        yaw = lerp(yaw, 0, o)
+        pitch = lerp(pitch, 0, o)
+      }
+      camera.position.set(0, lookY, camZ)
+      camera.lookAt(0, lookY, 0)
+      deck.rotation.set(pitch, yaw, 0)
+      // The solid back fades in once the body turns past side-on, so it never occludes the front.
+      backPanel.visible = !outroActive && Math.abs(yaw) > Math.PI / 2
+    }
+
+    applyOutroRef.current = (on: boolean) => {
+      if (on) {
+        introT = 1 // settle instantly so the outro starts from the rest pose
+        outroActive = true
+        outroT = 0
+        outroFired = false
+      } else {
+        outroActive = false
+        outroT = 0
+        outroFired = false
+        setScreenPower(0)
+      }
+      dirty = true
+    }
+
     /* dev GUI — only when explicitly debugging (e.g. the /console playground) */
     const gui = debug
       ? createConsoleGui({
@@ -742,10 +907,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const ndc = new THREE.Vector2()
     const MIN_PRESS_MS = 120
     const pressTimers: ReturnType<typeof setTimeout>[] = []
-    let hovered: THREE.Mesh | null = null, active: THREE.Mesh | null = null
+    let active: THREE.Mesh | null = null
     let knobDrag = false, knobStartY = 0, knobBase = 0, knobLastStep = 0, knobLastRidge = 0, knobStartValue = 0
     let numberWheelDrag = false, numberWheelStartY = 0, numberWheelLastStep = 0, numberWheelStartValue = 0
-    let numberWheelAngle = 0, numberWheelTarget = 0
+    let numberWheelStartPosition = 0
     const NUMBER_WHEEL_PX_PER_STEP = 28
 
     function toNDC(e: PointerEvent) {
@@ -763,6 +928,19 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const onPointerDown = (e: PointerEvent) => {
       audio.resumeAudio()
       hint.style.opacity = '0'
+      // In the studio the controls don't fire; the whole device is a turntable. Once the Done outro
+      // is rolling, it's locked.
+      if (customize) {
+        if (outroActive) return
+        canvas.setPointerCapture(e.pointerId)
+        orbitDrag = true
+        orbitStartX = e.clientX
+        orbitStartY = e.clientY
+        orbitBaseYaw = orbitYaw
+        orbitBasePitch = orbitPitch
+        canvas.style.cursor = 'grabbing'
+        return
+      }
       toNDC(e)
       const obj = pick()
       if (!obj) return
@@ -773,6 +951,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         numberWheelStartY = e.clientY
         numberWheelLastStep = 0
         numberWheelStartValue = state.numberWheel?.value ?? debugNumberValue
+        numberWheelStartPosition = state.numberWheel ? numberWheelPosition(state.numberWheel) : 0
         return
       }
       if (obj.userData.kind === 'knob') {
@@ -802,17 +981,35 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
 
     const onPointerMove = (e: PointerEvent) => {
+      if (customize) {
+        if (orbitDrag) {
+          orbitYaw = orbitBaseYaw + (e.clientX - orbitStartX) * 0.011
+          orbitPitch = Math.max(-0.5, Math.min(0.46, orbitBasePitch + (e.clientY - orbitStartY) * 0.006))
+        } else {
+          canvas.style.cursor = 'grab'
+        }
+        return
+      }
       toNDC(e)
       if (numberWheelDrag) {
+        const wheel = state.numberWheel
+        if (!wheel) return
         const rawSteps = (numberWheelStartY - e.clientY) / NUMBER_WHEEL_PX_PER_STEP
-        const steps = Math.round(rawSteps)
-        numberWheelAngle = -(rawSteps - steps) * NUMBER_LABEL_ANGLE
+        const minSteps = (wheel.min - numberWheelStartValue) / wheel.step
+        const maxSteps = (wheel.max - numberWheelStartValue) / wheel.step
+        const resistedSteps =
+          rawSteps < minSteps
+            ? minSteps - Math.min(0.28, (minSteps - rawSteps) * 0.16)
+            : rawSteps > maxSteps
+              ? maxSteps + Math.min(0.28, (rawSteps - maxSteps) * 0.16)
+              : rawSteps
+        const steps = Math.round(Math.min(maxSteps, Math.max(minSteps, resistedSteps)))
+        numberWheelAngle = -(numberWheelStartPosition + resistedSteps) * NUMBER_LABEL_ANGLE
         numberWheelTarget = numberWheelAngle
         if (steps !== numberWheelLastStep) {
           numberWheelLastStep = steps
           audio.playSfx('knob')
-          const wheel = state.numberWheel
-          if (wheel && !state.numberWheelDisabled) {
+          if (!state.numberWheelDisabled) {
             const raw = numberWheelStartValue + steps * wheel.step
             const next = Math.min(wheel.max, Math.max(wheel.min, Number(raw.toFixed(6))))
             if (next !== wheel.value) {
@@ -848,15 +1045,20 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         }
         return
       }
-      hovered = pick()
-      canvas.style.cursor = hovered
-        ? hovered.userData.kind === 'knob' || hovered.userData.kind === 'numberWheel' ? 'ns-resize' : 'pointer'
+      const target = pick()
+      canvas.style.cursor = target
+        ? target.userData.kind === 'knob' || target.userData.kind === 'numberWheel' ? 'ns-resize' : 'pointer'
         : 'default'
     }
 
     function release() {
+      if (orbitDrag) {
+        orbitDrag = false
+        renderer.domElement.style.cursor = 'grab'
+        return
+      }
       if (numberWheelDrag) {
-        numberWheelTarget = 0
+        numberWheelTarget = -(numberWheelStartPosition + numberWheelLastStep) * NUMBER_LABEL_ANGLE
         numberWheelDrag = false
       }
       if (knobDrag) {
@@ -897,6 +1099,17 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       if (w === 0 || h === 0) return
       renderer.setSize(w, h)
       camera.aspect = w / h
+
+      if (customize) {
+        // No screen layer to project (the device is off); the loop owns the camera during the
+        // intro + spin, this just keeps the aspect correct and paints the current pose.
+        camera.updateProjectionMatrix()
+        placeCustomizeCamera()
+        camera.updateMatrixWorld()
+        dirty = true
+        return
+      }
+
       const fov = (camera.fov * Math.PI) / 180
       const tanHalf = Math.tan(fov / 2)
 
@@ -961,23 +1174,40 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const dt = Math.min(clock.getDelta(), 0.05)
       let animating = false
 
+      if (customize) {
+        if (introT < 1) {
+          introT = Math.min(1, introT + (dt * 1000) / CUST.introMs)
+          animating = true
+        }
+        if (outroActive) {
+          if (outroT < 1) {
+            outroT = Math.min(1, outroT + (dt * 1000) / CUST.outroMs)
+            animating = true
+          }
+          // Screen blinks on through the back half of the snap.
+          setScreenPower(Math.max(0, Math.min(1, (outroT - 0.4) / 0.6)))
+          if (outroT >= 1 && !outroFired) {
+            outroFired = true
+            propsRef.current.onOutroComplete?.()
+          }
+        } else if (orbitDrag) {
+          animating = true
+        } else if (Math.abs(orbitPitch) > 0.0006) {
+          orbitPitch += (0 - orbitPitch) * Math.min(1, dt * 5) // level out the tilt on release
+          animating = true
+        }
+        if (animating) placeCustomizeCamera()
+      }
+
       interactive.forEach((o) => {
         const d = o.userData
-        const hoverTarget = hovered === o ? 1 : 0
-        if (Math.abs(hoverTarget - d.hover) > 0.001) animating = true
-        d.hover += (hoverTarget - d.hover) * Math.min(1, dt * 12)
-        if (d.kind === 'numberWheel') {
-          numberWheelMat.emissiveIntensity = d.hover * 0.08
-          return
-        }
-        if (d.kind === 'knob') return
-        const lift = !d.pressed ? d.hover * 0.035 : 0
-        const targetZ = (d.pressed ? d.pressedZ : d.baseZ) + lift
+        if (d.kind === 'numberWheel' || d.kind === 'knob') return
+        const targetZ = d.pressed ? d.pressedZ : d.baseZ
         if (Math.abs(targetZ - o.position.z) > 0.0002) animating = true
         o.position.z += (targetZ - o.position.z) * Math.min(1, dt * 20)
         if (d.pressed) { d.glow = Math.min(1, d.glow + dt * 9); animating = true }
         else { if (d.glow > 0.002) animating = true; d.glow *= Math.pow(0.015, dt) }
-          ; (o.material as THREE.MeshStandardMaterial).emissiveIntensity = d.glow * 0.95 + d.hover * 0.05
+          ; (o.material as THREE.MeshStandardMaterial).emissiveIntensity = d.glow * 0.95
       })
 
       if (knobDrag) {
@@ -998,6 +1228,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         if (Math.abs(numberWheelTarget - numberWheelAngle) < 0.001) numberWheelAngle = numberWheelTarget
       }
       numberWheelRoll.rotation.x = numberWheelAngle
+      updateNumberWheelLighting()
 
       // Only touch the GPU when something actually changed. An idle device paints nothing; the
       // shadow pass (the heavy bit) runs only on the frames we render.
@@ -1020,6 +1251,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       ro.disconnect()
       pressTimers.forEach(clearTimeout)
       applyViewRef.current = () => {}
+      applyThemeRef.current = () => {}
+      applyOutroRef.current = () => {}
       gui?.destroy()
       logoGeo.forEach((g) => g.dispose())
       matLogoDark.dispose()
@@ -1027,14 +1260,24 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       renderer.dispose()
       audio.dispose()
     }
-    // Scene is built once; live bindings flow through refs + the [view] effect below.
+    // Scene is built once per mode; live bindings flow through refs + the effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debug])
+  }, [debug, customize])
 
   // Push label/state updates into the scene whenever the registered view changes.
   useEffect(() => {
     applyViewRef.current(view)
   }, [view])
+
+  // Repaint the device whenever the skin changes (no rebuild).
+  useEffect(() => {
+    applyThemeRef.current(theme)
+  }, [theme])
+
+  // Arm / disarm the Done outro.
+  useEffect(() => {
+    applyOutroRef.current(outro)
+  }, [outro])
 
   return (
     <div
@@ -1044,8 +1287,14 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         inset: 0,
         overflow: 'hidden',
         // Playground sits the device on a warm backdrop to inspect the model; the real app stays
-        // black so the device reads as a product shot in the AppFrame.
-        background: debug ? 'radial-gradient(circle at 50% 38%, #f4ead6 0%, #decdab 82%)' : '#000',
+        // black so the device reads as a product shot. Customize is transparent so the workshop
+        // backdrop shows around the floating device, and sits above it in the studio stack.
+        background: debug
+          ? 'radial-gradient(circle at 50% 38%, #f4ead6 0%, #decdab 82%)'
+          : customize
+            ? 'transparent'
+            : '#000',
+        zIndex: customize ? 10 : undefined,
       }}
     >
       {/* screen content sits behind the device; the body's hole cuts it to the L-shape and the
@@ -1062,6 +1311,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
           // Real app: black backing so any rim seam reads as screen. Playground: transparent so the
           // empty layer doesn't show as a black strip when the device is rotated (screenMesh is the screen).
           background: debug ? 'transparent' : '#000',
+          // Customize uses the 3D screenMesh (it spins with the body), so the HTML layer is dead weight.
+          display: customize ? 'none' : undefined,
           overflow: 'hidden',
         }}
       >

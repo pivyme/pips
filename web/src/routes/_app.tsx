@@ -1,11 +1,15 @@
 import { Outlet, createFileRoute, useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef } from 'react'
+import { AnimatePresence } from 'motion/react'
 import type { ReactNode } from 'react'
 import { AppFrame } from '@/components/console/AppFrame'
 import { ConsoleControlsProvider, useConsoleView } from '@/components/console/controls'
 import { ConsoleShell } from '@/components/console/ConsoleShell'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { MenuDrawer } from '@/components/console/MenuDrawer'
+import { CustomizeStudio } from '@/components/console/CustomizeStudio'
+import { useConsoleTheme } from '@/components/console/themes'
+import type { ConsoleTheme } from '@/components/console/themes'
 import { Illo } from '@/ui/Illo'
 import { haptic } from '@/lib/haptics'
 import { useAuth } from '@/lib/auth'
@@ -34,6 +38,11 @@ function AppLayout() {
   const onRange = Boolean(matchRoute({ to: '/games/range' }))
   const onLucky = Boolean(matchRoute({ to: '/games/lucky' }))
   const on3D = Boolean(matchRoute({ to: '/games', fuzzy: true })) && !onTap
+  // Customize takes over the device: the menu drawer slides away and the device drops into the
+  // workshop studio. It rides the same persistent 3D branch so the WebGL stays warm.
+  const onCustomize = Boolean(matchRoute({ to: '/menu/customize' }))
+  // The saved skin. Feeds the live games device; the studio seeds from it and writes back on Done.
+  const savedTheme = useConsoleTheme()
 
   // Remember which shell was live before the menu opened, so the drawer's blurred backdrop (and
   // where Close returns) matches where the user came from. Pressing Menu on the 3D handheld must
@@ -66,16 +75,31 @@ function AppLayout() {
   // The 3D handheld is the persistent shell for the games hub + the aperture games, and for the menu
   // opened over them. Keeping one Console3DRoute element mounted across screen<->menu means the WebGL
   // scene builds once instead of rebuilding on every toggle. Screen content only mounts on a 3D route.
-  if (on3D || menuOver3D) {
+  if (on3D || menuOver3D || onCustomize) {
     return (
       <AppFrame>
         <ConsoleControlsProvider>
-          <Console3DRoute>{on3D ? <Outlet /> : null}</Console3DRoute>
-          {onMenu && (
-            <MenuDrawer returnTo={last3DPath.current}>
-              <Outlet />
-            </MenuDrawer>
+          {onCustomize ? (
+            <CustomizeStudio
+              initialThemeId={savedTheme.id}
+              onDone={(id) => {
+                savedTheme.setId(id)
+                void navigate({ to: '/games' })
+              }}
+              onCancel={() => void navigate({ to: '/menu' })}
+            />
+          ) : (
+            <Console3DRoute theme={savedTheme.theme}>{on3D ? <Outlet /> : null}</Console3DRoute>
           )}
+          {/* The drawer slides itself away (exit) as Customize takes over, so the device is revealed
+              settling into the studio. */}
+          <AnimatePresence initial={false}>
+            {onMenu && !onCustomize && (
+              <MenuDrawer key="menu-drawer" returnTo={last3DPath.current}>
+                <Outlet />
+              </MenuDrawer>
+            )}
+          </AnimatePresence>
         </ConsoleControlsProvider>
       </AppFrame>
     )
@@ -98,7 +122,7 @@ function AppLayout() {
 // The 3D handheld as the live shell. It reads the controls the screen registered and renders the
 // screen content on the device's screen; the physical knob/buttons drive the game. The screen
 // content is passed in (the active game's Outlet, or nothing while the menu sits over the device).
-function Console3DRoute({ children }: { children?: ReactNode }) {
+function Console3DRoute({ children, theme }: { children?: ReactNode; theme?: ConsoleTheme }) {
   const { view, handlers } = useConsoleView()
   const navigate = useNavigate()
   const onNav = useCallback(
@@ -109,7 +133,7 @@ function Console3DRoute({ children }: { children?: ReactNode }) {
     [navigate],
   )
   return (
-    <ConsoleCanvas view={view} handlers={handlers} onNav={onNav}>
+    <ConsoleCanvas view={view} handlers={handlers} onNav={onNav} theme={theme}>
       {children}
     </ConsoleCanvas>
   )

@@ -32,6 +32,7 @@ function MenuHome() {
             icon="/assets/icons/icon-customize.png"
             title="Customize"
             sub="Make it yours"
+            launch
           />
           <MenuRow
             to="/menu/settings"
@@ -242,18 +243,22 @@ function MenuRow({
   icon,
   title,
   sub,
+  launch = false,
 }: {
   to: string
   icon: string
   title: string
   sub: string
+  // `launch` rows hand off to a full takeover (the Customize studio) instead of pushing a page
+  // inside the drawer, so they navigate plainly and let the drawer animate itself away.
+  launch?: boolean
 }): ReactNode {
   return (
     <Link
       to={to}
-      viewTransition
+      viewTransition={!launch}
       onClick={() => {
-        prepareMenuTransition('forward')
+        if (!launch) prepareMenuTransition('forward')
         haptic('selection')
       }}
       className="surface-skeuo flex min-h-24 items-center gap-3 rounded-card px-3 py-1 transition-transform active:scale-[0.99]"

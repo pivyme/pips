@@ -21,7 +21,7 @@ import { formatStringToNumericDecimals } from '@/utils/format'
 // live mark. The pre-play multiplier is a client estimate; the real one comes back on the mint.
 export const Route = createFileRoute('/_app/games/range')({ component: RangeScreen })
 
-const STAKE_LADDER = [1, 5, 10, 25, 50, 100] as const
+const STAKE_LADDER = [0.1, 0.5, 1, 5, 10] as const
 const FALLBACK_ASSETS = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
 const FALLBACK_DURATIONS = [10, 30, 60]
 const RESULT_MS = 4200

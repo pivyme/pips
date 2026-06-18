@@ -23,7 +23,7 @@ import { formatStringToNumericDecimals } from '@/utils/format'
 // (web/CLAUDE.md): a top bar + the reel cluster float over the chart, a notch-safe readout below.
 export const Route = createFileRoute('/_app/games/lucky')({ component: LuckyScreen })
 
-const STAKE_LADDER = [1, 5, 10, 25, 50, 100] as const
+const STAKE_LADDER = [0.1, 0.5, 1, 5, 10] as const
 const FALLBACK_ASSETS = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
 const FALLBACK_DURATIONS = [10, 30, 60]
 const LEV_POOL = ['2x', '5x', '10x', '25x', '100x']
@@ -56,7 +56,7 @@ function LuckyScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
 
-  const [betIdx, setBetIdx] = useState(3)
+  const [betIdx, setBetIdx] = useState(2)
   const [durIdx, setDurIdx] = useState(1) // SPEED (Action 1): index into durations, default mid
   const [riskIdx, setRiskIdx] = useState(1) // RISK (Action 2): index into RISK_TIERS, default WILD
   const [phase, setPhase] = useState<Phase>('idle')
