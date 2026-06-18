@@ -4,18 +4,9 @@
 // child Outlet. Closing slides it back down, then routes to `returnTo` (where the user came from).
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
-import { motion } from 'motion/react'
 import type { ReactNode } from 'react'
 import { haptic } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
-
-// Explicit timing keeps the full upward travel visible even when the 3D console makes route
-// mounting expensive. The curve starts decisively and settles like a native bottom sheet.
-const OPEN_TRANSITION = {
-  duration: 0.46,
-  ease: [0.16, 1, 0.3, 1],
-} as const
-const CLOSE_TRANSITION = { duration: 0.24, ease: [0.32, 0, 0.67, 0] } as const
 
 // Lets a menu item slide the drawer away before navigating (e.g. Customize handing off to its
 // full-screen studio). Reuses the proven close animation instead of an unmount transition.
@@ -33,29 +24,8 @@ export function MenuDrawer({
 }) {
   const router = useRouter()
   const reduced = useReducedMotion()
-  const [opened, setOpened] = useState(false)
   const [closing, setClosing] = useState(false)
   const closingRef = useRef(false)
-
-  // Wait until the drawer has reached an actual paint before starting the spring. The 3D console
-  // can briefly occupy the main thread during the route swap; an immediate mount animation would
-  // otherwise finish off-screen and make the drawer appear to pop into place.
-  useEffect(() => {
-    if (reduced) {
-      setOpened(true)
-      return
-    }
-
-    let secondFrame = 0
-    const firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(() => setOpened(true))
-    })
-
-    return () => {
-      window.cancelAnimationFrame(firstFrame)
-      window.cancelAnimationFrame(secondFrame)
-    }
-  }, [reduced])
 
   // Slide down, then route. `to` defaults to where the user came from (a normal close); Customize
   // passes its own route so the drawer clears before the studio takes over.
@@ -88,20 +58,12 @@ export function MenuDrawer({
         aria-hidden
       />
 
-      <motion.div
+      <div
         role="dialog"
         aria-modal="true"
         aria-label="Menu"
-        className="absolute inset-x-0 bottom-0 top-[10%] flex flex-col overflow-hidden rounded-t-[28px] border-x border-t border-white/10 bg-black shadow-[0_-24px_64px_-24px_rgba(0,0,0,0.95)]"
-        initial={false}
-        animate={{ y: closing || !opened ? '104%' : 0 }}
-        transition={
-          reduced
-            ? { duration: 0 }
-            : closing
-              ? CLOSE_TRANSITION
-              : OPEN_TRANSITION
-        }
+        data-closing={closing || undefined}
+        className="drawer-sheet absolute inset-x-0 bottom-0 top-[10%] flex flex-col overflow-hidden rounded-t-[28px] border-x border-t border-white/10 bg-black shadow-[0_-24px_64px_-24px_rgba(0,0,0,0.95)]"
       >
         {/* Grabber: tap to dismiss. */}
         <button
@@ -121,7 +83,7 @@ export function MenuDrawer({
         >
           <MenuDrawerContext.Provider value={{ closeTo }}>{children}</MenuDrawerContext.Provider>
         </div>
-      </motion.div>
+      </div>
     </div>
   )
 }

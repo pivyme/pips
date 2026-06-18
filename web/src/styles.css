@@ -366,6 +366,44 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
+/* The menu drawer rises on mount and drops on close. Both directions are compositor keyframes, so
+   the slide never touches the main thread: opening /menu briefly hands the main thread to the 3D
+   console, and a JS/rAF-gated animation would freeze off-screen through that. Keyframes keep gliding.
+   Close is its own keyframe (not a transition) because flipping transform in the same frame an
+   animation is cancelled won't reliably start a transition in Chromium. */
+.drawer-sheet {
+  animation: drawer-rise 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.drawer-sheet[data-closing='true'] {
+  animation: drawer-fall 240ms cubic-bezier(0.32, 0, 0.67, 0) forwards;
+}
+
+@keyframes drawer-rise {
+  from {
+    transform: translateY(104%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes drawer-fall {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(104%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer-sheet,
+  .drawer-sheet[data-closing='true'] {
+    animation: none;
+  }
+}
+
 @layer utilities {
   .tnum {
     font-variant-numeric: tabular-nums;
