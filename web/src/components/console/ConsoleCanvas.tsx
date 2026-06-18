@@ -570,7 +570,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
 
     // "By PIVY Inc." caption under the carved back-panel PIPS logo (centered at backPanel-local 0,0).
     // Parented to the panel, mirrored + double-sided so it reads upright from the flipped (back) view.
-    const pivyLbl = makeLabel('By PIVY Inc.', 0, -1, backFaceLocalZ - 0.02, 0.36, '#b9b6b1', 108, {
+    const pivyLbl = makeLabel('By PIVY Inc.', 0, -1, backFaceLocalZ + 0.15, 0.36, '#b9b6b1', 108, {
       parent: backPanel,
       doubleSide: true,
       mirrorX: true,
