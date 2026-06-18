@@ -275,12 +275,19 @@ function newId(): string {
 const str = (n: number): string => n.toFixed(2)
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-function pickLeverage(): number {
-  // Weighted toward the mid buckets so the hero swing reads nicely, not a 100x coin flip.
-  const buckets: Array<[number, number]> = [[2, 1], [5, 2], [10, 3], [25, 3], [100, 1]]
-  let r = Math.random() * 10
+function pickLeverage(risk?: string): number {
+  // The risk tier (Lucky's Action 2) constrains the bucket set; default weights toward the mid
+  // buckets so the hero swing reads nicely, not a 100x coin flip.
+  const tiers: Record<string, Array<[number, number]>> = {
+    chill: [[2, 1], [5, 1]],
+    wild: [[5, 2], [10, 3], [25, 3]],
+    lotto: [[25, 1], [100, 1]],
+  }
+  const buckets = tiers[risk ?? ''] ?? [[2, 1], [5, 2], [10, 3], [25, 3], [100, 1]]
+  const total = buckets.reduce((a, [, w]) => a + w, 0)
+  let r = Math.random() * total
   for (const [v, w] of buckets) if ((r -= w) <= 0) return v
-  return 25
+  return buckets[0][0]
 }
 
 // Same shape as the Range screen's client estimate, so the locked multiple feels consistent.
@@ -443,12 +450,14 @@ function registerOpen(p: PlayDTO, c: MarkCtx): void {
   save()
 }
 
-function createLucky(stake: number): PlayDTO {
+function createLucky(body: Record<string, unknown>): PlayDTO {
+  const stake = Number(body.stake ?? 25)
   ensureBalance(stake)
   const asset = ASSETS[Math.floor(Math.random() * ASSETS.length)]
   const side: Side = Math.random() < 0.5 ? 'up' : 'down'
-  const leverage = pickLeverage()
-  const duration = Math.random() < 0.7 ? 30 : 60
+  const risk = typeof body.risk === 'string' ? body.risk : undefined
+  const leverage = pickLeverage(risk)
+  const duration = Number(body.duration ?? (Math.random() < 0.7 ? 30 : 60))
   const entry = currentPrice(asset)
   const openedMs = nowMs()
   const expiryMs = openedMs + duration * 1000
@@ -597,7 +606,7 @@ export const demoApi = {
 
   play: async (game: Game, body: Record<string, unknown>): Promise<PlayResult> => {
     await delay(140)
-    const play = game === 'lucky' ? createLucky(Number(body.stake ?? 25)) : game === 'range' ? createRange(body) : createTap(body)
+    const play = game === 'lucky' ? createLucky(body) : game === 'range' ? createRange(body) : createTap(body)
     return { play }
   },
 

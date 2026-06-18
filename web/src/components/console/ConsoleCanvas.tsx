@@ -18,6 +18,7 @@ type HandlersRef = {
     action1?: () => void
     action2?: () => void
     knob?: (value: number) => void
+    numberWheel?: (value: number) => void
   }
 }
 
@@ -105,17 +106,20 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       { w: 1.6, h: 1.5, r: 0.15, depth: 2, dx: 0, dy: 0, baseZ: 0.8, pressedZ: 0.4, pad: 0.12 },
       { w: 1.6, h: 1.5, r: 0.15, depth: 2, dx: 0, dy: 0, baseZ: 0.5, pressedZ: 0.4, pad: 0.12 },
       { w: 1.6, h: 1.5, r: 0.15, depth: 2, dx: 0, dy: 0, baseZ: 0.5, pressedZ: 0.4, pad: 0.12 },
-      { w: 1.07, h: 0.35, r: 0.17, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.12 },
-      { w: 1.12, h: 0.35, r: 0.17, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.12 },
+      { w: 0.98, h: 0.31, r: 0.15, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.1 },
+      { w: 1.02, h: 0.31, r: 0.15, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.1 },
     ]
     // button pixel centers — kept here so buildBodyShape stays in sync with makeButton calls below
     const BTN_PX = [
-      { x: 965, y: 1490 }, { x: 200, y: 1860 }, { x: 589, y: 1860 },
+      { x: 965, y: 1490 }, { x: 200, y: 1820 }, { x: 589, y: 1820 },
       { x: 150, y: 2150 }, { x: 425, y: 2150 },
     ]
     // knob pocket config — w/h must stay in sync with kp.height / kp.radius*2 below
     // cylinder is rotated on Z so from the front it reads as w=height, h=radius*2
     const knobPocket = { px: 975, py: 1960, w: 1, h: 2.4, r: 0.1, pad: 0.08 }
+    // Compact number drum, aligned with the Menu / Games row. It owns stake selection while the
+    // yellow wheel remains available for the active game's signature control.
+    const numberWheelPocket = { px: 700, py: 2145, w: 0.86, h: 0.82, r: 0.12, pad: 0.035 }
 
     // screen L-shape in pixel coords — mirrors screenPts used for the screen mesh
     // screenMesh.position.y = 0.13 is baked in here as a world-space offset before converting to body-local
@@ -163,6 +167,11 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const kw = knobPocket.w + knobPocket.pad * 2
       const kh = knobPocket.h + knobPocket.pad * 2
       s.holes.push(roundedRectPath(klx, kly, kw, kh, Math.min(knobPocket.r + knobPocket.pad, kw / 2, kh / 2)))
+      const nlx = wx(numberWheelPocket.px) - wx(585)
+      const nly = wy(numberWheelPocket.py) - cy
+      const nw = numberWheelPocket.w + numberWheelPocket.pad * 2
+      const nh = numberWheelPocket.h + numberWheelPocket.pad * 2
+      s.holes.push(roundedRectPath(nlx, nly, nw, nh, Math.min(numberWheelPocket.r + numberWheelPocket.pad, nw / 2, nh / 2)))
       // screen cutout — the L-shape (top raised by screenExt), converted to body-local coords
       s.holes.push(roundedPolyPath(
         screenWorldPts().map((v) => ({ x: v.x - wx(585), y: v.y - cy })),
@@ -305,8 +314,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
 
     const bm = [
       makeButton(wx(965), wy(1490), buttons[0].w, buttons[0].h, buttons[0].r, buttons[0].baseZ, buttons[0].pressedZ, buttons[0].depth, RED, 0xff5a3c),
-      makeButton(wx(200), wy(1860), buttons[1].w, buttons[1].h, buttons[1].r, buttons[1].baseZ, buttons[1].pressedZ, buttons[1].depth, BLUE, 0x5e9bff),
-      makeButton(wx(589), wy(1860), buttons[2].w, buttons[2].h, buttons[2].r, buttons[2].baseZ, buttons[2].pressedZ, buttons[2].depth, BLUE, 0x5e9bff),
+      makeButton(wx(200), wy(1820), buttons[1].w, buttons[1].h, buttons[1].r, buttons[1].baseZ, buttons[1].pressedZ, buttons[1].depth, BLUE, 0x5e9bff),
+      makeButton(wx(589), wy(1820), buttons[2].w, buttons[2].h, buttons[2].r, buttons[2].baseZ, buttons[2].pressedZ, buttons[2].depth, BLUE, 0x5e9bff),
       makeButton(wx(150), wy(2150), buttons[3].w, buttons[3].h, buttons[3].r, buttons[3].baseZ, buttons[3].pressedZ, buttons[3].depth, CREAM, 0xff7a1a),
       makeButton(wx(425), wy(2150), buttons[4].w, buttons[4].h, buttons[4].r, buttons[4].baseZ, buttons[4].pressedZ, buttons[4].depth, CREAM, 0xff7a1a),
     ]
@@ -334,6 +343,18 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     knobFloor.position.set(wx(knobPocket.px), wy(knobPocket.py), body.position.z - 0.04)
     knobFloor.receiveShadow = true
     device.add(knobFloor)
+    const nfw = numberWheelPocket.w + numberWheelPocket.pad * 2 - 0.04
+    const nfh = numberWheelPocket.h + numberWheelPocket.pad * 2 - 0.04
+    const numberWheelFloor = new THREE.Mesh(
+      new THREE.ShapeGeometry(
+        roundedRect(nfw, nfh, Math.min(numberWheelPocket.r + numberWheelPocket.pad, nfw / 2, nfh / 2)),
+        48,
+      ),
+      matPocket,
+    )
+    numberWheelFloor.position.set(wx(numberWheelPocket.px), wy(numberWheelPocket.py), body.position.z - 0.04)
+    numberWheelFloor.receiveShadow = true
+    device.add(numberWheelFloor)
 
     // knob pocket bevel — chamfered ring sloping from the body front face inward into the pocket, so
     // the rim reads as a real machined recess. Outer ring matches the body hole (pocket pad), inner
@@ -377,6 +398,45 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       device.add(knobBevel)
     }
 
+    // Black beveled housing and curved drum. The drum rolls on a horizontal axle, with adjacent
+    // values wrapping around its face like a mechanical counter.
+    const numberWheelHousingShape = roundedRect(
+      numberWheelPocket.w,
+      numberWheelPocket.h,
+      numberWheelPocket.r,
+    )
+    numberWheelHousingShape.holes.push(roundedRectPath(0, 0, 0.78, 0.74, 0.085))
+    const numberWheelHousing = new THREE.Mesh(
+      frontZeroed(numberWheelHousingShape, 0.24, 0.025),
+      new THREE.MeshStandardMaterial({ color: 0x080808, roughness: 0.58, metalness: 0.08 }),
+    )
+    numberWheelHousing.position.set(wx(numberWheelPocket.px), wy(numberWheelPocket.py), 0.12)
+    numberWheelHousing.castShadow = true
+    numberWheelHousing.receiveShadow = true
+    device.add(numberWheelHousing)
+
+    const numberWheelRoll = new THREE.Group()
+    numberWheelRoll.position.set(wx(numberWheelPocket.px), wy(numberWheelPocket.py), -0.14)
+    device.add(numberWheelRoll)
+
+    const numberWheelMat = new THREE.MeshStandardMaterial({
+      color: 0x171717,
+      roughness: 0.42,
+      metalness: 0.18,
+      emissive: 0xffffff,
+      emissiveIntensity: 0,
+    })
+    const numberWheelDrum = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.37, 0.37, 0.76, 64, 1, false),
+      numberWheelMat,
+    )
+    numberWheelDrum.rotation.z = Math.PI / 2
+    numberWheelDrum.castShadow = true
+    numberWheelDrum.receiveShadow = true
+    numberWheelDrum.userData = { kind: 'numberWheel', hover: 0 }
+    numberWheelRoll.add(numberWheelDrum)
+    interactive.push(numberWheelDrum)
+
     // Canvas-texture label. Static caption (makeLabel) or live, updatable (makeDynLabel).
     function drawLabel(c: HTMLCanvasElement, g: CanvasRenderingContext2D, text: string, color: string, fs = 64) {
       g.font = `700 ${fs}px -apple-system,"Segoe UI",system-ui,sans-serif`
@@ -407,7 +467,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
 
     // Updatable label that lives on a button face (or the body) and reflects the registered view.
-    function makeDynLabel(worldH: number, color: string) {
+    function makeDynLabel(worldH: number, color: string, opticalCenter = false) {
       const W = 640, H = 128, FS = 92
       const c = document.createElement('canvas')
       c.width = W
@@ -431,8 +491,15 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
             g.font = `700 ${FS}px -apple-system,"Segoe UI",system-ui,sans-serif`
             g.fillStyle = col
             g.textAlign = 'center'
-            g.textBaseline = 'middle'
-            g.fillText(text, W / 2, H / 2)
+            if (opticalCenter) {
+              g.textBaseline = 'alphabetic'
+              const metrics = g.measureText(text)
+              const y = H / 2 + (metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2
+              g.fillText(text, W / 2, y)
+            } else {
+              g.textBaseline = 'middle'
+              g.fillText(text, W / 2, H / 2)
+            }
             const tw = Math.min(W, g.measureText(text).width + 36)
             tex.repeat.x = tw / W
             tex.offset.x = (1 - tw / W) / 2
@@ -464,10 +531,45 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     knobLbl.plane.position.set(wx(knobPocket.px), wy(knobPocket.py) - 1.55, 0.07)
     device.add(knobLbl.plane)
 
+    const NUMBER_LABEL_ANGLE = 0.78
+    const numberWheelLabels = [NUMBER_LABEL_ANGLE, 0, -NUMBER_LABEL_ANGLE].map((angle) => {
+      const label = makeDynLabel(0.46, '#f4f4f4', true)
+      const radius = 0.375
+      label.plane.position.set(0, Math.sin(angle) * radius, Math.cos(angle) * radius)
+      label.plane.rotation.x = -angle
+      numberWheelRoll.add(label.plane)
+      return label
+    })
+    let debugNumberValue = 1
+    const debugNumberWheel = {
+      min: 0,
+      max: 9,
+      step: 1,
+      value: debugNumberValue,
+      label: 'USDC',
+      format: (value: number) => String(value),
+      disabled: false,
+    }
+
     // View state mirrored from the registry, read by the input handlers for gating.
     const state = {
-      mainDisabled: true, a1Disabled: true, a2Disabled: true, knobDisabled: true,
+      mainDisabled: true, a1Disabled: true, a2Disabled: true, knobDisabled: true, numberWheelDisabled: true,
       knob: null as null | NonNullable<ConsoleView['knob']>,
+      numberWheel: null as null | NonNullable<ConsoleView['numberWheel']>,
+    }
+
+    function setNumberWheelLabels(spec: NonNullable<ConsoleView['numberWheel']> | null) {
+      const values = spec
+        ? [spec.value - spec.step, spec.value, spec.value + spec.step]
+        : [0, 0, 0]
+      numberWheelLabels.forEach((label, i) => {
+        const value = values[i]
+        const visible = !!spec && value >= spec.min && value <= spec.max
+        label.set(
+          visible ? (spec.format ? spec.format(value) : String(value)) : '',
+          state.numberWheelDisabled ? 0.32 : i === 1 ? 1 : 0.38,
+        )
+      })
     }
 
     function applyView(v?: ConsoleView) {
@@ -484,6 +586,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       state.knob = k
       state.knobDisabled = !k || !!k.disabled
       knobLbl.set(k ? (k.format ? k.format(k.value) : String(k.value)) : '', state.knobDisabled ? 0.4 : 1)
+      const n = v?.numberWheel ?? (debug ? { ...debugNumberWheel, value: debugNumberValue } : null)
+      state.numberWheel = n
+      state.numberWheelDisabled = !n || !!n.disabled
+      setNumberWheelLabels(n)
       dirty = true // labels/state moved, repaint once
     }
     applyViewRef.current = applyView
@@ -638,6 +744,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const pressTimers: ReturnType<typeof setTimeout>[] = []
     let hovered: THREE.Mesh | null = null, active: THREE.Mesh | null = null
     let knobDrag = false, knobStartY = 0, knobBase = 0, knobLastStep = 0, knobLastRidge = 0, knobStartValue = 0
+    let numberWheelDrag = false, numberWheelStartY = 0, numberWheelLastStep = 0, numberWheelStartValue = 0
+    let numberWheelAngle = 0, numberWheelTarget = 0
+    const NUMBER_WHEEL_PX_PER_STEP = 28
 
     function toNDC(e: PointerEvent) {
       const r = renderer.domElement.getBoundingClientRect()
@@ -657,6 +766,15 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       toNDC(e)
       const obj = pick()
       if (!obj) return
+      if (obj.userData.kind === 'numberWheel') {
+        if (state.numberWheelDisabled && !debug) return
+        canvas.setPointerCapture(e.pointerId)
+        numberWheelDrag = true
+        numberWheelStartY = e.clientY
+        numberWheelLastStep = 0
+        numberWheelStartValue = state.numberWheel?.value ?? debugNumberValue
+        return
+      }
       if (obj.userData.kind === 'knob') {
         // In the standalone playground no game binds a view, so everything reads disabled. Let the
         // controls still respond physically there (press + turn) so the device is testable on its own.
@@ -685,6 +803,32 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
 
     const onPointerMove = (e: PointerEvent) => {
       toNDC(e)
+      if (numberWheelDrag) {
+        const rawSteps = (numberWheelStartY - e.clientY) / NUMBER_WHEEL_PX_PER_STEP
+        const steps = Math.round(rawSteps)
+        numberWheelAngle = -(rawSteps - steps) * NUMBER_LABEL_ANGLE
+        numberWheelTarget = numberWheelAngle
+        if (steps !== numberWheelLastStep) {
+          numberWheelLastStep = steps
+          audio.playSfx('knob')
+          const wheel = state.numberWheel
+          if (wheel && !state.numberWheelDisabled) {
+            const raw = numberWheelStartValue + steps * wheel.step
+            const next = Math.min(wheel.max, Math.max(wheel.min, Number(raw.toFixed(6))))
+            if (next !== wheel.value) {
+              const handler = propsRef.current.handlers?.current.numberWheel
+              if (handler) handler(next)
+              else if (debug) {
+                debugNumberValue = next
+                const debugSpec = { ...debugNumberWheel, value: debugNumberValue }
+                state.numberWheel = debugSpec
+                setNumberWheelLabels(debugSpec)
+              }
+            }
+          }
+        }
+        return
+      }
       if (knobDrag) {
         const dyDown = e.clientY - knobStartY // down positive — drives the visual ridge scroll
         knobOffset = knobBase + dyDown * kp.dragSensitivity
@@ -706,11 +850,15 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       }
       hovered = pick()
       canvas.style.cursor = hovered
-        ? hovered.userData.kind === 'knob' ? 'ns-resize' : 'pointer'
+        ? hovered.userData.kind === 'knob' || hovered.userData.kind === 'numberWheel' ? 'ns-resize' : 'pointer'
         : 'default'
     }
 
     function release() {
+      if (numberWheelDrag) {
+        numberWheelTarget = 0
+        numberWheelDrag = false
+      }
       if (knobDrag) {
         knobTarget = Math.round(knobOffset / kp.snapInterval) * kp.snapInterval
         knobDrag = false
@@ -818,6 +966,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         const hoverTarget = hovered === o ? 1 : 0
         if (Math.abs(hoverTarget - d.hover) > 0.001) animating = true
         d.hover += (hoverTarget - d.hover) * Math.min(1, dt * 12)
+        if (d.kind === 'numberWheel') {
+          numberWheelMat.emissiveIntensity = d.hover * 0.08
+          return
+        }
         if (d.kind === 'knob') return
         const lift = !d.pressed ? d.hover * 0.035 : 0
         const targetZ = (d.pressed ? d.pressedZ : d.baseZ) + lift
@@ -837,6 +989,15 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         if (Math.abs(knobTarget - knobOffset) < 0.001) knobOffset = knobTarget
       }
       knobBump.offset.x = knobOffset / kp.ridgeRepeat
+
+      if (numberWheelDrag) {
+        animating = true
+      } else {
+        if (Math.abs(numberWheelTarget - numberWheelAngle) > 0.001) animating = true
+        numberWheelAngle += (numberWheelTarget - numberWheelAngle) * Math.min(1, dt * 12)
+        if (Math.abs(numberWheelTarget - numberWheelAngle) < 0.001) numberWheelAngle = numberWheelTarget
+      }
+      numberWheelRoll.rotation.x = numberWheelAngle
 
       // Only touch the GPU when something actually changed. An idle device paints nothing; the
       // shadow pass (the heavy bit) runs only on the frames we render.
@@ -929,7 +1090,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
             fontFamily: '-apple-system, "Segoe UI", system-ui, sans-serif',
           }}
         >
-          {onNav ? 'Turn the knob · press to play' : ''}
+          {onNav ? 'Turn the wheels · press to play' : ''}
         </div>
       </div>
     </div>

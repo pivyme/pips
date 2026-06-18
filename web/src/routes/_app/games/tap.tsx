@@ -53,6 +53,7 @@ function TapScreen() {
 
   const [tapBet, setTapBet] = useState(5)
   const [durIdx, setDurIdx] = useState(0)
+  const [assetIdx, setAssetIdx] = useState(0)
   const [boxes, setBoxes] = useState<Box[]>([])
   const [spot, setSpot] = useState<number | null>(null)
 
@@ -62,13 +63,14 @@ function TapScreen() {
   const boxesRef = useRef<Box[]>(boxes)
   const subs = useRef<Map<string, () => void>>(new Map())
   const removeTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const autoCash = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const finalized = useRef<Set<string>>(new Set())
   boxesRef.current = boxes
 
   const marketsQ = useQuery({ queryKey: ['markets'], queryFn: () => api.markets(), refetchInterval: 10_000 })
   const markets = marketsQ.data?.markets ?? []
   const liveAssets = markets.filter((m) => m.live).map((m) => m.asset)
-  const asset = liveAssets[0]
+  const asset: string | undefined = liveAssets[Math.min(assetIdx, Math.max(0, liveAssets.length - 1))]
   const noLiveMarket = !marketsQ.isLoading && !marketsQ.isError && liveAssets.length === 0
   const durations = markets[0]?.durations ?? FALLBACK_DURATIONS
   const duration = durations[Math.min(durIdx, durations.length - 1)] ?? FALLBACK_DURATIONS[0]
@@ -86,6 +88,11 @@ function TapScreen() {
     (key: string, play: PlayDTO, unlocked: string[] = []) => {
       if (finalized.current.has(key)) return
       finalized.current.add(key)
+      const ac = autoCash.current.get(key)
+      if (ac) {
+        clearTimeout(ac)
+        autoCash.current.delete(key)
+      }
       const pnl = parseFloat(play.pnl ?? '0')
       const payout = parseFloat(play.payout ?? '0')
       setBoxes((bs) => bs.map((b) => (b.key === key ? { ...b, status: 'settling', pnl } : b)))
@@ -159,12 +166,21 @@ function TapScreen() {
           ),
         )
         haptic('medium')
+        // Round timer: the box auto-cashes at its chosen duration (TIME). Tapping it again cashes
+        // out earlier; settle wins if the oracle expires first. Captured `duration` = the value at
+        // tap time, so boxes opened at different TIME settings keep their own lifetimes.
+        const t = setTimeout(() => {
+          autoCash.current.delete(key)
+          const b = boxesRef.current.find((x) => x.key === key)
+          if (b && b.status === 'open') void doCashOut(b)
+        }, duration * 1000)
+        autoCash.current.set(key, t)
       } catch (e) {
         setBoxes((bs) => bs.filter((b) => b.key !== key))
         toastError(e)
       }
     },
-    [tapBet, asset, duration],
+    [tapBet, asset, duration, doCashOut],
   )
 
   // A tap on the chart resolves to a price (the canvas owns the mapping). Snap it to a band:
@@ -233,6 +249,8 @@ function TapScreen() {
     subs.current.clear()
     for (const t of removeTimers.current.values()) clearTimeout(t)
     removeTimers.current.clear()
+    for (const t of autoCash.current.values()) clearTimeout(t)
+    autoCash.current.clear()
     finalized.current.clear()
     setBoxes([])
     setSpot(null)
@@ -244,6 +262,8 @@ function TapScreen() {
       subs.current.clear()
       for (const t of removeTimers.current.values()) clearTimeout(t)
       removeTimers.current.clear()
+      for (const t of autoCash.current.values()) clearTimeout(t)
+      autoCash.current.clear()
     },
     [],
   )
@@ -252,18 +272,23 @@ function TapScreen() {
     haptic('selection')
     setDurIdx((i) => (i + 1) % durations.length)
   }, [durations.length])
+  // Switching asset wipes the open boxes (the effect above), so it is gated while any are live.
+  const cycleAsset = useCallback(() => {
+    haptic('selection')
+    if (liveAssets.length) setAssetIdx((i) => (i + 1) % liveAssets.length)
+  }, [liveAssets.length])
 
   const openCount = boxes.filter((b) => b.status === 'open').length
   useConsoleControls({
     knob: { label: 'TAP $', min: MIN_STAKE, max: MAX_STAKE, step: 1, value: tapBet, onChange: setTapBet, format: (v) => `$${v}`, disabled: !asset },
     action1: { label: durationLabel(duration), color: 'neutral', onPress: cycleDuration },
-    action2: { label: 'CLEAR', color: 'down', onPress: cashOutAll, disabled: openCount === 0 },
+    action2: { label: asset ?? '·', color: 'neutral', onPress: cycleAsset, disabled: openCount > 0 || liveAssets.length <= 1 },
     main: { label: 'CASH OUT ALL', color: 'up', onPress: cashOutAll, disabled: openCount === 0 },
   })
 
   // Candidate grid (faint) under the live (strong) boxes. Skip candidate bands already held.
   const activeIdx = new Set(boxes.map((b) => b.idx))
-  const candidates: ChartBox[] = []
+  const candidates: Array<ChartBox> = []
   if (bandHeight > 0 && spot != null) {
     const center = Math.floor(spot / bandHeight)
     for (let i = center - GRID_REACH; i <= center + GRID_REACH; i++) {
@@ -271,7 +296,7 @@ function TapScreen() {
       candidates.push({ lower: i * bandHeight, upper: (i + 1) * bandHeight, tint: 'neutral' })
     }
   }
-  const activeBoxes: ChartBox[] = boxes.map((b) => ({
+  const activeBoxes: Array<ChartBox> = boxes.map((b) => ({
     lower: b.lower,
     upper: b.upper,
     tint: b.status === 'placing' ? 'neutral' : b.pnl >= 0 ? 'up' : 'down',

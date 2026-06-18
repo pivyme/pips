@@ -1,5 +1,5 @@
 // The console is a persistent shell with a swappable screen (docs/DESIGN.md).
-// The physical controls (Main / Action 1·2 / Knob / status) belong to the shell,
+// The physical controls (Main / Action 1·2 / Knob / Number Wheel / status) belong to the shell,
 // but each game screen *registers* what they do when it mounts. Same device,
 // different bindings, like a real handheld.
 //
@@ -9,6 +9,7 @@
 //     action1: { label: 'LONG', color: 'up',   onPress: () => setSide('long') },
 //     action2: { label: 'SHORT', color: 'down', onPress: () => setSide('short') },
 //     knob:    { min: 1, max: 100, step: 1, value: bet, onChange: setBet, label: 'BET' },
+//     numberWheel: { min: 0, max: 5, step: 1, value: stakeIndex, onChange: setStakeIndex },
 //   })
 //
 // Handlers stay fresh (kept in a ref) so screens don't fight stale closures;
@@ -60,6 +61,7 @@ export interface ConsoleControls {
   action1?: ActionSpec | null
   action2?: ActionSpec | null
   knob?: KnobSpec | null
+  numberWheel?: KnobSpec | null
   status?: StatusSpec | null
 }
 
@@ -69,6 +71,7 @@ export interface ConsoleView {
   action1: Omit<ActionSpec, 'onPress'> | null
   action2: Omit<ActionSpec, 'onPress'> | null
   knob: Omit<KnobSpec, 'onChange'> | null
+  numberWheel: Omit<KnobSpec, 'onChange'> | null
   status: StatusSpec | null
 }
 
@@ -77,6 +80,7 @@ interface Handlers {
   action1?: () => void
   action2?: () => void
   knob?: (value: number) => void
+  numberWheel?: (value: number) => void
 }
 
 const EMPTY_VIEW: ConsoleView = {
@@ -84,6 +88,7 @@ const EMPTY_VIEW: ConsoleView = {
   action1: null,
   action2: null,
   knob: null,
+  numberWheel: null,
   status: null,
 }
 
@@ -139,6 +144,17 @@ function toView(c: ConsoleControls): ConsoleView {
           disabled: c.knob.disabled,
         }
       : null,
+    numberWheel: c.numberWheel
+      ? {
+          min: c.numberWheel.min,
+          max: c.numberWheel.max,
+          step: c.numberWheel.step,
+          value: c.numberWheel.value,
+          label: c.numberWheel.label,
+          format: c.numberWheel.format,
+          disabled: c.numberWheel.disabled,
+        }
+      : null,
     status: c.status ?? null,
   }
 }
@@ -147,13 +163,13 @@ function toView(c: ConsoleControls): ConsoleView {
 function viewKey(v: ConsoleView): string {
   const btn = (b: { label?: string; color?: string; disabled?: boolean; loading?: boolean } | null) =>
     b ? `${b.label}/${b.color ?? ''}/${b.disabled ? 1 : 0}/${b.loading ? 1 : 0}` : '-'
-  const knob = v.knob
-    ? `${v.knob.min}/${v.knob.max}/${v.knob.step}/${v.knob.value}/${v.knob.label ?? ''}/${v.knob.disabled ? 1 : 0}`
+  const dial = (d: ConsoleView['knob']) => d
+    ? `${d.min}/${d.max}/${d.step}/${d.value}/${d.label ?? ''}/${d.disabled ? 1 : 0}`
     : '-'
   const txt = (x: ReactNode) =>
     typeof x === 'string' || typeof x === 'number' ? String(x) : x ? '#' : '-'
   const status = v.status ? `${txt(v.status.left)}|${txt(v.status.right)}` : '-'
-  return [btn(v.main), btn(v.action1), btn(v.action2), knob, status].join(';')
+  return [btn(v.main), btn(v.action1), btn(v.action2), dial(v.knob), dial(v.numberWheel), status].join(';')
 }
 
 // Write side: a game screen.
@@ -166,6 +182,7 @@ export function useConsoleControls(controls: ConsoleControls) {
     action1: controls.action1?.onPress,
     action2: controls.action2?.onPress,
     knob: controls.knob?.onChange,
+    numberWheel: controls.numberWheel?.onChange,
   }
 
   const view = toView(controls)

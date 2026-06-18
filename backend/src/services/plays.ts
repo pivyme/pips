@@ -34,6 +34,7 @@ import {
   PlayError,
   type PlayErrorCode,
   type Resolved,
+  type RiskTier,
 } from './games.ts';
 import { recordSettlement } from './stats.ts';
 import { evaluateAndUnlock } from './achievements.ts';
@@ -89,14 +90,14 @@ async function fundManager(tx: Transaction, managerId: string, needRaw: bigint):
 // === Create ===
 
 export type CreatePlayInput =
-  | { game: 'lucky'; stake: string | number }
+  | { game: 'lucky'; stake: string | number; duration?: number; risk?: RiskTier }
   | { game: 'range'; stake: string | number; asset: string; widthPct: number; duration: number }
   | { game: 'tap'; stake: string | number; asset: string; band: { lower: number; upper: number }; duration: number };
 
 export type CreateResult = { mode: 'dev'; play: PlayDTO } | { mode: 'enoki'; envelope: SponsorEnvelope };
 
 async function resolveByGame(input: CreatePlayInput, stakeRaw: bigint): Promise<Resolved> {
-  if (input.game === 'lucky') return resolveLucky(stakeRaw);
+  if (input.game === 'lucky') return resolveLucky(stakeRaw, { duration: input.duration, risk: input.risk });
   if (input.game === 'range') return resolveRange(stakeRaw, input.asset, input.widthPct, input.duration);
   return resolveTap(stakeRaw, input.asset, input.band, input.duration);
 }

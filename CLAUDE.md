@@ -85,6 +85,14 @@ This is what every Pips game settles against. The fun, game-like front layer tra
 - **Package IDs and object layouts are explicitly unstable** and will change before mainnet. **Never hardcode them.** Read them from config or from the SDK's constants, behind one abstraction layer.
 - The published `@mysten/deepbook-v3` SDK has **no Predict support** (verified against source). We hand-build raw PTBs against the predict modules with `@mysten/sui`, and for fast short-expiry games we **publish our own copy of `packages/predict`** to testnet and operate our own markets, vault, and oracles (seeded with free DUSDC). Full verified recipe in [`bigdev/plans/05-SUI-PREDICT.md`](./bigdev/plans/05-SUI-PREDICT.md). Everything stays behind the one wrapper.
 
+**Capability box (design games INSIDE this, never outside it).** Verified against `contracts/predict/sources/predict.move`. The entire on-chain vocabulary is two **European, expiry-settled** instruments:
+1. **Binary up/down** at a grid-aligned strike. Pays `$1·qty` if the settlement price at expiry is on the chosen side, else 0.
+2. **Vertical range** `(lower, higher]`. Pays `$1·qty` if the settlement price at expiry lands in the band, else 0.
+
+Both support **hold + early cash-out**: pre-expiry `redeem` pays the live bid (mark-to-market), post-expiry `redeem` pays `$1·qty` or 0. You mint at `ask = fair + spread` and cash out at `bid = fair − spread` (round-trip costs the spread); a settled win is spread-free. Multipliers are market-priced (`1/ask`) and clamped by on-chain ask bounds, not fixed buckets. "Leverage" here just means how far OTM the strike sits.
+
+**Predict CANNOT do (do not design a game around these):** no touch/no-touch/barrier (settlement reads only the price AT expiry, never the path), no path-dependent or time-climbing payoff (no native crash/Aviator curve), no leverage/margin inside Predict (positions are fully prepaid, max loss = premium; leverage is the separate margin loop), no fixed-odds book (it is a vault-priced AMM with a spread). If a mechanic needs any of these it cannot ship on real Predict. The ONLY sanctioned sim is demo mode. Full source-cited box in [`bigdev/plans/05-SUI-PREDICT.md`](./bigdev/plans/05-SUI-PREDICT.md).
+
 **Architecture rule:** all Predict interaction goes through one wrapper module (`web/src/lib/sui/predict.*` on the client, `backend/src/lib/sui/*` on the server). Games call that wrapper. When mainnet lands or IDs change, we touch one place.
 
 ---

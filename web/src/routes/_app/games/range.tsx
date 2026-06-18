@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
 import { Chart, type BandOverlay } from '@/components/game/Chart'
-import { ResultOverlay, ScreenMessage } from '@/components/game/screen'
+import { Cell, ResultOverlay, ScreenMessage } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { haptic } from '@/lib/haptics'
 import { sound } from '@/lib/sound'
@@ -21,7 +21,7 @@ import { formatStringToNumericDecimals } from '@/utils/format'
 // live mark. The pre-play multiplier is a client estimate; the real one comes back on the mint.
 export const Route = createFileRoute('/_app/games/range')({ component: RangeScreen })
 
-const RANGE_STAKE = 10 // the knob is the band, so the bet is fixed here
+const STAKE_LADDER = [1, 5, 10, 25, 50, 100] as const
 const FALLBACK_ASSETS = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
 const FALLBACK_DURATIONS = [10, 30, 60]
 const RESULT_MS = 4200
@@ -47,13 +47,14 @@ function RangeScreen() {
   const qc = useQueryClient()
 
   const [widthTenths, setWidthTenths] = useState(10) // knob: half-band in tenths of a percent
+  const [stakeIdx, setStakeIdx] = useState(2)
   const [assetIdx, setAssetIdx] = useState(0)
   const [durIdx, setDurIdx] = useState(1)
   const [phase, setPhase] = useState<Phase>('idle')
   const [play, setPlay] = useState<PlayDTO | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [spot, setSpot] = useState<number | null>(null)
-  const [nowMs, setNowMs] = useState(0)
+  const [secsLeft, setSecsLeft] = useState<number | null>(null)
 
   const finalized = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -67,6 +68,7 @@ function RangeScreen() {
   const assets = liveAssets.length ? liveAssets : FALLBACK_ASSETS
   const asset = play?.params.asset ?? assets[Math.min(assetIdx, assets.length - 1)]
   const duration = durations[Math.min(durIdx, durations.length - 1)] ?? FALLBACK_DURATIONS[1]
+  const stake = STAKE_LADDER[stakeIdx]
 
   const halfPct = widthTenths / 10
   const canPlay = liveAssets.length > 0
@@ -127,14 +129,6 @@ function RangeScreen() {
     return unsub
   }, [play, phase, finishResult])
 
-  // Expiry countdown ticker while open.
-  useEffect(() => {
-    if (phase !== 'open') return
-    const iv = setInterval(() => setNowMs(Date.now()), 500)
-    setNowMs(Date.now())
-    return () => clearInterval(iv)
-  }, [phase])
-
   useEffect(() => () => clearResetTimer(), [])
 
   const doPlay = useCallback(async () => {
@@ -148,7 +142,7 @@ function RangeScreen() {
     setPhase('placing')
     haptic('rigid')
     try {
-      const { play: p } = await placePlay('range', { stake: RANGE_STAKE, asset, widthPct: halfPct * 2, duration })
+      const { play: p } = await placePlay('range', { stake, asset, widthPct: halfPct * 2, duration })
       setPlay(p)
       setLive({ markValue: p.markValue, pnl: p.pnl, multiplier: p.multiplier, status: p.status })
       setPhase('open')
@@ -157,7 +151,7 @@ function RangeScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, asset, halfPct, duration])
+  }, [phase, canPlay, stake, asset, halfPct, duration])
 
   const doCashOut = useCallback(async () => {
     if (phase !== 'open' || !play) return
@@ -181,6 +175,32 @@ function RangeScreen() {
     }
   }, [phase, play, finishResult])
 
+  // Round timer: the chosen duration is the round length, realized as an auto-cash at the live
+  // mark when it elapses (the on-chain oracle lives ~5 min; the round is the UX timer, see
+  // 05-SUI-PREDICT). An early Main cash-out still wins, whichever comes first.
+  useEffect(() => {
+    if (phase !== 'open' || !play) {
+      setSecsLeft(null)
+      return
+    }
+    const lenMs = (play.params.duration || duration) * 1000
+    const endAt = (play.openedAt ? Date.parse(play.openedAt) : Date.now()) + lenMs
+    let fired = false
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000))
+      setSecsLeft(left)
+      // The phase flips to 'cashing' on cash-out, tearing down this effect; `fired` guards the
+      // gap before that re-render lands so we never fire two redeems.
+      if (left <= 0 && !fired) {
+        fired = true
+        void doCashOut()
+      }
+    }
+    tick()
+    const iv = setInterval(tick, 250)
+    return () => clearInterval(iv)
+  }, [phase, play, duration, doCashOut])
+
   const cycleAsset = useCallback(() => {
     haptic('selection')
     if (assets.length) setAssetIdx((i) => (i + 1) % assets.length)
@@ -202,6 +222,16 @@ function RangeScreen() {
       format: (v) => `±${(v / 10).toFixed(1)}%`,
       disabled: phase !== 'idle' && phase !== 'result',
     },
+    numberWheel: {
+      label: 'USDC',
+      min: 0,
+      max: STAKE_LADDER.length - 1,
+      step: 1,
+      value: stakeIdx,
+      onChange: setStakeIdx,
+      format: (v) => String(STAKE_LADDER[v]),
+      disabled: phase !== 'idle' && phase !== 'result',
+    },
     action1: { label: durationLabel(duration), color: 'neutral', onPress: cycleDuration, disabled: isOpen || phase === 'cashing' },
     action2: { label: asset ?? '·', color: 'neutral', onPress: cycleAsset, disabled: isOpen || phase === 'cashing' },
     main: isOpen
@@ -219,7 +249,6 @@ function RangeScreen() {
 
   const pnlNum = live ? parseFloat(live.pnl) : 0
   const showReadouts = play != null && (phase === 'open' || phase === 'cashing' || phase === 'result')
-  const secsLeft = play && phase === 'open' ? Math.max(0, Math.ceil((play.market.expiry - nowMs) / 1000)) : null
 
   // The device screen is the L-shaped aperture (web/CLAUDE.md "The console screen"): a top bar, the
   // chart filling the slack height, then a notch-safe readout band the chart stops above. The
@@ -297,7 +326,7 @@ function RangeScreen() {
                   <div className="tnum text-4xl font-extrabold leading-none text-brand-500">{mult.toFixed(2)}x</div>
                 </div>
                 <div className="grid grid-cols-2 gap-x-4">
-                  <Cell label="Stake" value={`$${RANGE_STAKE}`} />
+                  <Cell label="Stake" value={`$${stake}`} />
                   <Cell label="Band" value={`±${halfPct.toFixed(1)}%`} />
                 </div>
               </>
@@ -307,16 +336,6 @@ function RangeScreen() {
       )}
 
       {phase === 'result' && play && <ResultOverlay {...rangeResult(play)} onDismiss={() => setPhase('idle')} />}
-    </div>
-  )
-}
-
-// One readout cell in the bottom band: tiny label over a tabular value.
-function Cell({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-3">{label}</div>
-      <div className="tnum text-base font-bold leading-tight text-text">{value}</div>
     </div>
   )
 }

@@ -27,16 +27,24 @@ function AppLayout() {
   // The menu is a drawer over the device, not a screen inside it. When a /menu route is active we
   // render it through the drawer while the shell behind it stays put for the blur layer.
   const onMenu = Boolean(matchRoute({ to: '/menu', fuzzy: true }))
-  // Range runs on the real 3D handheld, inside the same phone frame as every other route. Other
-  // routes keep the CSS shell for now (their screens aren't laid out for the L-shaped aperture yet).
+  // The 3D handheld now hosts the games hub (the selectable list) and the games laid out for the
+  // L-shaped aperture (Lucky, Range). Tap still runs on the CSS shell until its tap-the-chart
+  // surface is migrated, so it is the one /games route that stays off the device.
+  const onTap = Boolean(matchRoute({ to: '/games/tap' }))
   const onRange = Boolean(matchRoute({ to: '/games/range' }))
+  const onLucky = Boolean(matchRoute({ to: '/games/lucky' }))
+  const on3D = Boolean(matchRoute({ to: '/games', fuzzy: true })) && !onTap
 
   // Remember which shell was live before the menu opened, so the drawer's blurred backdrop (and
   // where Close returns) matches where the user came from. Pressing Menu on the 3D handheld must
-  // keep that device behind, not drop to the CSS games list.
+  // keep that device behind, not drop to the CSS shell.
   const lastShell = useRef<'3d' | 'css'>('css')
-  if (!onMenu) lastShell.current = onRange ? '3d' : 'css'
+  if (!onMenu) lastShell.current = on3D ? '3d' : 'css'
   const menuOver3D = onMenu && lastShell.current === '3d'
+
+  // Where Close returns the menu: back to the device screen the user came from (the hub by default).
+  const last3DPath = useRef('/games')
+  if (!onMenu && on3D) last3DPath.current = onRange ? '/games/range' : onLucky ? '/games/lucky' : '/games'
 
   // Not signed in (enoki, signed out): send them back to the door. dev auto-logs-in, so
   // this only fires when there is genuinely no session.
@@ -55,16 +63,16 @@ function AppLayout() {
     )
   }
 
-  // The 3D handheld is the persistent shell for Range and for the menu opened over it. Keeping one
-  // Console3DRoute element mounted across range<->menu means the WebGL scene builds once instead of
-  // rebuilding on every menu toggle. The screen content only mounts while actually on Range.
-  if (onRange || menuOver3D) {
+  // The 3D handheld is the persistent shell for the games hub + the aperture games, and for the menu
+  // opened over them. Keeping one Console3DRoute element mounted across screen<->menu means the WebGL
+  // scene builds once instead of rebuilding on every toggle. Screen content only mounts on a 3D route.
+  if (on3D || menuOver3D) {
     return (
       <AppFrame>
         <ConsoleControlsProvider>
-          <Console3DRoute>{onRange ? <Outlet /> : null}</Console3DRoute>
+          <Console3DRoute>{on3D ? <Outlet /> : null}</Console3DRoute>
           {onMenu && (
-            <MenuDrawer returnTo="/games/range">
+            <MenuDrawer returnTo={last3DPath.current}>
               <Outlet />
             </MenuDrawer>
           )}

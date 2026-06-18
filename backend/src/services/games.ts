@@ -29,7 +29,7 @@ import {
   type Side,
   type TradeAmounts,
 } from '../lib/sui/predict.ts';
-import { newSeed, seedFloat, pickLeverage, LEVERAGE_BUCKETS as RNG_BUCKETS } from './rng.ts';
+import { newSeed, seedFloat, pickWeighted, BUCKET_WEIGHTS, LEVERAGE_BUCKETS as RNG_BUCKETS } from './rng.ts';
 
 // === Errors ===
 
@@ -77,6 +77,20 @@ export const httpStatusForPlayError = (code: PlayErrorCode): number => {
 // === Leverage buckets (Lucky) ===
 
 export const LEVERAGE_BUCKETS = RNG_BUCKETS;
+
+// Risk tier (Lucky's Action 2). Constrains which leverage buckets the spin can land on, so the
+// player sets the flavor while asset/side stay random. Chill hugs ATM (small, frequent wins);
+// Lotto only draws the far, big-multiple strikes. The fair RNG still picks within the tier.
+export type RiskTier = 'chill' | 'wild' | 'lotto';
+const RISK_BUCKETS: Record<RiskTier, readonly number[]> = {
+  chill: [2, 5],
+  wild: [5, 10, 25],
+  lotto: [25, 100],
+};
+const isRiskTier = (v: unknown): v is RiskTier => v === 'chill' || v === 'wild' || v === 'lotto';
+const riskWeights = (allowed: readonly number[]): Record<number, number> =>
+  Object.fromEntries(allowed.map((b) => [b, BUCKET_WEIGHTS[b] ?? 1]));
+export { isRiskTier };
 
 // Strike distance from spot per bucket (fraction). Further out = cheaper = bigger multiple.
 const BUCKET_DISTANCE_PCT: Record<number, number> = { 2: 0.0008, 5: 0.002, 10: 0.004, 25: 0.009, 100: 0.025 };
@@ -245,21 +259,26 @@ export type ResolvedRange = {
 
 export type Resolved = ResolvedBinary | ResolvedRange;
 
-// I Feel Lucky: fair server RNG picks asset/side/leverage/duration, then we size the binary.
-export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
+// I Feel Lucky: fair server RNG picks asset/side, the player sets the bet (knob), round length
+// (Action 1) and risk tier (Action 2); we draw the leverage within the tier and size the binary.
+export async function resolveLucky(stakeRaw: bigint, opts: { duration?: number; risk?: RiskTier } = {}): Promise<ResolvedBinary> {
   const assets = liveAssets();
   if (assets.length === 0) throw new PlayError('MARKET_UNAVAILABLE', 'No markets are live right now');
 
   const seed = newSeed();
   const asset = assets[Math.floor(seedFloat(seed, 0) * assets.length)];
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
-  // Fair RNG by default; a rehearsed demo can pin the leverage/duration via env (see config).
+  // Leverage: a rehearsed demo can pin it via env; otherwise fair RNG within the chosen risk tier.
+  const allowed = RISK_BUCKETS[opts.risk ?? 'wild'] ?? LEVERAGE_BUCKETS;
   const leverage = LEVERAGE_BUCKETS.includes(DEMO_LUCKY_LEVERAGE as (typeof LEVERAGE_BUCKETS)[number])
     ? DEMO_LUCKY_LEVERAGE
-    : pickLeverage(seedFloat(seed, 2));
+    : pickWeighted(seedFloat(seed, 2), riskWeights(allowed));
+  // Round length: env pin (demo) > the player's pick > fair RNG.
   const duration = GAME_DURATIONS.includes(DEMO_LUCKY_DURATION)
     ? DEMO_LUCKY_DURATION
-    : GAME_DURATIONS[Math.floor(seedFloat(seed, 3) * GAME_DURATIONS.length)] ?? GAME_DURATIONS[0];
+    : opts.duration != null && GAME_DURATIONS.includes(opts.duration)
+      ? opts.duration
+      : GAME_DURATIONS[Math.floor(seedFloat(seed, 3) * GAME_DURATIONS.length)] ?? GAME_DURATIONS[0];
 
   const market = pickMarket(asset);
   const spot = await freshSpot(market);
