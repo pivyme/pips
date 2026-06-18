@@ -13,7 +13,7 @@ The twist that makes Pips Pips: the whole interface looks and behaves like a **p
 ## What an agent needs to know first
 
 1. This is a **monorepo** with three pillars: `web/` (frontend), `backend/` (API), `contracts/` (Sui Move). Working in a pillar? Read its own `CLAUDE.md` too.
-2. The chain is **Sui**. The trading mechanic is **DeepBook Predict** (an on-chain prediction-market protocol, currently testnet only, see below).
+2. The chain is **our own Sui localnet**, deployed and live at `https://rpc.playpips.fun`. **Not Sui testnet.** We publish and run our own copy of **DeepBook Predict** (an on-chain prediction-market protocol) on it. Setup and redeploy are one command: `scripts/localnet.sh`. Read the "The chain" section below before touching anything Sui.
 3. The frontend is **not a normal dashboard**. It is a persistent console shell with a swappable screen. Read [`docs/DESIGN.md`](./docs/DESIGN.md) before touching UI.
 4. Auth is **Sui zkLogin via Enoki (Google sign-in)** plus a **dev auto-login** for local and the build loop. Suiet wallet connect is not in v1. See [`bigdev/plans/04-AUTH.md`](./bigdev/plans/04-AUTH.md).
 5. The Sui SDK surface moves fast. The package names and APIs in this file were verified mid 2026. When you write integration code, confirm the current API before coding, never guess from memory.
@@ -30,6 +30,8 @@ pips/
 ├── docs/
 │   ├── DESIGN.md       Console design language + layout spec (read this)
 │   └── references/     Visual references (Not Boring Camera, console layout)
+├── scripts/
+│   └── localnet.sh     Localnet + Predict deploy front door (setup/redeploy/doctor)
 ├── .claude/
 │   └── progress.md     Living roadmap + build progress + quick reference
 ├── CLAUDE.md           This file (master context)
@@ -81,9 +83,9 @@ DeepBook Predict is a real, official Sui primitive: an **expiry based on-chain p
 This is what every Pips game settles against. The fun, game-like front layer translates into Predict positions underneath.
 
 **Critical constraints:**
-- **Testnet only** as of mid 2026 (launched ~May 2026). Mainnet is expected later. Build for testnet now, plan a clean mainnet re-point.
-- **Package IDs and object layouts are explicitly unstable** and will change before mainnet. **Never hardcode them.** Read them from config or from the SDK's constants, behind one abstraction layer.
-- The published `@mysten/deepbook-v3` SDK has **no Predict support** (verified against source). We hand-build raw PTBs against the predict modules with `@mysten/sui`, and for fast short-expiry games we **publish our own copy of `packages/predict`** to testnet and operate our own markets, vault, and oracles (seeded with free DUSDC). Full verified recipe in [`bigdev/plans/05-SUI-PREDICT.md`](./bigdev/plans/05-SUI-PREDICT.md). Everything stays behind the one wrapper.
+- **We run our own deployment on our own localnet.** Mysten's Predict is testnet only as of mid 2026 (launched ~May 2026), but we never depend on it. We publish our **own** copy of `packages/predict` (plus DUSDC, token, deepbook) onto our localnet (live at `rpc.playpips.fun`), seed the vault with free DUSDC, and run the oracles ourselves. Gas is effectively infinite there, which is why we moved off the gas-starved testnet. Mainnet is a clean re-point later.
+- **Package IDs and object layouts are per-deployment and change every redeploy.** **Never hardcode them.** Read them from config (the bootstrap writes them to `deployed.localnet.json` + the `.env`s), behind one abstraction layer.
+- The published `@mysten/deepbook-v3` SDK has **no Predict support** (verified against source). We hand-build raw PTBs against the predict modules with `@mysten/sui`, and for fast short-expiry games we **publish our own copy of `packages/predict`** to our localnet and operate our own markets, vault, and oracles (seeded with free DUSDC). Full verified recipe in [`bigdev/plans/05-SUI-PREDICT.md`](./bigdev/plans/05-SUI-PREDICT.md). Everything stays behind the one wrapper.
 
 **Capability box (design games INSIDE this, never outside it).** Verified against `contracts/predict/sources/predict.move`. The entire on-chain vocabulary is two **European, expiry-settled** instruments:
 1. **Binary up/down** at a grid-aligned strike. Pays `$1·qty` if the settlement price at expiry is on the chosen side, else 0.
@@ -97,12 +99,35 @@ Both support **hold + early cash-out**: pre-expiry `redeem` pays the live bid (m
 
 ---
 
+## The chain: our own Sui localnet
+
+Pips does **not** run on Sui testnet. It runs on **our own Sui localnet**, deployed and live at `https://rpc.playpips.fun` (Cloudflare in front, valid cert, chain `325c13db`). The whole Predict stack (our copy of `predict` + DUSDC + token + deepbook) is published there, the vault is seeded with free DUSDC, and we run the oracles. This is the chain every play settles against now.
+
+**One command drives it: `scripts/localnet.sh`.**
+- `setup` — one shot: import the operator key into the sui CLI, publish the Predict stack, wire both `.env`s. Run once.
+- `redeploy` — **after any `contracts/` (Move) change**: republish all packages, reseed, rewire the ids. This is the loop for Move work.
+- `doctor` / `status` — diagnose what is live (node, cert, gRPC deploy path, Predict package, operator funding).
+- `apply-ids <file>` — wire ids from a deploy done on another machine.
+- `up` — start a throwaway local node + faucet (the fully-local flow, instead of the deployed box).
+
+**Editing a game, the UI, or the backend needs NO redeploy.** The three games just compose the two on-chain Predict instruments, so a plain `bun dev` restart is enough. Only `contracts/` (Move) changes need `redeploy`.
+
+**The deploy gotcha (already solved, do not relearn):** the sui CLI 1.71 publishes over **gRPC**, and Cloudflare 403s gRPC while passing JSON-RPC. So the apps (JSON-RPC) run fine through `rpc.playpips.fun`, but the CLI cannot publish there. The fix: publish through the node's **origin** (`http://95.111.237.44:9000`, where gRPC is unblocked), run through the proxied url. The origin is recorded as `PIPS_DEPLOY_RPC` in `backend/.env`; `scripts/localnet.sh` uses it automatically and resets the apps back to the proxied url after each deploy.
+
+**IDs are never hardcoded.** The bootstrap writes them to `backend/src/lib/sui/deployed.localnet.json` (gitignored) and the headline ids into both `.env`s. Read from config, always. Current deployment (chain `325c13db`): Predict package `0xded84f0b…43a3`, vault `0xf31457a2…ad69`.
+
+**`/tools/wallet`** is a standalone browser wallet for this private node (no extension speaks to it): editable RPC, import/generate/watch a key, all coin balances, send any coin, faucet. No auth/backend/Predict wrapper.
+
+Runtime node resolves as `PIPS_LOCALNET_RPC` > `backend/.env` `SUI_FULLNODE_URL` > `127.0.0.1:9000`. Deploy node resolves as `PIPS_DEPLOY_RPC` > auto-origin > runtime.
+
+---
+
 ## Auth (v1)
 
 Two modes behind one JWT plumbing, selected by `AUTH_MODE`. Full spec in [`bigdev/plans/04-AUTH.md`](./bigdev/plans/04-AUTH.md).
 
 - **`enoki` (product + demo):** Google sign-in via **Sui zkLogin (Enoki)**, so users get a real Sui address with no wallet or seed phrase. The client signs its own plays; the backend sponsors gas (Enoki server key) so plays are gasless. To auth our backend: nonce, client signs a personal message, server verifies (`verifyPersonalMessageSignature({ address })`, and zkLogin sigs on testnet need a testnet `SuiGraphQLClient`), mints the JWT.
-- **`dev` (local + build loop):** auto-login the testing wallet (`TESTING_WALLET_PK`); the backend signs txs directly. No OAuth, real Predict on testnet.
+- **`dev` (local + build loop):** auto-login the testing wallet (`TESTING_WALLET_PK`); the backend signs txs directly. No OAuth, real Predict on our localnet.
 
 Suiet wallet connect is not in v1 (`@suiet/wallet-kit` stays available but unused).
 
@@ -133,7 +158,7 @@ Suiet wallet connect is not in v1 (`@suiet/wallet-kit` stays available but unuse
 
 The full v1 build (auth, the three games, menu, backend, indexer, the Predict integration) is planned under [`bigdev/`](./bigdev/) and built by an autonomous loop (`./bigdev/autobuild`). Durable steering lives in [`bigdev/claude/requirements-log.md`](./bigdev/claude/requirements-log.md) (committed, read every iteration); one-shot corrections go to `bigdev/claude/inject.md` (gitignored). Use `./bigdev/autobuild say "rule"` for durable, `./bigdev/autobuild fix "msg"` for transient.
 
-**The spine (decided):** Pips runs its **own** DeepBook Predict deployment on testnet (we publish `packages/predict` ourselves, seed the vault with free DUSDC, run short-expiry oracles via a backend price-pusher). Every play is a real `mint`/`redeem`. No sim. Gasless via Enoki, dev mode backend-signs. Fast paced is the priority. The why and how: `bigdev/plans/01-ARCHITECTURE.md` and `05-SUI-PREDICT.md`.
+**The spine (decided):** Pips runs its **own** DeepBook Predict deployment on its **own Sui localnet** (live at `rpc.playpips.fun`, no longer testnet: we publish `packages/predict` ourselves, seed the vault with free DUSDC, run short-expiry oracles via a backend price-pusher). Every play is a real `mint`/`redeem`. No sim. Gasless via Enoki, dev mode backend-signs. Fast paced is the priority. The why and how: `bigdev/plans/01-ARCHITECTURE.md` and `05-SUI-PREDICT.md`; the deploy mechanics live in "The chain" above.
 
 **Plans (source of truth, read the relevant one before each phase):**
 
@@ -160,6 +185,9 @@ cd backend && bun run typecheck    # backend typecheck gate
 cd backend && bun dev              # API on :3700
 cd web && bun dev                  # console on :3200
 cd backend && bun run db:push      # USER runs this after schema changes (never the loop)
+scripts/localnet.sh setup          # deploy our Predict stack + wire both .envs (run once)
+scripts/localnet.sh redeploy       # re-publish after any contracts/ (Move) change
+scripts/localnet.sh doctor         # diagnose the localnet (node, cert, gRPC, ids, funding)
 ```
 
 ## Working on something big?

@@ -10,6 +10,8 @@
 
 This is the **Pips** backend (gamified trading on Sui via DeepBook Predict). Read the root [`../CLAUDE.md`](../CLAUDE.md) for product and Sui stack context. Its job: auth (zkLogin via Enoki + a dev auto-login), game engine, the Predict operator (price-pusher, oracle ladder, settle), indexing, and sponsored Sui txs.
 
+**The chain is our own Sui localnet, not testnet.** It is deployed and live at `https://rpc.playpips.fun`. `scripts/bootstrap.ts` is network-aware via `SUI_NETWORK` and is driven by the repo-root `scripts/localnet.sh` (`setup` once, `redeploy` after any `contracts/` change). It writes the deployed ids into `src/lib/sui/deployed.localnet.json` (gitignored, read via `src/lib/sui/config.ts`) and the headline ids into `.env`. Runtime RPC is `SUI_FULLNODE_URL` (the proxied url); `PIPS_DEPLOY_RPC` is the gRPC origin the CLI publishes through. See "The chain" in the root CLAUDE.md for the gRPC-origin gotcha. Never hardcode ids.
+
 **v1 build:** planned in [`../bigdev/plans/`](../bigdev/plans/). Read `05-SUI-PREDICT.md` (we publish + operate our own Predict instance: the verified bootstrap recipe, the wrappers, and the price-pusher / oracle-roll / settle workers), `02-API.md` (routes + SSE streams), `03-DATABASE.md` (schema + seed), `04-AUTH.md` (dev + Enoki, sponsorship, onboarding). All Sui ids come from config, never hardcode.
 
 **Sui (verified mid 2026, reconfirm before coding):**

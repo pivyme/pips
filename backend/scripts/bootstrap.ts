@@ -607,20 +607,28 @@ async function main(): Promise<void> {
   // reflect network + headline ids into backend/.env (config reads deployed.json, but
   // keeping SUI_NETWORK in sync here prevents the "deployed.json is for X but SUI_NETWORK
   // is Y" mismatch error when switching between testnet and localnet).
-  updateEnv(ENV_PATH, {
+  const backendVars: Record<string, string> = {
     SUI_NETWORK: NETWORK,
     PREDICT_PACKAGE_ID: packageId,
     PREDICT_REGISTRY_ID: registryId,
     PREDICT_OBJECT_ID: predictId,
     PREDICT_ADMIN_CAP_ID: adminCapId,
-  });
+  };
   // mirror network + the public ids the client needs into web/.env (reads only, no secrets)
-  updateEnv(WEB_ENV_PATH, {
+  const webVars: Record<string, string> = {
     VITE_SUI_NETWORK: NETWORK,
     VITE_PREDICT_PACKAGE_ID: packageId,
     VITE_PREDICT_OBJECT_ID: predictId,
     VITE_DUSDC_TYPE: DUSDC_TYPE,
-  });
+  };
+  // Pin the fullnode URL so both apps hit the exact node we just deployed to (local node, our
+  // deployed box, whatever). Only for localnet; testnet/mainnet ride the SDK's default RPC.
+  if (IS_LOCAL) {
+    backendVars.SUI_FULLNODE_URL = RPC_URL;
+    webVars.VITE_SUI_FULLNODE_URL = RPC_URL;
+  }
+  updateEnv(ENV_PATH, backendVars);
+  updateEnv(WEB_ENV_PATH, webVars);
 
   cleanupLocalArtifacts();
   console.log(`\n=== Bootstrap complete (${NETWORK}). Spike is GREEN. ===`);
