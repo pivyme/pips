@@ -494,20 +494,26 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       g.fillText(text, c.width / 2, c.height / 2)
     }
 
-    function makeLabel(text: string, cx: number, cy: number, worldH: number, color: string) {
+    // Static caption on a flat plane. Defaults to a front-facing label on the device body; opts let it
+    // sit on another parent (e.g. the back panel), face both ways, and mirror x for the flipped view.
+    function makeLabel(
+      text: string, cx: number, cy: number, cz: number, worldH: number, color: string, fs = 64,
+      opts: { parent?: THREE.Object3D; doubleSide?: boolean; mirrorX?: boolean } = {},
+    ) {
       const c = document.createElement('canvas'), g = c.getContext('2d')!
-      drawLabel(c, g, text, color)
+      drawLabel(c, g, text, color, fs)
       const tex = new THREE.CanvasTexture(c)
       tex.colorSpace = THREE.SRGBColorSpace
       tex.anisotropy = MAXANISO
       const plane = new THREE.Mesh(
         new THREE.PlaneGeometry(worldH * (c.width / c.height), worldH),
-        new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: opts.doubleSide ? THREE.DoubleSide : THREE.FrontSide }),
       )
-      plane.position.set(cx, cy, 0.06)
-      device.add(plane)
+      plane.position.set(cx, cy, cz)
+      if (opts.mirrorX) plane.scale.x = -1
+        ; (opts.parent ?? device).add(plane)
       // Repaint the caption when the skin changes its label tint.
-      const recolor = (col: string) => { drawLabel(c, g, text, col); tex.needsUpdate = true; dirty = true }
+      const recolor = (col: string) => { drawLabel(c, g, text, col, fs); tex.needsUpdate = true; dirty = true }
       return { plane, recolor }
     }
 
@@ -559,8 +565,16 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
 
     const LABEL_DY = -0.45
-    const menuLbl = makeLabel('MENU', bm[3].position.x, bm[3].position.y + LABEL_DY, 0.26, '#7c7870')
-    const gamesLbl = makeLabel('GAMES', bm[4].position.x, bm[4].position.y + LABEL_DY, 0.26, '#7c7870')
+    const menuLbl = makeLabel('MENU', bm[3].position.x, bm[3].position.y + LABEL_DY, 0.06, 0.26, '#7c7870')
+    const gamesLbl = makeLabel('GAMES', bm[4].position.x, bm[4].position.y + LABEL_DY, 0.06, 0.26, '#7c7870')
+
+    // "By PIVY Inc." caption under the carved back-panel PIPS logo (centered at backPanel-local 0,0).
+    // Parented to the panel, mirrored + double-sided so it reads upright from the flipped (back) view.
+    const pivyLbl = makeLabel('By PIVY Inc.', 0, -1, backFaceLocalZ - 0.02, 0.36, '#b9b6b1', 108, {
+      parent: backPanel,
+      doubleSide: true,
+      mirrorX: true,
+    })
 
     // Live labels: action1 / action2 on their faces, knob value on the body. The main button wears the
     // embossed Pips glyph instead of a text label (carved once the logo SVG loads, see buildMainGlyph).
@@ -754,6 +768,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const labelColor = t.label ?? '#7c7870'
       menuLbl.recolor(labelColor)
       gamesLbl.recolor(labelColor)
+      pivyLbl.recolor(labelColor)
       dirty = true
     }
     applyThemeRef.current = applyTheme
