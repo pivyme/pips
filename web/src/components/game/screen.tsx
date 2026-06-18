@@ -1,8 +1,41 @@
+import type { ReactNode } from 'react'
 import { explorerTxUrl } from '@/lib/sui/config'
 import { cnm } from '@/utils/style'
 
 // Shared in-screen pieces for the games: the win/loss result moment and the markets
 // empty/error message. Copy stays game-specific (passed in); the chrome is shared.
+
+// The L-shaped aperture layout for the games that run on the device (web/CLAUDE.md "The
+// console screen"). The rim inset lives here, once, so no game pads its own zones by hand:
+// the chart bleeds full width, the top bar floats over its top edge, and a notch-safe
+// readout band sits below (left-only, the bottom-right is the knob + PLAY body). Tune
+// SCREEN_PAD and every game reflows together.
+const SCREEN_PAD = 'p-6'
+
+// Root: the black screen, a vertical flex stack that absorbs the responsive height stretch
+// in the chart. Wrap the loading/empty states and the result overlay inside it too.
+export function GameScreen({ children }: { children: ReactNode }) {
+  return (
+    <div className="relative flex h-full w-full flex-col overflow-hidden bg-black text-text">{children}</div>
+  )
+}
+
+// Zones 1+2: the chart fills the slack height (pass it as the child, positioned
+// `absolute inset-0`), the top bar (`top`) floats over its top edge, padded off the rim.
+export function GameStage({ top, children }: { top?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="relative min-h-0 flex-1">
+      {children}
+      {top != null && <div className={cnm('pointer-events-none absolute inset-x-0 top-0', SCREEN_PAD)}>{top}</div>}
+    </div>
+  )
+}
+
+// Zone 3: the notch-safe readout band. Left-only and padded off the rim by the same inset
+// as the top bar, so the play's numbers never crowd the bevel or the device body.
+export function GameReadout({ children }: { children: ReactNode }) {
+  return <div className={cnm('pointer-events-none max-w-[62%] space-y-2.5', SCREEN_PAD)}>{children}</div>
+}
 
 export function ResultOverlay({
   title,

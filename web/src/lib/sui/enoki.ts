@@ -7,7 +7,9 @@ import { fromBase64 } from '@mysten/sui/utils'
 
 import { env } from '@/env'
 
-const NETWORK = env.VITE_SUI_NETWORK as 'mainnet' | 'testnet' | 'devnet'
+// Enoki only serves real networks; localnet has no zkLogin prover, so fall back to testnet
+// for the (unused in localnet) enoki calls. localnet always runs in dev auth mode.
+const NETWORK = env.VITE_SUI_NETWORK === 'localnet' ? 'testnet' : env.VITE_SUI_NETWORK
 
 let flow: EnokiFlow | null = null
 function getFlow(): EnokiFlow {

@@ -8,7 +8,7 @@ import { roundedRect, roundedPoly, frontZeroed, setBoxUVs, roundedRectPath, roun
 import { createButtons, createKnob, createNumberWheel } from './consoleElements'
 import { createAudio } from './consoleAudio'
 import type { ConsoleView } from './controls'
-import type { ConsoleTheme } from './themes'
+import { themeBackdrop, type ConsoleTheme } from './themes'
 
 // The 3D handheld, driven by the console controls registry. A game registers its bindings via
 // useConsoleControls(); this paints live labels on the buttons + knob and dispatches the physical
@@ -1367,14 +1367,16 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         position: 'absolute',
         inset: 0,
         overflow: 'hidden',
-        // Playground sits the device on a warm backdrop to inspect the model; the real app stays
-        // black so the device reads as a product shot. Customize is transparent so the workshop
-        // backdrop shows around the floating device, and sits above it in the studio stack.
+        // Playground sits the device on a warm backdrop to inspect the model; the real app frames it
+        // on a deep tint of the active skin so the surround feels themed, not flat black. Customize is
+        // transparent so the workshop backdrop shows around the floating device.
         background: debug
           ? 'radial-gradient(circle at 50% 38%, #f4ead6 0%, #decdab 82%)'
           : customize
             ? 'transparent'
-            : '#000',
+            : theme
+              ? themeBackdrop(theme)
+              : '#000',
         zIndex: customize ? 10 : undefined,
       }}
     >

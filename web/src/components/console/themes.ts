@@ -12,6 +12,7 @@ export interface ConsoleTheme {
   // device materials
   body: string
   back?: string // defaults to body
+  ambient?: string // the page/surround color the device floats on; defaults to a deep tint of `body`
   skin?: string // optional SVG wrapped across the front body (overlays `body`); back stays flat
   knob: string
   main: string // big PLAY button
@@ -206,6 +207,24 @@ export const THEMES: ConsoleTheme[] = [
     cardSub: 'rgba(38,40,44,0.6)',
   },
 ]
+
+// The ambient the device floats on: the root page, the desktop surround, and the strip framing the
+// 3D handheld. Derived from the skin's body color so the backdrop feels part of the theme instead of
+// flat black, but kept deep so the device still reads as the hero. A theme can pin it with `ambient`.
+export function themeBackdrop(theme: ConsoleTheme): string {
+  if (theme.ambient) return theme.ambient
+  const hex = theme.body.replace('#', '')
+  if (hex.length !== 6) return '#0b0b0c'
+  const r = parseInt(hex.slice(0, 2), 16)
+  const g = parseInt(hex.slice(2, 4), 16)
+  const b = parseInt(hex.slice(4, 6), 16)
+  // ~15% of the body hue over a near-black base: enough tint to feel themed, dark enough to frame.
+  const ch = (c: number, base: number) =>
+    Math.round(c * 0.15 + base * 0.85)
+      .toString(16)
+      .padStart(2, '0')
+  return `#${ch(r, 11)}${ch(g, 11)}${ch(b, 12)}`
+}
 
 export const DEFAULT_THEME_ID = 'classic'
 export const THEME_BY_ID: Record<string, ConsoleTheme> = Object.fromEntries(

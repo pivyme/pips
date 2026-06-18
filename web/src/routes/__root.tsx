@@ -69,6 +69,14 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         <HeadContent />
+        {/* Tint the iOS status-bar strip to the saved skin before first paint, so it never flashes
+            black on load. _app caches the color; the door ("/") clears it. Runs in <head>, so it can
+            touch the theme-color meta + html bg (body isn't parsed yet, that lands in _app's effect). */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var c=localStorage.getItem('pips_console_backdrop');if(c&&location.pathname!=='/'){document.documentElement.style.background=c;var m=document.querySelector('meta[name="theme-color"]');if(m)m.content=c;}}catch(e){}`,
+          }}
+        />
       </head>
       <body className="bg-canvas text-text antialiased">
         <LenisSmoothScrollProvider />

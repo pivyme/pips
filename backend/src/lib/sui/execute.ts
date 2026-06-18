@@ -35,7 +35,9 @@ export async function executeAsOperator(tx: Transaction, label: string): Promise
   };
 }
 
-const ENOKI_NETWORK = SUI_NETWORK as 'mainnet' | 'testnet' | 'devnet';
+// Enoki has no localnet prover; localnet always runs dev auth mode (this path is never hit
+// there), so fall back to testnet to keep the type honest.
+const ENOKI_NETWORK = (SUI_NETWORK === 'localnet' ? 'testnet' : SUI_NETWORK) as 'mainnet' | 'testnet' | 'devnet';
 
 let enoki: EnokiClient | null = null;
 function enokiClient(): EnokiClient {

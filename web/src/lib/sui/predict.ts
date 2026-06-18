@@ -15,7 +15,7 @@ export type PlayOutcome = { play: PlayDTO; unlocked: string[] }
 let client: SuiJsonRpcClient | null = null
 function suiClient(): SuiJsonRpcClient {
   if (!client) {
-    const url = env.VITE_SUI_FULLNODE_URL || getJsonRpcFullnodeUrl(NETWORK as 'testnet' | 'mainnet' | 'devnet')
+    const url = env.VITE_SUI_FULLNODE_URL || getJsonRpcFullnodeUrl(NETWORK as 'testnet' | 'mainnet' | 'devnet' | 'localnet')
     client = new SuiJsonRpcClient({ url, network: NETWORK })
   }
   return client

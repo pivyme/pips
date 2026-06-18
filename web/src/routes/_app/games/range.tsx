@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
 import { Chart, type BandOverlay } from '@/components/game/Chart'
-import { Cell, ResultOverlay, ScreenMessage } from '@/components/game/screen'
+import { Cell, GameReadout, GameScreen, GameStage, ResultOverlay, ScreenMessage } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { haptic } from '@/lib/haptics'
 import { sound } from '@/lib/sound'
@@ -251,10 +251,10 @@ function RangeScreen() {
   const showReadouts = play != null && (phase === 'open' || phase === 'cashing' || phase === 'result')
 
   // The device screen is the L-shaped aperture (web/CLAUDE.md "The console screen"): a top bar, the
-  // chart filling the slack height, then a notch-safe readout band the chart stops above. The
-  // bottom-right is the body (main button + knob), so the band is left-only and padded off the rim.
+  // chart filling the slack height, then a notch-safe readout band the chart stops above. The rim
+  // inset is owned by the GameScreen/GameStage/GameReadout layout, not set here.
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-black text-text">
+    <GameScreen>
       {marketsQ.isLoading ? (
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="shimmer h-24 w-2/3 rounded-md" />
@@ -265,9 +265,34 @@ function RangeScreen() {
         <ScreenMessage title="No live markets right now." action="Retry" onAction={() => void marketsQ.refetch()} />
       ) : (
         <>
-          {/* top bar + chart: the chart fills the slack height, the top bar floats over its top.
-              The chart stops above the readout band below, it never runs under it. */}
-          <div className="relative min-h-0 flex-1">
+          {/* top bar — full width. Left: market + live price. Right: balance at rest, the expiry
+              countdown once a play is open. The chart fills the slack height behind it. */}
+          <GameStage
+            top={
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Range · {asset}</div>
+                  <div className="tnum text-2xl font-extrabold leading-none text-text">
+                    {spot != null
+                      ? `$${spot.toLocaleString('en-US', { maximumFractionDigits: spot >= 1000 ? 0 : 2 })}`
+                      : '—'}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                    {showReadouts && secsLeft != null ? 'Ends in' : 'Balance'}
+                  </div>
+                  <div className="tnum text-xl font-bold leading-none text-text-2">
+                    {showReadouts && secsLeft != null
+                      ? `${secsLeft}s`
+                      : user?.balance != null
+                        ? `$${formatStringToNumericDecimals(user.balance, 2)}`
+                        : '—'}
+                  </div>
+                </div>
+              </div>
+            }
+          >
             {asset ? (
               <Chart
                 asset={asset}
@@ -276,36 +301,11 @@ function RangeScreen() {
                 className="absolute inset-0"
               />
             ) : null}
+          </GameStage>
 
-            {/* top bar — full width. Left: market + live price. Right: balance at rest, the expiry
-                countdown once a play is open. Padded clear of the rim. */}
-            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-4">
-              <div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Range · {asset}</div>
-                <div className="tnum text-2xl font-extrabold leading-none text-text">
-                  {spot != null
-                    ? `$${spot.toLocaleString('en-US', { maximumFractionDigits: spot >= 1000 ? 0 : 2 })}`
-                    : '—'}
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                  {showReadouts && secsLeft != null ? 'Ends in' : 'Balance'}
-                </div>
-                <div className="tnum text-xl font-bold leading-none text-text-2">
-                  {showReadouts && secsLeft != null
-                    ? `${secsLeft}s`
-                    : user?.balance != null
-                      ? `$${formatStringToNumericDecimals(user.balance, 2)}`
-                      : '—'}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* readout band — notch-safe (bottom-right is the body: knob + PLAY). A hero number over a
-              clean two-up grid: the prize multiple + stake at rest, the live PnL once a play runs. */}
-          <div className="pointer-events-none max-w-[62%] space-y-2.5 p-4">
+          {/* readout band — a hero number over a clean two-up grid: the prize multiple + stake at
+              rest, the live PnL once a play runs. */}
+          <GameReadout>
             {showReadouts ? (
               <>
                 <div>
@@ -331,12 +331,12 @@ function RangeScreen() {
                 </div>
               </>
             )}
-          </div>
+          </GameReadout>
         </>
       )}
 
       {phase === 'result' && play && <ResultOverlay {...rangeResult(play)} onDismiss={() => setPhase('idle')} />}
-    </div>
+    </GameScreen>
   )
 }
 

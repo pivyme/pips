@@ -47,13 +47,19 @@ type Deployed = {
   bootstrappedAt: string;
 };
 
-const DEPLOYED_PATH = path.resolve(import.meta.dir, 'deployed.json');
+// Per-network deployment record. testnet keeps the committed `deployed.json`; localnet (and
+// any other chain) reads its own `deployed.<network>.json`, so switching networks never
+// clobbers another network's ids. The bootstrap writes the matching file.
+const DEPLOYED_FILE = SUI_NETWORK === 'testnet' ? 'deployed.json' : `deployed.${SUI_NETWORK}.json`;
+const DEPLOYED_PATH = path.resolve(import.meta.dir, DEPLOYED_FILE);
 
 function loadDeployed(): Deployed {
   if (!fs.existsSync(DEPLOYED_PATH)) {
     throw new Error(
-      'Predict deployment missing: backend/src/lib/sui/deployed.json not found. ' +
-        'Run `bun scripts/bootstrap.ts` from backend/ to publish and seed the instance.',
+      `Predict deployment missing: backend/src/lib/sui/${DEPLOYED_FILE} not found. ` +
+        (SUI_NETWORK === 'localnet'
+          ? 'Start a local chain and bootstrap it: scripts/localnet.sh up + scripts/localnet.sh bootstrap.'
+          : 'Run `bun scripts/bootstrap.ts` from backend/ to publish and seed the instance.'),
     );
   }
   const d = JSON.parse(fs.readFileSync(DEPLOYED_PATH, 'utf-8')) as Deployed;

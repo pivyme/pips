@@ -7,7 +7,7 @@ import { ConsoleShell } from '@/components/console/ConsoleShell'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { MenuDrawer } from '@/components/console/MenuDrawer'
 import { CustomizeStudio } from '@/components/console/CustomizeStudio'
-import { useConsoleTheme, type ConsoleTheme } from '@/components/console/themes'
+import { useConsoleTheme, themeBackdrop, type ConsoleTheme } from '@/components/console/themes'
 import { Illo } from '@/ui/Illo'
 import { haptic } from '@/lib/haptics'
 import { useAuth } from '@/lib/auth'
@@ -41,6 +41,44 @@ function AppLayout() {
   const onCustomize = Boolean(matchRoute({ to: '/menu/customize' }))
   // The saved skin. Feeds the live games device; the studio seeds from it and writes back on Done.
   const savedTheme = useConsoleTheme()
+  // The ambient the whole frame floats on, derived from the skin so the surround stops being flat
+  // black. We paint html + body (body shows under the safe-area inset behind iOS Safari's status
+  // bar) and retint the theme-color meta, which is what Safari uses to color the notch/status strip.
+  const backdrop = themeBackdrop(savedTheme.theme)
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.background = backdrop
+    document.body.style.background = backdrop
+    // Cache it so the pre-paint bootstrap (see __root) can tint the status bar before React mounts.
+    try {
+      localStorage.setItem('pips_console_backdrop', backdrop)
+    } catch {
+      // private mode / storage blocked: this effect still tints once mounted, just no pre-paint help.
+    }
+
+    // TanStack re-syncs <head> on every navigation and would reset theme-color to the static default,
+    // so pin it: re-apply our color whenever the head changes (the meta gets mutated or replaced).
+    const pin = () => {
+      let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+      if (!meta) {
+        meta = document.createElement('meta')
+        meta.name = 'theme-color'
+        document.head.appendChild(meta)
+      }
+      if (meta.content !== backdrop) meta.content = backdrop
+    }
+    pin()
+    const obs = new MutationObserver(pin)
+    obs.observe(document.head, { childList: true, subtree: true, attributes: true, attributeFilter: ['content'] })
+
+    return () => {
+      obs.disconnect()
+      root.style.background = ''
+      document.body.style.background = ''
+      const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+      if (meta) meta.content = '#000000'
+    }
+  }, [backdrop])
 
   // Remember which shell was live before the menu opened, so the drawer's blurred backdrop (and
   // where Close returns) matches where the user came from. Pressing Menu on the 3D handheld must
@@ -61,8 +99,8 @@ function AppLayout() {
 
   if (status !== 'authed') {
     return (
-      <AppFrame>
-        <div className="flex h-full flex-col items-center justify-center gap-4 bg-black">
+      <AppFrame bg={backdrop}>
+        <div className="flex h-full flex-col items-center justify-center gap-4">
           <Illo name="console" size={88} />
           <p className="text-sm text-text-3">{status === 'error' ? 'Could not connect' : 'Warming up'}</p>
         </div>
@@ -75,7 +113,7 @@ function AppLayout() {
   // scene builds once instead of rebuilding on every toggle. Screen content only mounts on a 3D route.
   if (on3D || menuOver3D || onCustomize) {
     return (
-      <AppFrame>
+      <AppFrame bg={backdrop}>
         <ConsoleControlsProvider>
           {onCustomize ? (
             <CustomizeStudio
@@ -102,7 +140,7 @@ function AppLayout() {
   }
 
   return (
-    <AppFrame>
+    <AppFrame bg={backdrop}>
       <ConsoleControlsProvider>
         <ConsoleShell>{onMenu ? <MenuBackdropScreen /> : <Outlet />}</ConsoleShell>
         {onMenu && (

@@ -13,6 +13,7 @@ import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ToolsWalletRouteImport } from './routes/tools/wallet'
 import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
 import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
 import { Route as AppMenuStatsRouteImport } from './routes/_app/menu/stats'
@@ -40,6 +41,11 @@ const AppRoute = AppRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ToolsWalletRoute = ToolsWalletRouteImport.update({
+  id: '/tools/wallet',
+  path: '/tools/wallet',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppMenuIndexRoute = AppMenuIndexRouteImport.update({
@@ -92,6 +98,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
+  '/tools/wallet': typeof ToolsWalletRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/range': typeof AppGamesRangeRoute
   '/games/tap': typeof AppGamesTapRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
+  '/tools/wallet': typeof ToolsWalletRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/range': typeof AppGamesRangeRoute
   '/games/tap': typeof AppGamesTapRoute
@@ -122,6 +130,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
+  '/tools/wallet': typeof ToolsWalletRoute
   '/_app/games/lucky': typeof AppGamesLuckyRoute
   '/_app/games/range': typeof AppGamesRangeRoute
   '/_app/games/tap': typeof AppGamesTapRoute
@@ -138,6 +147,7 @@ export interface FileRouteTypes {
     | '/'
     | '/console'
     | '/design-system'
+    | '/tools/wallet'
     | '/games/lucky'
     | '/games/range'
     | '/games/tap'
@@ -152,6 +162,7 @@ export interface FileRouteTypes {
     | '/'
     | '/console'
     | '/design-system'
+    | '/tools/wallet'
     | '/games/lucky'
     | '/games/range'
     | '/games/tap'
@@ -167,6 +178,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/console'
     | '/design-system'
+    | '/tools/wallet'
     | '/_app/games/lucky'
     | '/_app/games/range'
     | '/_app/games/tap'
@@ -183,6 +195,7 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   ConsoleRoute: typeof ConsoleRoute
   DesignSystemRoute: typeof DesignSystemRoute
+  ToolsWalletRoute: typeof ToolsWalletRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -213,6 +226,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tools/wallet': {
+      id: '/tools/wallet'
+      path: '/tools/wallet'
+      fullPath: '/tools/wallet'
+      preLoaderRoute: typeof ToolsWalletRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app/menu/': {
@@ -312,6 +332,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   ConsoleRoute: ConsoleRoute,
   DesignSystemRoute: DesignSystemRoute,
+  ToolsWalletRoute: ToolsWalletRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

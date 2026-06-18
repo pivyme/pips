@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
 import { Chart } from '@/components/game/Chart'
-import { Cell, ResultOverlay, ScreenMessage } from '@/components/game/screen'
+import { Cell, GameReadout, GameScreen, GameStage, ResultOverlay, ScreenMessage } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { haptic } from '@/lib/haptics'
 import { sound } from '@/lib/sound'
@@ -249,9 +249,9 @@ function LuckyScreen() {
 
   // The device screen is the L-shaped aperture (web/CLAUDE.md "The console screen"): the chart fills
   // the slack height with the top bar + reel cluster floating over it, then a notch-safe readout band
-  // the chart stops above. The bottom-right is the body (main button + knob), so the band is left-only.
+  // the chart stops above. The rim inset is owned by the GameScreen/GameStage/GameReadout layout.
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-black text-text">
+    <GameScreen>
       {marketsQ.isLoading ? (
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="shimmer h-24 w-2/3 rounded-md" />
@@ -262,7 +262,56 @@ function LuckyScreen() {
         <ScreenMessage title="No live markets right now." action="Retry" onAction={() => void marketsQ.refetch()} />
       ) : (
         <>
-          <div className="relative min-h-0 flex-1">
+          {/* top bar + reel cluster float over the chart. The asset is hidden until the spin draws
+              it, so at rest the title leads instead of a price. */}
+          <GameStage
+            top={
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    {lp ? (
+                      <>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Lucky · {lp.asset}</div>
+                        <div className="tnum text-2xl font-extrabold leading-none text-text">
+                          {spot != null ? priceLabel(spot) : '—'}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Pips</div>
+                        <div className="text-2xl font-extrabold leading-none tracking-tight text-text">I Feel Lucky</div>
+                      </>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                      {showReadouts && secsLeft != null ? 'Ends in' : 'Balance'}
+                    </div>
+                    <div className="tnum text-xl font-bold leading-none text-text-2">
+                      {showReadouts && secsLeft != null
+                        ? `${secsLeft}s`
+                        : user?.balance != null
+                          ? `$${formatStringToNumericDecimals(user.balance, 2)}`
+                          : '—'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <Reel label="Leverage" pool={LEV_POOL} target={lp ? `${lp.leverage}x` : undefined} spinning={spinning} stopAt={SPIN_STOPS[0]} />
+                  <Reel label="Asset" pool={assetPool} target={lp?.asset} spinning={spinning} stopAt={SPIN_STOPS[1]} />
+                  <Reel
+                    label="Side"
+                    pool={SIDE_POOL}
+                    target={lp ? sideLabel(lp.side) : undefined}
+                    spinning={spinning}
+                    stopAt={SPIN_STOPS[2]}
+                    tone={lp?.side}
+                  />
+                </div>
+              </div>
+            }
+          >
             {chartAsset ? (
               <Chart
                 asset={chartAsset}
@@ -271,57 +320,10 @@ function LuckyScreen() {
                 className="absolute inset-0"
               />
             ) : null}
+          </GameStage>
 
-            {/* top bar + reel cluster float over the chart, padded clear of the rim. The asset is
-                hidden until the spin draws it, so at rest the title leads instead of a price. */}
-            <div className="pointer-events-none absolute inset-x-0 top-0 space-y-3 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  {lp ? (
-                    <>
-                      <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Lucky · {lp.asset}</div>
-                      <div className="tnum text-2xl font-extrabold leading-none text-text">
-                        {spot != null ? priceLabel(spot) : '—'}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Pips</div>
-                      <div className="text-2xl font-extrabold leading-none tracking-tight text-text">I Feel Lucky</div>
-                    </>
-                  )}
-                </div>
-                <div className="text-right">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                    {showReadouts && secsLeft != null ? 'Ends in' : 'Balance'}
-                  </div>
-                  <div className="tnum text-xl font-bold leading-none text-text-2">
-                    {showReadouts && secsLeft != null
-                      ? `${secsLeft}s`
-                      : user?.balance != null
-                        ? `$${formatStringToNumericDecimals(user.balance, 2)}`
-                        : '—'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                <Reel label="Leverage" pool={LEV_POOL} target={lp ? `${lp.leverage}x` : undefined} spinning={spinning} stopAt={SPIN_STOPS[0]} />
-                <Reel label="Asset" pool={assetPool} target={lp?.asset} spinning={spinning} stopAt={SPIN_STOPS[1]} />
-                <Reel
-                  label="Side"
-                  pool={SIDE_POOL}
-                  target={lp ? sideLabel(lp.side) : undefined}
-                  spinning={spinning}
-                  stopAt={SPIN_STOPS[2]}
-                  tone={lp?.side}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* readout band — notch-safe. Live PnL once a play runs, the bet setup at rest. */}
-          <div className="pointer-events-none max-w-[62%] space-y-2.5 p-4">
+          {/* readout band — Live PnL once a play runs, the bet setup at rest. */}
+          <GameReadout>
             {showReadouts ? (
               <>
                 <div>
@@ -347,12 +349,12 @@ function LuckyScreen() {
                 </div>
               </>
             )}
-          </div>
+          </GameReadout>
         </>
       )}
 
       {phase === 'result' && play && <ResultOverlay {...luckyResult(play)} onDismiss={() => setPhase('idle')} />}
-    </div>
+    </GameScreen>
   )
 }
 

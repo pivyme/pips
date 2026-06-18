@@ -12,7 +12,7 @@ export const env = createEnv({
     VITE_DEMO_MODE: z.enum(['true', 'false']).default('false'),
     // Mirrors the backend PIPS_AUTH_MODE so the UI shows the right door.
     VITE_AUTH_MODE: z.enum(['dev', 'enoki']).default('dev'),
-    VITE_SUI_NETWORK: z.enum(['testnet', 'mainnet', 'devnet']).default('testnet'),
+    VITE_SUI_NETWORK: z.enum(['testnet', 'mainnet', 'devnet', 'localnet']).default('testnet'),
     VITE_SUI_FULLNODE_URL: z.string().url().optional(),
     // Public Predict ids the client needs for reads. Written by the bootstrap into
     // web/.env (mirrors backend deployed.json). Optional so the app can boot pre-deploy.
