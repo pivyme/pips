@@ -203,7 +203,7 @@ function ThemeCard({
         >
           {theme.code}
         </div>
-        <div className="mt-1 text-[14px] font-bold leading-tight" style={{ color: theme.cardInk }}>
+        <div className="mt-1 text-[14px] font-bold leading-tight" style={{ color: theme.cardSub }}>
           {theme.name}
         </div>
       </div>

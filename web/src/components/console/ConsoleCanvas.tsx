@@ -3,7 +3,9 @@ import type { ReactNode } from 'react'
 import * as THREE from 'three'
 import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
 import { createConsoleGui } from './consoleGui'
+import { createCustomizeGui } from './customizeGui'
 import { roundedRect, roundedPoly, frontZeroed, setBoxUVs, roundedRectPath, roundedPolyPath } from './consoleGeo'
+import { createButtons, createKnob, createNumberWheel } from './consoleElements'
 import { createAudio } from './consoleAudio'
 import type { ConsoleView } from './controls'
 import type { ConsoleTheme } from './themes'
@@ -33,8 +35,9 @@ interface ConsoleCanvasProps {
   // front/back, and `theme` repaints the materials live. Mutually exclusive with debug.
   customize?: boolean
   theme?: ConsoleTheme
-  // Done sequence: flip `outro` true and the device snaps front-on, zooms to the screen and powers
-  // on, then `onOutroComplete` fires (the studio uses it to commit + leave).
+  // Done sequence: flip `outro` true and the device snaps front-on to the exact game position with
+  // the screen black, then `onOutroComplete` fires (the studio commits + leaves, and the game fades
+  // its own screen content in).
   outro?: boolean
   onOutroComplete?: () => void
 }
@@ -51,11 +54,11 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
   const viewRef = useRef(view)
   viewRef.current = view
   // The scene exposes its label/state updater here; the [view] effect calls it.
-  const applyViewRef = useRef<(v?: ConsoleView) => void>(() => {})
+  const applyViewRef = useRef<(v?: ConsoleView) => void>(() => { })
   // Same pattern for the skin: the [theme] effect repaints the live materials, no rebuild.
-  const applyThemeRef = useRef<(t?: ConsoleTheme) => void>(() => {})
+  const applyThemeRef = useRef<(t?: ConsoleTheme) => void>(() => { })
   // And for the Done outro: the [outro] effect arms the snap-to-screen + power-on sequence.
-  const applyOutroRef = useRef<(on: boolean) => void>(() => {})
+  const applyOutroRef = useRef<(on: boolean) => void>(() => { })
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -116,15 +119,15 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const buttons = [
       // pad = gap between button edge and pocket rim on each side
       // pills share a wall so their pad is capped to avoid holes touching (~0.14 max before they'd merge)
-      { w: 1.6, h: 1.5, r: 0.15, depth: 2, dx: 0, dy: 0, baseZ: 0.8, pressedZ: 0.4, pad: 0.12 },
-      { w: 1.6, h: 1.5, r: 0.15, depth: 2, dx: 0, dy: 0, baseZ: 0.5, pressedZ: 0.4, pad: 0.12 },
-      { w: 1.6, h: 1.5, r: 0.15, depth: 2, dx: 0, dy: 0, baseZ: 0.5, pressedZ: 0.4, pad: 0.12 },
+      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.1 },
+      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.12 },
+      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.12 },
       { w: 0.98, h: 0.31, r: 0.15, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.1 },
       { w: 1.02, h: 0.31, r: 0.15, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.1 },
     ]
     // button pixel centers — kept here so buildBodyShape stays in sync with makeButton calls below
     const BTN_PX = [
-      { x: 965, y: 1490 }, { x: 200, y: 1820 }, { x: 589, y: 1820 },
+      { x: 965, y: 1490 }, { x: 200, y: 1840 }, { x: 589, y: 1840 },
       { x: 150, y: 2150 }, { x: 425, y: 2150 },
     ]
     // knob pocket config — w/h must stay in sync with kp.height / kp.radius*2 below
@@ -132,7 +135,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const knobPocket = { px: 975, py: 1960, w: 1, h: 2.4, r: 0.1, pad: 0.08 }
     // Compact number drum, aligned with the Menu / Games row. It owns stake selection while the
     // yellow wheel remains available for the active game's signature control.
-    const numberWheelPocket = { px: 700, py: 2145, w: 0.86, h: 0.82, r: 0.12, pad: 0.035 }
+    const numberWheelPocket = { px: 690, py: 2140, w: 0.86, h: 0.82, r: 0.12, pad: 0.035 }
 
     // screen L-shape in pixel coords — mirrors screenPts used for the screen mesh
     // screenMesh.position.y = 0.13 is baked in here as a world-space offset before converting to body-local
@@ -237,17 +240,49 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     backPanel.visible = false
     device.add(backPanel)
 
-    /* embossed logo on the back panel — child of backPanel so it inherits the flip rotation and the
-       hide-until-flipped visibility. The panel has no own rotation; the deck supplies the flip, which
-       mirrors local +X → world -X (negate scale.x) and leaves Y alone. SVG Y is down, so negate scale.y
-       too. The face we see once flipped is the extrusion's back, at the geometry's local min.z. */
+    // carved back logo
     backPanel.geometry.computeBoundingBox()
-    const backFaceLocalZ = backPanel.geometry.boundingBox!.min.z
+    let backFaceLocalZ = backPanel.geometry.boundingBox!.min.z
 
     const SVG_W = 1539, SVG_H = 629
     const logoScale = 3.6 / SVG_W
     const logoW = SVG_W * logoScale
     const logoH = SVG_H * logoScale
+
+    // Carve knobs, tuned live by the customize GUI. z = letter recess below the rear face, eyeZ =
+    // the eyes' depth (negative pops them out as raised ovals in front), depth = extrude thickness.
+    const logoCarve = { z: 0.17, eyeZ: 0.1, depth: 0.1 }
+
+    // Letter outlines cut through the panel, in panel-local 2D. Filled once the SVG loads; the panel
+    // geometry is built from these so a screen-stretch rebuild keeps the cut.
+    const logoHoles: THREE.Path[] = []
+    const toPanel = (p: THREE.Vector2) =>
+      new THREE.Vector2(-logoScale * p.x + logoW / 2, -logoScale * p.y + logoH / 2)
+    const signedArea = (pts: THREE.Vector2[]) => {
+      let a = 0
+      for (let i = 0; i < pts.length; i++) {
+        const q = pts[(i + 1) % pts.length]
+        a += pts[i].x * q.y - q.x * pts[i].y
+      }
+      return a / 2
+    }
+    function buildBackPanelGeo() {
+      // The body extrudes with a 0.08 bevel, which grows its silhouette by that much on every side. We
+      // run no bevel here (straight 90° letter cuts), so grow the outline by the same amount to match.
+      const s = roundedRect(6.2 + 0.16, 11.95 + screenExt + 0.16, deviceCfg.corner + 0.08)
+      for (const h of logoHoles) s.holes.push(h)
+      // no bevel: a chamfer cuts the letter walls at 45° (a triangular notch) and swallows thin strokes.
+      // 0 gives straight 90° cut walls so the carve keeps the letter shape, eyes included.
+      return frontZeroed(s, 1.2, 0)
+    }
+
+    // The cavity floor is a single cream plane seen from the flipped side, so it needs both faces.
+    matBack.side = THREE.DoubleSide
+    const cavityFloor = new THREE.Mesh(
+      new THREE.ShapeGeometry(roundedRect(logoW + 0.5, logoH + 0.5, 0.1)),
+      matBack,
+    )
+    backPanel.add(cavityFloor)
 
     const logoGroup = new THREE.Group()
     logoGroup.scale.set(-logoScale, -logoScale, 1)
@@ -258,41 +293,86 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const logoGeo: THREE.BufferGeometry[] = []
     const matLogoDark = new THREE.MeshStandardMaterial({ color: 0xff4444, roughness: 0.93, metalness: 0 })
     const matLogoWhite = new THREE.MeshStandardMaterial({ color: 0x4488ff, roughness: 0.8, metalness: 0 })
-    // How far each level stands off the back face toward the viewer (panel-local -Z = outward when flipped).
-    const logoProtrude = { white: -0.06, dark: -0.01 }
+    // Main-button glyph carve: its own tones so it reads as part of the button, not the back logo. The
+    // eye matches the button face; the recessed P is a shade darker. Recolored from t.main in applyTheme.
+    const matMainGlyph = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0 })
+    const matMainEye = new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0 })
+    // Dark letters (carved into the panel) and the eye ovals (raised in front), lifted from the
+    // letters' own counters. The SVG's white rects were just flat backing and are dropped.
+    const logoLetters: THREE.Shape[] = []
+    const logoEyes: THREE.Shape[] = []
+
+    // z = letter recess below the rear face, eyeZ = the eyes' depth (negative pops them out in front).
+    const pieceZ = (kind: string) => (kind === 'eye' ? logoCarve.eyeZ : logoCarve.z)
+
+    // Re-seat the carved pieces at the current carve depth (cheap: position only, no new geometry).
+    function placeLogoCarve() {
+      logoGroup.children.forEach((c) => { c.position.z = pieceZ(c.userData.kind) })
+      // floor sits behind the deepest piece so counters always bottom out on cream
+      cavityFloor.position.z = backFaceLocalZ + Math.max(logoCarve.z, logoCarve.eyeZ) + 0.012
+      dirty = true
+    }
+
+    // Rebuild the letter + eye meshes at the current extrude depth (needed when `depth` changes).
+    function rebuildLogo() {
+      for (const c of [...logoGroup.children]) logoGroup.remove(c)
+      while (logoGeo.length) logoGeo.pop()!.dispose()
+      const add = (shape: THREE.Shape, mat: THREE.Material, kind: string) => {
+        const g = new THREE.ExtrudeGeometry(shape, { depth: logoCarve.depth, bevelEnabled: false })
+        g.computeBoundingBox()
+        g.translate(0, 0, -g.boundingBox!.max.z)
+        g.computeVertexNormals()
+        logoGeo.push(g)
+        const mesh = new THREE.Mesh(g, mat)
+        mesh.userData.kind = kind
+        logoGroup.add(mesh)
+      }
+      for (const shape of logoLetters) add(shape, matLogoDark, 'letter')
+      for (const eye of logoEyes) add(eye, matLogoWhite, 'eye')
+      placeLogoCarve()
+    }
 
     new SVGLoader().load('/assets/pips-horizontal-black.svg', ({ paths }) => {
       for (const path of paths) {
         const fillStr = (path.userData?.style?.fill as string) ?? ''
         const isWhite = /^(white|#fff(fff)?|rgb\(\s*255,\s*255,\s*255\s*\))$/i.test(fillStr)
-        const zOff = isWhite ? logoProtrude.white : logoProtrude.dark
-        for (const svgShape of SVGLoader.createShapes(path)) {
-          const g = new THREE.ExtrudeGeometry(svgShape, { depth: 0.02, bevelEnabled: false })
-          g.computeBoundingBox()
-          g.translate(0, 0, -g.boundingBox!.max.z)
-          g.computeVertexNormals()
-          logoGeo.push(g)
-          const mesh = new THREE.Mesh(g, isWhite ? matLogoWhite : matLogoDark)
-          mesh.position.z = zOff
-          logoGroup.add(mesh)
+        // Drop the flat white backing rects; the eyes are rebuilt from the dark letters' counters.
+        if (isWhite) continue
+        for (const shape of SVGLoader.createShapes(path)) {
+          logoLetters.push(shape)
+          // Each counter (the oval hole in a letter) becomes a raised eye sitting in front.
+          for (const h of shape.holes) {
+            const eye = new THREE.Shape()
+            eye.setFromPoints(h.getPoints(40))
+            logoEyes.push(eye)
+          }
+          // Cut this letter's outer outline through the panel (holes wind CW, opposite the body).
+          const pts = shape.getPoints(40).map(toPanel)
+          if (signedArea(pts) > 0) pts.reverse()
+          const hole = new THREE.Path()
+          hole.setFromPoints(pts)
+          logoHoles.push(hole)
         }
       }
-      dirty = true
+      backPanel.geometry.dispose()
+      backPanel.geometry = buildBackPanelGeo()
+      backPanel.geometry.computeBoundingBox()
+      backFaceLocalZ = backPanel.geometry.boundingBox!.min.z
+      logoGroup.position.z = backFaceLocalZ
+      rebuildLogo()
+      buildMainGlyph()
     }, undefined, (e) => console.error('[ConsoleCanvas] back logo SVG failed:', e))
 
-    /* screen mesh */
-    const screenPts = [
-      { x: wx(30), y: wy(1680) },
-      { x: wx(760), y: wy(1680) },
-      { x: wx(760), y: wy(1325) },
-      { x: wx(1140), y: wy(1325) },
-      { x: wx(1140), y: wy(30) },
-      { x: wx(30), y: wy(30) },
-    ]
-    const screenGeo = frontZeroed(roundedPoly(screenPts, 0.25), 0.12, 0.03)
-    setBoxUVs(screenGeo)
-    const screenMesh = new THREE.Mesh(screenGeo, matScreen)
-    screenMesh.position.z = 0.06
+    /* screen mesh — rebuilt by relayout() so the lit panel tracks the stretched cutout. The Done
+       outro stretches it to the live game height so the handoff to the game device is seamless. */
+    function buildScreenGeo() {
+      const pts = SCREEN_PX.map((p) => ({ x: wx(p.x), y: wy(p.y) + (p.y === 30 ? screenExt : 0) }))
+      const g = frontZeroed(roundedPoly(pts, 0.25), 0.12, 0.03)
+      setBoxUVs(g)
+      return g
+    }
+    const screenMesh = new THREE.Mesh(buildScreenGeo(), matScreen)
+    screenMesh.position.z = -0.25
     screenMesh.position.y = SCREEN_MESH_Y_OFFSET
     screenMesh.receiveShadow = true
     // The live HTML screen sits behind the device and shows through this cutout, so the panel mesh
@@ -306,149 +386,101 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     // Reassigned by relayout() when the screen stretches to fill a tall frame.
     let screenWorld = screenWorldPts()
 
-    /* buttons */
+    /* device elements — buttons + number wheel. Geometry/mesh factories live in consoleElements.ts;
+       the canvas only places them and keeps the handles the loop / theme / GUI need. The knob is built
+       lower down (after its `kp` tuning block). */
     const interactive: THREE.Mesh[] = []
-
-    function makeButton(
-      cx: number, cy: number, w: number, h: number, cornerR: number,
-      baseZ: number, pressedZ: number, depth: number, color: number, glow: number,
-    ): THREE.Mesh {
-      const mat = new THREE.MeshStandardMaterial({
-        color, roughness: 0.5, metalness: 0,
-        emissive: new THREE.Color(glow), emissiveIntensity: 0,
-      })
-      const mesh = new THREE.Mesh(frontZeroed(roundedRect(w, h, cornerR), depth, 0.06), mat)
-      mesh.position.set(cx, cy, baseZ)
-      mesh.castShadow = true
-      mesh.receiveShadow = true
-      mesh.userData = { kind: 'button', baseZ, pressedZ, depth, pressed: false, glow: 0 }
-      device.add(mesh)
-      interactive.push(mesh)
-      return mesh
-    }
-
-    const bm = [
-      makeButton(wx(965), wy(1490), buttons[0].w, buttons[0].h, buttons[0].r, buttons[0].baseZ, buttons[0].pressedZ, buttons[0].depth, RED, 0xff5a3c),
-      makeButton(wx(200), wy(1820), buttons[1].w, buttons[1].h, buttons[1].r, buttons[1].baseZ, buttons[1].pressedZ, buttons[1].depth, BLUE, 0x5e9bff),
-      makeButton(wx(589), wy(1820), buttons[2].w, buttons[2].h, buttons[2].r, buttons[2].baseZ, buttons[2].pressedZ, buttons[2].depth, BLUE, 0x5e9bff),
-      makeButton(wx(150), wy(2150), buttons[3].w, buttons[3].h, buttons[3].r, buttons[3].baseZ, buttons[3].pressedZ, buttons[3].depth, CREAM, 0xff7a1a),
-      makeButton(wx(425), wy(2150), buttons[4].w, buttons[4].h, buttons[4].r, buttons[4].baseZ, buttons[4].pressedZ, buttons[4].depth, CREAM, 0xff7a1a),
-    ]
-    const bmOrigin = bm.map(m => ({ x: m.position.x, y: m.position.y }))
-
-    /* pocket floors — dark inset plane visible in the gap between button edge and chamfered rim */
     const matPocket = new THREE.MeshStandardMaterial({ color: 0x19160f, roughness: 0.95, metalness: 0 })
-    bm.forEach((btn, i) => {
-      const c = buttons[i]
-      const pad = c.pad
-      const fw = c.w + pad * 2 - 0.04
-      const fh = c.h + pad * 2 - 0.04
-      const fr = Math.min(c.r + pad, fw / 2, fh / 2)
-      const geo = new THREE.ShapeGeometry(roundedRect(fw, fh, fr), 48)
-      const floor = new THREE.Mesh(geo, matPocket)
-      floor.position.set(btn.position.x, btn.position.y, -0.04)
-      floor.receiveShadow = true
-      device.add(floor)
-    })
-    // knob pocket floor
-    const kfw = knobPocket.w + knobPocket.pad * 2 - 0.04
-    const kfh = knobPocket.h + knobPocket.pad * 2 - 0.04
-    const knobFloorGeo = new THREE.ShapeGeometry(roundedRect(kfw, kfh, Math.min(knobPocket.r + knobPocket.pad, kfw / 2, kfh / 2)), 48)
-    const knobFloor = new THREE.Mesh(knobFloorGeo, matPocket)
-    knobFloor.position.set(wx(knobPocket.px), wy(knobPocket.py), body.position.z - 0.04)
-    knobFloor.receiveShadow = true
-    device.add(knobFloor)
-    const nfw = numberWheelPocket.w + numberWheelPocket.pad * 2 - 0.04
-    const nfh = numberWheelPocket.h + numberWheelPocket.pad * 2 - 0.04
-    const numberWheelFloor = new THREE.Mesh(
-      new THREE.ShapeGeometry(
-        roundedRect(nfw, nfh, Math.min(numberWheelPocket.r + numberWheelPocket.pad, nfw / 2, nfh / 2)),
-        48,
-      ),
-      matPocket,
-    )
-    numberWheelFloor.position.set(wx(numberWheelPocket.px), wy(numberWheelPocket.py), body.position.z - 0.04)
-    numberWheelFloor.receiveShadow = true
-    device.add(numberWheelFloor)
 
-    // knob pocket bevel — chamfered ring sloping from the body front face inward into the pocket, so
-    // the rim reads as a real machined recess. Outer ring matches the body hole (pocket pad), inner
-    // ring sits at the pocket edge one `pad` deep (45° slope).
-    {
-      const ow = knobPocket.w + knobPocket.pad * 2
-      const oh = knobPocket.h + knobPocket.pad * 2
-      const or_ = Math.min(knobPocket.r + knobPocket.pad, ow / 2, oh / 2)
-      const iw = knobPocket.w, ih = knobPocket.h, ir = knobPocket.r
-      const bD = knobPocket.pad // depth = pad → 45° slope
-      const S = 12
+    const bm = createButtons(device, interactive, matPocket, buttons, BTN_PX, [
+      { color: RED, glow: 0xff5a3c },
+      { color: BLUE, glow: 0x5e9bff },
+      { color: BLUE, glow: 0x5e9bff },
+      { color: CREAM, glow: 0xff7a1a },
+      { color: CREAM, glow: 0xff7a1a },
+    ], wx, wy)
+    const bmOrigin = bm.map((m) => ({ x: m.position.x, y: m.position.y }))
 
-      function ringPts(w: number, h: number, r: number, z: number): number[] {
-        const hw = w / 2, hh = h / 2, v: number[] = []
-        const corners: [number, number, number][] = [
-          [hw - r, hh - r, 0], [-hw + r, hh - r, Math.PI / 2],
-          [-hw + r, -hh + r, Math.PI], [hw - r, -hh + r, 3 * Math.PI / 2],
-        ]
-        for (const [cx, cy, a0] of corners)
-          for (let i = 0; i < S; i++) {
-            const a = a0 + (i / S) * (Math.PI / 2)
-            v.push(cx + r * Math.cos(a), cy + r * Math.sin(a), z)
-          }
-        return v
+    // The main button wears the first glyph of the Pips wordmark, carved with the same recipe as the
+    // back-panel logo: the letter recessed into the face, its eye raised, sharing the logo materials so
+    // it tracks the theme. mainGlyphHole holds the cut so a dev-GUI geometry rebuild re-cuts it. Filled
+    // once the logo SVG loads (buildMainGlyph, called from the loader callback above).
+    let mainGlyphHole: THREE.Path | null = null
+    function mainCapGeo() {
+      const c = buttons[0]
+      const s = roundedRect(c.w, c.h, c.r)
+      if (mainGlyphHole) s.holes.push(mainGlyphHole)
+      // A near-zero bevel keeps the glyph cut crisp (the cap bevel applies to the hole too, and 0.06
+      // rounds the letter walls into mush). Matches the back-panel carve's straight 90° walls.
+      return frontZeroed(s, c.depth, mainGlyphHole ? 0.012 : 0.06)
+    }
+    function buildMainGlyph() {
+      // Leftmost letter = the first glyph in reading order.
+      let glyph: THREE.Shape | null = null
+      let leftmost = Infinity
+      for (const s of logoLetters) {
+        let minX = Infinity
+        for (const p of s.getPoints(12)) minX = Math.min(minX, p.x)
+        if (minX < leftmost) { leftmost = minX; glyph = s }
+      }
+      if (!glyph) return
+
+      const c = buttons[0]
+      const outline = glyph.getPoints(24)
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+      for (const p of outline) {
+        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x)
+        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y)
+      }
+      const gw = maxX - minX, gh = maxY - minY
+      const gx = (minX + maxX) / 2, gy = (minY + maxY) / 2
+      // Fit the glyph onto the face with margin; svg y is down, so flip y as we map to button-local.
+      const scale = (Math.min(c.w, c.h) * 0.6) / Math.max(gw, gh)
+      const map = (p: THREE.Vector2) => new THREE.Vector2(scale * (p.x - gx), -scale * (p.y - gy))
+
+      // Cut the outer silhouette through the cap (holes wind opposite the cap outline).
+      const holePts = outline.map(map)
+      if (signedArea(holePts) > 0) holePts.reverse()
+      mainGlyphHole = new THREE.Path()
+      mainGlyphHole.setFromPoints(holePts)
+      bm[0].geometry.dispose()
+      bm[0].geometry = mainCapGeo()
+
+      const carveZ = 0.07, eyeZ = 0.02, depth = 0.12
+      const extrude = (shape: THREE.Shape) => {
+        const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false })
+        g.computeBoundingBox()
+        g.translate(0, 0, -g.boundingBox!.max.z) // front face to z=0
+        g.computeVertexNormals()
+        return g
       }
 
-      const N = S * 4
-      const verts = [...ringPts(ow, oh, or_, 0), ...ringPts(iw, ih, ir, -bD)]
-      const idx: number[] = []
-      for (let i = 0; i < N; i++) {
-        const j = (i + 1) % N
-        idx.push(i, N + i, j, j, N + i, N + j)
+      // Recessed letter: the silhouette minus its counters (the eye holes), sunk below the face.
+      const letterShape = new THREE.Shape(holePts)
+      for (const h of glyph.holes) letterShape.holes.push(new THREE.Path(h.getPoints(40).map(map)))
+      const letter = new THREE.Mesh(extrude(letterShape), matMainGlyph)
+      letter.position.z = -carveZ
+      letter.castShadow = true
+      letter.receiveShadow = true
+      bm[0].add(letter)
+
+      // Raised eye(s): the counters lifted slightly proud of the face.
+      for (const h of glyph.holes) {
+        const eye = new THREE.Mesh(extrude(new THREE.Shape(h.getPoints(40).map(map))), matMainEye)
+        eye.position.z = eyeZ
+        bm[0].add(eye)
       }
-      const bevelGeo = new THREE.BufferGeometry()
-      bevelGeo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3))
-      bevelGeo.setIndex(idx)
-      bevelGeo.computeVertexNormals()
-      const knobBevel = new THREE.Mesh(bevelGeo, matPocket)
-      knobBevel.position.set(wx(knobPocket.px), wy(knobPocket.py), 0)
-      knobBevel.receiveShadow = true
-      device.add(knobBevel)
+
+      // Dark floor behind the cut so the tunnel never reveals the layers behind the button.
+      const floor = new THREE.Mesh(
+        new THREE.ShapeGeometry(roundedRect(gw * scale + 0.12, gh * scale + 0.12, 0.06)),
+        matPocket,
+      )
+      floor.position.z = -carveZ - depth - 0.01
+      bm[0].add(floor)
     }
 
-    // Black beveled housing and curved drum. The drum rolls on a horizontal axle, with adjacent
-    // values wrapping around its face like a mechanical counter.
-    const numberWheelHousingShape = roundedRect(
-      numberWheelPocket.w,
-      numberWheelPocket.h,
-      numberWheelPocket.r,
-    )
-    numberWheelHousingShape.holes.push(roundedRectPath(0, 0, 0.78, 0.74, 0.085))
-    const numberWheelHousing = new THREE.Mesh(
-      frontZeroed(numberWheelHousingShape, 0.24, 0.025),
-      new THREE.MeshStandardMaterial({ color: 0x080808, roughness: 0.58, metalness: 0.08 }),
-    )
-    numberWheelHousing.position.set(wx(numberWheelPocket.px), wy(numberWheelPocket.py), 0.12)
-    numberWheelHousing.castShadow = true
-    numberWheelHousing.receiveShadow = true
-    device.add(numberWheelHousing)
-
-    const numberWheelRoll = new THREE.Group()
-    numberWheelRoll.position.set(wx(numberWheelPocket.px), wy(numberWheelPocket.py), -0.14)
-    device.add(numberWheelRoll)
-
-    const numberWheelMat = new THREE.MeshStandardMaterial({
-      color: 0x171717,
-      roughness: 0.42,
-      metalness: 0.18,
-    })
-    const numberWheelDrum = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.37, 0.37, 0.76, 64, 1, false),
-      numberWheelMat,
-    )
-    numberWheelDrum.rotation.z = Math.PI / 2
-    numberWheelDrum.castShadow = true
-    numberWheelDrum.receiveShadow = true
-    numberWheelDrum.userData = { kind: 'numberWheel' }
-    numberWheelRoll.add(numberWheelDrum)
-    interactive.push(numberWheelDrum)
+    const { numberWheelRoll } = createNumberWheel(device, interactive, matPocket, numberWheelPocket, wx, wy, body.position.z)
 
     // Canvas-texture label. Static caption (makeLabel) or live, updatable (makeDynLabel).
     function drawLabel(c: HTMLCanvasElement, g: CanvasRenderingContext2D, text: string, color: string, fs = 64) {
@@ -476,7 +508,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       )
       plane.position.set(cx, cy, 0.06)
       device.add(plane)
-      return plane
+      // Repaint the caption when the skin changes its label tint.
+      const recolor = (col: string) => { drawLabel(c, g, text, col); tex.needsUpdate = true; dirty = true }
+      return { plane, recolor }
     }
 
     // Updatable label that lives on a button face (or the body) and reflects the registered view.
@@ -527,13 +561,11 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
 
     const LABEL_DY = -0.45
-    makeLabel('MENU', bm[3].position.x, bm[3].position.y + LABEL_DY, 0.26, '#7c7870')
-    makeLabel('GAMES', bm[4].position.x, bm[4].position.y + LABEL_DY, 0.26, '#7c7870')
+    const menuLbl = makeLabel('MENU', bm[3].position.x, bm[3].position.y + LABEL_DY, 0.26, '#7c7870')
+    const gamesLbl = makeLabel('GAMES', bm[4].position.x, bm[4].position.y + LABEL_DY, 0.26, '#7c7870')
 
-    // Live labels: main / action1 / action2 on their button faces, knob value on the body.
-    const mainLbl = makeDynLabel(0.42, '#ffffff')
-    mainLbl.plane.position.set(0, 0, 0.02)
-    bm[0].add(mainLbl.plane)
+    // Live labels: action1 / action2 on their faces, knob value on the body. The main button wears the
+    // embossed Pips glyph instead of a text label (carved once the logo SVG loads, see buildMainGlyph).
     const a1Lbl = makeDynLabel(0.5, '#ffffff')
     a1Lbl.plane.position.set(0, 0, 0.02)
     bm[1].add(a1Lbl.plane)
@@ -629,7 +661,6 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     function applyView(v?: ConsoleView) {
       const m = v?.main
       state.mainDisabled = !m || !!m.disabled || !!m.loading
-      mainLbl.set(m?.loading ? '•••' : (m?.label ?? ''), state.mainDisabled ? 0.34 : 1)
       const a1 = v?.action1
       state.a1Disabled = !a1 || !!a1.disabled
       a1Lbl.set(a1?.label ?? '', state.a1Disabled ? 0.34 : 1)
@@ -676,7 +707,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     function rebuildBtnGeo(i: number) {
       const m = bm[i], c = buttons[i]
       m.geometry.dispose()
-      m.geometry = frontZeroed(roundedRect(c.w, c.h, c.r), c.depth, 0.06)
+      m.geometry = i === 0 ? mainCapGeo() : frontZeroed(roundedRect(c.w, c.h, c.r), c.depth, 0.06)
       m.position.x = bmOrigin[i].x + c.dx
       m.position.y = bmOrigin[i].y + c.dy
       m.userData.depth = c.depth
@@ -693,72 +724,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       ridgeLength: 0.825,
     }
 
-    const bumpc = document.createElement('canvas')
-    bumpc.width = 128
-    bumpc.height = 128
-    const bx = bumpc.getContext('2d')!
-    const knobBump = new THREE.CanvasTexture(bumpc)
-    knobBump.wrapS = knobBump.wrapT = THREE.RepeatWrapping
-
-    function redrawBump() {
-      const img = bx.createImageData(128, 128)
-      const pitch = kp.ridgeWidth + kp.grooveWidth
-      // ridges occupy a centered fraction (ridgeLength) of the V range; the rounded ends stay flat (255)
-      const margin = (1 - kp.ridgeLength) / 2
-      const lo = margin * 128, hi = (1 - margin) * 128
-      for (let y = 0; y < 128; y++) {
-        for (let x = 0; x < 128; x++) {
-          let v = 255
-          if (y >= lo && y <= hi) {
-            const phase = x % pitch
-            if (phase < kp.grooveWidth) {
-              const t = phase / kp.grooveWidth
-              v = Math.round((1 - Math.sin(t * Math.PI)) * kp.cornerCurve * 255)
-            }
-          }
-          const i = (y * 128 + x) * 4
-          img.data[i] = img.data[i + 1] = img.data[i + 2] = v
-          img.data[i + 3] = 255
-        }
-      }
-      bx.putImageData(img, 0, 0)
-      knobBump.needsUpdate = true
-    }
-    redrawBump()
-
-    const matKnobSlab = matKnob.clone()
-    matKnobSlab.bumpMap = knobBump
-    matKnobSlab.bumpScale = kp.bumpScale
-    matKnobSlab.roughness = 0.88
-    knobBump.repeat.set(kp.ridgeRepeat, 1)
-
-    // Quarter-circle rounds at each end of the profile. LatheGeometry has no flat cap faces, so the
-    // ridge bump never bleeds a UV stripe across a hard edge the way a capped cylinder does.
-    function knobProfile(): THREE.Vector2[] {
-      const { radius, height, edgeCurve: r } = kp
-      const pts: THREE.Vector2[] = []
-      pts.push(new THREE.Vector2(0, -height / 2))
-      for (let i = 0; i <= 12; i++) {
-        const a = -Math.PI / 2 + (i / 12) * (Math.PI / 2)
-        pts.push(new THREE.Vector2(radius - r + r * Math.cos(a), -height / 2 + r + r * Math.sin(a)))
-      }
-      pts.push(new THREE.Vector2(radius, height / 2 - r))
-      for (let i = 1; i <= 12; i++) {
-        const a = (i / 12) * (Math.PI / 2)
-        pts.push(new THREE.Vector2(radius - r + r * Math.cos(a), height / 2 - r + r * Math.sin(a)))
-      }
-      pts.push(new THREE.Vector2(0, height / 2))
-      return pts
-    }
-
-    const knobSlab = new THREE.Mesh(new THREE.LatheGeometry(knobProfile(), 64), matKnobSlab)
-    knobSlab.rotation.z = Math.PI / 2
-    knobSlab.position.set(wx(975), wy(1960), -0.5)
-    knobSlab.castShadow = true
-    knobSlab.receiveShadow = true
-    knobSlab.userData = { kind: 'knob' }
-    device.add(knobSlab)
-    interactive.push(knobSlab)
+    const { knobSlab, knobBump, matKnobSlab, redrawBump, knobProfile } =
+      createKnob(device, interactive, matPocket, matKnob, kp, knobPocket, wx, wy, body.position.z)
 
     // Repaint the device to a skin. Colors only, no geometry touched, so it's cheap enough to run on
     // every card tap in the studio. emissive tracks the color so the press glow stays in-palette.
@@ -768,20 +735,28 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       matBack.color.set(t.back ?? t.body)
       matKnob.color.set(t.knob)
       matKnobSlab.color.set(t.knob)
-      // Embossed back logo: letters + eyes. Most skins use one accent tone; Classic keeps red/blue.
+      // Carved back logo: letters take the accent tone, the raised eyes match the back panel so they
+      // read as the same material punched through, not a separate inlay.
       const logoColor = t.logo ?? t.knob
       matLogoDark.color.set(logoColor)
-      matLogoWhite.color.set(t.logoEyes ?? logoColor)
-      const paint = (m: THREE.Mesh, c: number) => {
+      matLogoWhite.color.set(t.back ?? t.body)
+      const paint = (m: THREE.Mesh, c: string) => {
         const mat = m.material as THREE.MeshStandardMaterial
         mat.color.set(c)
         mat.emissive.set(c)
       }
       paint(bm[0], t.main)
+      // Glyph carve tracks the button: eye = face color, recessed P a shade darker.
+      matMainEye.color.set(t.main)
+      matMainGlyph.color.set(t.main).multiplyScalar(0.7)
       paint(bm[1], t.action)
       paint(bm[2], t.action)
       paint(bm[3], t.pills)
       paint(bm[4], t.pills)
+      // MENU / GAMES captions under the nav pills
+      const labelColor = t.label ?? '#7c7870'
+      menuLbl.recolor(labelColor)
+      gamesLbl.recolor(labelColor)
       dirty = true
     }
     applyThemeRef.current = applyTheme
@@ -799,9 +774,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       body.geometry.dispose()
       body.geometry = frontZeroed(buildBodyShape(), 0.6, 0.08)
       body.position.y = wy(1130) + screenExt / 2
-      // back panel tracks the body so it stays a full cover when the screen stretches
+      // back panel tracks the body so it stays a full cover when the screen stretches, keeping the cut logo
       backPanel.geometry.dispose()
-      backPanel.geometry = frontZeroed(roundedRect(6.2, 11.95 + screenExt, deviceCfg.corner), 1.2, 0.08)
+      backPanel.geometry = buildBackPanelGeo()
       backPanel.position.y = wy(1130) + screenExt / 2
     }
 
@@ -811,6 +786,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       if (ext === screenExt) return
       screenExt = ext
       rebuildBodyGeo()
+      screenMesh.geometry.dispose()
+      screenMesh.geometry = buildScreenGeo()
       screenWorld = screenWorldPts()
     }
 
@@ -825,9 +802,15 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       yaw: [-0.1, -0.5] as const,
       pitch: [-0.03, -0.17] as const,
       introMs: 880,
-      outroMs: 820,
-      frontLookY: 1.45, // outro target: framed on the screen
+      outroMs: 700,
+      fadeMs: 100, // a short black beat once the snap settles, then we hand off to the game
     }
+    // Studio camera distance multiplier on the rest pose (1 = default, lower = pulled closer).
+    const custCam = { zoom: 1 }
+    // Studio idle float tuning. speed = overall cycle rate, bob = up/down height (world units),
+    // tiltX/tiltZ = pitch/roll sway (radians). Set any to 0 to drop that axis.
+    const FLOAT = { speed: 1.5, bob: 0.15, tiltX: 0.07, tiltZ: 0.05 }
+    let floatPhase = 0 // drives the studio idle float
     let introT = customize ? 0 : 1 // 0 → start, 1 → settled
     let orbitYaw = 0 // persists, so you can park it facing back
     let orbitPitch = 0 // eases back to level on release
@@ -836,6 +819,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     // Done outro: 0 → product shot, 1 → snapped front-on with the screen lit.
     let outroActive = false
     let outroT = 0
+    let outroFade = 0 // screen fade-to-black, runs only once the zoom has fully settled
     let outroFired = false
 
     const easeOutExpo = (t: number) => (t >= 1 ? 1 : 1 - Math.pow(2, -10 * t))
@@ -853,15 +837,21 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     function placeCustomizeCamera() {
       const e = easeOutExpo(introT)
       let lookY = lerp(CUST.lookY[0], CUST.lookY[1], e)
-      let camZ = lerp(CUST.camZ[0], CUST.camZ[1], e)
+      let camZ = lerp(CUST.camZ[0], CUST.camZ[1], e) * custCam.zoom
       let yaw = lerp(CUST.yaw[0], CUST.yaw[1], e) + orbitYaw * e
       let pitch = lerp(CUST.pitch[0], CUST.pitch[1], e) + orbitPitch * e
       if (outroActive) {
-        // Zoom in and rotate flat to the front, framing the screen as it powers on.
+        // Land on the exact pose the games view computes for this aspect (same cy/d math as the
+        // resize handler), so when the studio hands off to the live game device there's no jump.
+        // The device was stretched to that height when the outro armed.
         const o = easeInOutCubic(outroT)
         const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
-        const frontZ = (6.2 * 0.5) / (tanHalf * Math.max(camera.aspect, 0.0001)) + DEVICE_Z + 0.6
-        lookY = lerp(lookY, CUST.frontLookY, o)
+        const aspect = Math.max(camera.aspect, 0.0001)
+        const ext = Math.max(0, Math.round((6.2 / aspect - 11.95) * 100) / 100)
+        const cy = wy(1130) + ext / 2
+        const frontZ =
+          (ext > 0 ? (6.2 * 0.5) / (tanHalf * aspect) : (11.95 * 0.5) / tanHalf) + DEVICE_Z
+        lookY = lerp(lookY, cy, o)
         camZ = lerp(camZ, frontZ, o)
         yaw = lerp(yaw, 0, o)
         pitch = lerp(pitch, 0, o)
@@ -869,38 +859,51 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       camera.position.set(0, lookY, camZ)
       camera.lookAt(0, lookY, 0)
       deck.rotation.set(pitch, yaw, 0)
-      // The solid back fades in once the body turns past side-on, so it never occludes the front.
-      backPanel.visible = !outroActive && Math.abs(yaw) > Math.PI / 2
+      // Keep the solid back on through the whole spin and only drop it once we're basically front-on,
+      // so it doesn't pop while the device is still angled. By then it's occluded anyway.
+      backPanel.visible = !outroActive || easeInOutCubic(outroT) < 0.9
     }
 
     applyOutroRef.current = (on: boolean) => {
       if (on) {
         introT = 1 // settle instantly so the outro starts from the rest pose
+        // Stretch the device to the live game height up front so the screen we zoom into is exactly
+        // the one the games view mounts, keeping the handoff seamless.
+        const aspect = Math.max(camera.aspect, 0.0001)
+        relayout(Math.max(0, Math.round((6.2 / aspect - 11.95) * 100) / 100))
         outroActive = true
         outroT = 0
+        outroFade = 0
         outroFired = false
       } else {
         outroActive = false
         outroT = 0
+        outroFade = 0
         outroFired = false
+        relayout(0)
         setScreenPower(0)
       }
       dirty = true
     }
 
-    /* dev GUI — only when explicitly debugging (e.g. the /console playground) */
+    /* GUI — the full dev panel when debugging (the /console playground), a slim carve panel in the studio */
     const gui = debug
       ? createConsoleGui({
-          kp, buttons, knobPocket, deviceCfg, bm, matKnobSlab, knobBump, matScreen, deck, backPanel,
-          lights: { key, fill, hemi, ambient },
-          logo: { group: logoGroup, darkMat: matLogoDark, whiteMat: matLogoWhite, protrude: logoProtrude },
-          onRedrawBump: redrawBump,
-          onRebuildBodyGeo: rebuildBodyGeo,
-          onRebuildBtnGeo: rebuildBtnGeo,
-          onRebuildKnobGeo: rebuildKnobGeo,
-          requestRender: () => { dirty = true },
+        kp, buttons, knobPocket, deviceCfg, bm, matKnobSlab, knobBump, matScreen, deck, backPanel,
+        lights: { key, fill, hemi, ambient },
+        logo: { carve: logoCarve, onPlace: placeLogoCarve, onRebuild: rebuildLogo },
+        onRedrawBump: redrawBump,
+        onRebuildBodyGeo: rebuildBodyGeo,
+        onRebuildBtnGeo: rebuildBtnGeo,
+        onRebuildKnobGeo: rebuildKnobGeo,
+        requestRender: () => { dirty = true },
+      })
+      : customize
+        ? createCustomizeGui({
+          carve: logoCarve, onPlaceLogo: placeLogoCarve, onRebuildLogo: rebuildLogo,
+          cam: custCam, onCam: () => { placeCustomizeCamera(); dirty = true },
         })
-      : null
+        : null
 
     /* pointer handling */
     const raycaster = new THREE.Raycaster()
@@ -1165,6 +1168,14 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     resize()
     applyView(viewRef.current)
 
+    // Game side only: the layer mounts black (opacity 0), then eases in on the next frame once it's
+    // been sized, so the studio→game handoff reads as one continuous screen powering up.
+    if (!customize) {
+      requestAnimationFrame(() => {
+        if (screenLayerRef.current) screenLayerRef.current.style.opacity = '1'
+      })
+    }
+
     /* render loop */
     const clock = new THREE.Clock()
     let rafId: number
@@ -1175,20 +1186,35 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       let animating = false
 
       if (customize) {
+        // Idle float: a slow sine bob plus a gentle tilt sway so the hero shot feels alive. The axes
+        // run at offset rates so it never looks mechanical. Eases out during the Done snap so it
+        // doesn't fight the front framing. Keeps the loop painting while the studio is open.
+        floatPhase += dt * FLOAT.speed
+        const floatFade = outroActive ? Math.max(0, 1 - outroT * 2.5) : 1
+        device.position.y = Math.sin(floatPhase) * FLOAT.bob * floatFade
+        device.rotation.x = Math.sin(floatPhase * 0.8 + 0.6) * FLOAT.tiltX * floatFade
+        device.rotation.z = Math.cos(floatPhase * 0.6) * FLOAT.tiltZ * floatFade
+        animating = true
         if (introT < 1) {
           introT = Math.min(1, introT + (dt * 1000) / CUST.introMs)
           animating = true
         }
         if (outroActive) {
+          // Screen stays off through the whole snap, so the device lands in the exact black
+          // "game loading" state. The fade-in belongs to the game, not the studio.
+          setScreenPower(0)
           if (outroT < 1) {
             outroT = Math.min(1, outroT + (dt * 1000) / CUST.outroMs)
             animating = true
-          }
-          // Screen blinks on through the back half of the snap.
-          setScreenPower(Math.max(0, Math.min(1, (outroT - 0.4) / 0.6)))
-          if (outroT >= 1 && !outroFired) {
-            outroFired = true
-            propsRef.current.onOutroComplete?.()
+          } else {
+            // Settled at the game position: hold the black beat, then hand off so the game
+            // mounts and fades its own screen content in.
+            outroFade = Math.min(1, outroFade + (dt * 1000) / CUST.fadeMs)
+            if (outroFade < 1) animating = true
+            else if (!outroFired) {
+              outroFired = true
+              propsRef.current.onOutroComplete?.()
+            }
           }
         } else if (orbitDrag) {
           animating = true
@@ -1207,7 +1233,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         o.position.z += (targetZ - o.position.z) * Math.min(1, dt * 20)
         if (d.pressed) { d.glow = Math.min(1, d.glow + dt * 9); animating = true }
         else { if (d.glow > 0.002) animating = true; d.glow *= Math.pow(0.015, dt) }
-          ; (o.material as THREE.MeshStandardMaterial).emissiveIntensity = d.glow * 0.95
+        ; (o.material as THREE.MeshStandardMaterial).emissiveIntensity = d.glow * 0.95
       })
 
       if (knobDrag) {
@@ -1250,9 +1276,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       window.removeEventListener('focus', onVisible)
       ro.disconnect()
       pressTimers.forEach(clearTimeout)
-      applyViewRef.current = () => {}
-      applyThemeRef.current = () => {}
-      applyOutroRef.current = () => {}
+      applyViewRef.current = () => { }
+      applyThemeRef.current = () => { }
+      applyOutroRef.current = () => { }
       gui?.destroy()
       logoGeo.forEach((g) => g.dispose())
       matLogoDark.dispose()
@@ -1313,6 +1339,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
           background: debug ? 'transparent' : '#000',
           // Customize uses the 3D screenMesh (it spins with the body), so the HTML layer is dead weight.
           display: customize ? 'none' : undefined,
+          // Fade the screen in on a fresh mount, so the studio→game handoff lands black then the game
+          // content eases up (the studio side stays black through the snap). Flipped to 1 after layout.
+          opacity: customize ? undefined : 0,
+          transition: customize ? undefined : 'opacity 1s ease',
           overflow: 'hidden',
         }}
       >
@@ -1341,7 +1371,6 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
             fontFamily: '-apple-system, "Segoe UI", system-ui, sans-serif',
           }}
         >
-          {onNav ? 'Turn the wheels · press to play' : ''}
         </div>
       </div>
     </div>

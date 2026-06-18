@@ -24,10 +24,9 @@ interface GuiParams {
   deck: THREE.Group
   backPanel: THREE.Mesh
   logo: {
-    group: THREE.Group
-    darkMat: THREE.MeshStandardMaterial
-    whiteMat: THREE.MeshStandardMaterial
-    protrude: { white: number; dark: number }
+    carve: { z: number; eyeZ: number; depth: number }
+    onPlace: () => void   // reposition only (z / eyeZ changed)
+    onRebuild: () => void // re-extrude letters (depth changed)
   }
   lights: {
     key: THREE.DirectionalLight
@@ -95,20 +94,11 @@ export function createConsoleGui(p: GuiParams): GUI {
     p.requestRender()
   })
 
-  // Embossed back logo — tune how far each stamp level stands off the panel (local -Z = outward).
-  const gLogo = gui.addFolder('Back logo')
-  const setProtrude = (mat: THREE.MeshStandardMaterial, v: number) => {
-    logo.group.children.forEach((c) => {
-      if ((c as THREE.Mesh).material === mat) c.position.z = v
-    })
-    p.requestRender()
-  }
-  gLogo.add(logo.protrude, 'dark', -0.2, 0, 0.001).name('dark protrude').onChange((v: number) => setProtrude(logo.darkMat, v))
-  gLogo.add(logo.protrude, 'white', -0.2, 0, 0.001).name('white protrude').onChange((v: number) => setProtrude(logo.whiteMat, v))
-  const gLogoPos = gLogo.addFolder('position')
-  gLogoPos.add(logo.group.position, 'x', -5, 5, 0.01).onChange(p.requestRender)
-  gLogoPos.add(logo.group.position, 'y', -5, 5, 0.01).onChange(p.requestRender)
-  gLogoPos.add(logo.group.position, 'z', -3, 0, 0.01).onChange(p.requestRender)
+  // Carved back logo — recess (how far below the rear face) for letters and eyes, plus thickness.
+  const gLogo = gui.addFolder('Back logo carve')
+  gLogo.add(logo.carve, 'z', 0, 0.3, 0.005).name('letters recess').onChange(logo.onPlace)
+  gLogo.add(logo.carve, 'eyeZ', -0.15, 0.3, 0.005).name('eyes z (- = pop out)').onChange(logo.onPlace)
+  gLogo.add(logo.carve, 'depth', 0.005, 0.2, 0.005).name('depth').onChange(logo.onRebuild)
   gLogo.close()
 
   const gScreen = gui.addFolder('Screen')

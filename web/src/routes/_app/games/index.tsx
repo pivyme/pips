@@ -50,14 +50,14 @@ function GamesConsole() {
     },
     action1: { label: 'PREV', color: 'neutral', onPress: () => move(sel - 1), disabled: sel === 0 },
     action2: { label: 'NEXT', color: 'neutral', onPress: () => move(sel + 1), disabled: sel === GAMES.length - 1 },
-    main: { label: 'PLAY', color: 'amber', onPress: launch },
+    main: { label: '', color: 'amber', onPress: launch },
   })
 
   // The L-shaped aperture (web/CLAUDE.md): a full-width top bar, the list filling the slack height
   // (centered so it never sprawls into the occluded bottom-right), then a notch-safe readout band.
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-black text-text">
-      <div className="flex items-start justify-between gap-3 p-4">
+      <div className="flex items-start justify-between gap-3 p-8">
         <div>
           <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Pips</div>
           <div className="text-2xl font-extrabold leading-none tracking-tight">Games</div>
@@ -71,14 +71,14 @@ function GamesConsole() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col justify-center gap-2 px-4">
+      <div className="flex min-h-0 flex-1 flex-col justify-center gap-2 px-8">
         {GAMES.map((g, i) => (
           <GameRow key={g.to} index={i + 1} game={g} selected={i === sel} />
         ))}
       </div>
 
       {/* readout band — notch-safe, left-only (bottom-right is the body: knob + PLAY) */}
-      <div className="pointer-events-none max-w-[60%] p-4">
+      <div className="pointer-events-none max-w-[60%] p-6">
         <div className="tnum text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
           {pad2(sel + 1)} / {pad2(GAMES.length)}
         </div>
