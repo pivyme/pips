@@ -66,7 +66,6 @@ export const THEMES: ConsoleTheme[] = [
     cardSub: 'rgba(40,44,52,0.5)',
   },
   {
-    // Sui brand: vivid cobalt body, white PLAY block, deep navy controls.
     id: 'sui',
     code: '2023',
     name: 'DeepBlue',
@@ -82,6 +81,23 @@ export const THEMES: ConsoleTheme[] = [
     cardBg: '#1f6feb',
     cardInk: '#f4f7ff',
     cardSub: 'rgba(255,255,255,0.68)',
+  },
+  {
+    id: 'pivy',
+    code: '2025',
+    name: 'PIVY IT UP!',
+    badge: 'EXCLUSIVE',
+    body: '#7EFE9F',
+    back: '#6bcd83',
+    knob: '#f2c044',
+    main: '#f4f7ff',
+    action: '#3474FF',
+    pills: '#2b2b2b',
+    label: '#8a8a86',
+    logo: '#2480e9',
+    cardBg: '#7EFE9F',
+    cardInk: '#098227',
+    cardSub: 'rgba(20, 41, 21, 0.5)',
   },
   {
     id: 'carbon',
@@ -117,7 +133,7 @@ export const THEMES: ConsoleTheme[] = [
   },
   {
     id: 'cyberpunk',
-    code: '2026',
+    code: '2077',
     name: 'Cyberpunk',
     badge: 'NEW',
     body: '#cf42cf',
@@ -134,7 +150,7 @@ export const THEMES: ConsoleTheme[] = [
   },
   {
     id: 'mint',
-    code: '349',
+    code: '224',
     name: 'Wisteria',
     badge: 'NEW',
     body: '#c2e9d3',
@@ -151,7 +167,7 @@ export const THEMES: ConsoleTheme[] = [
   },
   {
     id: 'tangerine',
-    code: '088',
+    code: '2005',
     name: 'Teenager',
     badge: 'NEW',
     body: '#b8bcc2',

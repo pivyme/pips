@@ -15,6 +15,12 @@ import type { ConsoleTheme } from './themes'
 // press/drag to those handlers. The game's screen content (the chart) renders in a black HTML layer
 // positioned on the projected screen cutout, masked to the L-shape by the device body.
 
+// Parsed logo SVG, cached for the page lifetime. The scene effect remounts on every debug/customize
+// toggle, so without this the back logo + the main button's embossed P would re-fetch and re-parse
+// async on each rebuild and pop in a few frames late. Parsed once, every later mount builds it sync.
+type SvgPaths = Parameters<NonNullable<Parameters<SVGLoader['load']>[1]>>[0]['paths']
+let svgPathsCache: SvgPaths | null = null
+
 type HandlersRef = {
   current: {
     main?: () => void
@@ -119,9 +125,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const buttons = [
       // pad = gap between button edge and pocket rim on each side
       // pills share a wall so their pad is capped to avoid holes touching (~0.14 max before they'd merge)
-      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.1 },
-      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.12 },
-      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.12 },
+      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.15 },
+      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.15 },
+      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.15 },
       { w: 0.98, h: 0.31, r: 0.15, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.1 },
       { w: 1.02, h: 0.31, r: 0.15, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.1 },
     ]
@@ -293,10 +299,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const logoGeo: THREE.BufferGeometry[] = []
     const matLogoDark = new THREE.MeshStandardMaterial({ color: 0xff4444, roughness: 0.93, metalness: 0 })
     const matLogoWhite = new THREE.MeshStandardMaterial({ color: 0x4488ff, roughness: 0.8, metalness: 0 })
-    // Main-button glyph carve: its own tones so it reads as part of the button, not the back logo. The
-    // eye matches the button face; the recessed P is a shade darker. Recolored from t.main in applyTheme.
+    // Main-button glyph: its own tone so it reads as part of the button, not the back logo. The raised P
+    // is a shade darker than the cap face; its counter stays open so the face shows through as the eye.
+    // Recolored from t.main in applyTheme.
     const matMainGlyph = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0 })
-    const matMainEye = new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0 })
     // Dark letters (carved into the panel) and the eye ovals (raised in front), lifted from the
     // letters' own counters. The SVG's white rects were just flat backing and are dropped.
     const logoLetters: THREE.Shape[] = []
@@ -332,7 +338,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       placeLogoCarve()
     }
 
-    new SVGLoader().load('/assets/pips-horizontal-black.svg', ({ paths }) => {
+    // Derive the carved letters / eyes / panel holes from the parsed SVG, then (re)build the back logo
+    // and the main button glyph. Runs sync from cache on remount, or once from the async load below.
+    function buildFromSvg(paths: SvgPaths) {
       for (const path of paths) {
         const fillStr = (path.userData?.style?.fill as string) ?? ''
         const isWhite = /^(white|#fff(fff)?|rgb\(\s*255,\s*255,\s*255\s*\))$/i.test(fillStr)
@@ -361,7 +369,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       logoGroup.position.z = backFaceLocalZ
       rebuildLogo()
       buildMainGlyph()
-    }, undefined, (e) => console.error('[ConsoleCanvas] back logo SVG failed:', e))
+    }
+
+    // Invoked below, once createButtons + buildMainGlyph exist (buildFromSvg builds the glyph onto bm).
 
     /* screen mesh — rebuilt by relayout() so the lit panel tracks the stretched cutout. The Done
        outro stretches it to the live game height so the handoff to the game device is seamless. */
@@ -401,18 +411,13 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     ], wx, wy)
     const bmOrigin = bm.map((m) => ({ x: m.position.x, y: m.position.y }))
 
-    // The main button wears the first glyph of the Pips wordmark, carved with the same recipe as the
-    // back-panel logo: the letter recessed into the face, its eye raised, sharing the logo materials so
-    // it tracks the theme. mainGlyphHole holds the cut so a dev-GUI geometry rebuild re-cuts it. Filled
-    // once the logo SVG loads (buildMainGlyph, called from the loader callback above).
-    let mainGlyphHole: THREE.Path | null = null
+    // The main button wears the first glyph of the Pips wordmark, raised proud of the cap face (built
+    // once the logo SVG loads, see buildMainGlyph). The glyph is a separate mesh, so the cap stays a
+    // solid full-bevel pillow and keeps its glossy, light-catching rim. Cutting the glyph through the
+    // cap would force a near-flat bevel (to keep the letter crisp) and kill that gloss.
     function mainCapGeo() {
       const c = buttons[0]
-      const s = roundedRect(c.w, c.h, c.r)
-      if (mainGlyphHole) s.holes.push(mainGlyphHole)
-      // A near-zero bevel keeps the glyph cut crisp (the cap bevel applies to the hole too, and 0.06
-      // rounds the letter walls into mush). Matches the back-panel carve's straight 90° walls.
-      return frontZeroed(s, c.depth, mainGlyphHole ? 0.012 : 0.06)
+      return frontZeroed(roundedRect(c.w, c.h, c.r), c.depth, 0.06)
     }
     function buildMainGlyph() {
       // Leftmost letter = the first glyph in reading order.
@@ -438,15 +443,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const scale = (Math.min(c.w, c.h) * 0.6) / Math.max(gw, gh)
       const map = (p: THREE.Vector2) => new THREE.Vector2(scale * (p.x - gx), -scale * (p.y - gy))
 
-      // Cut the outer silhouette through the cap (holes wind opposite the cap outline).
-      const holePts = outline.map(map)
-      if (signedArea(holePts) > 0) holePts.reverse()
-      mainGlyphHole = new THREE.Path()
-      mainGlyphHole.setFromPoints(holePts)
-      bm[0].geometry.dispose()
-      bm[0].geometry = mainCapGeo()
+      const outlinePts = outline.map(map)
+      if (signedArea(outlinePts) > 0) outlinePts.reverse()
 
-      const carveZ = 0.07, eyeZ = 0.02, depth = 0.12
+      const raise = 0.06, depth = 0.2
       const extrude = (shape: THREE.Shape) => {
         const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false })
         g.computeBoundingBox()
@@ -455,29 +455,27 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         return g
       }
 
-      // Recessed letter: the silhouette minus its counters (the eye holes), sunk below the face.
-      const letterShape = new THREE.Shape(holePts)
+      // Raised letter: the silhouette minus its counters (the eyes), standing proud of the cap face.
+      // The open counters let the cap face read through as the eye, the same look the back-panel carve
+      // gets from its lifted ovals. castShadow drops a faint emboss shadow onto the glossy face.
+      const letterShape = new THREE.Shape(outlinePts)
       for (const h of glyph.holes) letterShape.holes.push(new THREE.Path(h.getPoints(40).map(map)))
       const letter = new THREE.Mesh(extrude(letterShape), matMainGlyph)
-      letter.position.z = -carveZ
+      letter.position.z = raise
       letter.castShadow = true
       letter.receiveShadow = true
       bm[0].add(letter)
+    }
 
-      // Raised eye(s): the counters lifted slightly proud of the face.
-      for (const h of glyph.holes) {
-        const eye = new THREE.Mesh(extrude(new THREE.Shape(h.getPoints(40).map(map))), matMainEye)
-        eye.position.z = eyeZ
-        bm[0].add(eye)
-      }
-
-      // Dark floor behind the cut so the tunnel never reveals the layers behind the button.
-      const floor = new THREE.Mesh(
-        new THREE.ShapeGeometry(roundedRect(gw * scale + 0.12, gh * scale + 0.12, 0.06)),
-        matPocket,
-      )
-      floor.position.z = -carveZ - depth - 0.01
-      bm[0].add(floor)
+    // Now that bm + buildMainGlyph exist, build the logo + glyph: sync from cache on remount (no blink),
+    // or once from the async load (first paint, then cached for every later customize/debug toggle).
+    if (svgPathsCache) {
+      buildFromSvg(svgPathsCache)
+    } else {
+      new SVGLoader().load('/assets/pips-horizontal-black.svg', ({ paths }) => {
+        svgPathsCache = paths
+        buildFromSvg(paths)
+      }, undefined, (e) => console.error('[ConsoleCanvas] back logo SVG failed:', e))
     }
 
     const { numberWheelRoll } = createNumberWheel(device, interactive, matPocket, numberWheelPocket, wx, wy, body.position.z)
@@ -746,8 +744,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         mat.emissive.set(c)
       }
       paint(bm[0], t.main)
-      // Glyph carve tracks the button: eye = face color, recessed P a shade darker.
-      matMainEye.color.set(t.main)
+      // Raised P tracks the button: a shade darker than the face, its open counter reads as the eye.
       matMainGlyph.color.set(t.main).multiplyScalar(0.7)
       paint(bm[1], t.action)
       paint(bm[2], t.action)
@@ -797,8 +794,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const CUST = {
       // intro: start pose → rest pose, lerped by easeOutExpo(introT). Rest sits the device small and
       // high so the workshop breathes around it and the preset rail has room below.
-      camZ: [29, 47] as const,
-      lookY: [-0.6, -2.5] as const,
+      camZ: [29, 40] as const,
+      lookY: [-0.6, -3.2] as const,
       yaw: [-0.1, -0.5] as const,
       pitch: [-0.03, -0.17] as const,
       introMs: 880,
