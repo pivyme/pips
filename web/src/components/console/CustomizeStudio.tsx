@@ -139,6 +139,12 @@ function ThemeRail({
   onSelect: (id: string) => void
 }) {
   const railRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef({
+    pointerId: -1,
+    startX: 0,
+    startScrollLeft: 0,
+    moved: false,
+  })
 
   // Keep the active card in view when it changes (e.g. landing on a saved skin off-screen).
   useEffect(() => {
@@ -146,12 +152,55 @@ function ThemeRail({
     el?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
   }, [selectedId])
 
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    const rail = e.currentTarget
+    dragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startScrollLeft: rail.scrollLeft,
+      moved: false,
+    }
+    rail.setPointerCapture(e.pointerId)
+  }
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (drag.pointerId !== e.pointerId) return
+    const dx = e.clientX - drag.startX
+    if (Math.abs(dx) > 4) drag.moved = true
+    if (!drag.moved) return
+    e.preventDefault()
+    e.currentTarget.scrollLeft = drag.startScrollLeft - dx
+  }
+
+  const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (drag.pointerId !== e.pointerId) return
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    drag.pointerId = -1
+    // Keep the flag through the synthetic click that follows pointerup, then clear it.
+    if (drag.moved) setTimeout(() => { drag.moved = false }, 0)
+  }
+
   return (
     <div
       ref={railRef}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onClickCapture={(e) => {
+        if (!dragRef.current.moved) return
+        e.preventDefault()
+        e.stopPropagation()
+      }}
+      onDragStart={(e) => e.preventDefault()}
       // pt/pb leave room for the selected card to lift + tilt; overflow-x forces overflow-y, so
       // without the padding the raised card clips.
-      className="-mx-4 flex gap-3 overflow-x-auto px-5 pb-4 pt-7 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="-mx-4 flex cursor-grab select-none gap-3 overflow-x-auto px-5 pb-4 pt-7 active:cursor-grabbing touch-pan-y [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {THEMES.map((t) => (
         <ThemeCard

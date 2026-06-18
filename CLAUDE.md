@@ -14,7 +14,7 @@ The twist that makes Pips Pips: the whole interface looks and behaves like a **p
 
 1. This is a **monorepo** with three pillars: `web/` (frontend), `backend/` (API), `contracts/` (Sui Move). Working in a pillar? Read its own `CLAUDE.md` too.
 2. The chain is **our own Sui localnet**, deployed and live at `https://rpc.playpips.fun`. **Not Sui testnet.** We publish and run our own copy of **DeepBook Predict** (an on-chain prediction-market protocol) on it. Setup and redeploy are one command: `scripts/localnet.sh`. Read the "The chain" section below before touching anything Sui.
-3. The frontend is **not a normal dashboard**. It is a persistent console shell with a swappable screen. Read [`docs/DESIGN.md`](./docs/DESIGN.md) before touching UI.
+3. The frontend is **not a normal dashboard**. It is a persistent console shell with a swappable screen. Read [`docs/DESIGN.md`](./docs/DESIGN.md) (how it looks) and [`docs/FLOW.md`](./docs/FLOW.md) (how it moves: the surfaces, the Home screen, the navigation map) before touching UI.
 4. Auth is **Sui zkLogin via Enoki (Google sign-in)** plus a **dev auto-login** for local and the build loop. Suiet wallet connect is not in v1. See [`bigdev/plans/04-AUTH.md`](./bigdev/plans/04-AUTH.md).
 5. The Sui SDK surface moves fast. The package names and APIs in this file were verified mid 2026. When you write integration code, confirm the current API before coding, never guess from memory.
 
@@ -29,6 +29,7 @@ pips/
 ├── contracts/          Sui Move packages (game logic, Predict wrappers)
 ├── docs/
 │   ├── DESIGN.md       Console design language + layout spec (read this)
+│   ├── FLOW.md         App flow + navigation map (door, device, drawer)
 │   └── references/     Visual references (Not Boring Camera, console layout)
 ├── scripts/
 │   └── localnet.sh     Localnet + Predict deploy front door (setup/redeploy/doctor)

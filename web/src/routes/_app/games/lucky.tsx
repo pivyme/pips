@@ -214,7 +214,6 @@ function LuckyScreen() {
     setRiskIdx((i) => (i + 1) % RISK_TIERS.length)
   }, [])
 
-  const configurable = phase === 'idle' || phase === 'result'
   const isOpen = phase === 'open'
   useConsoleControls({
     numberWheel: {
@@ -225,20 +224,18 @@ function LuckyScreen() {
       value: betIdx,
       onChange: setBetIdx,
       format: (v) => String(STAKE_LADDER[v]),
-      disabled: !configurable,
     },
-    action1: { label: durationLabel(duration), color: 'neutral', onPress: cycleSpeed, disabled: !configurable },
-    action2: { label: risk.label, color: 'neutral', onPress: cycleRisk, disabled: !configurable },
+    action1: { label: durationLabel(duration), color: 'neutral', onPress: cycleSpeed },
+    action2: { label: risk.label, color: 'neutral', onPress: cycleRisk },
     main: isOpen
       ? { label: 'CASH OUT', color: 'up', onPress: () => void doCashOut() }
       : phase === 'cashing'
-        ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true, disabled: true }
+        ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true }
         : {
             label: 'PLAY',
             color: 'amber',
             onPress: () => void doPlay(),
             loading: phase === 'placing' || phase === 'spinning',
-            disabled: !canPlay || phase === 'placing' || phase === 'spinning',
           },
   })
 

@@ -560,25 +560,23 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
 
     const LABEL_DY = -0.45
     const menuLbl = makeLabel('MENU', bm[3].position.x, bm[3].position.y + LABEL_DY, 0.26, '#7c7870')
-    const gamesLbl = makeLabel('GAMES', bm[4].position.x, bm[4].position.y + LABEL_DY, 0.26, '#7c7870')
+    const gamesLbl = makeLabel('HOME', bm[4].position.x, bm[4].position.y + LABEL_DY, 0.26, '#7c7870')
 
-    // Live labels: action1 / action2 on their faces, knob value on the body. The main button wears the
-    // embossed Pips glyph instead of a text label (carved once the logo SVG loads, see buildMainGlyph).
+    // Live labels: action1 / action2 on their faces. The main button wears the embossed Pips glyph
+    // instead of a text label (carved once the logo SVG loads, see buildMainGlyph).
     const a1Lbl = makeDynLabel(0.5, '#ffffff')
     a1Lbl.plane.position.set(0, 0, 0.02)
     bm[1].add(a1Lbl.plane)
     const a2Lbl = makeDynLabel(0.5, '#ffffff')
     a2Lbl.plane.position.set(0, 0, 0.02)
     bm[2].add(a2Lbl.plane)
-    const knobLbl = makeDynLabel(0.42, '#2c2722')
-    knobLbl.plane.position.set(wx(knobPocket.px), wy(knobPocket.py) - 1.55, 0.07)
-    device.add(knobLbl.plane)
 
     const NUMBER_LABEL_ANGLE = 1.02
-    const NUMBER_LABEL_RADIUS = 0.375
+    const NUMBER_LABEL_RADIUS = 0.4
     const MAX_NUMBER_WHEEL_LABELS = 5
     const numberWheelLabels = Array.from({ length: MAX_NUMBER_WHEEL_LABELS }, () => {
-      const label = makeDynLabel(0.46, '#ffffff', true, true)
+      // Keep the digits above the drum instead of depth-fighting into its black surface.
+      const label = makeDynLabel(0.46, '#ffffff', true)
       numberWheelRoll.add(label.plane)
       return { ...label, angle: 0, active: false }
     })
@@ -586,6 +584,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     let numberWheelTarget = 0
     let numberWheelInitialized = false
     let debugNumberValue = 1
+    let idleNumberValue = 2
+    const idleStakes = [1, 5, 10, 25, 50, 100]
     const debugNumberWheel = {
       min: 0,
       max: 9,
@@ -593,20 +593,27 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       value: debugNumberValue,
       label: 'USDC',
       format: (value: number) => String(value),
-      disabled: false,
     }
     // In the studio no game binds the wheel, so it would read as an empty black drum. Park a sample
-    // value on it (disabled) so the device looks complete in the product shot.
+    // value on it so the device looks complete in the product shot.
     const customizeWheel = {
-      // Not disabled (so the digit shows full-bright); the studio's orbit grab already blocks any
-      // interaction with it.
+      // The studio's orbit grab already blocks interaction with it.
       min: 0, max: 9, step: 1, value: 5,
-      label: '', format: (value: number) => String(value), disabled: false,
+      label: '', format: (value: number) => String(value),
+    }
+    const idleNumberWheel = {
+      min: 0,
+      max: idleStakes.length - 1,
+      step: 1,
+      value: idleNumberValue,
+      label: 'USDC',
+      format: (value: number) => String(idleStakes[value]),
     }
 
-    // View state mirrored from the registry, read by the input handlers for gating.
+    // View state mirrored from the registry. Registered controls remain physically interactive;
+    // unbound controls still move and sound, but only registered controls dispatch into a screen.
     const state = {
-      mainDisabled: true, a1Disabled: true, a2Disabled: true, knobDisabled: true, numberWheelDisabled: true,
+      mainAvailable: false, a1Available: false, a2Available: false, knobAvailable: false, numberWheelBound: false,
       knob: null as null | NonNullable<ConsoleView['knob']>,
       numberWheel: null as null | NonNullable<ConsoleView['numberWheel']>,
     }
@@ -641,7 +648,6 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
 
     function updateNumberWheelLighting() {
-      const disabledOpacity = state.numberWheelDisabled ? 0.36 : 1
       for (const label of numberWheelLabels) {
         if (!label.active) continue
         const angle = Math.atan2(
@@ -650,7 +656,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         )
         const facing = Math.max(0, Math.cos(angle))
         const light = Math.pow(facing, 2.2)
-        label.mat.opacity = facing > 0 ? (0.04 + 0.96 * light) * disabledOpacity : 0
+        label.mat.opacity = facing > 0 ? 0.12 + 0.88 * light : 0
         const brightness = 0.32 + 0.68 * Math.pow(facing, 1.6)
         label.mat.color.setRGB(brightness, brightness, brightness)
       }
@@ -658,22 +664,24 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
 
     function applyView(v?: ConsoleView) {
       const m = v?.main
-      state.mainDisabled = !m || !!m.disabled || !!m.loading
+      state.mainAvailable = !!m
       const a1 = v?.action1
-      state.a1Disabled = !a1 || !!a1.disabled
-      a1Lbl.set(a1?.label ?? '', state.a1Disabled ? 0.34 : 1)
+      state.a1Available = !!a1
+      a1Lbl.set(a1?.label ?? '', state.a1Available ? 1 : 0.34)
       const a2 = v?.action2
-      state.a2Disabled = !a2 || !!a2.disabled
-      a2Lbl.set(a2?.label ?? '', state.a2Disabled ? 0.34 : 1)
+      state.a2Available = !!a2
+      a2Lbl.set(a2?.label ?? '', state.a2Available ? 1 : 0.34)
       const k = v?.knob ?? null
       state.knob = k
-      state.knobDisabled = !k || !!k.disabled
-      knobLbl.set(k ? (k.format ? k.format(k.value) : String(k.value)) : '', state.knobDisabled ? 0.4 : 1)
-      const n =
-        v?.numberWheel ??
-        (debug ? { ...debugNumberWheel, value: debugNumberValue } : customize ? customizeWheel : null)
+      state.knobAvailable = !!k
+      state.numberWheelBound = !!v?.numberWheel
+      const n = v?.numberWheel
+        ?? (debug
+          ? { ...debugNumberWheel, value: debugNumberValue }
+          : customize
+            ? customizeWheel
+            : { ...idleNumberWheel, value: idleNumberValue })
       state.numberWheel = n
-      state.numberWheelDisabled = !n || !!n.disabled
       setNumberWheelLabels(n)
       if (n && !numberWheelDrag) {
         numberWheelTarget = -numberWheelPosition(n) * NUMBER_LABEL_ANGLE
@@ -687,12 +695,6 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
     applyViewRef.current = applyView
 
-    function isBtnDisabled(i: number) {
-      if (i === 0) return state.mainDisabled
-      if (i === 1) return state.a1Disabled
-      if (i === 2) return state.a2Disabled
-      return false // pills (nav) are never disabled
-    }
     function dispatch(i: number) {
       const h = propsRef.current.handlers?.current
       if (i === 0) h?.main?.()
@@ -717,7 +719,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       ridgeWidth: 120, grooveWidth: 50, bumpScale: 45, ridgeRepeat: 20,
       cornerCurve: 0.2,
       radius: 1.25, height: 0.95, edgeCurve: 0.1,
-      dragSensitivity: 0.5, pxPerStep: 22, ridgePhase: 0,
+      dragSensitivity: 0.5, ridgePhase: 0,
       snapInterval: 20, snapSpeed: 5,
       ridgeLength: 0.825,
     }
@@ -965,7 +967,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const MIN_PRESS_MS = 120
     const pressTimers: ReturnType<typeof setTimeout>[] = []
     let active: THREE.Mesh | null = null
-    let knobDrag = false, knobStartY = 0, knobBase = 0, knobLastStep = 0, knobLastRidge = 0, knobStartValue = 0
+    let knobDrag = false, knobStartY = 0, knobBase = 0, knobStartDetent = 0, knobLastStep = 0, knobStartValue = 0
     let numberWheelDrag = false, numberWheelStartY = 0, numberWheelLastStep = 0, numberWheelStartValue = 0
     let numberWheelStartPosition = 0
     const NUMBER_WHEEL_PX_PER_STEP = 28
@@ -1002,7 +1004,6 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const obj = pick()
       if (!obj) return
       if (obj.userData.kind === 'numberWheel') {
-        if (state.numberWheelDisabled && !debug) return
         canvas.setPointerCapture(e.pointerId)
         numberWheelDrag = true
         numberWheelStartY = e.clientY
@@ -1012,28 +1013,26 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         return
       }
       if (obj.userData.kind === 'knob') {
-        // In the standalone playground no game binds a view, so everything reads disabled. Let the
-        // controls still respond physically there (press + turn) so the device is testable on its own.
-        if (state.knobDisabled && !debug) return
         canvas.setPointerCapture(e.pointerId)
         knobDrag = true
         knobStartY = e.clientY
         knobBase = knobOffset
+        knobStartDetent = Math.round(knobOffset / kp.snapInterval)
         knobLastStep = 0
-        knobLastRidge = Math.round(knobOffset / kp.snapInterval)
         knobStartValue = state.knob?.value ?? 0
         return
       }
       const bi = bm.indexOf(obj)
-      if (isBtnDisabled(bi) && !debug) return
       canvas.setPointerCapture(e.pointerId)
       obj.userData.pressed = true
       obj.userData.pressedAt = performance.now()
       obj.userData.glow = Math.max(obj.userData.glow, 0.001)
       active = obj
-      if (bi === 0) audio.playSfx('mainPress')
-      else if (bi === 1 || bi === 2) audio.playSfx('actionPress')
-      else if (bi === 3 || bi === 4) audio.playSfx('pillPress')
+      if (bi === 0) audio.playSfx('mainPress', 'main')
+      else if (bi === 1) audio.playSfx('actionPress', 'action1')
+      else if (bi === 2) audio.playSfx('actionPress', 'action2')
+      else if (bi === 3) audio.playSfx('pillPress', 'menu')
+      else if (bi === 4) audio.playSfx('pillPress', 'home')
       dispatch(bi)
     }
 
@@ -1064,22 +1063,29 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         numberWheelAngle = -(numberWheelStartPosition + resistedSteps) * NUMBER_LABEL_ANGLE
         numberWheelTarget = numberWheelAngle
         if (steps !== numberWheelLastStep) {
-          numberWheelLastStep = steps
-          audio.playSfx('knob')
-          if (!state.numberWheelDisabled) {
-            const raw = numberWheelStartValue + steps * wheel.step
+          const direction = Math.sign(steps - numberWheelLastStep)
+          for (let detent = numberWheelLastStep + direction; detent !== steps + direction; detent += direction) {
+            audio.playSfx('knob', 'thumbwheel')
+            const raw = numberWheelStartValue + detent * wheel.step
             const next = Math.min(wheel.max, Math.max(wheel.min, Number(raw.toFixed(6))))
-            if (next !== wheel.value) {
-              const handler = propsRef.current.handlers?.current.numberWheel
-              if (handler) handler(next)
-              else if (debug) {
+            const handler = propsRef.current.handlers?.current.numberWheel
+            if (handler) {
+              handler(next)
+            } else if (!state.numberWheelBound) {
+              if (debug) {
                 debugNumberValue = next
                 const debugSpec = { ...debugNumberWheel, value: debugNumberValue }
                 state.numberWheel = debugSpec
                 setNumberWheelLabels(debugSpec)
+              } else if (!customize) {
+                idleNumberValue = next
+                const idleSpec = { ...idleNumberWheel, value: idleNumberValue }
+                state.numberWheel = idleSpec
+                setNumberWheelLabels(idleSpec)
               }
             }
           }
+          numberWheelLastStep = steps
         }
         return
       }
@@ -1087,18 +1093,18 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         const dyDown = e.clientY - knobStartY // down positive — drives the visual ridge scroll
         knobOffset = knobBase + dyDown * kp.dragSensitivity
         const detent = Math.round(knobOffset / kp.snapInterval)
-        if (detent !== knobLastRidge) {
-          knobLastRidge = detent
-          audio.playSfx('knob')
-        }
-        const k = state.knob
-        if (k && !state.knobDisabled) {
-          const steps = Math.round((knobStartY - e.clientY) / kp.pxPerStep) // up = increase
-          if (steps !== knobLastStep) {
-            knobLastStep = steps
-            const next = Math.min(k.max, Math.max(k.min, knobStartValue + steps * k.step))
-            if (next !== k.value) propsRef.current.handlers?.current.knob?.(next)
+        const steps = knobStartDetent - detent // dragging up advances one value per physical click
+        if (steps !== knobLastStep) {
+          const direction = Math.sign(steps - knobLastStep)
+          for (let step = knobLastStep + direction; step !== steps + direction; step += direction) {
+            audio.playSfx('knob', 'knob')
+            const k = state.knob
+            if (k && state.knobAvailable) {
+              const next = Math.min(k.max, Math.max(k.min, knobStartValue + step * k.step))
+              propsRef.current.handlers?.current.knob?.(next)
+            }
           }
+          knobLastStep = steps
         }
         return
       }
@@ -1129,9 +1135,11 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         const elapsed = performance.now() - (btn.userData.pressedAt ?? 0)
         const delay = Math.max(0, MIN_PRESS_MS - elapsed)
         const t = setTimeout(() => {
-          if (bi === 0) audio.playSfx('mainRelease')
-          else if (bi === 1 || bi === 2) audio.playSfx('actionRelease')
-          else if (bi === 3 || bi === 4) audio.playSfx('pillRelease')
+          if (bi === 0) audio.playSfx('mainRelease', 'main')
+          else if (bi === 1) audio.playSfx('actionRelease', 'action1')
+          else if (bi === 2) audio.playSfx('actionRelease', 'action2')
+          else if (bi === 3) audio.playSfx('pillRelease', 'menu')
+          else if (bi === 4) audio.playSfx('pillRelease', 'home')
           btn.userData.pressed = false
         }, delay)
         pressTimers.push(t)
@@ -1214,6 +1222,13 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         el.style.top = `${minY - M}px`
         el.style.width = `${maxX - minX + M * 2}px`
         el.style.height = `${maxY - minY + M * 2}px`
+        // Rim-safe inset for HTML content, published as --screen-rim. The device is responsive, so
+        // a fixed px pad crops once it scales up: this tracks the projected screen and clears the
+        // rounded, beveled cutout edge (~corner radius 0.25 world + bevel). Screens inset text by
+        // var(--screen-rim); rules and charts bleed full width and tuck under the rim. This is the
+        // layout boundary every console screen lays out against.
+        const scale = (maxX - minX) / (wx(1140) - wx(30))
+        el.style.setProperty('--screen-rim', `${Math.max(16, Math.round(M + 0.33 * scale))}px`)
       }
       dirty = true // camera/geometry moved, repaint once
     }

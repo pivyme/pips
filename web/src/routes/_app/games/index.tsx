@@ -1,92 +1,184 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
+import { motion } from 'motion/react'
+import { Activity, Dices, Target, Zap } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useConsoleControls } from '@/components/console/controls'
-import { Illo } from '@/ui/Illo'
+import { GameScreen } from '@/components/game/screen'
+import { Stat } from '@/components/Stat'
 import { api } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
+import { isDemo } from '@/lib/demo'
 import { haptic } from '@/lib/haptics'
+import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 
-// The games picker, rendered on the device screen instead of a separate page. The knob scrubs the
-// selection, the action buttons step it, the main button launches. Reads like a handheld's cartridge
-// list: one row per game, the selected one lit. Picking Tap drops to the CSS shell (it isn't laid
-// out for the L-shaped aperture yet); Lucky and Range run on the device.
+// The Home screen on the device (docs/FLOW.md §5). The console screen emulates a Teenage
+// Engineering instrument panel, so this is flat, edge-to-edge and high-contrast: true black,
+// hairline rules that bleed past the rim, mono micro-labels, crisp line glyphs, sharp corners.
+// No rounded cards, no domed surfaces, no emoji. A read-only readout up top (who you are, the
+// chip balance, network), then the one interactive thing, the game select. Tap a row to launch,
+// or scrub the knob and hit PLAY. The depth (full stats, history) lives in the Menu.
+//
+// Inset rule for this L-shaped aperture: the device body masks the outer ~16px, so text sits at
+// RIM (clears the bevel) while the hairlines/fills run full width (they slide under the rim, so
+// the visible line still reaches the screen edge). That is what reads as edge-to-edge, not padded.
 export const Route = createFileRoute('/_app/games/')({ component: GamesConsole })
 
-const GAMES = [
-  { to: '/games/lucky', illo: 'dice', name: 'I Feel Lucky', tag: 'Spin. Ride it. Cash out.' },
-  { to: '/games/range', illo: 'target', name: 'Range', tag: 'Call the zone. Tighter pays more.' },
-  { to: '/games/tap', illo: 'bolt', name: 'Tap', tag: 'Tap the chart. Catch the move.' },
-] as const
+// Text inset that clears the beveled rim, responsive: --screen-rim is published by ConsoleCanvas
+// per device scale (24px fallback). Rules + row fills stay full width and bleed under the rim, so
+// the screen reads edge-to-edge while text never crops as the device grows.
+const RIM = 'px-[var(--screen-rim,24px)]'
+// Extra breathing room up top so the status strip doesn't kiss the bevel.
+const RIM_T = 'pt-[calc(var(--screen-rim,24px)_+_18px)]'
+const RIM_B = 'pb-[var(--screen-rim,24px)]'
+
+type GameDef = { to: string; icon: LucideIcon; name: string; tag: string }
+
+// Real plays. Every one settles a DeepBook Predict position with actual funds.
+const GAMES: ReadonlyArray<GameDef> = [
+  { to: '/games/lucky', icon: Dices, name: 'I Feel Lucky', tag: 'Spin. Ride it. Cash out.' },
+  { to: '/games/range', icon: Target, name: 'Range', tag: 'Call the zone. Tighter pays more.' },
+  { to: '/games/tap', icon: Zap, name: 'Tap', tag: 'Tap the chart. Catch the move.' },
+]
+
+// Minigames. Pure local arcade, no chain, no funds. A totally separate, just-for-fun lane.
+const MINIGAMES: ReadonlyArray<GameDef> = [
+  { to: '/games/line-rider', icon: Activity, name: 'Line Rider', tag: 'Ride the line. Don’t slip.' },
+]
+
+// One flat order for the knob/PLAY selection; rendered in two separate sections below.
+const ALL: ReadonlyArray<GameDef> = [...GAMES, ...MINIGAMES]
 
 const pad2 = (n: number): string => String(n).padStart(2, '0')
+const shortAddr = (a: string): string => (a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a)
 
 function GamesConsole() {
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const reduced = useReducedMotion()
   const [sel, setSel] = useState(0)
 
   const marketsQ = useQuery({ queryKey: ['markets'], queryFn: () => api.markets(), refetchInterval: 10_000 })
+  const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const liveCount = (marketsQ.data?.markets ?? []).filter((m) => m.live).length
+  const streak = statsQ.data?.stats.currentStreak ?? 0
 
-  // The shell handles the tactile feedback (knob detent click, button press), so keep this pure.
   const move = useCallback((next: number) => {
-    setSel(Math.max(0, Math.min(GAMES.length - 1, next)))
+    setSel(Math.max(0, Math.min(ALL.length - 1, next)))
   }, [])
 
-  const launch = useCallback(() => {
-    haptic('medium')
-    void navigate({ to: GAMES[sel].to })
-  }, [navigate, sel])
+  // Tap a row or hit PLAY both land here. A rigid tick sells picking the cartridge up.
+  const launch = useCallback(
+    (i: number) => {
+      haptic('rigid')
+      void navigate({ to: ALL[i].to })
+    },
+    [navigate],
+  )
 
   useConsoleControls({
     knob: {
       label: 'SELECT',
       min: 0,
-      max: GAMES.length - 1,
+      max: ALL.length - 1,
       step: 1,
       value: sel,
       onChange: move,
-      format: (v) => `${v + 1}/${GAMES.length}`,
+      format: (v) => `${pad2(v + 1)}/${pad2(ALL.length)}`,
     },
-    action1: { label: 'PREV', color: 'neutral', onPress: () => move(sel - 1), disabled: sel === 0 },
-    action2: { label: 'NEXT', color: 'neutral', onPress: () => move(sel + 1), disabled: sel === GAMES.length - 1 },
-    main: { label: '', color: 'amber', onPress: launch },
+    action1: { label: 'PREV', color: 'neutral', onPress: () => move(sel - 1) },
+    action2: { label: 'NEXT', color: 'neutral', onPress: () => move(sel + 1) },
+    main: { label: '', color: 'amber', onPress: () => launch(sel) },
   })
 
-  // The L-shaped aperture (web/CLAUDE.md): a full-width top bar, the list filling the slack height
-  // (centered so it never sprawls into the occluded bottom-right), then a notch-safe readout band.
+  const demo = isDemo()
+  const name = user?.displayName ?? 'Player'
+  const balance = parseFloat(user?.balance ?? '0') || 0
+
+  const reveal = (i: number) =>
+    reduced
+      ? {}
+      : {
+          initial: { opacity: 0, y: 10 },
+          animate: { opacity: 1, y: 0 },
+          transition: { duration: 0.4, delay: 0.05 * i, ease: [0.16, 1, 0.3, 1] as const },
+        }
+
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-black text-text">
-      <div className="flex items-start justify-between gap-3 p-8">
-        <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Pips</div>
-          <div className="text-2xl font-extrabold leading-none tracking-tight">Games</div>
+    <GameScreen>
+      {/* status line — mono, like a device model strip */}
+      <div className={cnm('flex items-center justify-between pb-3 font-mono text-[13px] font-semibold uppercase tracking-[0.16em] text-text-2', RIM_T, RIM)}>
+        <span className="flex items-center gap-2">
+          <span className={cnm('h-2 w-2', demo ? 'bg-brand-500' : 'bg-up')} />
+          {demo ? 'Demo' : 'Testnet'}
+        </span>
+        <span className="flex items-center gap-2">
+          {marketsQ.isLoading ? '—' : liveCount > 0 ? `${liveCount} live` : 'Warming up'}
+          <span className={cnm('h-2 w-2', liveCount > 0 ? 'bg-up' : 'bg-text-3')} />
+        </span>
+      </div>
+      <Rule />
+
+      {/* identity + balance — read-only context, the resting readout */}
+      <div className={cnm('flex items-start justify-between gap-4 py-4', RIM)}>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[21px] font-extrabold uppercase leading-tight tracking-[0.02em] text-text">{name}</div>
+          <div className="mt-1.5 flex items-center gap-2 font-mono text-[12px] uppercase tracking-[0.08em] text-text-2">
+            <span className="tnum truncate">{user ? shortAddr(user.address) : '—'}</span>
+            {streak > 0 && (
+              <span className="tnum flex shrink-0 items-center border border-brand-500/60 px-1.5 py-0.5 text-brand-500">STREAK {streak}</span>
+            )}
+          </div>
         </div>
-        <div className="text-right">
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Markets</div>
-          <div className="flex items-center justify-end gap-1.5 text-sm font-bold text-text-2">
-            <span className={cnm('h-1.5 w-1.5 rounded-full', liveCount > 0 ? 'bg-up' : 'bg-text-3')} />
-            {marketsQ.isLoading ? '—' : liveCount > 0 ? `${liveCount} live` : 'Warming up'}
+        <div className="shrink-0 text-right">
+          <div className="font-mono text-[12px] uppercase tracking-[0.14em] text-text-2">Balance</div>
+          <div className="mt-1 leading-none">
+            <Stat value={balance} prefix="$" className="text-[34px] font-extrabold tracking-tight text-text" />
+            <span className="ml-1 font-mono text-[12px] uppercase tracking-[0.1em] text-text-2">USDC</span>
           </div>
         </div>
       </div>
+      <Rule />
 
-      <div className="flex min-h-0 flex-1 flex-col justify-center gap-2 px-8">
+      {/* select game — real plays, each settles a Predict position. Full-bleed rows split by hairlines */}
+      <div className={cnm('pb-1 pt-3.5 font-mono text-[13px] font-semibold uppercase tracking-[0.18em] text-text-2', RIM)}>Select Game</div>
+      <div className="flex flex-col">
         {GAMES.map((g, i) => (
-          <GameRow key={g.to} index={i + 1} game={g} selected={i === sel} />
+          <div key={g.to}>
+            {i > 0 && <Rule />}
+            <GameRow index={i + 1} game={g} selected={i === sel} reveal={reveal(i)} reduced={reduced} onSelect={() => { setSel(i); launch(i) }} />
+          </div>
         ))}
       </div>
 
-      {/* readout band — notch-safe, left-only (bottom-right is the body: knob + PLAY) */}
-      <div className="pointer-events-none max-w-[60%] p-6">
-        <div className="tnum text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-          {pad2(sel + 1)} / {pad2(GAMES.length)}
-        </div>
-        <div className="text-sm font-bold text-text-2">
-          Press <span className="text-brand-500">PLAY</span> to start
-        </div>
+      {/* minigame — a quieter, lower-hierarchy lane below the real plays. No chain, no funds, just play. */}
+      <div className={cnm('flex items-baseline justify-between pb-0.5 pt-6 font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-text-3', RIM)}>
+        <span>Minigame</span>
+        <span className="tracking-[0.1em]">Just for fun · No funds</span>
       </div>
-    </div>
+      <Rule />
+      <div className="flex flex-col">
+        {MINIGAMES.map((g, j) => {
+          const i = GAMES.length + j
+          return (
+            <div key={g.to}>
+              {j > 0 && <Rule />}
+              <MiniRow game={g} selected={i === sel} reveal={reveal(i)} reduced={reduced} onSelect={() => { setSel(i); launch(i) }} />
+            </div>
+          )
+        })}
+      </div>
+
+      {/* black negative space absorbs the slack height (and the occluded bottom-right body) */}
+      <div className="min-h-0 flex-1" />
+
+      {/* readout — left-only, notch-safe (the bottom-right is the body: knob + PLAY) */}
+      <div className={cnm('max-w-[62%] pt-2 font-mono text-[13px] font-semibold uppercase tracking-[0.16em]', RIM_B, RIM)}>
+        <span className="text-text">Tap a game</span> <span className="text-text-2">or hit</span> <span className="text-brand-500">PLAY</span>
+      </div>
+    </GameScreen>
   )
 }
 
@@ -94,29 +186,81 @@ function GameRow({
   index,
   game,
   selected,
+  reveal,
+  reduced,
+  onSelect,
 }: {
   index: number
-  game: { illo: string; name: string; tag: string }
+  game: { icon: LucideIcon; name: string; tag: string }
   selected: boolean
+  reveal: object
+  reduced: boolean
+  onSelect: () => void
 }) {
+  const Icon = game.icon
   return (
-    <div
+    <motion.button
+      type="button"
+      onClick={onSelect}
+      {...reveal}
+      whileTap={reduced ? undefined : { scale: 0.99 }}
       className={cnm(
-        'flex items-center gap-3 rounded-card px-3 py-2.5 transition-all',
-        selected ? 'card-neo-active scale-[1.01]' : 'opacity-45',
+        'relative flex w-full items-center gap-4 py-4 text-left transition-colors',
+        RIM,
+        selected ? 'bg-brand-500/[0.13]' : 'hover:bg-white/[0.04]',
       )}
     >
-      <span className={cnm('tnum w-5 text-sm font-extrabold', selected ? 'text-brand-500' : 'text-text-3')}>
-        {pad2(index)}
-      </span>
-      <Illo name={game.illo} size={44} showGlow={selected} />
+      {/* left edge bar marks the selected cartridge, instrument-panel style */}
+      {selected && <span className="absolute inset-y-0 left-0 w-1 bg-brand-500" />}
+      <span className={cnm('tnum w-7 font-mono text-[16px] font-bold', selected ? 'text-brand-500' : 'text-text-2')}>{pad2(index)}</span>
+      <Icon size={32} strokeWidth={2} className={selected ? 'text-brand-500' : 'text-text-2'} />
       <div className="min-w-0 flex-1">
-        <div className={cnm('text-[17px] font-bold leading-tight', selected ? 'text-text' : 'text-text-2')}>
-          {game.name}
-        </div>
-        <div className="truncate text-xs text-text-3">{game.tag}</div>
+        <div className={cnm('text-[24px] font-extrabold uppercase leading-tight tracking-[0.02em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</div>
+        <div className="truncate font-mono text-[13px] uppercase tracking-[0.08em] text-text-3">{game.tag}</div>
       </div>
-      {selected && <span className="text-lg text-brand-500">▸</span>}
-    </div>
+      {selected && <span className="font-mono text-xl text-brand-500">▶</span>}
+    </motion.button>
   )
+}
+
+// The minigame row: deliberately smaller than GameRow so the just-for-fun lane reads as secondary.
+// Compact icon, single line, no big slot number. Still knob-selectable and tappable.
+function MiniRow({
+  game,
+  selected,
+  reveal,
+  reduced,
+  onSelect,
+}: {
+  game: GameDef
+  selected: boolean
+  reveal: object
+  reduced: boolean
+  onSelect: () => void
+}) {
+  const Icon = game.icon
+  return (
+    <motion.button
+      type="button"
+      onClick={onSelect}
+      {...reveal}
+      whileTap={reduced ? undefined : { scale: 0.99 }}
+      className={cnm(
+        'relative flex w-full items-center gap-3 py-3 text-left transition-colors',
+        RIM,
+        selected ? 'bg-brand-500/[0.13]' : 'hover:bg-white/[0.04]',
+      )}
+    >
+      {selected && <span className="absolute inset-y-0 left-0 w-0.5 bg-brand-500" />}
+      <Icon size={20} strokeWidth={2} className={selected ? 'text-brand-500' : 'text-text-3'} />
+      <span className={cnm('text-[16px] font-bold uppercase tracking-[0.04em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-[12px] uppercase tracking-[0.06em] text-text-3">{game.tag}</span>
+      {selected && <span className="font-mono text-sm text-brand-500">▶</span>}
+    </motion.button>
+  )
+}
+
+// Full-bleed hairline rule. Slides under the rim so the visible line reaches the screen edge.
+function Rule() {
+  return <div className="h-px w-full bg-line-strong" />
 }

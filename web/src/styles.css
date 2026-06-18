@@ -13,8 +13,8 @@
   --color-surface: #242424;
   --color-surface-2: #2d2d2c;
 
-  --color-line: rgba(255, 255, 255, 0.06);
-  --color-line-strong: rgba(255, 255, 255, 0.1);
+  --color-line: rgba(255, 255, 255, 0.09);
+  --color-line-strong: rgba(255, 255, 255, 0.16);
 
   --color-brand-300: #ffe08a;
   --color-brand-400: #ffd24a;
@@ -34,9 +34,11 @@
   --color-viz-cyan: #2de2d6;
   --color-viz-line: rgba(255, 255, 255, 0.05);
 
-  --color-text: #dfdfdf;
-  --color-text-2: #8c8c8c;
-  --color-text-3: #5e5e5e;
+  /* High contrast on pure black. Old greys (#8c8c8c / #5e5e5e) vanished on the
+     OLED screen, so secondary + tertiary are pushed up to stay readable. */
+  --color-text: #f2f2f2;
+  --color-text-2: #b6b6b6;
+  --color-text-3: #8a8a8a;
 
   --font-sans:
     'Gabarito Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
@@ -51,6 +53,7 @@
 
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
 }
 
 @layer base {
@@ -366,17 +369,26 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
-/* The menu drawer rises on mount and drops on close. Both directions are compositor keyframes, so
-   the slide never touches the main thread: opening /menu briefly hands the main thread to the 3D
-   console, and a JS/rAF-gated animation would freeze off-screen through that. Keyframes keep gliding.
-   Close is its own keyframe (not a transition) because flipping transform in the same frame an
-   animation is cancelled won't reliably start a transition in Chromium. */
+/* The menu drawer rises on mount and drops on close, and the dim/blur scrim fades with it so the
+   backdrop never pops in or out. Both directions are compositor keyframes, so the slide never touches
+   the main thread: opening /menu briefly hands the main thread to the 3D console, and a JS/rAF-gated
+   animation would freeze off-screen through that. Keyframes keep gliding. Close is its own keyframe
+   (not a transition) because flipping transform in the same frame an animation is cancelled won't
+   reliably start a transition in Chromium. data-closing on the drawer root drives both layers. */
 .drawer-sheet {
   animation: drawer-rise 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.drawer-sheet[data-closing='true'] {
-  animation: drawer-fall 240ms cubic-bezier(0.32, 0, 0.67, 0) forwards;
+.drawer-scrim {
+  animation: scrim-in 420ms ease both;
+}
+
+[data-closing] .drawer-sheet {
+  animation: drawer-fall 300ms cubic-bezier(0.32, 0, 0.67, 0) forwards;
+}
+
+[data-closing] .drawer-scrim {
+  animation: scrim-out 260ms ease forwards;
 }
 
 @keyframes drawer-rise {
@@ -397,16 +409,103 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scrim-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .drawer-sheet,
-  .drawer-sheet[data-closing='true'] {
+  .drawer-scrim,
+  [data-closing] .drawer-sheet,
+  [data-closing] .drawer-scrim {
     animation: none;
+  }
+}
+
+.app-loading-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #000;
+  transform: translateY(0);
+}
+
+.app-loading-screen-leaving {
+  pointer-events: none;
+  animation: app-loading-screen-exit 520ms var(--ease-in-out-quart) forwards;
+  will-change: transform;
+}
+
+@keyframes app-loading-screen-exit {
+  to {
+    transform: translateY(-100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loading-screen-leaving {
+    animation-duration: 0.001ms;
   }
 }
 
 @layer utilities {
   .tnum {
     font-variant-numeric: tabular-nums;
+  }
+  .loading-icon {
+    --loading-icon-size: 3rem;
+
+    display: inline-grid;
+    width: var(--loading-icon-size);
+    height: var(--loading-icon-size);
+    place-items: center;
+  }
+  .loading-icon-mark {
+    display: block;
+    height: 100%;
+    aspect-ratio: 395 / 567;
+  }
+  .loading-icon-eyes {
+    animation: loading-icon-eyes 4s var(--ease-in-out-quart) infinite;
+    will-change: transform;
+  }
+  @keyframes loading-icon-eyes {
+    0%,
+    12.5% {
+      transform: translate(0, 0);
+    }
+    25%,
+    37.5% {
+      transform: translate(-82px, 0);
+    }
+    50%,
+    62.5% {
+      transform: translate(-82px, -210px);
+    }
+    75%,
+    87.5% {
+      transform: translate(0, -210px);
+    }
+    100% {
+      transform: translate(0, 0);
+    }
   }
   /* Loading shimmer for skeletons. */
   .shimmer {
@@ -577,6 +676,7 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .loading-icon-eyes,
     .viz-spin,
     .viz-spin-fast,
     .viz-sweep,

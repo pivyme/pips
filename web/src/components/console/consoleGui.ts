@@ -5,7 +5,7 @@ interface KnobParams {
   ridgeWidth: number; grooveWidth: number; bumpScale: number; cornerCurve: number
   ridgeRepeat: number; ridgePhase: number; radius: number; height: number; edgeCurve: number
   ridgeLength: number
-  dragSensitivity: number; pxPerStep: number; snapInterval: number; snapSpeed: number
+  dragSensitivity: number; snapInterval: number; snapSpeed: number
 }
 
 interface ButtonCfg {
@@ -64,7 +64,6 @@ export function createConsoleGui(p: GuiParams): GUI {
 
   const gKFeel = gKnob.addFolder('Feel')
   gKFeel.add(kp, 'dragSensitivity', 0.01, 0.5, 0.005).name('ridges / px')
-  gKFeel.add(kp, 'pxPerStep', 10, 120, 5).name('px / step')
   gKFeel.add(kp, 'snapInterval').name('snap interval')
   gKFeel.add(kp, 'snapSpeed').name('snap speed')
 

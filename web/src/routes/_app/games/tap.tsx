@@ -280,10 +280,10 @@ function TapScreen() {
 
   const openCount = boxes.filter((b) => b.status === 'open').length
   useConsoleControls({
-    knob: { label: 'TAP $', min: MIN_STAKE, max: MAX_STAKE, step: 1, value: tapBet, onChange: setTapBet, format: (v) => `$${v}`, disabled: !asset },
+    knob: { label: 'TAP $', min: MIN_STAKE, max: MAX_STAKE, step: 1, value: tapBet, onChange: setTapBet, format: (v) => `$${v}` },
     action1: { label: durationLabel(duration), color: 'neutral', onPress: cycleDuration },
-    action2: { label: asset ?? '·', color: 'neutral', onPress: cycleAsset, disabled: openCount > 0 || liveAssets.length <= 1 },
-    main: { label: 'CASH OUT ALL', color: 'up', onPress: cashOutAll, disabled: openCount === 0 },
+    action2: { label: asset ?? '·', color: 'neutral', onPress: cycleAsset },
+    main: { label: 'CASH OUT ALL', color: 'up', onPress: cashOutAll },
   })
 
   // Candidate grid (faint) under the live (strong) boxes. Skip candidate bands already held.

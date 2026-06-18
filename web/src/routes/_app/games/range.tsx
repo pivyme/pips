@@ -220,7 +220,6 @@ function RangeScreen() {
       value: widthTenths,
       onChange: setWidthTenths,
       format: (v) => `±${(v / 10).toFixed(1)}%`,
-      disabled: phase !== 'idle' && phase !== 'result',
     },
     numberWheel: {
       label: 'USDC',
@@ -230,20 +229,18 @@ function RangeScreen() {
       value: stakeIdx,
       onChange: setStakeIdx,
       format: (v) => String(STAKE_LADDER[v]),
-      disabled: phase !== 'idle' && phase !== 'result',
     },
-    action1: { label: durationLabel(duration), color: 'neutral', onPress: cycleDuration, disabled: isOpen || phase === 'cashing' },
-    action2: { label: asset ?? '·', color: 'neutral', onPress: cycleAsset, disabled: isOpen || phase === 'cashing' },
+    action1: { label: durationLabel(duration), color: 'neutral', onPress: cycleDuration },
+    action2: { label: asset ?? '·', color: 'neutral', onPress: cycleAsset },
     main: isOpen
       ? { label: 'CASH OUT', color: 'up', onPress: () => void doCashOut() }
       : phase === 'cashing'
-        ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true, disabled: true }
+        ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true }
         : {
             label: 'PLAY',
             color: 'amber',
             onPress: () => void doPlay(),
             loading: phase === 'placing',
-            disabled: !canPlay || phase === 'placing',
           },
   })
 

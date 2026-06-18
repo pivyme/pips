@@ -17,6 +17,7 @@ import { useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Illo } from '@/ui/Illo'
+import { LoadingIcon } from '@/ui/LoadingIcon'
 import {
   ArcGauge,
   AssetList,
@@ -174,6 +175,36 @@ function DesignSystemPage() {
         </section>
 
         <GameLab />
+
+        <Section eyebrow="Motion" title="Loading Icon">
+          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+            <div className="surface-skeuo flex min-h-72 items-center justify-center rounded-lg p-8">
+              <LoadingIcon size={136} />
+            </div>
+
+            <div className="surface-skeuo flex flex-col justify-between rounded-lg p-5">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-3">
+                  loading-icon
+                </p>
+                <h3 className="mt-4 text-2xl font-extrabold tracking-tight">
+                  Four corners, one mark.
+                </h3>
+                <p className="mt-2 max-w-md text-sm leading-6 text-text-2">
+                  The logo stays fixed while its eyes move through every
+                  corner, resting briefly before the next quartic in-out move.
+                </p>
+              </div>
+
+              <dl className="mt-8 grid grid-cols-2 gap-3">
+                <MotionDetail label="Loop" value="Infinite" />
+                <MotionDetail label="Timing" value="In-out quart" />
+                <MotionDetail label="Cycle" value="4 seconds" />
+                <MotionDetail label="Asset" value="pips-white.svg" />
+              </dl>
+            </div>
+          </div>
+        </Section>
 
         <Section eyebrow="Tokens" title="Color, Type, Material">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -737,6 +768,17 @@ function NumberSample({
       <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.08em] text-text-3">
         {label}
       </p>
+    </div>
+  )
+}
+
+function MotionDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-black/35 p-3">
+      <dt className="text-[10px] font-bold uppercase tracking-[0.08em] text-text-3">
+        {label}
+      </dt>
+      <dd className="mt-1 text-sm font-extrabold">{value}</dd>
     </div>
   )
 }

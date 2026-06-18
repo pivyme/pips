@@ -23,6 +23,7 @@ import { Route as AppMenuAchievementsRouteImport } from './routes/_app/menu/achi
 import { Route as AppGamesTapRouteImport } from './routes/_app/games/tap'
 import { Route as AppGamesRangeRouteImport } from './routes/_app/games/range'
 import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
+import { Route as AppGamesLineRiderRouteImport } from './routes/_app/games/line-rider'
 
 const DesignSystemRoute = DesignSystemRouteImport.update({
   id: '/design-system',
@@ -93,12 +94,18 @@ const AppGamesLuckyRoute = AppGamesLuckyRouteImport.update({
   path: '/games/lucky',
   getParentRoute: () => AppRoute,
 } as any)
+const AppGamesLineRiderRoute = AppGamesLineRiderRouteImport.update({
+  id: '/games/line-rider',
+  path: '/games/line-rider',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
   '/tools/wallet': typeof ToolsWalletRoute
+  '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/range': typeof AppGamesRangeRoute
   '/games/tap': typeof AppGamesTapRoute
@@ -114,6 +121,7 @@ export interface FileRoutesByTo {
   '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
   '/tools/wallet': typeof ToolsWalletRoute
+  '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/range': typeof AppGamesRangeRoute
   '/games/tap': typeof AppGamesTapRoute
@@ -131,6 +139,7 @@ export interface FileRoutesById {
   '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
   '/tools/wallet': typeof ToolsWalletRoute
+  '/_app/games/line-rider': typeof AppGamesLineRiderRoute
   '/_app/games/lucky': typeof AppGamesLuckyRoute
   '/_app/games/range': typeof AppGamesRangeRoute
   '/_app/games/tap': typeof AppGamesTapRoute
@@ -148,6 +157,7 @@ export interface FileRouteTypes {
     | '/console'
     | '/design-system'
     | '/tools/wallet'
+    | '/games/line-rider'
     | '/games/lucky'
     | '/games/range'
     | '/games/tap'
@@ -163,6 +173,7 @@ export interface FileRouteTypes {
     | '/console'
     | '/design-system'
     | '/tools/wallet'
+    | '/games/line-rider'
     | '/games/lucky'
     | '/games/range'
     | '/games/tap'
@@ -179,6 +190,7 @@ export interface FileRouteTypes {
     | '/console'
     | '/design-system'
     | '/tools/wallet'
+    | '/_app/games/line-rider'
     | '/_app/games/lucky'
     | '/_app/games/range'
     | '/_app/games/tap'
@@ -298,10 +310,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppGamesLuckyRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/games/line-rider': {
+      id: '/_app/games/line-rider'
+      path: '/games/line-rider'
+      fullPath: '/games/line-rider'
+      preLoaderRoute: typeof AppGamesLineRiderRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
+  AppGamesLineRiderRoute: typeof AppGamesLineRiderRoute
   AppGamesLuckyRoute: typeof AppGamesLuckyRoute
   AppGamesRangeRoute: typeof AppGamesRangeRoute
   AppGamesTapRoute: typeof AppGamesTapRoute
@@ -314,6 +334,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppGamesLineRiderRoute: AppGamesLineRiderRoute,
   AppGamesLuckyRoute: AppGamesLuckyRoute,
   AppGamesRangeRoute: AppGamesRangeRoute,
   AppGamesTapRoute: AppGamesTapRoute,

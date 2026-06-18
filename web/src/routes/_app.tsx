@@ -1,14 +1,16 @@
 import { Outlet, createFileRoute, useMatchRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import type { ConsoleTheme } from '@/components/console/themes'
 import { AppFrame } from '@/components/console/AppFrame'
 import { ConsoleControlsProvider, useConsoleView } from '@/components/console/controls'
 import { ConsoleShell } from '@/components/console/ConsoleShell'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { MenuDrawer } from '@/components/console/MenuDrawer'
 import { CustomizeStudio } from '@/components/console/CustomizeStudio'
-import { useConsoleTheme, themeBackdrop, type ConsoleTheme } from '@/components/console/themes'
+import { themeBackdrop, useConsoleTheme } from '@/components/console/themes'
 import { Illo } from '@/ui/Illo'
+import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
 import { useAuth } from '@/lib/auth'
 
@@ -18,12 +20,17 @@ const BACKDROP_GAMES = [
   { illo: 'bolt', title: 'Tap', sub: 'Tap the chart. Catch the move.' },
 ] as const
 
+const LOADING_EXIT_DELAY_MS = 150
+const LOADING_EXIT_DURATION_MS = 520
+
 // Everything under the device (games + menu) shares one persistent shell.
 // The landing route ("/") lives outside this and gets the full viewport.
 export const Route = createFileRoute('/_app')({ component: AppLayout })
 
 function AppLayout() {
   const { status } = useAuth()
+  const [showLoadingScreen, setShowLoadingScreen] = useState(true)
+  const [loadingScreenLeaving, setLoadingScreenLeaving] = useState(false)
   const navigate = useNavigate()
   const matchRoute = useMatchRoute()
   // The menu is a drawer over the device, not a screen inside it. When a /menu route is active we
@@ -35,6 +42,7 @@ function AppLayout() {
   const onTap = Boolean(matchRoute({ to: '/games/tap' }))
   const onRange = Boolean(matchRoute({ to: '/games/range' }))
   const onLucky = Boolean(matchRoute({ to: '/games/lucky' }))
+  const onLineRider = Boolean(matchRoute({ to: '/games/line-rider' }))
   const on3D = Boolean(matchRoute({ to: '/games', fuzzy: true })) && !onTap
   // Customize takes over the device: the menu drawer slides away and the device drops into the
   // workshop studio. It rides the same persistent 3D branch so the WebGL stays warm.
@@ -89,7 +97,14 @@ function AppLayout() {
 
   // Where Close returns the menu: back to the device screen the user came from (the hub by default).
   const last3DPath = useRef('/games')
-  if (!onMenu && on3D) last3DPath.current = onRange ? '/games/range' : onLucky ? '/games/lucky' : '/games'
+  if (!onMenu && on3D)
+    last3DPath.current = onRange
+      ? '/games/range'
+      : onLucky
+        ? '/games/lucky'
+        : onLineRider
+          ? '/games/line-rider'
+          : '/games'
 
   // Not signed in (enoki, signed out): send them back to the door. dev auto-logs-in, so
   // this only fires when there is genuinely no session.
@@ -97,59 +112,94 @@ function AppLayout() {
     if (status === 'anon') void navigate({ to: '/' })
   }, [status, navigate])
 
-  if (status !== 'authed') {
-    return (
-      <AppFrame bg={backdrop}>
-        <div className="flex h-full flex-col items-center justify-center gap-4">
-          <Illo name="console" size={88} />
-          <p className="text-sm text-text-3">{status === 'error' ? 'Could not connect' : 'Warming up'}</p>
-        </div>
-      </AppFrame>
+  useEffect(() => {
+    if (status !== 'authed') return
+
+    const exitTimer = window.setTimeout(
+      () => setLoadingScreenLeaving(true),
+      LOADING_EXIT_DELAY_MS,
     )
+    const removeTimer = window.setTimeout(
+      () => setShowLoadingScreen(false),
+      LOADING_EXIT_DELAY_MS + LOADING_EXIT_DURATION_MS,
+    )
+
+    return () => {
+      window.clearTimeout(exitTimer)
+      window.clearTimeout(removeTimer)
+    }
+  }, [status])
+
+  if (status !== 'authed') {
+    return <AppLoadingScreen />
   }
+
+  const loadingScreen = showLoadingScreen ? (
+    <AppLoadingScreen leaving={loadingScreenLeaving} />
+  ) : null
 
   // The 3D handheld is the persistent shell for the games hub + the aperture games, and for the menu
   // opened over them. Keeping one Console3DRoute element mounted across screen<->menu means the WebGL
   // scene builds once instead of rebuilding on every toggle. Screen content only mounts on a 3D route.
   if (on3D || menuOver3D || onCustomize) {
     return (
+      <>
+        <AppFrame bg={backdrop}>
+          <ConsoleControlsProvider>
+            {onCustomize ? (
+              <CustomizeStudio
+                initialThemeId={savedTheme.id}
+                onDone={(id) => {
+                  savedTheme.setId(id)
+                  void navigate({ to: '/games' })
+                }}
+                onCancel={() => void navigate({ to: '/menu' })}
+              />
+            ) : (
+              <Console3DRoute theme={savedTheme.theme}>{on3D ? <Outlet /> : null}</Console3DRoute>
+            )}
+            {/* The drawer slides itself away (closeTo) when Customize is tapped, then the studio takes
+                over, so the device is revealed settling into the workshop. */}
+            {onMenu && !onCustomize && (
+              <MenuDrawer returnTo={last3DPath.current}>
+                <Outlet />
+              </MenuDrawer>
+            )}
+          </ConsoleControlsProvider>
+        </AppFrame>
+        {loadingScreen}
+      </>
+    )
+  }
+
+  return (
+    <>
       <AppFrame bg={backdrop}>
         <ConsoleControlsProvider>
-          {onCustomize ? (
-            <CustomizeStudio
-              initialThemeId={savedTheme.id}
-              onDone={(id) => {
-                savedTheme.setId(id)
-                void navigate({ to: '/games' })
-              }}
-              onCancel={() => void navigate({ to: '/menu' })}
-            />
-          ) : (
-            <Console3DRoute theme={savedTheme.theme}>{on3D ? <Outlet /> : null}</Console3DRoute>
-          )}
-          {/* The drawer slides itself away (closeTo) when Customize is tapped, then the studio takes
-              over, so the device is revealed settling into the workshop. */}
-          {onMenu && !onCustomize && (
-            <MenuDrawer returnTo={last3DPath.current}>
+          <ConsoleShell>{onMenu ? <MenuBackdropScreen /> : <Outlet />}</ConsoleShell>
+          {onMenu && (
+            <MenuDrawer>
               <Outlet />
             </MenuDrawer>
           )}
         </ConsoleControlsProvider>
       </AppFrame>
-    )
-  }
+      {loadingScreen}
+    </>
+  )
+}
 
+function AppLoadingScreen({ leaving = false }: { leaving?: boolean }) {
   return (
-    <AppFrame bg={backdrop}>
-      <ConsoleControlsProvider>
-        <ConsoleShell>{onMenu ? <MenuBackdropScreen /> : <Outlet />}</ConsoleShell>
-        {onMenu && (
-          <MenuDrawer>
-            <Outlet />
-          </MenuDrawer>
-        )}
-      </ConsoleControlsProvider>
-    </AppFrame>
+    <div
+      className={
+        leaving
+          ? 'app-loading-screen app-loading-screen-leaving'
+          : 'app-loading-screen'
+      }
+    >
+      <LoadingIcon size={72} />
+    </div>
   )
 }
 

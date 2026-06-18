@@ -25,18 +25,18 @@ import type { ReactNode } from 'react'
 
 export type ButtonColor = 'amber' | 'up' | 'down' | 'neutral'
 
+// Physical controls intentionally have no disabled state. They always remain tactile; handlers
+// own any boundary clamping or safe no-op behavior required by the active screen.
 export interface ActionSpec {
   label: string
   onPress: () => void
   color?: ButtonColor
-  disabled?: boolean
 }
 
 export interface MainSpec {
   label: string
   onPress: () => void
   color?: ButtonColor
-  disabled?: boolean
   loading?: boolean
 }
 
@@ -48,7 +48,6 @@ export interface KnobSpec {
   onChange: (value: number) => void
   label?: string
   format?: (value: number) => string
-  disabled?: boolean
 }
 
 export interface StatusSpec {
@@ -125,13 +124,13 @@ export function useConsoleView() {
 function toView(c: ConsoleControls): ConsoleView {
   return {
     main: c.main
-      ? { label: c.main.label, color: c.main.color, disabled: c.main.disabled, loading: c.main.loading }
+      ? { label: c.main.label, color: c.main.color, loading: c.main.loading }
       : null,
     action1: c.action1
-      ? { label: c.action1.label, color: c.action1.color, disabled: c.action1.disabled }
+      ? { label: c.action1.label, color: c.action1.color }
       : null,
     action2: c.action2
-      ? { label: c.action2.label, color: c.action2.color, disabled: c.action2.disabled }
+      ? { label: c.action2.label, color: c.action2.color }
       : null,
     knob: c.knob
       ? {
@@ -141,7 +140,6 @@ function toView(c: ConsoleControls): ConsoleView {
           value: c.knob.value,
           label: c.knob.label,
           format: c.knob.format,
-          disabled: c.knob.disabled,
         }
       : null,
     numberWheel: c.numberWheel
@@ -152,7 +150,6 @@ function toView(c: ConsoleControls): ConsoleView {
           value: c.numberWheel.value,
           label: c.numberWheel.label,
           format: c.numberWheel.format,
-          disabled: c.numberWheel.disabled,
         }
       : null,
     status: c.status ?? null,
@@ -161,10 +158,10 @@ function toView(c: ConsoleControls): ConsoleView {
 
 // Cheap key over the renderable bits, so the shell only re-renders on real change.
 function viewKey(v: ConsoleView): string {
-  const btn = (b: { label?: string; color?: string; disabled?: boolean; loading?: boolean } | null) =>
-    b ? `${b.label}/${b.color ?? ''}/${b.disabled ? 1 : 0}/${b.loading ? 1 : 0}` : '-'
+  const btn = (b: { label?: string; color?: string; loading?: boolean } | null) =>
+    b ? `${b.label}/${b.color ?? ''}/${b.loading ? 1 : 0}` : '-'
   const dial = (d: ConsoleView['knob']) => d
-    ? `${d.min}/${d.max}/${d.step}/${d.value}/${d.label ?? ''}/${d.disabled ? 1 : 0}`
+    ? `${d.min}/${d.max}/${d.step}/${d.value}/${d.label ?? ''}`
     : '-'
   const txt = (x: ReactNode) =>
     typeof x === 'string' || typeof x === 'number' ? String(x) : x ? '#' : '-'

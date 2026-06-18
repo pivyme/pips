@@ -15,6 +15,10 @@ export function useMenuDrawer() {
   return useContext(MenuDrawerContext)
 }
 
+// How long the close slide + scrim fade run before we route away. Kept in sync with the
+// drawer-fall keyframe in styles.css so the sheet is fully off-screen before it unmounts.
+const CLOSE_MS = 300
+
 export function MenuDrawer({
   children,
   returnTo = '/games',
@@ -35,7 +39,7 @@ export function MenuDrawer({
       closingRef.current = true
       haptic('selection')
       setClosing(true)
-      window.setTimeout(() => router.navigate({ to }), reduced ? 0 : 240)
+      window.setTimeout(() => router.navigate({ to }), reduced ? 0 : CLOSE_MS)
     },
     [router, reduced],
   )
@@ -50,10 +54,10 @@ export function MenuDrawer({
   }, [close])
 
   return (
-    <div className="absolute inset-0 z-50">
-      {/* The console behind, dimmed and blurred. Tap to close. */}
+    <div className="absolute inset-0 z-50" data-closing={closing || undefined}>
+      {/* The console behind, dimmed and blurred. Fades in with the sheet and back out on close. Tap to close. */}
       <div
-        className="absolute inset-0 bg-black/22 backdrop-blur-[9px]"
+        className="drawer-scrim absolute inset-0 bg-black/22 backdrop-blur-[9px]"
         onClick={close}
         aria-hidden
       />
@@ -62,7 +66,6 @@ export function MenuDrawer({
         role="dialog"
         aria-modal="true"
         aria-label="Menu"
-        data-closing={closing || undefined}
         className="drawer-sheet absolute inset-x-0 bottom-0 top-[10%] flex flex-col overflow-hidden rounded-t-[28px] border-x border-t border-white/10 bg-black shadow-[0_-24px_64px_-24px_rgba(0,0,0,0.95)]"
       >
         {/* Grabber: tap to dismiss. */}

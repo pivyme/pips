@@ -8,9 +8,12 @@ import { cnm } from '@/utils/style'
 // The L-shaped aperture layout for the games that run on the device (web/CLAUDE.md "The
 // console screen"). The rim inset lives here, once, so no game pads its own zones by hand:
 // the chart bleeds full width, the top bar floats over its top edge, and a notch-safe
-// readout band sits below (left-only, the bottom-right is the knob + PLAY body). Tune
-// SCREEN_PAD and every game reflows together.
-const SCREEN_PAD = 'p-6'
+// readout band sits below (left-only, the bottom-right is the knob + PLAY body).
+//
+// The inset is --screen-rim, published by ConsoleCanvas per device scale (the 3D device is
+// responsive, so a fixed px pad crops once it grows). Falls back to 24px for the CSS shell /
+// pre-layout. Text zones inset by it; the chart bleeds full width and tucks under the rim.
+const SCREEN_PAD = 'p-[var(--screen-rim,24px)]'
 
 // Root: the black screen, a vertical flex stack that absorbs the responsive height stretch
 // in the chart. Wrap the loading/empty states and the result overlay inside it too.
