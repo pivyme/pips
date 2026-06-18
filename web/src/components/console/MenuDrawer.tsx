@@ -2,7 +2,7 @@
 // open the console sits behind it, dimmed and blurred, so the drawer is the whole interface. It is
 // route-driven (mounted whenever a /menu route matches), so the menu sub-screens render through the
 // child Outlet. Closing slides it back down, then routes to `returnTo` (where the user came from).
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import type { ReactNode } from 'react'
@@ -16,6 +16,13 @@ const OPEN_TRANSITION = {
   ease: [0.16, 1, 0.3, 1],
 } as const
 const CLOSE_TRANSITION = { duration: 0.24, ease: [0.32, 0, 0.67, 0] } as const
+
+// Lets a menu item slide the drawer away before navigating (e.g. Customize handing off to its
+// full-screen studio). Reuses the proven close animation instead of an unmount transition.
+const MenuDrawerContext = createContext<{ closeTo: (to: string) => void } | null>(null)
+export function useMenuDrawer() {
+  return useContext(MenuDrawerContext)
+}
 
 export function MenuDrawer({
   children,
@@ -50,16 +57,19 @@ export function MenuDrawer({
     }
   }, [reduced])
 
-  const close = useCallback(() => {
-    if (closingRef.current) return
-    closingRef.current = true
-    haptic('selection')
-    setClosing(true)
-    window.setTimeout(
-      () => router.navigate({ to: returnTo }),
-      reduced ? 0 : 240,
-    )
-  }, [router, reduced, returnTo])
+  // Slide down, then route. `to` defaults to where the user came from (a normal close); Customize
+  // passes its own route so the drawer clears before the studio takes over.
+  const closeTo = useCallback(
+    (to: string) => {
+      if (closingRef.current) return
+      closingRef.current = true
+      haptic('selection')
+      setClosing(true)
+      window.setTimeout(() => router.navigate({ to }), reduced ? 0 : 240)
+    },
+    [router, reduced],
+  )
+  const close = useCallback(() => closeTo(returnTo), [closeTo, returnTo])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -70,15 +80,12 @@ export function MenuDrawer({
   }, [close])
 
   return (
-    <motion.div className="absolute inset-0 z-50">
-      {/* The console behind, dimmed and blurred. Tap to close. Fades out when the drawer is removed
-          (e.g. Customize taking over) so the studio underneath is revealed cleanly. */}
-      <motion.div
+    <div className="absolute inset-0 z-50">
+      {/* The console behind, dimmed and blurred. Tap to close. */}
+      <div
         className="absolute inset-0 bg-black/22 backdrop-blur-[9px]"
         onClick={close}
         aria-hidden
-        initial={false}
-        exit={{ opacity: 0, transition: { duration: 0.2 } }}
       />
 
       <motion.div
@@ -88,7 +95,6 @@ export function MenuDrawer({
         className="absolute inset-x-0 bottom-0 top-[10%] flex flex-col overflow-hidden rounded-t-[28px] border-x border-t border-white/10 bg-black shadow-[0_-24px_64px_-24px_rgba(0,0,0,0.95)]"
         initial={false}
         animate={{ y: closing || !opened ? '104%' : 0 }}
-        exit={{ y: '104%', transition: reduced ? { duration: 0 } : CLOSE_TRANSITION }}
         transition={
           reduced
             ? { duration: 0 }
@@ -113,9 +119,9 @@ export function MenuDrawer({
           data-lenis-prevent
           className="menu-page-transition min-h-0 flex-1 overflow-y-auto overscroll-contain bg-black"
         >
-          {children}
+          <MenuDrawerContext.Provider value={{ closeTo }}>{children}</MenuDrawerContext.Provider>
         </div>
       </motion.div>
-    </motion.div>
+    </div>
   )
 }

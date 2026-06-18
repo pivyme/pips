@@ -4,6 +4,7 @@ import { LogOut } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
+import { useMenuDrawer } from '@/components/console/MenuDrawer'
 import { StatsCard, StatsCardSkeleton } from '@/components/menu/StatsCard'
 import { Button } from '@/ui/Button'
 import { Illo } from '@/ui/Illo'
@@ -249,16 +250,22 @@ function MenuRow({
   icon: string
   title: string
   sub: string
-  // `launch` rows hand off to a full takeover (the Customize studio) instead of pushing a page
-  // inside the drawer, so they navigate plainly and let the drawer animate itself away.
+  // `launch` rows hand off to a full takeover (the Customize studio): the drawer slides itself away
+  // first, then routes, so it never just pops out from under the studio.
   launch?: boolean
 }): ReactNode {
+  const drawer = useMenuDrawer()
   return (
     <Link
       to={to}
       viewTransition={!launch}
-      onClick={() => {
-        if (!launch) prepareMenuTransition('forward')
+      onClick={(e) => {
+        if (launch && drawer) {
+          e.preventDefault()
+          drawer.closeTo(to)
+          return
+        }
+        prepareMenuTransition('forward')
         haptic('selection')
       }}
       className="surface-skeuo flex min-h-24 items-center gap-3 rounded-card px-3 py-1 transition-transform active:scale-[0.99]"

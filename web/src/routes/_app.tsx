@@ -1,6 +1,5 @@
 import { Outlet, createFileRoute, useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef } from 'react'
-import { AnimatePresence } from 'motion/react'
 import type { ReactNode } from 'react'
 import { AppFrame } from '@/components/console/AppFrame'
 import { ConsoleControlsProvider, useConsoleView } from '@/components/console/controls'
@@ -8,8 +7,7 @@ import { ConsoleShell } from '@/components/console/ConsoleShell'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { MenuDrawer } from '@/components/console/MenuDrawer'
 import { CustomizeStudio } from '@/components/console/CustomizeStudio'
-import { useConsoleTheme } from '@/components/console/themes'
-import type { ConsoleTheme } from '@/components/console/themes'
+import { useConsoleTheme, type ConsoleTheme } from '@/components/console/themes'
 import { Illo } from '@/ui/Illo'
 import { haptic } from '@/lib/haptics'
 import { useAuth } from '@/lib/auth'
@@ -91,15 +89,13 @@ function AppLayout() {
           ) : (
             <Console3DRoute theme={savedTheme.theme}>{on3D ? <Outlet /> : null}</Console3DRoute>
           )}
-          {/* The drawer slides itself away (exit) as Customize takes over, so the device is revealed
-              settling into the studio. */}
-          <AnimatePresence initial={false}>
-            {onMenu && !onCustomize && (
-              <MenuDrawer key="menu-drawer" returnTo={last3DPath.current}>
-                <Outlet />
-              </MenuDrawer>
-            )}
-          </AnimatePresence>
+          {/* The drawer slides itself away (closeTo) when Customize is tapped, then the studio takes
+              over, so the device is revealed settling into the workshop. */}
+          {onMenu && !onCustomize && (
+            <MenuDrawer returnTo={last3DPath.current}>
+              <Outlet />
+            </MenuDrawer>
+          )}
         </ConsoleControlsProvider>
       </AppFrame>
     )
