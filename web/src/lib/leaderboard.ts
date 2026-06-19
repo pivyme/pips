@@ -31,6 +31,16 @@ const SEEDS: Record<string, Array<[string, number]>> = {
     ['RAY', 310],
     ['MOE', 160],
   ],
+  'candle-hop': [
+    ['KZ', 52],
+    ['AX', 38],
+    ['VOID', 27],
+    ['NEO', 19],
+    ['PIP', 13],
+    ['LUX', 8],
+    ['RAY', 5],
+    ['MOE', 2],
+  ],
 }
 
 function seed(game: string): ScoreEntry[] {

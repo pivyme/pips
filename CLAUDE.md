@@ -14,7 +14,7 @@ The twist that makes Pips Pips: the whole interface looks and behaves like a **p
 
 1. This is a **monorepo** with three pillars: `web/` (frontend), `backend/` (API), `contracts/` (Sui Move). Working in a pillar? Read its own `CLAUDE.md` too.
 2. The chain is **our own Sui localnet**, deployed and live at `https://rpc.playpips.fun`. **Not Sui testnet.** We publish and run our own copy of **DeepBook Predict** (an on-chain prediction-market protocol) on it. Setup and redeploy are one command: `scripts/localnet.sh`. Read the "The chain" section below before touching anything Sui.
-3. The frontend is **not a normal dashboard**. It is a persistent console shell with a swappable screen. Read [`docs/DESIGN.md`](./docs/DESIGN.md) (how it looks) and [`docs/FLOW.md`](./docs/FLOW.md) (how it moves: the surfaces, the Home screen, the navigation map) before touching UI.
+3. The frontend is **not a normal dashboard**. It is a persistent console shell with a swappable screen. Read [`docs/DESIGN.md`](./docs/DESIGN.md) (how it looks) and [`docs/FLOW.md`](./docs/FLOW.md) (how it moves: the surfaces, the Home screen, the navigation map) before touching UI. The UI has **two distinct visual languages**: the App Surface (the menu drawer, settings, landing, modals) is iOS clean with rounded cards, per DESIGN.md; **everything inside the device screen (Home + all games) is the Teenage Engineering instrument language in [`docs/SCREEN.md`](./docs/SCREEN.md), flat black with electric high-contrast ink, no rounded cards.** Read SCREEN.md before touching any `/games/*` screen.
 4. Auth is **Sui zkLogin via Enoki (Google sign-in)** plus a **dev auto-login** for local and the build loop. Suiet wallet connect is not in v1. See [`bigdev/plans/04-AUTH.md`](./bigdev/plans/04-AUTH.md).
 5. The Sui SDK surface moves fast. The package names and APIs in this file were verified mid 2026. When you write integration code, confirm the current API before coding, never guess from memory.
 
@@ -28,7 +28,8 @@ pips/
 ├── backend/            Bun + Fastify API (auth, indexing, game state)        :3700
 ├── contracts/          Sui Move packages (game logic, Predict wrappers)
 ├── docs/
-│   ├── DESIGN.md       Console design language + layout spec (read this)
+│   ├── DESIGN.md       App Surface design language + the physical device (read this)
+│   ├── SCREEN.md       In-device screen language (Home + games): Teenage Engineering instrument style
 │   ├── FLOW.md         App flow + navigation map (door, device, drawer)
 │   └── references/     Visual references (Not Boring Camera, console layout)
 ├── scripts/
@@ -175,6 +176,7 @@ The full v1 build (auth, the three games, menu, backend, indexer, the Predict in
 | `bigdev/plans/08-DEMO-FLOW.md` | The 2-min arc, seed data, achievements, fallbacks |
 | `bigdev/plans/09-DEPLOYMENT.md` | Local run, the Predict bootstrap, deploy, mainnet re-point |
 | `bigdev/plans/10-LEVERAGE.md` | Real margin-loop leverage: verified testnet ids, the atomic PTB, LTV/liquidation/repay, the open product decision (Phase L) |
+| `bigdev/plans/LUCKY.md` | **Active build, the current `bigdev/TODO.md`.** LUCKY game rebuild: slot-weighted reel, tier→strike solver, Enoki→Privy auth swap, USDC chips + free SUI gas |
 
 `docs/DESIGN.md` remains the canonical visual system. Demo-grade quality bar: `bigdev/plans/07-DESIGN-SYSTEM.md` + `bigdev/plans/08-DEMO-FLOW.md`.
 

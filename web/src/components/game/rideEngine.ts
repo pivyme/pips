@@ -1,17 +1,15 @@
-// Line Rider engine. A neon trend line scrolls right to left; the player rides a pip on it with
-// the thumbwheel and banks a climbing multiplier with the main button. Stay on the line and the
-// multiplier + unbanked "pending" climb and grip refills; drift off and the multiplier decays and
-// grip drains; grip hits zero and the run ends, losing all unbanked pending. Banking locks pending
-// into the safe score but drops the multiplier back to x1. Hold vs take-profit, as a reflex toy.
+// Line Rider engine. A neon trend line scrolls right to left; the player rides a pip on it with the
+// thumbwheel. Hug the line and your score climbs (faster the tighter you hug, via a combo multiplier)
+// and grip refills; drift off and the combo resets and grip drains; grip hits zero and the run ends.
+// Pure score chase: the score only ever goes up, the challenge is surviving the ramp for a big one.
 //
 // Framework-free on purpose: the field + every bit of juice draw here at 60fps, and only a small
 // HUD snapshot is pushed out (throttled) for the DOM overlay. React owns phase + the leaderboard.
 
 export interface RideHud {
-  score: number // banked, safe
-  pending: number // unbanked, at risk if grip runs out
-  multiplier: number
-  grip: number // 0..1
+  score: number
+  multiplier: number // the combo: higher the longer you hug, resets on a slip
+  grip: number // 0..1 survival meter
   elapsed: number // seconds into the run
   onLine: boolean
 }
@@ -39,7 +37,7 @@ const RAMP_S = 34 // seconds from warmup to full difficulty (was a lazy 110: way
 const BAND0 = 0.08 // on-line tolerance (half-band, normalized) early
 const BAND1 = 0.04 // ...and late: tighter, so hugging gets harder
 const PIP_TRACK = 16 // how fast the pip eases toward the wheel target (higher = snappier)
-const BASE_RATE = 34 // pending points per second at x1, hugging the edge
+const BASE_RATE = 34 // score points per second at x1, hugging the edge
 const MULT_RAMP = 0.55 // base multiplier gain per second on-line
 const MULT_HUG = 1.5 // extra gain per second when hugging dead-center (skill reward)
 const MULT_DECAY = 9 // multiplier lost per second while off-line
@@ -109,7 +107,6 @@ export class RideEngine {
   private target = 0.5 // pip target y (normalized), from the wheel
   private pipY = 0.5
   private score = 0
-  private pending = 0
   private mult = 1
   private grip = 1
   private elapsed = 0
@@ -117,8 +114,6 @@ export class RideEngine {
   private onFor = 0 // seconds continuously on the line
   private onLine = false
   private milestone = 1
-  private flash = 0 // bank flash 0..1
-  private ring = 0 // expanding bank ring 0..1
   private trail: Trail[] = []
   private sparks: Spark[] = []
   private lastHud = 0
@@ -153,26 +148,27 @@ export class RideEngine {
   }
 
   start() {
+    // Seed the line dead flat right where the pip sits, so the run always opens ON the line (never
+    // a free death). Clamp into the line's band so the pip and line truly coincide at extremes.
+    const startY = Math.max(Y_MIN, Math.min(Y_MAX, lerp(PIP_LO, PIP_HI, this.target)))
     this.pts = []
     this.head = 0
     this.worldX = 0
-    this.genCur = 0.5
-    this.genGoal = 0.5
-    this.segsToGoal = 0
-    this.pipY = lerp(PIP_LO, PIP_HI, this.target)
+    this.genCur = startY
+    this.genGoal = startY
+    this.segsToGoal = 30 // hold flat through the warmup, then the line starts to move
+    this.pipY = startY
     this.score = 0
-    this.pending = 0
     this.mult = 1
     this.grip = 1
     this.elapsed = 0
     this.offFor = 0
     this.onFor = 0
-    this.onLine = false
+    this.onLine = true
     this.milestone = 1
-    this.flash = 0
-    this.ring = 0
     this.trail = []
     this.sparks = []
+    this.lastHud = -1 // reset the HUD throttle clock, else a replay (elapsed back to 0) never pushes
     this.running = true
     this.last = performance.now()
     this.fillToWidth()
@@ -188,22 +184,6 @@ export class RideEngine {
     this.stop()
     this.ro?.disconnect()
     this.ro = null
-  }
-
-  // Lock pending into the safe score; surrender the multiplier. Returns the banked amount so the
-  // caller can fire sound/haptic only on a real bank.
-  bank(): number {
-    if (!this.running) return 0
-    const amt = Math.floor(this.pending)
-    if (amt <= 0) return 0
-    this.score += amt
-    this.pending = 0
-    this.mult = 1
-    this.milestone = 1
-    this.flash = 1
-    this.ring = 0.0001 // arm the expanding ring
-    this.pushHud(true)
-    return amt
   }
 
   // 0..1 ramp, but flat at 0 through the warmup so the opening few seconds stay gentle.
@@ -297,7 +277,7 @@ export class RideEngine {
     if (onLine) {
       const hug = 1 - clamp01(dist / band) // 0 at the band edge, 1 dead-center
       this.mult += dt * (MULT_RAMP + MULT_HUG * hug)
-      this.pending += dt * BASE_RATE * this.mult * (0.5 + 0.5 * hug)
+      this.score += dt * BASE_RATE * this.mult * (0.5 + 0.5 * hug)
       this.grip = Math.min(1, this.grip + dt * GRIP_REFILL)
       // perfect-hug sparkle
       if (hug > 0.85 && !this.cb.reduced && Math.random() < dt * 22) {
@@ -343,12 +323,6 @@ export class RideEngine {
     }
     this.sparks = this.sparks.filter((s) => s.life > 0)
 
-    if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * 3.2)
-    if (this.ring > 0) {
-      this.ring += dt * 2.6
-      if (this.ring > 1) this.ring = 0
-    }
-
     this.pushHud()
 
     if (this.grip <= 0) {
@@ -366,7 +340,6 @@ export class RideEngine {
     this.lastHud = now
     this.cb.onHud({
       score: this.score,
-      pending: Math.floor(this.pending),
       multiplier: this.mult,
       grip: this.grip,
       elapsed: this.elapsed,
@@ -466,15 +439,6 @@ export class RideEngine {
       ctx.stroke()
     }
 
-    // bank ring (expanding pulse from the pip)
-    if (this.ring > 0) {
-      ctx.strokeStyle = `rgba(255,255,255,${(1 - this.ring) * 0.7})`
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.arc(pipX, py, 10 + this.ring * 80, 0, Math.PI * 2)
-      ctx.stroke()
-    }
-
     // grip bar, vertical on the rim-safe left edge; reds out and the field vignettes when low
     const gx = this.safe * 0.5
     const gTop = this.safe
@@ -492,12 +456,6 @@ export class RideEngine {
       g.addColorStop(0, 'rgba(255,90,77,0)')
       g.addColorStop(1, `rgba(255,90,77,${a})`)
       ctx.fillStyle = g
-      ctx.fillRect(0, 0, w, h)
-    }
-
-    // bank flash
-    if (this.flash > 0) {
-      ctx.fillStyle = `rgba(255,255,255,${this.flash * 0.22})`
       ctx.fillRect(0, 0, w, h)
     }
   }

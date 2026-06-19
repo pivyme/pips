@@ -43,6 +43,7 @@ function AppLayout() {
   const onRange = Boolean(matchRoute({ to: '/games/range' }))
   const onLucky = Boolean(matchRoute({ to: '/games/lucky' }))
   const onLineRider = Boolean(matchRoute({ to: '/games/line-rider' }))
+  const onCandleHop = Boolean(matchRoute({ to: '/games/candle-hop' }))
   const on3D = Boolean(matchRoute({ to: '/games', fuzzy: true })) && !onTap
   // Customize takes over the device: the menu drawer slides away and the device drops into the
   // workshop studio. It rides the same persistent 3D branch so the WebGL stays warm.
@@ -104,7 +105,9 @@ function AppLayout() {
         ? '/games/lucky'
         : onLineRider
           ? '/games/line-rider'
-          : '/games'
+          : onCandleHop
+            ? '/games/candle-hop'
+            : '/games'
 
   // Not signed in (enoki, signed out): send them back to the door. dev auto-logs-in, so
   // this only fires when there is genuinely no session.

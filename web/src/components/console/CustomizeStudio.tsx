@@ -153,7 +153,9 @@ function ThemeRail({
   }, [selectedId])
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return
+    // Touch uses the browser's native horizontal scrolling. Capturing it here breaks taps on the
+    // theme buttons and is less reliable than native momentum scrolling on mobile Safari.
+    if (e.pointerType === 'touch' || e.button !== 0) return
     const rail = e.currentTarget
     dragRef.current = {
       pointerId: e.pointerId,
@@ -161,14 +163,16 @@ function ThemeRail({
       startScrollLeft: rail.scrollLeft,
       moved: false,
     }
-    rail.setPointerCapture(e.pointerId)
   }
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current
     if (drag.pointerId !== e.pointerId) return
     const dx = e.clientX - drag.startX
-    if (Math.abs(dx) > 4) drag.moved = true
+    if (Math.abs(dx) > 4 && !drag.moved) {
+      drag.moved = true
+      e.currentTarget.setPointerCapture(e.pointerId)
+    }
     if (!drag.moved) return
     e.preventDefault()
     e.currentTarget.scrollLeft = drag.startScrollLeft - dx
@@ -200,7 +204,7 @@ function ThemeRail({
       onDragStart={(e) => e.preventDefault()}
       // pt/pb leave room for the selected card to lift + tilt; overflow-x forces overflow-y, so
       // without the padding the raised card clips.
-      className="-mx-4 flex cursor-grab select-none gap-3 overflow-x-auto px-5 pb-4 pt-7 active:cursor-grabbing touch-pan-y [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="-mx-4 flex cursor-grab touch-pan-x select-none gap-3 overflow-x-auto px-5 pb-4 pt-7 active:cursor-grabbing [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {THEMES.map((t) => (
         <ThemeCard

@@ -124,7 +124,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       <StatusStrip status={view.status} balance={user?.balance ?? null} />
 
       {/* The screen: true black, recessed. Routed content renders inside. */}
-      <div className="screen relative mx-3 min-h-0 flex-1 overflow-hidden rounded-[28px]">
+      <div className="screen console-screen-surface relative mx-3 min-h-0 flex-1 overflow-hidden rounded-[28px]">
         <div className="h-full w-full overflow-y-auto overflow-x-hidden">{children}</div>
       </div>
 

@@ -1237,8 +1237,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     resize()
     applyView(viewRef.current)
 
-    // Game side only: the layer mounts black (opacity 0), then eases in on the next frame once it's
-    // been sized, so the studio→game handoff reads as one continuous screen powering up.
+    // Game side only: the layer starts hidden (opacity 0) only so it doesn't flash before it's been
+    // sized, then snaps to visible on the next frame. No fade, no entry animation, the screen just
+    // shows its content the instant it's laid out.
     if (!customize) {
       requestAnimationFrame(() => {
         if (screenLayerRef.current) screenLayerRef.current.style.opacity = '1'
@@ -1399,6 +1400,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
           beveled rim frames it. Total black so any rim seam reads as screen, not a gap. */}
       <div
         ref={screenLayerRef}
+        className={debug || customize ? undefined : 'console-screen-surface'}
         style={{
           position: 'absolute',
           left: 0,
@@ -1411,10 +1413,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
           background: debug ? 'transparent' : '#000',
           // Customize uses the 3D screenMesh (it spins with the body), so the HTML layer is dead weight.
           display: customize ? 'none' : undefined,
-          // Fade the screen in on a fresh mount, so the studio→game handoff lands black then the game
-          // content eases up (the studio side stays black through the snap). Flipped to 1 after layout.
+          // Hidden until sized (so it doesn't flash mispositioned), then snapped to visible. No fade:
+          // the screen content appears instantly, no entry animation.
           opacity: customize ? undefined : 0,
-          transition: customize ? undefined : 'opacity 1s ease',
           overflow: 'hidden',
         }}
       >

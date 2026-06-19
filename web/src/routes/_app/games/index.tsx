@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'motion/react'
-import { Activity, Dices, Target, Zap } from 'lucide-react'
+import { Activity, CandlestickChart, Dices, Target, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useConsoleControls } from '@/components/console/controls'
@@ -17,9 +17,13 @@ import { cnm } from '@/utils/style'
 // The Home screen on the device (docs/FLOW.md §5). The console screen emulates a Teenage
 // Engineering instrument panel, so this is flat, edge-to-edge and high-contrast: true black,
 // hairline rules that bleed past the rim, mono micro-labels, crisp line glyphs, sharp corners.
-// No rounded cards, no domed surfaces, no emoji. A read-only readout up top (who you are, the
-// chip balance, network), then the one interactive thing, the game select. Tap a row to launch,
-// or scrub the knob and hit PLAY. The depth (full stats, history) lives in the Menu.
+// No rounded cards, no domed surfaces, no emoji.
+//
+// Layout follows the L-shaped aperture. The game select (the one interactive thing) takes the
+// full width up top, where the wide rows have room to breathe and never crop. The read-only
+// readout (who you are, streak, chip balance) drops into the bottom-left, the notch-safe zone
+// that is never full width because the knob + PLAY body occludes the bottom-right. Tap a row to
+// launch, or scrub the knob and hit PLAY. The depth (full stats, history) lives in the Menu.
 //
 // Inset rule for this L-shaped aperture: the device body masks the outer ~16px, so text sits at
 // RIM (clears the bevel) while the hairlines/fills run full width (they slide under the rim, so
@@ -38,7 +42,7 @@ type GameDef = { to: string; icon: LucideIcon; name: string; tag: string }
 
 // Real plays. Every one settles a DeepBook Predict position with actual funds.
 const GAMES: ReadonlyArray<GameDef> = [
-  { to: '/games/lucky', icon: Dices, name: 'I Feel Lucky', tag: 'Spin. Ride it. Cash out.' },
+  { to: '/games/lucky', icon: Dices, name: 'I Feel Lucky', tag: 'Spin. Win. Cash out.' },
   { to: '/games/range', icon: Target, name: 'Range', tag: 'Call the zone. Tighter pays more.' },
   { to: '/games/tap', icon: Zap, name: 'Tap', tag: 'Tap the chart. Catch the move.' },
 ]
@@ -46,6 +50,7 @@ const GAMES: ReadonlyArray<GameDef> = [
 // Minigames. Pure local arcade, no chain, no funds. A totally separate, just-for-fun lane.
 const MINIGAMES: ReadonlyArray<GameDef> = [
   { to: '/games/line-rider', icon: Activity, name: 'Line Rider', tag: 'Ride the line. Don’t slip.' },
+  { to: '/games/candle-hop', icon: CandlestickChart, name: 'Candle Hop', tag: 'Flap through the gaps.' },
 ]
 
 // One flat order for the knob/PLAY selection; rendered in two separate sections below.
@@ -97,19 +102,10 @@ function GamesConsole() {
   const name = user?.displayName ?? 'Player'
   const balance = parseFloat(user?.balance ?? '0') || 0
 
-  const reveal = (i: number) =>
-    reduced
-      ? {}
-      : {
-          initial: { opacity: 0, y: 10 },
-          animate: { opacity: 1, y: 0 },
-          transition: { duration: 0.4, delay: 0.05 * i, ease: [0.16, 1, 0.3, 1] as const },
-        }
-
   return (
     <GameScreen>
       {/* status line — mono, like a device model strip */}
-      <div className={cnm('flex items-center justify-between pb-3 font-mono text-[13px] font-semibold uppercase tracking-[0.16em] text-text-2', RIM_T, RIM)}>
+      <div className={cnm('flex items-center justify-between pb-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.16em] text-text-2', RIM_T, RIM)}>
         <span className="flex items-center gap-2">
           <span className={cnm('h-2 w-2', demo ? 'bg-brand-500' : 'bg-up')} />
           {demo ? 'Demo' : 'Testnet'}
@@ -121,40 +117,19 @@ function GamesConsole() {
       </div>
       <Rule />
 
-      {/* identity + balance — read-only context, the resting readout */}
-      <div className={cnm('flex items-start justify-between gap-4 py-4', RIM)}>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[21px] font-extrabold uppercase leading-tight tracking-[0.02em] text-text">{name}</div>
-          <div className="mt-1.5 flex items-center gap-2 font-mono text-[12px] uppercase tracking-[0.08em] text-text-2">
-            <span className="tnum truncate">{user ? shortAddr(user.address) : '—'}</span>
-            {streak > 0 && (
-              <span className="tnum flex shrink-0 items-center border border-brand-500/60 px-1.5 py-0.5 text-brand-500">STREAK {streak}</span>
-            )}
-          </div>
-        </div>
-        <div className="shrink-0 text-right">
-          <div className="font-mono text-[12px] uppercase tracking-[0.14em] text-text-2">Balance</div>
-          <div className="mt-1 leading-none">
-            <Stat value={balance} prefix="$" className="text-[34px] font-extrabold tracking-tight text-text" />
-            <span className="ml-1 font-mono text-[12px] uppercase tracking-[0.1em] text-text-2">USDC</span>
-          </div>
-        </div>
-      </div>
-      <Rule />
-
       {/* select game — real plays, each settles a Predict position. Full-bleed rows split by hairlines */}
-      <div className={cnm('pb-1 pt-3.5 font-mono text-[13px] font-semibold uppercase tracking-[0.18em] text-text-2', RIM)}>Select Game</div>
+      <div className={cnm('pb-1 pt-3 font-mono text-[12px] font-semibold uppercase tracking-[0.18em] text-text-2', RIM)}>Select Game</div>
       <div className="flex flex-col">
         {GAMES.map((g, i) => (
           <div key={g.to}>
             {i > 0 && <Rule />}
-            <GameRow index={i + 1} game={g} selected={i === sel} reveal={reveal(i)} reduced={reduced} onSelect={() => { setSel(i); launch(i) }} />
+            <GameRow index={i + 1} game={g} selected={i === sel} reduced={reduced} onSelect={() => { setSel(i); launch(i) }} />
           </div>
         ))}
       </div>
 
       {/* minigame — a quieter, lower-hierarchy lane below the real plays. No chain, no funds, just play. */}
-      <div className={cnm('flex items-baseline justify-between pb-0.5 pt-6 font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-text-3', RIM)}>
+      <div className={cnm('flex items-baseline justify-between pb-0.5 pt-5 font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-text-3', RIM)}>
         <span>Minigame</span>
         <span className="tracking-[0.1em]">Just for fun · No funds</span>
       </div>
@@ -165,7 +140,7 @@ function GamesConsole() {
           return (
             <div key={g.to}>
               {j > 0 && <Rule />}
-              <MiniRow game={g} selected={i === sel} reveal={reveal(i)} reduced={reduced} onSelect={() => { setSel(i); launch(i) }} />
+              <MiniRow game={g} selected={i === sel} reduced={reduced} onSelect={() => { setSel(i); launch(i) }} />
             </div>
           )
         })}
@@ -174,9 +149,22 @@ function GamesConsole() {
       {/* black negative space absorbs the slack height (and the occluded bottom-right body) */}
       <div className="min-h-0 flex-1" />
 
-      {/* readout — left-only, notch-safe (the bottom-right is the body: knob + PLAY) */}
-      <div className={cnm('max-w-[62%] pt-2 font-mono text-[13px] font-semibold uppercase tracking-[0.16em]', RIM_B, RIM)}>
-        <span className="text-text">Tap a game</span> <span className="text-text-2">or hit</span> <span className="text-brand-500">PLAY</span>
+      {/* readout — left-only info zone, notch-safe (the bottom-right is the body: knob + PLAY).
+          who you are, streak, chip balance: all the read-only context lives down here now. */}
+      <Rule />
+      <div className={cnm('max-w-[62%] pt-3', RIM_B, RIM)}>
+        <div className="truncate text-[17px] font-extrabold uppercase leading-tight tracking-[0.02em] text-text">{name}</div>
+        <div className="mt-1 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-text-2">
+          <span className="tnum truncate">{user ? shortAddr(user.address) : '—'}</span>
+          {streak > 0 && (
+            <span className="tnum flex shrink-0 items-center border border-brand-500/60 px-1.5 py-0.5 text-brand-500">STREAK {streak}</span>
+          )}
+        </div>
+        <div className="mt-3 font-mono text-[11px] uppercase tracking-[0.14em] text-text-2">Balance</div>
+        <div className="mt-0.5 leading-none">
+          <Stat value={balance} prefix="$" className="text-[26px] font-extrabold tracking-tight text-text" />
+          <span className="ml-1 font-mono text-[11px] uppercase tracking-[0.1em] text-text-2">USDC</span>
+        </div>
       </div>
     </GameScreen>
   )
@@ -186,14 +174,12 @@ function GameRow({
   index,
   game,
   selected,
-  reveal,
   reduced,
   onSelect,
 }: {
   index: number
   game: { icon: LucideIcon; name: string; tag: string }
   selected: boolean
-  reveal: object
   reduced: boolean
   onSelect: () => void
 }) {
@@ -202,23 +188,22 @@ function GameRow({
     <motion.button
       type="button"
       onClick={onSelect}
-      {...reveal}
       whileTap={reduced ? undefined : { scale: 0.99 }}
       className={cnm(
-        'relative flex w-full items-center gap-4 py-4 text-left transition-colors',
+        'relative flex w-full items-center gap-3.5 py-3.5 text-left transition-colors',
         RIM,
         selected ? 'bg-brand-500/[0.13]' : 'hover:bg-white/[0.04]',
       )}
     >
       {/* left edge bar marks the selected cartridge, instrument-panel style */}
       {selected && <span className="absolute inset-y-0 left-0 w-1 bg-brand-500" />}
-      <span className={cnm('tnum w-7 font-mono text-[16px] font-bold', selected ? 'text-brand-500' : 'text-text-2')}>{pad2(index)}</span>
-      <Icon size={32} strokeWidth={2} className={selected ? 'text-brand-500' : 'text-text-2'} />
+      <span className={cnm('tnum w-6 font-mono text-[15px] font-bold', selected ? 'text-brand-500' : 'text-text-2')}>{pad2(index)}</span>
+      <Icon size={28} strokeWidth={2} className={selected ? 'text-brand-500' : 'text-text-2'} />
       <div className="min-w-0 flex-1">
-        <div className={cnm('text-[24px] font-extrabold uppercase leading-tight tracking-[0.02em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</div>
-        <div className="truncate font-mono text-[13px] uppercase tracking-[0.08em] text-text-3">{game.tag}</div>
+        <div className={cnm('text-[21px] font-extrabold uppercase leading-tight tracking-[0.02em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</div>
+        <div className="truncate font-mono text-[12px] uppercase tracking-[0.08em] text-text-3">{game.tag}</div>
       </div>
-      {selected && <span className="font-mono text-xl text-brand-500">▶</span>}
+      {selected && <span className="font-mono text-lg text-brand-500">▶</span>}
     </motion.button>
   )
 }
@@ -228,13 +213,11 @@ function GameRow({
 function MiniRow({
   game,
   selected,
-  reveal,
   reduced,
   onSelect,
 }: {
   game: GameDef
   selected: boolean
-  reveal: object
   reduced: boolean
   onSelect: () => void
 }) {
@@ -243,18 +226,17 @@ function MiniRow({
     <motion.button
       type="button"
       onClick={onSelect}
-      {...reveal}
       whileTap={reduced ? undefined : { scale: 0.99 }}
       className={cnm(
-        'relative flex w-full items-center gap-3 py-3 text-left transition-colors',
+        'relative flex w-full items-center gap-3 py-2.5 text-left transition-colors',
         RIM,
         selected ? 'bg-brand-500/[0.13]' : 'hover:bg-white/[0.04]',
       )}
     >
       {selected && <span className="absolute inset-y-0 left-0 w-0.5 bg-brand-500" />}
-      <Icon size={20} strokeWidth={2} className={selected ? 'text-brand-500' : 'text-text-3'} />
-      <span className={cnm('text-[16px] font-bold uppercase tracking-[0.04em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</span>
-      <span className="min-w-0 flex-1 truncate font-mono text-[12px] uppercase tracking-[0.06em] text-text-3">{game.tag}</span>
+      <Icon size={18} strokeWidth={2} className={selected ? 'text-brand-500' : 'text-text-3'} />
+      <span className={cnm('text-[15px] font-bold uppercase tracking-[0.04em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-[11px] uppercase tracking-[0.06em] text-text-3">{game.tag}</span>
       {selected && <span className="font-mono text-sm text-brand-500">▶</span>}
     </motion.button>
   )

@@ -8,7 +8,7 @@ This repo is simple minded - no overengineering, no code poison, no early abstra
 
 ## Project Overview
 
-This is the **Pips** frontend: the gamified trading console. Pips makes trading simple, intuitive, and addictive, like a game, on Sui via DeepBook Predict. Read the root [`../CLAUDE.md`](../CLAUDE.md) for product context and the Sui stack, [`../docs/DESIGN.md`](../docs/DESIGN.md) for the design language, and [`../docs/FLOW.md`](../docs/FLOW.md) for the app flow (the surfaces, the on-device Home screen, the navigation map). This was forked from a React starter, so reframe anything still labeled "starter".
+This is the **Pips** frontend: the gamified trading console. Pips makes trading simple, intuitive, and addictive, like a game, on Sui via DeepBook Predict. Read the root [`../CLAUDE.md`](../CLAUDE.md) for product context and the Sui stack, [`../docs/DESIGN.md`](../docs/DESIGN.md) for the App Surface design language, [`../docs/SCREEN.md`](../docs/SCREEN.md) for the in-device screen language (the Teenage Engineering instrument style every `/games/*` screen follows), and [`../docs/FLOW.md`](../docs/FLOW.md) for the app flow (the surfaces, the on-device Home screen, the navigation map). This was forked from a React starter, so reframe anything still labeled "starter".
 
 **v1 build:** frontend work is planned in [`../bigdev/plans/`](../bigdev/plans/). Read `06-GAMES.md` (the three games + the 60fps chart, bound to the existing console controls), `07-DESIGN-SYSTEM.md` (screen states + verbatim copy; `../docs/DESIGN.md` is canonical), `05-SUI-PREDICT.md` (the thin client Predict wrapper), `04-AUTH.md` (dev + Enoki zkLogin), `02-API.md` (the backend contract). The console shell, Knob, `useConsoleControls`, and `Illo` are already built, do not rebuild them.
 
@@ -39,6 +39,8 @@ The `/menu/*` routes use a native-style push/pop transition inside the persisten
 - **Bun + WASM gotcha:** the Sui crypto stack pulls WASM and `vite-plugin-wasm` can fail when the Vite dev server runs through Bun. If you hit a WASM load error, run the dev server on Node (bun stays the package manager).
 
 ## The console screen (the L-shaped aperture)
+
+**Visual language first:** everything that renders inside the screen (Home + all games) follows [`../docs/SCREEN.md`](../docs/SCREEN.md), the Teenage Engineering instrument style: flat true-black, electric high-contrast ink, hairline rules and full-bleed fills (no rounded cards, no `card-neo`, no domed surfaces, no blur, no emoji), mono uppercase micro-labels over big bold tabular numbers, one amber active accent, green/red for facts. **That is a different language from the App Surface / menu drawer.** The Home screen (`routes/_app/games/index.tsx`) is the reference. Read SCREEN.md before designing or redesigning any `/games/*` screen. This section below is the **layout mechanics** of the aperture; SCREEN.md is the look.
 
 Game screens (`/games/*`) render as an HTML layer **behind** the 3D device and show through a cutout in the body. `ConsoleCanvas` projects that cutout on every resize and positions the layer onto it; the device body masks anything outside it. Treat the screen as a real, oddly shaped, **variable-height** display, not a plain rectangle. Three rules, always:
 
