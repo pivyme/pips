@@ -392,18 +392,16 @@ async function sweepStuckPendings(): Promise<void> {
   if (res.count > 0) console.log(`[Settle] swept ${res.count} stuck pending play(s) to error`);
 }
 
-// A play whose oracle can no longer be settled (a dead deployment whose cap the operator no longer
-// holds, or an object that's gone) would otherwise read 'open' and be re-scanned every tick forever.
-// Give up on anything stuck this far past its buzzer, well beyond the worst real settle, so it stops
-// clogging the scan and the client stops waiting. Real rounds settle in seconds, never near this.
+// Give-up thresholds for the evidence-based sweep in settleDuePlays (Phase 3). We never error a play
+// on elapsed time alone, because that wrongly kills a play whose oracle is merely behind (a downtime
+// backlog, a transient RPC blip, or a settled win whose redeem is still retrying). A play is only
+// given up when its oracle is PROVABLY unsettleable:
+//  - UNSETTLEABLE_MS: the oracle reads fine but is unsettled and authorizes no cap the operator holds
+//    (a dead deployment). Well beyond the worst real settle, so a live round is never touched.
+//  - ORPHAN_GIVEUP_MS: the oracle object cannot be read at all for this long (its chain is gone, e.g.
+//    a wiped/redeployed localnet). Far beyond any downtime+recovery, so a brief read failure is safe.
 const UNSETTLEABLE_MS = 5 * 60_000;
-async function sweepUnsettleable(): Promise<void> {
-  const res = await prismaQuery.play.updateMany({
-    where: { status: 'open', expiry: { lt: BigInt(Date.now() - UNSETTLEABLE_MS) } },
-    data: { status: 'error' },
-  });
-  if (res.count > 0) console.log(`[Settle] gave up on ${res.count} unsettleable play(s) (dead oracle)`);
-}
+const ORPHAN_GIVEUP_MS = 30 * 60_000;
 
 // The authorized OracleSVICap to push/settle an oracle with: the live ladder cache (the cap
 // oracle-roll used this process), else a cap the oracle authorizes on-chain that the operator still
@@ -456,7 +454,6 @@ async function settleOracles(items: Array<{ st: OracleState; cap: string; spotUs
 // through the operator, capped per tick so a backlog can't monopolize the serial executor.
 export async function settleDuePlays(): Promise<void> {
   await sweepStuckPendings();
-  await sweepUnsettleable();
   const due = await prismaQuery.play.findMany({ where: { status: 'open', expiry: { lte: BigInt(Date.now()) } } });
   if (due.length === 0) return;
 
@@ -512,6 +509,27 @@ export async function settleDuePlays(): Promise<void> {
         console.error(`[Settle] play ${play.id} settle failed:`, e instanceof Error ? e.message : e);
       }
     }
+  }
+
+  // Phase 3: give up ONLY on plays whose oracle is provably unsettleable, never on elapsed time alone.
+  // This runs AFTER the settle attempt above, so a play that could still settle (its oracle just rolled
+  // behind, the chain was briefly down, or a settled win is mid-redeem) is left 'open' to resolve on a
+  // later tick instead of being wrongly flipped to 'error'. The `status: 'open'` guard also skips any
+  // play Phase 2 just resolved. Errors here mean "real position we genuinely cannot settle", not "slow".
+  const deadBefore = BigInt(now - UNSETTLEABLE_MS);
+  const orphanBefore = BigInt(now - ORPHAN_GIVEUP_MS);
+  const giveUp: string[] = [];
+  for (const [oracleId, plays] of byOracle) {
+    const st = states.get(oracleId);
+    const readableDead = !!st && !st.settled && !resolveOracleCap(st); // dead deployment: no cap we hold
+    const unreadable = !st; // oracle object gone / chain wiped
+    if (!readableDead && !unreadable) continue;
+    const cutoff = readableDead ? deadBefore : orphanBefore;
+    for (const p of plays) if (p.expiry < cutoff) giveUp.push(p.id);
+  }
+  if (giveUp.length > 0) {
+    const res = await prismaQuery.play.updateMany({ where: { id: { in: giveUp }, status: 'open' }, data: { status: 'error' } });
+    if (res.count > 0) console.log(`[Settle] gave up on ${res.count} unsettleable play(s)`);
   }
 }
 
@@ -576,17 +594,22 @@ export async function getLiveMarkRaw(play: Play): Promise<bigint> {
 // Cached live mark for the hot read paths (the play SSE tick + /plays/:id). A binary/range mark
 // barely moves second to second, so a short TTL collapses the per-open-play devInspect storm that
 // otherwise saturates the single-validator remote node (and starves the operator ladder). Pending/
-// settled plays never hit the chain here.
-const markCache = new Map<string, { mark: bigint; at: number }>();
+// settled plays never hit the chain here. The cache holds the in-flight promise, not just the resolved
+// value, so several concurrent readers of the same play (multiple SSE clients + the watchdog poll)
+// share ONE ~1.5s devInspect instead of each firing their own. A failed read is evicted so it retries.
+const markCache = new Map<string, { p: Promise<bigint>; at: number }>();
 export async function getLiveMarkCached(play: Play): Promise<bigint> {
   if (play.status !== 'open') return play.payout ?? play.markValue ?? 0n;
   const now = Date.now();
   const hit = markCache.get(play.id);
-  if (hit && now - hit.at < LIVE_MARK_TTL_MS) return hit.mark;
-  const mark = await getLiveMarkRaw(play);
-  markCache.set(play.id, { mark, at: now });
+  if (hit && now - hit.at < LIVE_MARK_TTL_MS) return hit.p;
+  const entry = { p: getLiveMarkRaw(play), at: now };
+  markCache.set(play.id, entry);
+  // Don't pin a failed read; let the next tick re-read. Evict by identity so a slow read that rejects
+  // after a fresher entry already replaced it can't delete that newer in-flight promise.
+  entry.p.catch(() => { if (markCache.get(play.id) === entry) markCache.delete(play.id); });
   if (markCache.size > 512) for (const [k, v] of markCache) if (now - v.at >= LIVE_MARK_TTL_MS) markCache.delete(k);
-  return mark;
+  return entry.p;
 }
 
 const money = (raw: bigint): string => (Number(raw) / 1_000_000).toFixed(2);

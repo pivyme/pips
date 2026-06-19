@@ -28,7 +28,7 @@ This is the **Pips** backend (gamified trading on Sui via DeepBook Predict). Rea
 Runtime is **Bun**, not Node. Framework is **Fastify**. All scripts run via `bun`.
 
 ```bash
-bun dev              # Start with file watcher on :3700
+bun dev              # Start with file watcher on :3780
 bun start            # Production start (no watch)
 bun run typecheck    # tsc --noEmit (the build loop's gate)
 bun test             # Run tests (*.test.ts: math, rng, achievements)
@@ -41,7 +41,7 @@ bun run db:migrate   # Create a new migration
 bun run db:seed      # Seed the database (prisma/seed.ts)
 ```
 
-Env is loaded by `dotenv.ts`, which is imported at the top of `index.ts` before any other module. Copy `.env.example` to `.env`. Required: `DATABASE_URL`, `JWT_SECRET`. Optional: `APP_PORT` (default 3700), `ALLOWED_ORIGIN` (required in production for CORS).
+Env is loaded by `dotenv.ts`, which is imported at the top of `index.ts` before any other module. Copy `.env.example` to `.env`. Required: `DATABASE_URL`, `JWT_SECRET`. Optional: `APP_PORT` (default 3780), `ALLOWED_ORIGIN` (required in production for CORS).
 
 This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 
@@ -94,7 +94,7 @@ import { JWT_SECRET, APP_PORT, IS_DEV } from '../config/main-config.ts';
 ```
 
 **Available exports:**
-- `APP_PORT: number` - Server port (default: 3700)
+- `APP_PORT: number` - Server port (default: 3780)
 - `NODE_ENV: string` - Environment mode
 - `IS_DEV: boolean` / `IS_PROD: boolean` - Boolean flags
 - `DATABASE_URL: string` - Database connection string
