@@ -69,8 +69,11 @@ export function LuckyScreen() {
 
   const finalized = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Latest spot, read at SPIN press to mark the entry line (state would be stale in the callback).
+  // Entry line marks the dealt asset's first live price. Track the latest spot and the asset it
+  // belongs to (set together in onPrice) so a round on a new asset never marks entry at the old one.
   const spotRef = useRef<number | null>(null)
+  const spotAssetRef = useRef<string | null>(null)
+  const chartAssetRef = useRef<string>('')
 
   const marketsQ = useQuery({ queryKey: ['markets'], queryFn: () => api.markets(), refetchInterval: 10_000 })
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
@@ -88,6 +91,7 @@ export function LuckyScreen() {
 
   const lp = play ? (play.params as LuckyParams) : null
   const chartAsset = lp?.asset ?? liveAssets[0] ?? 'BTC'
+  chartAssetRef.current = chartAsset
   // The entry line shows once a round is live (placed through to the result), marking where you got in.
   const showEntry = play != null && (phase === 'spinning' || phase === 'open' || phase === 'cashing' || phase === 'result')
   const strike = play?.market.strike ? parseFloat(play.market.strike) : undefined
@@ -174,6 +178,15 @@ export function LuckyScreen() {
     return () => clearInterval(iv)
   }, [reelsCycling])
 
+  // Mark the entry line at the dealt asset's first live price. Waits until the chart has switched
+  // to the round's asset (spotAssetRef matches) so it never anchors at the previous asset's price.
+  useEffect(() => {
+    if (entryPrice != null || !play) return
+    if (spotAssetRef.current === play.market.asset && spotRef.current != null) {
+      setEntryPrice(spotRef.current)
+    }
+  }, [spot, play, entryPrice])
+
   const doPlay = useCallback(async () => {
     if (phase !== 'idle' && phase !== 'result') return
     if (!canPlay) {
@@ -184,7 +197,7 @@ export function LuckyScreen() {
     finalized.current = false
     setOverlay('none')
     setPhase('placing')
-    setEntryPrice(spotRef.current)
+    setEntryPrice(null) // re-marked at the dealt asset's first live price (capture effect below)
     haptic('rigid')
     slotSpin()
     try {
@@ -354,6 +367,7 @@ export function LuckyScreen() {
                 overlays={showEntry && entryPrice != null ? { entry: entryPrice } : undefined}
                 onPrice={(p) => {
                   spotRef.current = p
+                  spotAssetRef.current = chartAssetRef.current
                   setSpot(p)
                 }}
                 className="absolute inset-0"

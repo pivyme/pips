@@ -9,14 +9,12 @@ import {
   LUCKY_MIN_ORACLE_LIFE_MS,
   MIN_STAKE,
   MAX_STAKE,
-  GAME_DURATIONS,
 } from '../config/main-config.ts';
 import {
   DUSDC_DECIMALS,
   FLOAT_SCALING,
   ORACLE_STRIKE_GRID_TICKS,
   toDusdcRaw,
-  usd1e9,
   multiplier as multiplierOf,
 } from '../lib/sui/config.ts';
 import { liveByAsset, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
@@ -235,7 +233,7 @@ export type ResolvedBinary = {
 
 export type ResolvedRange = {
   kind: 'range';
-  game: 'range' | 'tap';
+  game: 'range';
   market: Market;
   params: RangeParams;
   asset: string;
@@ -348,37 +346,6 @@ export async function resolveRange(stakeRaw: bigint, asset: string, widthPct: nu
     lowerDisplay: fmt1e9(lower),
     upperDisplay: fmt1e9(higher),
     widthPct,
-    duration,
-    entryCost: amounts.cost,
-    maxPayout: quantity,
-    multiplier: multiplierOf(amounts.cost, quantity),
-  };
-}
-
-// Tap: one tapped box is a range position at the box's band (display USD bounds).
-export async function resolveTap(stakeRaw: bigint, asset: string, band: { lower: number; upper: number }, duration: number): Promise<ResolvedRange> {
-  if (!GAME_DURATIONS.includes(duration)) throw new PlayError('INVALID_PARAMS', 'Unsupported round duration');
-  if (!(band.lower < band.upper)) throw new PlayError('INVALID_PARAMS', 'Invalid tap band');
-
-  const market = pickMarket(asset);
-  await freshSpot(market);
-  const g = gridOf(market);
-  let lower = clampStrike(floorTick(usd1e9(band.lower), g.tick), g);
-  let higher = clampStrike(ceilTick(usd1e9(band.upper), g.tick), g);
-  if (higher <= lower) higher = clampStrike(lower + g.tick, g);
-  if (higher <= lower) throw new PlayError('INVALID_PARAMS', 'Invalid tap band');
-
-  const mk = (q: bigint): RangeParams => ({ oracleId: market.oracleId, expiryMs: market.expiryMs, lower1e9: lower, higher1e9: higher, quantity: q });
-  const { quantity, amounts } = await solveQuantity((q) => previewRange(mk(q)), stakeRaw);
-
-  return {
-    kind: 'range',
-    game: 'tap',
-    market,
-    params: mk(quantity),
-    asset,
-    lowerDisplay: fmt1e9(lower),
-    upperDisplay: fmt1e9(higher),
     duration,
     entryCost: amounts.cost,
     maxPayout: quantity,

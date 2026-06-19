@@ -92,7 +92,7 @@ const CATALOG = [
   { slug: 'win_streak_5', name: 'On Fire', description: 'Win 5 plays in a row.', illo: 'flame', metric: 'win_streak', threshold: 5 },
   { slug: 'big_multiplier', name: 'Moonshot', description: 'Cash out a 25x or higher.', illo: 'up', metric: 'big_multiplier', threshold: 25 },
   { slug: 'volume_1000', name: 'High Roller', description: 'Trade $1,000 in total volume.', illo: 'gem', metric: 'volume', threshold: 1000 },
-  { slug: 'all_games', name: 'Sampler', description: 'Play all three games.', illo: 'dice', metric: 'distinct_games', threshold: 3 },
+  { slug: 'all_games', name: 'Sampler', description: 'Play both games.', illo: 'dice', metric: 'distinct_games', threshold: 2 },
   { slug: 'cashout_10', name: 'Quick Hands', description: 'Cash out 10 winning plays.', illo: 'coin', metric: 'cashouts', threshold: 10 },
   { slug: 'comeback', name: 'Comeback', description: 'Win a play right after a loss.', illo: 'medal', metric: 'comeback', threshold: 1 },
 ] as const
@@ -211,7 +211,7 @@ interface MarkCtx {
   side?: Side
   lower?: number
   upper?: number
-  lockedMult: number // the payout multiplier: lucky's dealt tier, or range/tap's locked estimate
+  lockedMult: number // the payout multiplier: lucky's dealt tier, or range's locked estimate
   target?: number // lucky: the strike the price must cross (the TARGET line)
   roundVol?: number // lucky: fractional round volatility, for the live mark-to-market value
   openedMs: number
@@ -231,7 +231,7 @@ function freshState(): DemoState {
     netPnl: 180,
     cashouts: 8,
     maxMultiplierCashed: 12,
-    distinctGames: ['lucky', 'range', 'tap'],
+    distinctGames: ['lucky', 'range'],
     comebackDone: false,
     lastWasLoss: false,
     firstPlayAt: new Date(now - 30 * 86_400_000).toISOString(),
@@ -545,37 +545,6 @@ function createRange(body: Record<string, unknown>): PlayDTO {
   return p
 }
 
-function createTap(body: Record<string, unknown>): PlayDTO {
-  const stake = Number(body.stake ?? 5)
-  ensureBalance(stake)
-  const asset = String(body.asset ?? ASSETS[0])
-  const duration = Number(body.duration ?? 10)
-  const band = (body.band as { lower: number; upper: number }) ?? { lower: 0, upper: 0 }
-  const lower = Number(band.lower)
-  const upper = Number(band.upper)
-  const entry = currentPrice(asset)
-  const halfPct = entry > 0 ? ((upper - lower) / 2 / entry) * 100 : 0.5
-  const lockedMult = estimateMultiplier(Math.max(0.05, halfPct), duration)
-  const openedMs = nowMs()
-  const expiryMs = openedMs + duration * 1000
-  const id = newId()
-  const p: PlayDTO = {
-    id,
-    game: 'tap',
-    status: 'open',
-    stake: str(stake),
-    params: { asset, band: { lower: str(lower), upper: str(upper) }, duration },
-    market: { asset, oracleId: `demo-oracle-${asset}`, expiry: expiryMs, lower: String(lower), upper: String(upper) },
-    entryValue: str(stake),
-    markValue: str(stake),
-    pnl: '0.00',
-    multiplier: lockedMult,
-    openedAt: new Date(openedMs).toISOString(),
-  }
-  registerOpen(p, { game: 'tap', asset, stake, entry, lower, upper, lockedMult, openedMs, expiryMs })
-  return p
-}
-
 // === The mock api surface (mirrors lib/api.ts `api`) ===
 
 function userDTO(): UserDTO {
@@ -643,7 +612,7 @@ export const demoApi = {
 
   play: async (game: Game, body: Record<string, unknown>): Promise<PlayResult> => {
     await delay(140)
-    const play = game === 'lucky' ? createLucky(body) : game === 'range' ? createRange(body) : createTap(body)
+    const play = game === 'lucky' ? createLucky(body) : createRange(body)
     return { play }
   },
 
@@ -746,10 +715,10 @@ const SEED_PLAYS: SeedSpec[] = [
   { game: 'lucky', asset: 'SOL', status: 'cashed_out', stake: 25, mult: 13.6, pnl: 315, minsAgo: 18 },
   { game: 'lucky', asset: 'BTC', status: 'lost', stake: 20, mult: 0, pnl: -20, minsAgo: 64 },
   { game: 'range', asset: 'ETH', status: 'won', stake: 10, mult: 6.2, pnl: 52, minsAgo: 122 },
-  { game: 'tap', asset: 'SUI', status: 'won', stake: 5, mult: 4.1, pnl: 15.5, minsAgo: 190 },
+  { game: 'range', asset: 'SUI', status: 'won', stake: 5, mult: 4.1, pnl: 15.5, minsAgo: 190 },
   { game: 'lucky', asset: 'DEEP', status: 'cashed_out', stake: 15, mult: 3.2, pnl: 33, minsAgo: 360 },
   { game: 'range', asset: 'BTC', status: 'lost', stake: 10, mult: 0, pnl: -10, minsAgo: 520 },
-  { game: 'tap', asset: 'SOL', status: 'cashed_out', stake: 8, mult: 2.4, pnl: 11.2, minsAgo: 800 },
+  { game: 'range', asset: 'SOL', status: 'cashed_out', stake: 8, mult: 2.4, pnl: 11.2, minsAgo: 800 },
   { game: 'lucky', asset: 'ETH', status: 'won', stake: 40, mult: 5, pnl: 160, minsAgo: 1440 },
 ]
 
@@ -768,8 +737,7 @@ function buildSeedPlay(s: SeedSpec, i: number, past: (mins: number) => string): 
     const upper = entry * 1.002
     market.lower = String(lower)
     market.upper = String(upper)
-    if (s.game === 'range') params = { asset: s.asset, lower: str(lower), upper: str(upper), widthPct: 0.4, duration: 30 }
-    else params = { asset: s.asset, band: { lower: str(lower), upper: str(upper) }, duration: 10 }
+    params = { asset: s.asset, lower: str(lower), upper: str(upper), widthPct: 0.4, duration: 30 }
   }
   return {
     id: `demo-seed-${i}`,

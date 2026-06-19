@@ -53,7 +53,7 @@ export const ACHIEVEMENTS: Array<CatalogAchievement> = [
   { slug: 'calm_click', name: 'Calm Click', description: 'Submit a play without changing your choice.' },
   { slug: 'double_play', name: 'Double Play', description: 'Complete 2 plays in one session.' },
   { slug: 'mini_streak', legacySlug: 'win_streak_5', name: 'Mini Streak', description: 'Win 2 plays in a row.' },
-  { slug: 'market_hopper', legacySlug: 'all_games', name: 'Market Hopper', description: 'Try 3 different markets.' },
+  { slug: 'market_hopper', legacySlug: 'all_games', name: 'Sampler', description: 'Play both Lucky and Range.' },
   { slug: 'dollar_rookie', legacySlug: 'volume_1000', name: 'Dollar Rookie', description: 'Play a total of $25.' },
   { slug: 'bigger_move', legacySlug: 'big_multiplier', name: 'Bigger Move', description: 'Make one play above $25.' },
   { slug: 'comeback', name: 'Comeback', description: 'Win after your previous play was a loss.' },

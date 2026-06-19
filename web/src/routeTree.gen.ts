@@ -20,7 +20,6 @@ import { Route as AppMenuStatsRouteImport } from './routes/_app/menu/stats'
 import { Route as AppMenuSettingsRouteImport } from './routes/_app/menu/settings'
 import { Route as AppMenuCustomizeRouteImport } from './routes/_app/menu/customize'
 import { Route as AppMenuAchievementsRouteImport } from './routes/_app/menu/achievements'
-import { Route as AppGamesTapRouteImport } from './routes/_app/games/tap'
 import { Route as AppGamesRangeRouteImport } from './routes/_app/games/range'
 import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
 import { Route as AppGamesLineRiderRouteImport } from './routes/_app/games/line-rider'
@@ -80,11 +79,6 @@ const AppMenuAchievementsRoute = AppMenuAchievementsRouteImport.update({
   path: '/menu/achievements',
   getParentRoute: () => AppRoute,
 } as any)
-const AppGamesTapRoute = AppGamesTapRouteImport.update({
-  id: '/games/tap',
-  path: '/games/tap',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppGamesRangeRoute = AppGamesRangeRouteImport.update({
   id: '/games/range',
   path: '/games/range',
@@ -115,7 +109,6 @@ export interface FileRoutesByFullPath {
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/range': typeof AppGamesRangeRoute
-  '/games/tap': typeof AppGamesTapRoute
   '/menu/achievements': typeof AppMenuAchievementsRoute
   '/menu/customize': typeof AppMenuCustomizeRoute
   '/menu/settings': typeof AppMenuSettingsRoute
@@ -132,7 +125,6 @@ export interface FileRoutesByTo {
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/range': typeof AppGamesRangeRoute
-  '/games/tap': typeof AppGamesTapRoute
   '/menu/achievements': typeof AppMenuAchievementsRoute
   '/menu/customize': typeof AppMenuCustomizeRoute
   '/menu/settings': typeof AppMenuSettingsRoute
@@ -151,7 +143,6 @@ export interface FileRoutesById {
   '/_app/games/line-rider': typeof AppGamesLineRiderRoute
   '/_app/games/lucky': typeof AppGamesLuckyRoute
   '/_app/games/range': typeof AppGamesRangeRoute
-  '/_app/games/tap': typeof AppGamesTapRoute
   '/_app/menu/achievements': typeof AppMenuAchievementsRoute
   '/_app/menu/customize': typeof AppMenuCustomizeRoute
   '/_app/menu/settings': typeof AppMenuSettingsRoute
@@ -170,7 +161,6 @@ export interface FileRouteTypes {
     | '/games/line-rider'
     | '/games/lucky'
     | '/games/range'
-    | '/games/tap'
     | '/menu/achievements'
     | '/menu/customize'
     | '/menu/settings'
@@ -187,7 +177,6 @@ export interface FileRouteTypes {
     | '/games/line-rider'
     | '/games/lucky'
     | '/games/range'
-    | '/games/tap'
     | '/menu/achievements'
     | '/menu/customize'
     | '/menu/settings'
@@ -205,7 +194,6 @@ export interface FileRouteTypes {
     | '/_app/games/line-rider'
     | '/_app/games/lucky'
     | '/_app/games/range'
-    | '/_app/games/tap'
     | '/_app/menu/achievements'
     | '/_app/menu/customize'
     | '/_app/menu/settings'
@@ -301,13 +289,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMenuAchievementsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/games/tap': {
-      id: '/_app/games/tap'
-      path: '/games/tap'
-      fullPath: '/games/tap'
-      preLoaderRoute: typeof AppGamesTapRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/games/range': {
       id: '/_app/games/range'
       path: '/games/range'
@@ -344,7 +325,6 @@ interface AppRouteChildren {
   AppGamesLineRiderRoute: typeof AppGamesLineRiderRoute
   AppGamesLuckyRoute: typeof AppGamesLuckyRoute
   AppGamesRangeRoute: typeof AppGamesRangeRoute
-  AppGamesTapRoute: typeof AppGamesTapRoute
   AppMenuAchievementsRoute: typeof AppMenuAchievementsRoute
   AppMenuCustomizeRoute: typeof AppMenuCustomizeRoute
   AppMenuSettingsRoute: typeof AppMenuSettingsRoute
@@ -358,7 +338,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppGamesLineRiderRoute: AppGamesLineRiderRoute,
   AppGamesLuckyRoute: AppGamesLuckyRoute,
   AppGamesRangeRoute: AppGamesRangeRoute,
-  AppGamesTapRoute: AppGamesTapRoute,
   AppMenuAchievementsRoute: AppMenuAchievementsRoute,
   AppMenuCustomizeRoute: AppMenuCustomizeRoute,
   AppMenuSettingsRoute: AppMenuSettingsRoute,

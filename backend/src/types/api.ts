@@ -1,7 +1,7 @@
 // Shared API DTOs (the wire shape between backend and web). DUSDC amounts cross the wire
 // as human-readable decimal strings, never raw 6dp integers or JS numbers. See 02-API.md.
 
-export type Game = 'lucky' | 'range' | 'tap';
+export type Game = 'lucky' | 'range';
 export type PlayStatus = 'pending' | 'open' | 'won' | 'lost' | 'cashed_out' | 'error';
 export type Side = 'up' | 'down'; // up = call/long, down = put/short
 
@@ -35,18 +35,13 @@ export interface RangeParams {
   widthPct: number;
   duration: number;
 }
-export interface TapParams {
-  asset: string;
-  band: { lower: string; upper: string };
-  duration: number;
-}
 
 export interface PlayDTO {
   id: string;
   game: Game;
   status: PlayStatus;
   stake: string; // DUSDC staked
-  params: LuckyParams | RangeParams | TapParams;
+  params: LuckyParams | RangeParams;
   market: { asset: string; oracleId: string; expiry: number; strike?: string; lower?: string; upper?: string };
   entryValue: string; // mint cost in DUSDC
   markValue: string; // current redeem value in DUSDC (live)

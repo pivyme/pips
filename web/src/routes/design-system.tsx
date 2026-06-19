@@ -44,7 +44,6 @@ import {
   StatusBadge,
   StatusStrip,
   StrikeReticle,
-  TapGrid,
   VolatilityScan,
   VolumeBars,
 } from '@/components/game/instruments'
@@ -432,9 +431,6 @@ function DesignSystemPage() {
             </GameScreen>
             <GameScreen title="Range" status="ETH / 30s">
               <RangePreview />
-            </GameScreen>
-            <GameScreen title="Tap" status="BTC / 10s">
-              <TapPreview />
             </GameScreen>
           </div>
 
@@ -889,52 +885,6 @@ function RangePreview() {
   )
 }
 
-function TapPreview() {
-  const [activeBoxes, setActiveBoxes] = useState([0, 2, 4])
-  const toggleBox = (index: number) => {
-    setActiveBoxes((current) =>
-      current.includes(index)
-        ? current.filter((active) => active !== index)
-        : [...current, index],
-    )
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <ScreenMetric label="Tap $" value="$5" tone="amber" />
-        <ScreenMetric label="Open" value={`${activeBoxes.length}/6`} />
-      </div>
-      <div className="grid h-44 grid-cols-3 gap-2">
-        {[0, 1, 2, 3, 4, 5].map((index) => (
-          <button
-            key={index}
-            type="button"
-            onClick={() => toggleBox(index)}
-            aria-pressed={activeBoxes.includes(index)}
-            className={cnm(
-              'rounded-md border transition-transform active:scale-95',
-              activeBoxes.includes(index)
-                ? index % 2 === 0
-                  ? 'border-up/50 bg-up/12'
-                  : 'border-down/50 bg-down/12'
-                : 'border-line bg-white/[0.025]',
-            )}
-          />
-        ))}
-      </div>
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-bold text-text-3">
-          Tap a box. Catch the move.
-        </p>
-        <p className="tnum text-lg font-black text-up">
-          +${(activeBoxes.length * 2.7).toFixed(2)}
-        </p>
-      </div>
-    </div>
-  )
-}
-
 function Reel({
   label,
   value,
@@ -1147,7 +1097,6 @@ const LAB: Array<LabItem> = [
   { id: 'dpad-long', name: 'Long / short pad', hint: 'Direction select, bound to Action 1/2.', cat: 'input', render: (f) => <DirectionPad active="up" frozen={f} /> },
   { id: 'dpad-short', name: 'Pad · short', hint: 'Short selected state.', cat: 'input', render: (f) => <DirectionPad active="down" frozen={f} /> },
   { id: 'ladder', name: 'Leverage ladder', hint: 'Pick a rung: 2× to 100×.', cat: 'input', render: (f) => <LeverageLadder hue="amber" frozen={f} /> },
-  { id: 'tap', name: 'Tap grid', hint: 'The Tap game, sweeping playhead.', cat: 'input', render: (f) => <TapGrid hue="amber" frozen={f} /> },
   { id: 'assets', name: 'Market picker', hint: 'Asset list with live change.', cat: 'input', render: () => <AssetList hue="amber" /> },
   { id: 'reticle-amber', name: 'Strike reticle', hint: 'Entry / strike targeting for Range.', cat: 'input', render: (f) => <StrikeReticle hue="amber" frozen={f} /> },
   { id: 'reticle-info', name: 'Reticle · info', hint: 'Neutral targeting variant.', cat: 'input', render: (f) => <StrikeReticle hue="info" frozen={f} /> },

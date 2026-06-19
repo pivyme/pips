@@ -667,33 +667,6 @@ export function DirectionPad({ frozen, className, active = 'up' }: VizProps & { 
   )
 }
 
-export function TapGrid({ hue = 'amber', frozen, className }: VizProps) {
-  // The Tap game: pick boxes, catch the move. A sweeping playhead reads the round.
-  const cols = 8
-  const rows = 2
-  const onCells = new Set(['0-0', '0-2', '0-5', '1-1', '1-3', '1-6', '0-7'])
-  const cw = 26
-  const gap = 3
-  const x0 = 12
-  const y0 = 30
-  const head = HUE[hue]
-  return (
-    <Svg className={className} fill>
-      <Tag x={12} y={20}>
-        TAP · CATCH THE MOVE
-      </Tag>
-      {Array.from({ length: rows }, (_, r) =>
-        Array.from({ length: cols }, (__, col) => {
-          const on = onCells.has(`${r}-${col}`)
-          const c = r === 0 ? HUE.up : HUE.down
-          return <rect key={`${r}-${col}`} x={x0 + col * (cw + gap)} y={y0 + r * (cw + gap + 8)} width={cw} height={cw + 4} rx={3} strokeWidth={on ? 1.5 : 1} style={on ? { fill: c, fillOpacity: 0.18, stroke: c, filter: glow(c, 2) } : { fill: 'var(--color-viz-line)', stroke: 'var(--color-line-strong)' }} />
-        }),
-      )}
-      {!frozen && <rect x={x0} y={y0 - 4} width={cw} height={(cw + 4) * 2 + 19} rx={4} strokeWidth={1.25} className="viz-scan" style={{ fill: head, fillOpacity: 0.12, stroke: head, filter: glow(head, 3) }} />}
-    </Svg>
-  )
-}
-
 export function AssetList({ hue = 'amber', className }: VizProps) {
   // Market picker, TE selection bar.
   const items: Array<[string, string, Hue]> = [

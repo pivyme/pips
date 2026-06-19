@@ -134,6 +134,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
   const reducedRef = useRef(reduced)
   const degenRef = useRef(degen)
   const sizeRef = useRef<{ w: number; h: number }>({ w: 0, h: height ?? 0 })
+  const rimRef = useRef(12) // rim-safe inset (px) for edge text, read from --screen-rim per resize
   const onPriceRef = useRef(onPrice)
   const onTapRef = useRef(onTap)
 
@@ -190,6 +191,9 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       const w = wrap.clientWidth
       const h = height ?? wrap.clientHeight
       sizeRef.current = { w, h }
+      // Edge labels must clear the device bevel: inset by the inherited --screen-rim (the full-bleed
+      // line itself still tucks under it). Falls back when the var is absent (CSS shell / SSR).
+      rimRef.current = Math.max(8, parseFloat(getComputedStyle(wrap).getPropertyValue('--screen-rim')) || 12)
       canvas.width = Math.round(w * dpr)
       canvas.height = Math.round(h * dpr)
       canvas.style.width = `${w}px`
@@ -311,7 +315,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       }
 
       // Overlays sit under the line.
-      drawOverlays(ctx, ov, band, { w, nowX, fill: bandFill.current, entryReveal: entryReveal.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
+      drawOverlays(ctx, ov, band, { w, nowX, fill: bandFill.current, entryReveal: entryReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
 
       // Build the visible line. Continuous: x by real time. Reduced: x by index step.
       const yDisp = y(display.current)
@@ -512,9 +516,9 @@ function drawOverlays(
   ctx: CanvasRenderingContext2D,
   ov: ChartOverlays | undefined,
   band: { lower: number; upper: number } | null,
-  ctxv: { w: number; nowX: number; fill: number; entryReveal: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
+  ctxv: { w: number; nowX: number; fill: number; entryReveal: number; rim: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
 ) {
-  const { w, nowX, fill, entryReveal, price, locked, y, C } = ctxv
+  const { w, nowX, fill, entryReveal, rim, price, locked, y, C } = ctxv
 
   if (band) {
     const top = y(band.upper)
@@ -566,7 +570,9 @@ function drawOverlays(
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'left'
     ctx.fillStyle = withAlpha(C.text, 0.85 * a)
-    ctx.fillText(`ENTRY ${formatPrice(ov.entry)}`, 4, ys - 8)
+    // Inset off the rim, and flip below the line when it sits too near the top to label above it.
+    const ly = ys - 16 < 4 ? ys + 14 : ys - 9
+    ctx.fillText(`ENTRY ${formatPrice(ov.entry)}`, rim + 2, ly)
     ctx.restore()
   }
 

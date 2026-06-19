@@ -1,42 +1,30 @@
-// settle: drives expired oracles to settlement. Between expiry and the first post-expiry
-// price push an oracle is frozen (mint AND redeem revert, gotcha #3), so this worker nudges
-// each expired oracle with a final price, which freezes its settlement price and flips it
-// settled. It then compacts the settled strike matrix to reclaim storage and retires the
-// oracle from the live cache. Per-play redemption (redeem_permissionless into each user's
-// manager + Play/stats/achievement updates) is owned by the plays service once the Play
-// model exists; this worker is the oracle-lifecycle half it builds on.
+// settle: resolves expired rounds on a tight cadence. The real work lives in settleDuePlays
+// (plays.ts), which is the self-healing, play-driven authority: for each open play whose round has
+// expired it reads the backing oracle straight from chain, drives it to settlement if the chain has
+// not frozen it yet (a post-expiry price push settles it, gotcha #3), then sweeps any in-the-money
+// payout into the user's manager. Because it reads the chain (not the in-memory ladder), a play
+// settles even if its oracle fell out of the cache on a restart, which is what stopped rounds from
+// sitting on SETTLING forever. This worker just ticks it and prunes retired oracles from the cache.
 
 import cron from 'node-cron';
 
-import { OPERATOR_ENABLED, ORACLE_COMPACT_SETTLED, SETTLE_CRON } from '../config/main-config.ts';
-import { FLOAT_SCALING } from '../lib/sui/config.ts';
-import { executeAsOperator } from '../lib/sui/execute.ts';
-import { buildCompactSettled, appendPriceUpdate, readOracle } from '../lib/sui/predict.ts';
+import { OPERATOR_ENABLED, SETTLE_CRON } from '../config/main-config.ts';
 import { allMarkets, removeMarket } from '../lib/sui/markets.ts';
 import { settleDuePlays } from '../services/plays.ts';
-import { gameSpot } from '../lib/game-price.ts';
-import { Transaction } from '@mysten/sui/transactions';
 
 let isRunning = false;
 
-// Settle price: the live game price (the same synthetic-vol feed the chart streamed and the pusher
-// pushed), so a round settles exactly where the player watched it land. Falls back to the oracle's
-// last known spot if Pyth is briefly unreachable, so settlement never stalls.
-const settlePrice = async (asset: string, lastSpot1e9?: string): Promise<number> => {
-  const s = await gameSpot(asset);
-  if (s) return s.price;
-  if (lastSpot1e9) return Number(BigInt(lastSpot1e9)) / Number(FLOAT_SCALING);
-  throw new Error(`no settle price for ${asset} (Pyth down, no cached spot)`);
-};
+// Long enough that any open play on an expired oracle has settled before we drop it. settleDuePlays
+// reads the chain directly, so even pruning early would not strand a settle, this is pure memory
+// hygiene so a long-lived process doesn't accumulate dead oracles in the cache.
+const ORACLE_PRUNE_GRACE_MS = 5 * 60_000;
 
 const settleTick = async (): Promise<void> => {
   if (isRunning) return;
   isRunning = true;
   try {
-    await driveOraclesToSettlement();
-    // Then redeem + record any open plays whose oracle has now settled. Reads the oracle
-    // directly, so it still resolves plays after their market left the live cache.
     await settleDuePlays();
+    pruneRetiredOracles();
   } catch (err) {
     console.error('[Settle] tick error:', err instanceof Error ? err.message : err);
   } finally {
@@ -44,45 +32,13 @@ const settleTick = async (): Promise<void> => {
   }
 };
 
-// Nudge each expired oracle to settlement, compact its strike matrix, and retire it.
-const driveOraclesToSettlement = async (): Promise<void> => {
-  const now = Date.now();
+// Drop oracles the live set no longer needs: settled, or expired well past the point any open play
+// could still reference them. Routing already ignores expired oracles (liveByAsset/tradeableMarkets
+// filter on remaining life), so this only bounds the cache's memory.
+const pruneRetiredOracles = (): void => {
+  const cutoff = Date.now() - ORACLE_PRUNE_GRACE_MS;
   for (const m of allMarkets()) {
-    if (m.settled || m.expiryMs > now) continue; // live or already retired
-
-    let state = await readOracle(m.oracleId);
-    if (!state) {
-      removeMarket(m.oracleId); // object gone, nothing to settle
-      continue;
-    }
-
-    try {
-      // Nudge to settlement if the chain has not frozen it yet.
-      if (!state.settled) {
-        const spot = await settlePrice(m.underlying, m.spot1e9);
-        const tx = new Transaction();
-        appendPriceUpdate(tx, m.oracleId, m.capId, spot);
-        await executeAsOperator(tx, `settle-nudge ${m.underlying} ${m.oracleId}`);
-        state = { ...state, settled: true };
-        console.log(`[Settle] settled ${m.underlying} oracle ${m.oracleId}`);
-      }
-
-      // Best-effort storage reclaim; only worth a tx on a gas-scarce chain (off on free localnet).
-      if (ORACLE_COMPACT_SETTLED) {
-        try {
-          const compactTx = new Transaction();
-          buildCompactSettled(compactTx, m.oracleId, m.capId);
-          await executeAsOperator(compactTx, `compact ${m.oracleId}`);
-        } catch (err) {
-          console.error(`[Settle] compact failed for ${m.oracleId}:`, err instanceof Error ? err.message : err);
-        }
-      }
-
-      removeMarket(m.oracleId);
-    } catch (err) {
-      // Leave it in the cache so the next tick retries the nudge.
-      console.error(`[Settle] settle failed for ${m.oracleId}:`, err instanceof Error ? err.message : err);
-    }
+    if (m.settled || m.expiryMs < cutoff) removeMarket(m.oracleId);
   }
 };
 

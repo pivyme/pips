@@ -113,6 +113,7 @@ export type OracleState = {
   spot1e9: bigint;
   settlementPrice1e9: bigint | null;
   timestampMs: number;
+  authorizedCapIds: string[]; // the OracleSVICap ids allowed to push/settle this oracle
 };
 
 type OracleFields = {
@@ -122,11 +123,14 @@ type OracleFields = {
   prices: { fields: { spot: string; forward: string } };
   settlement_price: string | null;
   timestamp: string;
+  authorized_caps?: { fields?: { contents?: string[] } };
 };
 
 // Read the current on-chain oracle state. Returns null if the object is gone or not an
 // oracle. `active` is the stored flag; lifecycle status is derived against the clock by
-// callers (expired = now >= expiry; settled = settlement_price set).
+// callers (expired = now >= expiry; settled = settlement_price set). `authorizedCapIds` is the
+// on-chain set of caps allowed to push/settle it, so the settle path can find the right cap to
+// nudge an oracle with even when it has fallen out of the in-memory ladder cache (a restart).
 export async function readOracle(oracleId: string): Promise<OracleState | null> {
   const obj = await suiClient.getObject({ id: oracleId, options: { showContent: true } });
   const content = obj.data?.content;
@@ -141,6 +145,7 @@ export async function readOracle(oracleId: string): Promise<OracleState | null> 
     spot1e9: BigInt(f.prices.fields.spot),
     settlementPrice1e9: f.settlement_price != null ? BigInt(f.settlement_price) : null,
     timestampMs: Number(f.timestamp),
+    authorizedCapIds: f.authorized_caps?.fields?.contents ?? [],
   };
 }
 

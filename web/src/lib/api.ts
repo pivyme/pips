@@ -9,7 +9,7 @@ const BASE = env.VITE_API_URL
 
 // === DTOs (mirror the backend) ===
 
-export type Game = 'lucky' | 'range' | 'tap'
+export type Game = 'lucky' | 'range'
 export type PlayStatus = 'pending' | 'open' | 'won' | 'lost' | 'cashed_out' | 'error'
 export type Side = 'up' | 'down'
 
@@ -43,18 +43,13 @@ export interface RangeParams {
   widthPct: number
   duration: number
 }
-export interface TapParams {
-  asset: string
-  band: { lower: string; upper: string }
-  duration: number
-}
 
 export interface PlayDTO {
   id: string
   game: Game
   status: PlayStatus
   stake: string
-  params: LuckyParams | RangeParams | TapParams
+  params: LuckyParams | RangeParams
   market: { asset: string; oracleId: string; expiry: number; strike?: string; lower?: string; upper?: string }
   entryValue: string
   markValue: string

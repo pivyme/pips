@@ -19,7 +19,7 @@ import {
 } from '../services/plays.ts';
 import type { Game, MarketDTO } from '../types/api.ts';
 
-const GAMES: Game[] = ['lucky', 'range', 'tap'];
+const GAMES: Game[] = ['lucky', 'range'];
 
 // Stable display order for the market list. The live oracle set reshuffles as the ladder rolls
 // (oracles added/retired every few seconds), so without a fixed order the client's asset picker
@@ -122,22 +122,11 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
     return { game, stake };
   }
 
-  if (game === 'range') {
-    // The round holds to the routed oracle's real expiry, so the client sends no duration.
-    const widthPct = Number(body.widthPct);
-    const asset = String(body.asset ?? '');
-    if (!asset || !Number.isFinite(widthPct)) {
-      throw new PlayError('INVALID_PARAMS', 'Pick an asset and band width');
-    }
-    return { game, stake, asset, widthPct };
-  }
-
-  // tap
-  const band = body.band as { lower?: number; upper?: number } | undefined;
-  const duration = Number(body.duration);
+  // range: the round holds to the routed oracle's real expiry, so the client sends no duration.
+  const widthPct = Number(body.widthPct);
   const asset = String(body.asset ?? '');
-  if (!asset || !band || band.lower == null || band.upper == null || !Number.isFinite(duration)) {
-    throw new PlayError('INVALID_PARAMS', 'Pick an asset, a box, and duration');
+  if (!asset || !Number.isFinite(widthPct)) {
+    throw new PlayError('INVALID_PARAMS', 'Pick an asset and band width');
   }
-  return { game, stake, asset, band: { lower: Number(band.lower), upper: Number(band.upper) }, duration };
+  return { game, stake, asset, widthPct };
 }
