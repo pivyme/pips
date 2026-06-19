@@ -62,14 +62,18 @@ const rollLadder = async (): Promise<void> => {
   if (isRunning) return;
   isRunning = true;
   try {
-    const capId = operatorCaps.oracleCapIds[0];
-    if (!capId) {
+    const caps = operatorCaps.oracleCapIds;
+    if (caps.length === 0) {
       console.error('[OracleRoll] no oracle cap in config; run the bootstrap first');
       return;
     }
 
     const stagger = Math.floor(ORACLE_LIFETIME_MS / ORACLE_LADDER_DEPTH);
-    for (const asset of ORACLE_ASSETS) {
+    for (let ai = 0; ai < ORACLE_ASSETS.length; ai++) {
+      const asset = ORACLE_ASSETS[ai];
+      // Distinct cap per asset so each asset becomes its own price-push lane (one PTB per
+      // cap, gotcha #5). Round-robins when the deployment has fewer caps than assets.
+      const capId = caps[ai % caps.length];
       const now = Date.now();
       const live = liveByAsset(asset, now, ORACLE_MIN_REMAINING_MS);
       const need = ORACLE_LADDER_DEPTH - live.length;

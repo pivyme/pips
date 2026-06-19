@@ -36,7 +36,7 @@ import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { fromBase64 } from '@mysten/sui/utils';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 
-import { TESTING_WALLET_PK, SUI_NETWORK, SUI_FULLNODE_URL } from '../src/config/main-config.ts';
+import { TESTING_WALLET_PK, SUI_NETWORK, SUI_FULLNODE_URL, ORACLE_ASSETS } from '../src/config/main-config.ts';
 
 type Network = 'testnet' | 'mainnet' | 'devnet' | 'localnet';
 const VALID_NETWORKS: Network[] = ['testnet', 'mainnet', 'devnet', 'localnet'];
@@ -448,18 +448,28 @@ async function main(): Promise<void> {
   const tickSize = usd1e9(200); // $200 tick, 500 ticks -> covers $50k..$150k (single matrix page)
   const expiryMs = Date.now() + 5 * 60 * 1000; // 5 min out, ample for the round trip
 
-  const capId = findCreated(
-    await run(
-      (() => {
-        const tx = new Transaction();
-        const cap = tx.moveCall({ target: `${packageId}::registry::create_oracle_cap`, arguments: [tx.object(adminCapId)] });
-        tx.transferObjects([cap], tx.pure.address(address));
-        return tx;
-      })(),
-      'create_oracle_cap',
-    ),
-    (t) => t.includes('::oracle::OracleSVICap'),
-  );
+  // One oracle cap per asset lane so price pushes for different assets never share a cap and
+  // can run as independent PTBs (gotcha #5). oracle-roll assigns caps to assets in order; the
+  // seeded BTC oracle below uses the first cap.
+  const laneCount = Math.max(ORACLE_ASSETS.length, 1);
+  const capIds: string[] = [];
+  for (let i = 0; i < laneCount; i++) {
+    capIds.push(
+      findCreated(
+        await run(
+          (() => {
+            const tx = new Transaction();
+            const cap = tx.moveCall({ target: `${packageId}::registry::create_oracle_cap`, arguments: [tx.object(adminCapId)] });
+            tx.transferObjects([cap], tx.pure.address(address));
+            return tx;
+          })(),
+          `create_oracle_cap ${i + 1}/${laneCount}`,
+        ),
+        (t) => t.includes('::oracle::OracleSVICap'),
+      ),
+    );
+  }
+  const capId = capIds[0];
 
   const oracleId = findCreated(
     await run(
@@ -596,7 +606,7 @@ async function main(): Promise<void> {
     predictId,
     plpTreasuryCapId,
     dusdc: { packageId: dusdcPackageId, type: DUSDC_TYPE, treasuryCapId: dusdcTreasuryCapId, currencyId: dusdcCurrencyId },
-    oracleCapIds: [capId],
+    oracleCapIds: capIds,
     oracles: [{ oracleId, underlying: 'BTC', expiryMs, minStrike: String(minStrike), tickSize: String(tickSize) }],
     bootstrappedAt: new Date().toISOString(),
   };
