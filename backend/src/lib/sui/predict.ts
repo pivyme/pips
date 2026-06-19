@@ -149,6 +149,47 @@ export async function readOracle(oracleId: string): Promise<OracleState | null> 
   };
 }
 
+// The on-chain strike grid (min strike + tick, 1e9-scaled) the vault registered for an oracle, used
+// by a follower backend (one that did not create the oracle, so it never cached the grid) to recover
+// the EXACT grid instead of re-deriving it from the current spot (which drifts off the creation
+// grid). The grid lives in Predict.oracle_config.oracle_grids, a Table<ID, OracleGrid> keyed by the
+// oracle id. The table's own id is fixed for the deployment, so resolve it once; individual grids are
+// immutable after create_oracle, so cache them forever (a follower sees at most a few hundred).
+let oracleGridsTableIdP: Promise<string> | null = null;
+async function oracleGridsTableId(): Promise<string> {
+  if (!oracleGridsTableIdP) {
+    oracleGridsTableIdP = (async () => {
+      const obj = await suiClient.getObject({ id: PREDICT_ID, options: { showContent: true } });
+      const content = obj.data?.content;
+      if (!content || content.dataType !== 'moveObject') throw new Error('Predict object not readable');
+      const id = (content.fields as { oracle_config?: { fields?: { oracle_grids?: { fields?: { id?: { id?: string } } } } } })
+        .oracle_config?.fields?.oracle_grids?.fields?.id?.id;
+      if (!id) throw new Error('oracle_grids table id not found on Predict');
+      return id;
+    })().catch((e) => {
+      oracleGridsTableIdP = null; // let the next call retry the lookup
+      throw e;
+    });
+  }
+  return oracleGridsTableIdP;
+}
+
+const gridCache = new Map<string, { minStrike: bigint; tickSize: bigint }>();
+
+export async function readOracleGrid(oracleId: string): Promise<{ minStrike: bigint; tickSize: bigint } | null> {
+  const hit = gridCache.get(oracleId);
+  if (hit) return hit;
+  const parentId = await oracleGridsTableId();
+  const df = await suiClient.getDynamicFieldObject({ parentId, name: { type: '0x2::object::ID', value: oracleId } });
+  const content = df.data?.content;
+  if (!content || content.dataType !== 'moveObject') return null;
+  const v = (content.fields as { value?: { fields?: { min_strike?: string; tick_size?: string } } }).value?.fields;
+  if (v?.min_strike == null || v.tick_size == null) return null;
+  const grid = { minStrike: BigInt(v.min_strike), tickSize: BigInt(v.tick_size) };
+  gridCache.set(oracleId, grid);
+  return grid;
+}
+
 // === User trade surface ===
 
 export type Side = 'up' | 'down';

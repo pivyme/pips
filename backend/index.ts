@@ -17,6 +17,7 @@ import { startErrorLogCleanupWorker } from './src/workers/errorLogCleanup.ts';
 import { startPricePusher } from './src/workers/price-pusher.ts';
 import { startOracleRoll } from './src/workers/oracle-roll.ts';
 import { startSettleWorker } from './src/workers/settle.ts';
+import { startMarketSync } from './src/workers/market-sync.ts';
 
 // Gas sponsor funding (operator-driven, seeds the sponsor's SUI address balance)
 import { ensureSponsorFunded } from './src/lib/sui/gas.ts';
@@ -76,6 +77,9 @@ const start = async (): Promise<void> => {
     startOracleRoll();
     startPricePusher();
     startSettleWorker();
+    // Follower mode (operator disabled): learn the live oracle set from chain so the games are
+    // playable against the deployed operator without running the operator workers here.
+    startMarketSync();
 
     await fastify.listen({
       port: APP_PORT,

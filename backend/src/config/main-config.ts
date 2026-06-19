@@ -111,6 +111,10 @@ export const OPERATOR_ENABLED: boolean = process.env.PIPS_OPERATOR_ENABLED === '
 export const PRICE_PUSH_CRON: string = process.env.PIPS_PRICE_PUSH_CRON || '*/2 * * * * *';
 export const ORACLE_ROLL_CRON: string = process.env.PIPS_ORACLE_ROLL_CRON || '*/5 * * * * *';
 export const SETTLE_CRON: string = process.env.PIPS_SETTLE_CRON || '*/3 * * * * *';
+// Follower-mode market discovery cadence. Only runs when OPERATOR_ENABLED is false: this backend
+// then learns the live oracle set from chain (emitted by whoever IS the operator) instead of from
+// its own oracle-roll. Oracles are short-lived, so sync briskly to keep the ladder current.
+export const MARKET_SYNC_CRON: string = process.env.PIPS_MARKET_SYNC_CRON || '*/3 * * * * *';
 // Cap the on-chain redeems a single settle tick fires, so a backlog of expired ITM plays drains
 // gradually instead of monopolizing the one serial operator executor (which oracle-roll shares) and
 // starving the ladder. The rest carry over to the next tick (every 3s).
@@ -236,6 +240,7 @@ export default {
   PRICE_PUSH_CRON,
   ORACLE_ROLL_CRON,
   SETTLE_CRON,
+  MARKET_SYNC_CRON,
   SETTLE_MAX_REDEEMS_PER_TICK,
   EXPIRY_SAFETY_MS,
   PLAY_STREAM_INTERVAL_MS,
