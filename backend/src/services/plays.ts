@@ -9,7 +9,6 @@ import { coinWithBalance } from '@mysten/sui/transactions';
 
 import type { Play, User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
-import { AUTH_MODE } from '../config/main-config.ts';
 import { DUSDC_TYPE } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import {
@@ -19,6 +18,7 @@ import {
   buildRedeem,
   buildRedeemRange,
   buildRedeemPermissionless,
+  buildRedeemRangePermissionless,
   getManagerBalanceRaw,
   previewRange,
   previewRedeem,
@@ -71,19 +71,31 @@ function deserializeKey(play: Play): PlayKey {
 
 // === Balance ===
 
-// Spendable chips = wallet DUSDC + whatever already sits in the manager from prior plays.
-export async function playableBalanceRaw(user: User): Promise<bigint> {
-  const wallet = await getDusdcBalanceRaw(user.address);
-  const manager = user.predictManagerId ? await getManagerBalanceRaw(user.predictManagerId) : 0n;
-  return wallet + manager;
+type Balances = { wallet: bigint; manager: bigint; total: bigint };
+
+// Wallet DUSDC + whatever already sits in the manager from prior plays, read in parallel (two
+// independent RPCs). Returns the parts so createPlay can reuse the manager figure for funding
+// instead of reading it a second time.
+async function loadBalances(user: User): Promise<Balances> {
+  const [wallet, manager] = await Promise.all([
+    getDusdcBalanceRaw(user.address),
+    user.predictManagerId ? getManagerBalanceRaw(user.predictManagerId) : Promise.resolve(0n),
+  ]);
+  return { wallet, manager, total: wallet + manager };
 }
 
-// Top the manager up to `needRaw` from the wallet (only the shortfall, so winnings already
-// in the manager are reused before pulling fresh coins).
-async function fundManager(tx: Transaction, managerId: string, needRaw: bigint): Promise<void> {
-  const have = await getManagerBalanceRaw(managerId);
-  if (have >= needRaw) return;
-  const coin = coinWithBalance({ type: DUSDC_TYPE, balance: needRaw - have })(tx);
+// Spendable chips. Kept as a thin wrapper for callers outside the play hot path.
+export async function playableBalanceRaw(user: User): Promise<bigint> {
+  return (await loadBalances(user)).total;
+}
+
+// Top the manager up to `targetRaw` from the wallet, reusing the already-read manager balance
+// (no extra RPC). We fund a little ABOVE the bet so the mint, which prices against the
+// post-trade vault (its own size moves the ask up a touch), can never withdraw more than the
+// manager holds. The surplus is not spent: it stays in the manager and funds the next play.
+function fundManager(tx: Transaction, managerId: string, targetRaw: bigint, haveRaw: bigint): void {
+  if (haveRaw >= targetRaw) return;
+  const coin = coinWithBalance({ type: DUSDC_TYPE, balance: targetRaw - haveRaw })(tx);
   buildDeposit(tx, managerId, coin);
 }
 
@@ -91,7 +103,7 @@ async function fundManager(tx: Transaction, managerId: string, needRaw: bigint):
 
 export type CreatePlayInput =
   | { game: 'lucky'; stake: string | number }
-  | { game: 'range'; stake: string | number; asset: string; widthPct: number; duration: number }
+  | { game: 'range'; stake: string | number; asset: string; widthPct: number }
   | { game: 'tap'; stake: string | number; asset: string; band: { lower: number; upper: number }; duration: number };
 
 export type CreateResult = { play: PlayDTO };
@@ -101,39 +113,70 @@ const userCtx = (user: User) => ({ address: user.address, walletId: user.privyWa
 
 async function resolveByGame(input: CreatePlayInput, stakeRaw: bigint): Promise<Resolved> {
   if (input.game === 'lucky') return resolveLucky(stakeRaw);
-  if (input.game === 'range') return resolveRange(stakeRaw, input.asset, input.widthPct, input.duration);
+  if (input.game === 'range') return resolveRange(stakeRaw, input.asset, input.widthPct);
   return resolveTap(stakeRaw, input.asset, input.band, input.duration);
 }
 
+// How far above the bet we fund the manager so the post-trade mint price (the position's own
+// market impact) never overdraws it. Surplus stays in the manager and funds the next play.
+const FUND_BUFFER_PCT = 12n;
+
+// A mint can still abort at execution for transient, position-shaped reasons: the routed oracle
+// ticking past expiry between solve and submit, or a deep/large position whose post-trade price
+// edges past the funded amount. These are safe to retry: a fresh resolve re-routes to a live
+// oracle and re-sizes. Auth/balance/param errors are not, so we only retry mint aborts.
+const isRetriableMint = (e: unknown): boolean => {
+  const m = e instanceof Error ? e.message : String(e);
+  return /assert_live_oracle|EOracleExpired|withdraw|interpolate_price|trade_prices|MoveAbort|MovePrimitiveRuntimeError|object .*not available|equivocat/i.test(m);
+};
+
 export async function createPlay(user: User, input: CreatePlayInput): Promise<CreateResult> {
   const stakeRaw = parseStake(input.stake);
-  if ((await playableBalanceRaw(user)) < stakeRaw) {
-    throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that bet');
-  }
   const managerId = user.predictManagerId;
   if (!managerId) throw new PlayError('MANAGER_NOT_READY', 'Your account is still getting ready');
 
-  const resolved = await resolveByGame(input, stakeRaw);
+  const _t0 = performance.now();
+  const _lap = (l: string) => { try { require('fs').appendFileSync('/tmp/pips-bench.log', `${l}: +${(performance.now() - _t0).toFixed(0)}ms\n`); } catch {} };
+  // Two attempts: a mint that aborts on a stale oracle or a tight post-trade price is re-resolved
+  // against a fresh oracle. The balance read runs concurrently with the (chain-bound) resolve.
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    _lap(`attempt ${attempt} start`);
+    const [balances, resolved] = await Promise.all([loadBalances(user), resolveByGame(input, stakeRaw)]);
+    _lap('balances+resolve done');
+    if (balances.total < stakeRaw) throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that bet');
 
-  const tx = new Transaction();
-  await fundManager(tx, managerId, stakeRaw);
-  if (resolved.kind === 'binary') buildMint(tx, managerId, resolved.params);
-  else buildMintRange(tx, managerId, resolved.params);
+    // Fund the manager to the bet plus the impact buffer, capped at what the player actually has.
+    const fundTarget = stakeRaw + (stakeRaw * FUND_BUFFER_PCT) / 100n;
+    const target = fundTarget > balances.total ? balances.total : fundTarget;
 
-  // Persist pending first so we hold an id even if signing/submit throws.
-  const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw) });
+    const tx = new Transaction();
+    fundManager(tx, managerId, target, balances.manager);
+    if (resolved.kind === 'binary') buildMint(tx, managerId, resolved.params);
+    else buildMintRange(tx, managerId, resolved.params);
+    _lap('ptb built');
 
-  try {
-    const exec = await executeForUser(tx, userCtx(user));
-    const opened = await prismaQuery.play.update({
-      where: { id: play.id },
-      data: { status: 'open', txMint: exec.digest, openedAt: new Date() },
-    });
-    return { play: await toPlayDTO(opened) };
-  } catch (e) {
-    await prismaQuery.play.update({ where: { id: play.id }, data: { status: 'error' } });
-    throw asPlayError(e, 'MINT_FAILED', 'Could not place that play. Your chips are safe.');
+    // Persist pending first so we hold an id even if signing/submit throws.
+    const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw) });
+    _lap('db created');
+
+    try {
+      const exec = await executeForUser(tx, userCtx(user));
+      _lap('executeForUser done');
+      const opened = await prismaQuery.play.update({
+        where: { id: play.id },
+        data: { status: 'open', txMint: exec.digest, openedAt: new Date() },
+      });
+      return { play: await toPlayDTO(opened) };
+    } catch (e) {
+      try { require('fs').appendFileSync('/tmp/pips-bench.log', `EXEC-FAIL +${(performance.now() - _t0).toFixed(0)}ms: ${e instanceof Error ? e.message : e}\n`); } catch {}
+      await prismaQuery.play.update({ where: { id: play.id }, data: { status: 'error' } });
+      lastErr = e;
+      if (attempt === 0 && isRetriableMint(e)) continue;
+      throw asPlayError(e, 'MINT_FAILED', 'Could not place that play. Your chips are safe.');
+    }
   }
+  throw asPlayError(lastErr, 'MINT_FAILED', 'Could not place that play. Your chips are safe.');
 }
 
 function mapResolvedToPlay(userId: string, r: Resolved, stakeRaw: bigint) {
@@ -222,28 +265,31 @@ export async function settleDuePlays(): Promise<void> {
 async function settleOnePlay(play: Play, settlement1e9: bigint): Promise<void> {
   const key = deserializeKey(play);
   const itm = isItm(key, settlement1e9);
-  const payoutRaw = itm ? key.params.quantity : 0n; // settled ITM pays $1 per contract
-  let digest: string | undefined;
 
+  // An in-the-money settle sweeps the $1/contract payout into the user's manager. Both legs use a
+  // permissionless redeem (no owner check once settled), so the operator finalizes the win in
+  // either auth mode. Mark the play won ONLY after that redeem confirms on-chain, so the record
+  // never claims a payout the chain did not move; a failed redeem leaves the play open to retry on
+  // the next settle tick. A losing play has nothing to redeem, so it settles immediately.
+  let digest: string | undefined;
   if (itm) {
     const user = await prismaQuery.user.findUnique({ where: { id: play.userId } });
-    if (user?.predictManagerId) {
-      try {
-        const tx = new Transaction();
-        if (key.kind === 'binary') {
-          buildRedeemPermissionless(tx, user.predictManagerId, key.params);
-          digest = (await executeAsOperator(tx, `settle-redeem ${play.id}`)).digest;
-        } else if (AUTH_MODE === 'dev') {
-          // No permissionless range redeem on-chain; in dev the operator owns the manager.
-          buildRedeemRange(tx, user.predictManagerId, key.params);
-          digest = (await executeAsOperator(tx, `settle-redeem-range ${play.id}`)).digest;
-        }
-      } catch (e) {
-        console.error(`[Settle] on-chain redeem failed for ${play.id}:`, e instanceof Error ? e.message : e);
-      }
+    if (!user?.predictManagerId) {
+      console.error(`[Settle] play ${play.id} is ITM but the user has no manager; will retry`);
+      return;
+    }
+    try {
+      const tx = new Transaction();
+      if (key.kind === 'binary') buildRedeemPermissionless(tx, user.predictManagerId, key.params);
+      else buildRedeemRangePermissionless(tx, user.predictManagerId, key.params);
+      digest = (await executeAsOperator(tx, `settle-redeem ${play.id}`)).digest;
+    } catch (e) {
+      console.error(`[Settle] on-chain redeem failed for ${play.id}, will retry:`, e instanceof Error ? e.message : e);
+      return; // leave status 'open' so the next settle tick retries the redeem
     }
   }
 
+  const payoutRaw = itm ? key.params.quantity : 0n; // settled ITM pays $1 per contract, else 0
   const pnl = payoutRaw - play.entryCost;
   await prismaQuery.play.update({
     where: { id: play.id },

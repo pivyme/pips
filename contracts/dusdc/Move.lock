@@ -4,6 +4,24 @@
 [move]
 version = 4
 
+[pinned.pips-deploy.MoveStdlib]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "73dd2c2ba6f9fdb21d7ffde2b50a3f2f0ac39bc1" }
+use_environment = "pips-deploy"
+manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
+deps = {}
+
+[pinned.pips-deploy.Sui]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "73dd2c2ba6f9fdb21d7ffde2b50a3f2f0ac39bc1" }
+use_environment = "pips-deploy"
+manifest_digest = "AA124960DC13FF5B7B9D61861890B5B064580D65A25AB13096507BA352B29881"
+deps = { MoveStdlib = "MoveStdlib" }
+
+[pinned.pips-deploy.dusdc]
+source = { root = true }
+use_environment = "pips-deploy"
+manifest_digest = "DF738CE8E1F9C44A2A34EFAB73285B4D8B2C463420C82418233D7B97F5E80FB4"
+deps = { std = "MoveStdlib", sui = "Sui" }
+
 [pinned.sim.MoveStdlib]
 source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "b38bca86f0323b3fe8b6b7f4ca0cd7ae7faebe4b" }
 use_environment = "sim"

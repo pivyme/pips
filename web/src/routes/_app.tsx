@@ -1,7 +1,12 @@
 import { Outlet, createFileRoute, useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import type { ConsoleTheme } from '@/components/console/themes'
+import { GamesConsole } from './_app/games/index'
+import { LuckyScreen } from './_app/games/lucky'
+import { RangeScreen } from './_app/games/range'
+import { LineRiderScreen } from './_app/games/line-rider'
+import { CandleHopScreen } from './_app/games/candle-hop'
 import { AppFrame } from '@/components/console/AppFrame'
 import { ConsoleControlsProvider, useConsoleView } from '@/components/console/controls'
 import { ConsoleShell } from '@/components/console/ConsoleShell'
@@ -23,6 +28,20 @@ const BACKDROP_GAMES = [
 const LOADING_EXIT_DELAY_MS = 150
 const LOADING_EXIT_DURATION_MS = 520
 
+// The aperture games keyed by their route path. The 3D device mounts the active game's screen
+// directly from here, not through the router Outlet. That is what lets the screen survive the menu:
+// the menu is its own /menu route, so going through the Outlet would unmount the game the moment the
+// drawer opens and flash the device black behind the blur. Mounting by path keeps the same instance
+// alive across game <-> menu, so the live chart never blinks. Tap stays on the CSS shell, so it is
+// not here.
+const DEVICE_SCREENS: Record<string, ComponentType> = {
+  '/games': GamesConsole,
+  '/games/lucky': LuckyScreen,
+  '/games/range': RangeScreen,
+  '/games/line-rider': LineRiderScreen,
+  '/games/candle-hop': CandleHopScreen,
+}
+
 // Everything under the device (games + menu) shares one persistent shell.
 // The landing route ("/") lives outside this and gets the full viewport.
 export const Route = createFileRoute('/_app')({ component: AppLayout })
@@ -31,6 +50,9 @@ function AppLayout() {
   const { status } = useAuth()
   const [showLoadingScreen, setShowLoadingScreen] = useState(true)
   const [loadingScreenLeaving, setLoadingScreenLeaving] = useState(false)
+  const [customizePrepared, setCustomizePrepared] = useState(false)
+  const [customizeOpening, setCustomizeOpening] = useState(false)
+  const [customizeHandoff, setCustomizeHandoff] = useState(false)
   const navigate = useNavigate()
   const matchRoute = useMatchRoute()
   // The menu is a drawer over the device, not a screen inside it. When a /menu route is active we
@@ -109,6 +131,12 @@ function AppLayout() {
             ? '/games/candle-hop'
             : '/games'
 
+  // The screen the 3D device mounts. last3DPath is the live game while on a games route, and holds
+  // that same game while the menu sits over the device, so the component stays identical across the
+  // open. React keeps the one instance mounted, the chart keeps running, and the screen never flashes
+  // black behind the drawer. (Mounting by path instead of the Outlet is what makes that possible.)
+  const DeviceScreen = DEVICE_SCREENS[last3DPath.current]
+
   // Not signed in (privy logged out, or signed out): send them back to the door. dev auto-logs-in,
   // so this only fires when there is genuinely no session.
   useEffect(() => {
@@ -133,6 +161,24 @@ function AppLayout() {
     }
   }, [status])
 
+  useEffect(() => {
+    if (onCustomize) setCustomizeOpening(false)
+  }, [onCustomize])
+
+  useEffect(() => {
+    if (!menuOver3D || onCustomize || customizePrepared) return
+
+    const prepare = () => setCustomizePrepared(true)
+    const id = window.setTimeout(prepare, 0)
+    return () => window.clearTimeout(id)
+  }, [customizePrepared, menuOver3D, onCustomize])
+
+  useEffect(() => {
+    if (!onMenu && !onCustomize && !customizeHandoff) {
+      setCustomizePrepared(false)
+    }
+  }, [customizeHandoff, onCustomize, onMenu])
+
   if (status !== 'authed') {
     return <AppLoadingScreen />
   }
@@ -140,31 +186,51 @@ function AppLayout() {
   const loadingScreen = showLoadingScreen ? (
     <AppLoadingScreen leaving={loadingScreenLeaving} />
   ) : null
+  const showCustomizeStudio =
+    onCustomize || customizeOpening || customizeHandoff
+  const mountCustomizeStudio = showCustomizeStudio || customizePrepared
 
   // The 3D handheld is the persistent shell for the games hub + the aperture games, and for the menu
-  // opened over them. Keeping one Console3DRoute element mounted across screen<->menu means the WebGL
-  // scene builds once instead of rebuilding on every toggle. Screen content only mounts on a 3D route.
-  if (on3D || menuOver3D || onCustomize) {
+  // opened over them. Customize overlays a second turntable view without unmounting this live canvas,
+  // so Done can hand off to an already-rendered device instead of rebuilding WebGL mid-transition.
+  if (on3D || menuOver3D || mountCustomizeStudio) {
     return (
       <>
         <AppFrame bg={backdrop}>
           <ConsoleControlsProvider>
-            {onCustomize ? (
+            <Console3DRoute
+              theme={savedTheme.theme}
+              screenContentVisible={!showCustomizeStudio}
+            >
+              {DeviceScreen ? <DeviceScreen /> : null}
+            </Console3DRoute>
+
+            {mountCustomizeStudio && (
               <CustomizeStudio
                 initialThemeId={savedTheme.id}
-                onDone={(id) => {
+                visible={showCustomizeStudio}
+                active={onCustomize || customizeHandoff}
+                onCommit={(id) => {
+                  setCustomizeHandoff(true)
                   savedTheme.setId(id)
                   void navigate({ to: '/games' })
                 }}
+                onOutroComplete={() => setCustomizeHandoff(false)}
                 onCancel={() => void navigate({ to: '/menu' })}
               />
-            ) : (
-              <Console3DRoute theme={savedTheme.theme}>{on3D ? <Outlet /> : null}</Console3DRoute>
             )}
             {/* The drawer slides itself away (closeTo) when Customize is tapped, then the studio takes
                 over, so the device is revealed settling into the workshop. */}
             {onMenu && !onCustomize && (
-              <MenuDrawer returnTo={last3DPath.current}>
+              <MenuDrawer
+                returnTo={last3DPath.current}
+                onLaunchStart={(to) => {
+                  if (to === '/menu/customize') {
+                    setCustomizePrepared(true)
+                    setCustomizeOpening(true)
+                  }
+                }}
+              >
                 <Outlet />
               </MenuDrawer>
             )}
@@ -209,7 +275,15 @@ function AppLoadingScreen({ leaving = false }: { leaving?: boolean }) {
 // The 3D handheld as the live shell. It reads the controls the screen registered and renders the
 // screen content on the device's screen; the physical knob/buttons drive the game. The screen
 // content is passed in (the active game's Outlet, or nothing while the menu sits over the device).
-function Console3DRoute({ children, theme }: { children?: ReactNode; theme?: ConsoleTheme }) {
+function Console3DRoute({
+  children,
+  theme,
+  screenContentVisible = true,
+}: {
+  children?: ReactNode
+  theme?: ConsoleTheme
+  screenContentVisible?: boolean
+}) {
   const { view, handlers } = useConsoleView()
   const navigate = useNavigate()
   const onNav = useCallback(
@@ -220,7 +294,13 @@ function Console3DRoute({ children, theme }: { children?: ReactNode; theme?: Con
     [navigate],
   )
   return (
-    <ConsoleCanvas view={view} handlers={handlers} onNav={onNav} theme={theme}>
+    <ConsoleCanvas
+      view={view}
+      handlers={handlers}
+      onNav={onNav}
+      theme={theme}
+      screenContentVisible={screenContentVisible}
+    >
       {children}
     </ConsoleCanvas>
   )

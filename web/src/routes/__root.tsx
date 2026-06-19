@@ -3,16 +3,14 @@ import {
   Scripts,
   createRootRouteWithContext,
 } from '@tanstack/react-router'
-import LenisSmoothScrollProvider from '../providers/LenisSmoothScrollProvider'
 import { Toaster } from 'react-hot-toast'
 import ErrorPage from '../components/ErrorPage'
 import NotFoundPage from '../components/NotFoundPage'
+import LenisSmoothScrollProvider from '../providers/LenisSmoothScrollProvider'
+import appCss from '../styles.css?url'
+import type { QueryClient } from '@tanstack/react-query'
 import { AuthProvider } from '@/lib/auth'
 import { AppPrivyProvider } from '@/lib/privy'
-
-import appCss from '../styles.css?url'
-
-import type { QueryClient } from '@tanstack/react-query'
 
 interface MyRouterContext {
   queryClient: QueryClient
@@ -35,6 +33,9 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
         content:
           'Pips makes trading simple, intuitive, and addictive, like a game. A gamified trading console on Sui.',
       },
+      // Pips owns its dark palette. Extension-level recoloring can force the live Canvas/WebGL
+      // game surfaces through an expensive full-page filter on every frame.
+      { name: 'darkreader-lock', content: '' },
       { name: 'theme-color', content: '#000000' },
       // Social previews
       { property: 'og:title', content: 'Pips' },

@@ -8,7 +8,6 @@ import {
   MIN_STAKE,
   MAX_STAKE,
   GAME_DURATIONS,
-  ORACLE_LIFETIME_MS,
 } from '../config/main-config.ts';
 import {
   DUSDC_DECIMALS,
@@ -18,9 +17,9 @@ import {
   usd1e9,
   multiplier as multiplierOf,
 } from '../lib/sui/config.ts';
-import { liveByAsset, nearestOracle, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
+import { liveByAsset, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
 import {
-  previewMint,
+  previewBinaryBatch,
   previewRange,
   readOracle,
   type BinaryParams,
@@ -28,7 +27,7 @@ import {
   type Side,
   type TradeAmounts,
 } from '../lib/sui/predict.ts';
-import { solveStrike, type PreviewFn } from '../lib/sui/solver.ts';
+import { solveStrike, type BatchPreviewFn } from '../lib/sui/solver.ts';
 import { newSeed, seedFloat, pickTier } from './rng.ts';
 
 // === Errors ===
@@ -83,6 +82,14 @@ function pickMarket(asset: string): Market {
   const m = live[0];
   if (!m) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
   return m;
+}
+
+// The live oracle for an asset with the most life left. LUCKY routes here so the batched solve
+// plus the mint always finish with margin to spare, never against an oracle about to expire.
+function longestLivedOracle(asset: string): Market | undefined {
+  const live = liveByAsset(asset, now(), EXPIRY_SAFETY_MS);
+  if (live.length === 0) return undefined;
+  return live.reduce((best, m) => (m.expiryMs > best.expiryMs ? m : best));
 }
 
 export function liveAssets(): string[] {
@@ -232,57 +239,69 @@ export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
   const tier = pickTier(seedFloat(seed, 2)); // slot-weighted reel deal (LUCKY.md §4)
 
-  const ts = now();
-  const market = nearestOracle(asset, ts, ts + ORACLE_LIFETIME_MS, EXPIRY_SAFETY_MS);
-  if (!market) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
-  await freshSpot(market); // freshness gate: throws ORACLE_STALE if the oracle price is stale
-  const g = gridOf(market);
+  // Route to the longest-lived oracle and solve in a few batched round trips. The asset/side/tier
+  // are fixed by the seed (fairness); only the oracle is re-picked if the first one expires
+  // mid-solve, which the batched preview surfaces as a thrown error.
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const market = longestLivedOracle(asset);
+    if (!market) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
+    const g = gridOf(market);
 
-  const preview: PreviewFn = (strike1e9, quantity) =>
-    previewMint({ oracleId: market.oracleId, expiryMs: market.expiryMs, strike1e9, side, quantity });
+    // One batched devInspect per solver round. cost == 0 means that strike is unmintable.
+    const preview: BatchPreviewFn = async (probes) => {
+      const amts = await previewBinaryBatch(market.oracleId, market.expiryMs, side, probes);
+      return amts.map((a) => (a.cost > 0n ? a : null));
+    };
 
-  let solution;
-  try {
-    solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview });
-  } catch (e) {
-    throw new PlayError('MINT_FAILED', `Could not price this play: ${e instanceof Error ? e.message : e}`);
+    try {
+      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview });
+      if (solution.clamped) {
+        // Dealt tier was past the live ask bounds; we minted the closest achievable one and report it.
+        console.log(
+          `[Lucky] ${asset} ${side} ${tier}x unreachable, solved ${solution.multiplier.toFixed(2)}x (tier ${solution.achievedTier}x)`,
+        );
+      }
+      // The round runs to the routed oracle's expiry, so the UI countdown matches the real settle.
+      const duration = Math.max(1, Math.round((market.expiryMs - now()) / 1000));
+      return {
+        kind: 'binary',
+        game: 'lucky',
+        market,
+        params: { oracleId: market.oracleId, expiryMs: market.expiryMs, strike1e9: solution.strike1e9, side, quantity: solution.quantity },
+        asset,
+        side,
+        tier: solution.achievedTier,
+        duration,
+        strikeDisplay: fmt1e9(solution.strike1e9),
+        entryCost: solution.entryCost,
+        maxPayout: solution.quantity,
+        multiplier: solution.multiplier,
+        seed,
+      };
+    } catch (e) {
+      lastErr = e;
+      // First failure re-routes to a fresh oracle (the old one likely expired mid-solve); a
+      // second failure is real, surface it as a friendly price error.
+      if (attempt === 0) continue;
+      throw new PlayError('MINT_FAILED', `Could not price this play: ${e instanceof Error ? e.message : e}`);
+    }
   }
-  if (solution.clamped) {
-    // Dealt tier was past the live ask bounds; we minted the closest achievable one and report it.
-    console.log(
-      `[Lucky] ${asset} ${side} ${tier}x unreachable, solved ${solution.multiplier.toFixed(2)}x (tier ${solution.achievedTier}x)`,
-    );
-  }
-
-  // The round runs to the routed oracle's expiry, so the UI countdown matches the real settle.
-  const duration = Math.max(1, Math.round((market.expiryMs - ts) / 1000));
-
-  return {
-    kind: 'binary',
-    game: 'lucky',
-    market,
-    params: { oracleId: market.oracleId, expiryMs: market.expiryMs, strike1e9: solution.strike1e9, side, quantity: solution.quantity },
-    asset,
-    side,
-    tier: solution.achievedTier,
-    duration,
-    strikeDisplay: fmt1e9(solution.strike1e9),
-    entryCost: solution.entryCost,
-    maxPayout: solution.quantity,
-    multiplier: solution.multiplier,
-    seed,
-  };
+  throw new PlayError('MINT_FAILED', `Could not price this play: ${lastErr instanceof Error ? lastErr.message : lastErr}`);
 }
 
-// Range: the knob's band width sets [lower, upper] around spot; tighter pays more.
-export async function resolveRange(stakeRaw: bigint, asset: string, widthPct: number, duration: number): Promise<ResolvedRange> {
-  if (!GAME_DURATIONS.includes(duration)) throw new PlayError('INVALID_PARAMS', 'Unsupported round duration');
+// Range: the knob's band width sets [lower, upper] around spot; tighter pays more. The round
+// holds to the routed oracle's real expiry and settles to a true win/lose (inside the band pays
+// $1*qty spread-free, else 0), so the duration is the oracle's time-to-expiry, never a client
+// choice. An early cash-out still exits at the live mark whenever the player wants.
+export async function resolveRange(stakeRaw: bigint, asset: string, widthPct: number): Promise<ResolvedRange> {
   if (!(widthPct > 0) || widthPct > 10) throw new PlayError('INVALID_PARAMS', 'Band width out of range');
 
   const market = pickMarket(asset);
   const spot = await freshSpot(market);
   const g = gridOf(market);
   const { lower, higher } = rangeBand(spot, widthPct, g);
+  const duration = Math.max(1, Math.round((market.expiryMs - now()) / 1000));
 
   const mk = (q: bigint): RangeParams => ({ oracleId: market.oracleId, expiryMs: market.expiryMs, lower1e9: lower, higher1e9: higher, quantity: q });
   const { quantity, amounts } = await solveQuantity((q) => previewRange(mk(q)), stakeRaw);

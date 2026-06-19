@@ -65,15 +65,20 @@ export async function executeForUser(tx: Transaction, ctx: UserContext): Promise
   if (!ctx.walletId || !ctx.publicKey) {
     throw new Error('privy play: user wallet not provisioned (missing walletId / publicKey)');
   }
+  const _t = performance.now();
+  const _l = (s: string) => { try { require('fs').appendFileSync('/tmp/pips-bench.log', `  [exec] ${s}: +${(performance.now() - _t).toFixed(0)}ms\n`); } catch {} };
   tx.setSender(ctx.address);
   const txBytes = await tx.build({ client: suiClient });
+  _l('build');
   const signature = await signSuiTxWithPrivy({ walletId: ctx.walletId, publicKey: ctx.publicKey, txBytes });
+  _l('privy-sign');
 
   const res = await suiClient.executeTransactionBlock({
     transactionBlock: txBytes,
     signature,
     options: { showEffects: true, showObjectChanges: true },
   });
+  _l('submit');
   if (res.effects?.status?.status !== 'success') {
     throw new Error(`privy play failed: ${JSON.stringify(res.effects?.status ?? res)}`);
   }

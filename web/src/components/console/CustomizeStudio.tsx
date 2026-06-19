@@ -15,11 +15,17 @@ import { cnm } from '@/utils/style'
 
 export function CustomizeStudio({
   initialThemeId,
-  onDone,
+  visible = true,
+  active = true,
+  onCommit,
+  onOutroComplete,
   onCancel,
 }: {
   initialThemeId: string
-  onDone: (themeId: string) => void
+  visible?: boolean
+  active?: boolean
+  onCommit: (themeId: string) => void
+  onOutroComplete: () => void
   onCancel: () => void
 }) {
   const reduced = useReducedMotion()
@@ -27,8 +33,7 @@ export function CustomizeStudio({
   // Once Done is tapped the device plays its snap-to-screen + power-on; the chrome bows out and
   // taps are locked until the canvas reports the outro is finished.
   const [exiting, setExiting] = useState(false)
-  // Let the workshop paint (and the old games canvas dispose) one beat before the heavy WebGL build,
-  // so the device drops cleanly into the bench instead of janking the first frames of its intro.
+  // Let the workshop paint one beat before the prepared WebGL view mounts.
   const [ready, setReady] = useState(reduced)
   const theme = THEME_BY_ID[selectedId] ?? THEMES[0]
 
@@ -58,10 +63,18 @@ export function CustomizeStudio({
     haptic('success')
     setReady(true) // make sure the canvas is mounted so the outro can play + report completion
     setExiting(true)
+    onCommit(selectedId)
   }
 
   return (
-    <div className="absolute inset-0 overflow-hidden">
+    <div
+      className="absolute inset-0 z-20 overflow-hidden"
+      style={{
+        opacity: visible ? 1 : 0,
+        pointerEvents: visible ? undefined : 'none',
+      }}
+      aria-hidden={!visible}
+    >
       <WorkshopBackdrop />
 
       {/* The floating device. Transparent canvas → the workshop shows around it. Mounted a beat late
@@ -69,9 +82,10 @@ export function CustomizeStudio({
       {ready && (
         <ConsoleCanvas
           customize
+          active={active}
           theme={theme}
           outro={exiting}
-          onOutroComplete={() => onDone(selectedId)}
+          onOutroComplete={onOutroComplete}
         />
       )}
 

@@ -6,13 +6,16 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 
+import type { UserDTO } from '@/lib/api'
 import { env } from '@/env'
-import { api, ApiError, setAuthToken, type UserDTO } from '@/lib/api'
-import { isDemo, demoUser } from '@/lib/demo'
+import { ApiError, api, setAuthToken } from '@/lib/api'
+import { demoUser, isDemo } from '@/lib/demo'
 import { setHapticsEnabled } from '@/lib/haptics'
 import { setSoundEnabled } from '@/lib/sound'
+import { readWalletBalances } from '@/lib/sui/predict'
 
 const TOKEN_KEY = 'pips_token'
+const WALLET_DEBUG_INTERVAL_MS = 30_000
 export const loadToken = (): string | null => {
   if (typeof window === 'undefined') return null
   try {
@@ -105,8 +108,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (privyControl.current) await privyControl.current.signIn()
   }, [apply, devLogin])
 
-  const signOut = useCallback(() => {
-    if (isPrivy && privyControl.current) void privyControl.current.signOut()
+  const signOut = useCallback(async () => {
+    // Await Privy's logout so the session is fully cleared before the door shows again. Fire-and-forget
+    // left Privy still authenticated, so the next login skipped the modal and the bridge silently
+    // re-authed the same account. Then drop our app session.
+    if (isPrivy && privyControl.current) {
+      try {
+        await privyControl.current.signOut()
+      } catch (e) {
+        console.error('[auth] privy logout failed', e)
+      }
+    }
     saveToken(null)
     setAuthToken(null)
     setUser(null)
@@ -121,6 +133,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setSoundEnabled(user?.settings.sound ?? true)
   }, [user?.settings.sound])
+
+  const address = user?.address
+  useEffect(() => {
+    if (!address || isDemo()) return
+
+    let active = true
+    let reading = false
+
+    const logWallet = async () => {
+      if (reading) return
+      reading = true
+      try {
+        const balances = await readWalletBalances(address)
+        if (!active) return
+        console.info(
+          `[Pips wallet]\nAddress: ${address}\nSUI: ${balances.sui}\nUSDC: ${balances.usdc ?? 'not configured'}\nUpdated: ${new Date().toISOString()}`,
+        )
+      } catch (error) {
+        if (active) console.warn(`[Pips wallet] Failed to read balances for ${address}`, error)
+      } finally {
+        reading = false
+      }
+    }
+
+    void logWallet()
+    const interval = window.setInterval(() => void logWallet(), WALLET_DEBUG_INTERVAL_MS)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+    }
+  }, [address])
 
   useEffect(() => {
     if (started.current) return

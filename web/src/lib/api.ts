@@ -95,9 +95,6 @@ export type PlayResult = { play: PlayDTO }
 export type CashoutResult = { play: PlayDTO; unlocked: string[] }
 export interface PrivyVerifyInput {
   token: string
-  address: string
-  publicKey: string
-  walletId: string
   email?: string
 }
 

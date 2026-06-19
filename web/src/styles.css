@@ -163,6 +163,21 @@
     transform: scale(0.97);
   }
 
+  /* The destructive counterpart to the amber commit button. */
+  .btn-danger {
+    background: linear-gradient(180deg, #ff766a 0%, #e83e32 100%);
+    color: #260604;
+    font-weight: 700;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.38),
+      inset 0 -2px 0 rgba(103, 14, 9, 0.46),
+      0 2px 0 rgba(76, 9, 6, 0.72),
+      0 10px 20px -18px rgba(0, 0, 0, 1);
+  }
+  .btn-danger:active {
+    transform: scale(0.97);
+  }
+
   /* Toggle: a small physical slider, beveled with inset light instead of glow. */
   .pips-switch-control {
     position: relative;
@@ -266,6 +281,20 @@
       inset 0 0 54px rgba(0, 0, 0, 0.74);
   }
 
+  .console-screen-content {
+    position: absolute;
+    inset: 0;
+    opacity: 1;
+    transition: opacity 420ms cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: opacity;
+  }
+
+  .console-screen-content[data-visible='false'] {
+    pointer-events: none;
+    opacity: 0;
+    transition-duration: 120ms;
+  }
+
   .console-screen-surface :where(
     .text-text,
     .text-text-2,
@@ -320,6 +349,12 @@
       inset 16px 0 32px rgba(0, 0, 0, 0.32),
       inset -16px 0 32px rgba(0, 0, 0, 0.32),
       inset 0 0 54px rgba(0, 0, 0, 0.6);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .console-screen-content {
+      transition: none;
+    }
   }
 
   .surface-skeuo {
@@ -475,18 +510,30 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
    reliably start a transition in Chromium. data-closing on the drawer root drives both layers. */
 .drawer-sheet {
   animation: drawer-rise 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform;
 }
 
 .drawer-scrim {
   animation: scrim-in 420ms ease both;
+  will-change: opacity;
 }
 
 [data-closing] .drawer-sheet {
-  animation: drawer-fall 300ms cubic-bezier(0.32, 0, 0.67, 0) forwards;
+  animation: drawer-fall 440ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
 }
 
 [data-closing] .drawer-scrim {
-  animation: scrim-out 260ms ease forwards;
+  animation: scrim-out 400ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+/* Full-screen launches build their destination beneath the drawer as it leaves. The shorter exit
+   exposes that prepared surface quickly without turning every normal menu close into a fast cut. */
+[data-closing][data-launching] .drawer-sheet {
+  animation-duration: 320ms;
+}
+
+[data-closing][data-launching] .drawer-scrim {
+  animation-duration: 280ms;
 }
 
 @keyframes drawer-rise {
@@ -560,6 +607,36 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
 @media (prefers-reduced-motion: reduce) {
   .app-loading-screen-leaving {
     animation-duration: 0.001ms;
+  }
+}
+
+/* Desktop ambient: the device floats on a slow diagonal grid of Pips-logo tiles. The tiles carry the
+   native #222222 pattern; a slightly darker base shows through each tile's transparent gutter (~8px),
+   which reads as the grid lines. The field translates by exactly one cell, so the loop is seamless. */
+.pips-surround {
+  position: absolute;
+  /* Oversize on every side so the diagonal drift never exposes a bare edge. */
+  top: -440px;
+  right: -760px;
+  bottom: -440px;
+  left: -760px;
+  background-color: #161616; /* the grid-line color showing through the 8px gaps between tiles */
+  background-image: url('/assets/images/pips-tile.svg');
+  background-repeat: repeat;
+  background-size: 728px 414px; /* one cell = tile + gutter; the gutter reads as the grid line */
+  animation: pips-drift 60s linear infinite;
+  will-change: transform;
+}
+
+@keyframes pips-drift {
+  to {
+    transform: translate3d(728px, 414px, 0); /* exactly one cell, so the grid loops seamlessly */
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pips-surround {
+    animation: none;
   }
 }
 

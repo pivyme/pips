@@ -112,13 +112,13 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
   }
 
   if (game === 'range') {
+    // The round holds to the routed oracle's real expiry, so the client sends no duration.
     const widthPct = Number(body.widthPct);
-    const duration = Number(body.duration);
     const asset = String(body.asset ?? '');
-    if (!asset || !Number.isFinite(widthPct) || !Number.isFinite(duration)) {
-      throw new PlayError('INVALID_PARAMS', 'Pick an asset, band width, and duration');
+    if (!asset || !Number.isFinite(widthPct)) {
+      throw new PlayError('INVALID_PARAMS', 'Pick an asset and band width');
     }
-    return { game, stake, asset, widthPct, duration };
+    return { game, stake, asset, widthPct };
   }
 
   // tap

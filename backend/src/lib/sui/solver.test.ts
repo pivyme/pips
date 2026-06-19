@@ -5,9 +5,9 @@
 
 import { describe, expect, it } from 'bun:test';
 
-import { solveStrike, LUCKY_TIERS, type Grid, type PreviewFn } from './solver.ts';
+import { solveStrike, LUCKY_TIERS, type Grid, type BatchPreviewFn } from './solver.ts';
 import { usd1e9, toDusdcRaw } from './math.ts';
-import type { Side } from './predict.ts';
+import type { Side, TradeAmounts } from './predict.ts';
 
 const TICK = usd1e9(1); // $1 tick
 const SPOT = usd1e9(100); // $100 spot
@@ -17,18 +17,20 @@ const BET = toDusdcRaw(10); // $10 bet
 // Model the binary ITM probability as a logistic of the strike's distance from spot, so the
 // per-unit multiple (1 / ask, ask = ITM probability) is monotonic in the strike for each side:
 // up pays bigger the further the strike is ABOVE spot, down the further BELOW. An optional ask
-// floor makes deep-OTM strikes unmintable, which is how we exercise the fallback path.
-function mockPreview(side: Side, opts: { k?: number; mintFloorAsk?: number } = {}): PreviewFn {
+// floor makes deep-OTM strikes unmintable (null), which is how we exercise the fallback path.
+// Batched: the solver hands a list of probes and gets results aligned to it, one round trip.
+function mockPreview(side: Side, opts: { k?: number; mintFloorAsk?: number } = {}): BatchPreviewFn {
   const k = opts.k ?? 8;
   const floor = opts.mintFloorAsk ?? 0;
-  return async (strike1e9, quantity) => {
+  const one = (strike1e9: bigint, quantity: bigint): TradeAmounts | null => {
     const x = Number(strike1e9 - SPOT) / Number(SPOT); // relative distance from spot
     const z = (side === 'up' ? -1 : 1) * k * x;
     const ask = 1 / (1 + Math.exp(-z)); // ITM probability in (0, 1); multiple = 1 / ask
-    if (ask < floor) return { cost: 0n, payout: 0n }; // outside ask bounds -> unmintable
+    if (ask < floor) return null; // outside ask bounds -> unmintable
     const cost = (BigInt(Math.round(ask * 1e9)) * quantity) / 1_000_000_000n; // mulScaled(ask, qty)
     return { cost, payout: quantity };
   };
+  return async (probes) => probes.map((p) => one(p.strike1e9, p.quantity));
 }
 
 describe('solveStrike: grid-strike selection', () => {

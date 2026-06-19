@@ -59,7 +59,7 @@ const ALL: ReadonlyArray<GameDef> = [...GAMES, ...MINIGAMES]
 const pad2 = (n: number): string => String(n).padStart(2, '0')
 const shortAddr = (a: string): string => (a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a)
 
-function GamesConsole() {
+export function GamesConsole() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const reduced = useReducedMotion()

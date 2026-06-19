@@ -72,6 +72,10 @@ export function suiAddressForPublicKey(publicKey: string): string {
 
 export type ProvisionedWallet = { walletId: string; address: string; publicKey: string };
 
+// Privy's external_id only accepts [A-Za-z0-9_-], but a Privy DID is `did:privy:<id>` (colons), so
+// map the disallowed chars out. The result is stable and 1:1, so it stays a unique idempotency tag.
+const toExternalId = (id: string): string => id.replace(/[^a-zA-Z0-9_-]/g, '_');
+
 // Provision a server-controlled embedded Sui wallet, owned by the app's authorization key so the
 // server can rawSign for it. This is the headless path: the Phase 12 spike and any automated test of
 // the privy signing branch use it instead of a browser login. In production the user creates their
@@ -82,8 +86,9 @@ export async function provisionServerSuiWallet(externalId?: string): Promise<Pro
   if (!PRIVY_AUTHORIZATION_KEY_ID) {
     throw new Error('PRIVY_AUTHORIZATION_KEY_ID is not set (needed to own a server-provisioned wallet)');
   }
-  if (externalId) {
-    const existing = await findWalletByExternalId(externalId);
+  const tag = externalId ? toExternalId(externalId) : undefined;
+  if (tag) {
+    const existing = await findWalletByExternalId(tag);
     if (existing) return existing;
   }
   const wallet = await privy()
@@ -91,7 +96,7 @@ export async function provisionServerSuiWallet(externalId?: string): Promise<Pro
     .create({
       chain_type: 'sui',
       owner_id: PRIVY_AUTHORIZATION_KEY_ID,
-      ...(externalId ? { external_id: externalId } : {}),
+      ...(tag ? { external_id: tag } : {}),
     });
   return toProvisioned(wallet);
 }

@@ -50,7 +50,7 @@ const sideLabel = (s: Side): string => (s === 'up' ? 'UP' : 'DOWN')
 const priceLabel = (p: number): string =>
   `$${p.toLocaleString('en-US', { maximumFractionDigits: p >= 1000 ? 0 : p >= 1 ? 2 : 4 })}`
 
-function LuckyScreen() {
+export function LuckyScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
 
@@ -84,6 +84,9 @@ function LuckyScreen() {
   const showStrike = play != null && (phase === 'spinning' || phase === 'open' || phase === 'cashing' || phase === 'result')
   const strike = play?.market.strike ? parseFloat(play.market.strike) : undefined
   const spinning = phase === 'spinning'
+  // Reels tumble from the instant SPIN is pressed through to the snap: the 'placing' wait (the
+  // server deal) and the 'spinning' window. This is what makes the multi-second deal feel instant.
+  const reelsCycling = phase === 'placing' || phase === 'spinning'
   const showReadouts = play != null && (phase === 'open' || phase === 'cashing' || phase === 'result')
   const multiplier = live?.multiplier ?? play?.multiplier ?? 0
   const value = live ? parseFloat(live.markValue) : bet
@@ -289,12 +292,13 @@ function LuckyScreen() {
                 </div>
 
                 <div className="grid grid-cols-3 gap-2">
-                  <Reel label="Asset" pool={REEL_ASSETS} target={lp?.asset} spinning={spinning} stopAt={SPIN_STOPS[0]} />
+                  <Reel label="Asset" pool={REEL_ASSETS} target={lp?.asset} cycling={reelsCycling} landing={spinning} stopAt={SPIN_STOPS[0]} />
                   <Reel
                     label="Up Down"
                     pool={DIR_POOL}
                     target={lp ? sideLabel(lp.side) : undefined}
-                    spinning={spinning}
+                    cycling={reelsCycling}
+                    landing={spinning}
                     stopAt={SPIN_STOPS[1]}
                     accent={lp?.side === 'up' ? 'up' : lp?.side === 'down' ? 'down' : undefined}
                   />
@@ -302,7 +306,8 @@ function LuckyScreen() {
                     label="Multiplier"
                     pool={MULT_POOL}
                     target={play ? fmtMult(play.multiplier) : undefined}
-                    spinning={spinning}
+                    cycling={reelsCycling}
+                    landing={spinning}
                     stopAt={SPIN_STOPS[2]}
                     accent="amber"
                   />
@@ -383,21 +388,25 @@ function LuckyScreen() {
   )
 }
 
-// One reel. While spinning it flickers through its pool, then snaps to the dealt target at its stop
-// time with a haptic tick. The stagger across the three reels is the slot feel. Flat, sharp-cornered,
-// opaque so it reads where it floats over the live chart (docs/SCREEN.md, no rounded cards).
+// One reel. It flickers through its pool the whole time the deal is in flight (`cycling`, which
+// covers both the server round trip and the spin window), so SPIN feels instant even while the
+// backend resolves. Once the play lands and the reels are `landing`, it snaps to the dealt target
+// at its staggered stop time with a haptic tick. Flat, sharp-cornered, opaque so it reads over the
+// live chart (docs/SCREEN.md, no rounded cards).
 function Reel({
   label,
   pool,
   target,
-  spinning,
+  cycling,
+  landing,
   stopAt,
   accent,
 }: {
   label: string
   pool: string[]
   target?: string
-  spinning: boolean
+  cycling: boolean
+  landing: boolean
   stopAt: number
   accent?: 'amber' | 'up' | 'down'
 }) {
@@ -406,7 +415,10 @@ function Reel({
   poolRef.current = pool
 
   useEffect(() => {
-    if (!spinning || !target) return
+    if (!cycling) {
+      setShown(target ?? '—')
+      return
+    }
     let stopped = false
     const iv = setInterval(() => {
       if (!stopped) {
@@ -414,28 +426,28 @@ function Reel({
         setShown(p[Math.floor(Math.random() * p.length)])
       }
     }, 60)
-    const to = setTimeout(() => {
-      stopped = true
-      clearInterval(iv)
-      setShown(target)
-      haptic('rigid')
-    }, stopAt)
+    // Only schedule the snap once we know the dealt target and the spin window has begun.
+    const to =
+      landing && target
+        ? setTimeout(() => {
+            stopped = true
+            clearInterval(iv)
+            setShown(target)
+            haptic('rigid')
+          }, stopAt)
+        : undefined
     return () => {
       clearInterval(iv)
-      clearTimeout(to)
+      if (to) clearTimeout(to)
     }
-  }, [spinning, target, stopAt])
-
-  useEffect(() => {
-    if (!spinning) setShown(target ?? '—')
-  }, [spinning, target])
+  }, [cycling, landing, target, stopAt])
 
   const tone =
     accent === 'amber' ? 'text-brand-500' : accent === 'up' ? 'text-up' : accent === 'down' ? 'text-down' : 'text-text'
   return (
     <div className="flex flex-col items-center gap-1 border border-line-strong bg-black px-2 py-2.5">
       <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-text-3">{label}</span>
-      <span className={cnm('tnum text-[19px] font-extrabold leading-none', spinning ? 'text-text-2' : tone)}>{shown}</span>
+      <span className={cnm('tnum text-[19px] font-extrabold leading-none', cycling ? 'text-text-2' : tone)}>{shown}</span>
     </div>
   )
 }

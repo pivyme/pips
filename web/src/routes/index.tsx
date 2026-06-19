@@ -50,6 +50,15 @@ function Landing() {
     if (status === 'authed' && (connecting || isPrivy)) enter()
   }, [status, connecting, isPrivy, enter])
 
+  // Sign-in failed (e.g. the verify handshake errored): drop the spinner so the door is usable
+  // again instead of hanging on "Signing you in..." forever.
+  useEffect(() => {
+    if (status === 'error') {
+      setConnecting(false)
+      toast.error('Could not sign you in. Try again.')
+    }
+  }, [status])
+
   const onCta = useCallback(async () => {
     haptic('rigid')
     if (status === 'authed') {

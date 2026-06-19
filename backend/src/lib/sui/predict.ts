@@ -220,6 +220,43 @@ export const previewMint = (p: BinaryParams): Promise<TradeAmounts> =>
   tradeAmounts((tx) => binaryKey(tx, p), 'get_trade_amounts', p.oracleId, p.quantity);
 export const previewRedeem = previewMint;
 
+// Batch many binary previews into ONE devInspect. Every probe shares the oracle/side/expiry;
+// each carries its own (strike, quantity). The whole solver curve comes back in a single round
+// trip, which is the difference between a ~2s and a ~13s solve over the remote node (each
+// devInspect is ~1s of node compute + network there). Safe to batch because get_trade_amounts
+// has no per-strike abort: the only gate is the shared assert_quoteable_oracle, so the call
+// aborts as a whole iff the oracle is no longer quoteable (expired/inactive/stale), which is the
+// signal to re-route, not a partial result. Throws on a non-success devInspect so the caller can
+// detect an expired oracle. cost == 0 means unmintable (price rounded to zero / outside bounds).
+export async function previewBinaryBatch(
+  oracleId: string,
+  expiryMs: number,
+  side: Side,
+  probes: Array<{ strike1e9: bigint; quantity: bigint }>,
+): Promise<TradeAmounts[]> {
+  if (probes.length === 0) return [];
+  const tx = new Transaction();
+  // Each probe is two commands: build the market key, then read the trade amounts. Command k
+  // pairs are interleaved [key0, getter0, key1, getter1, ...], so the getter result for probe i
+  // lands at result index 2*i+1.
+  for (const p of probes) {
+    const key = binaryKey(tx, { oracleId, expiryMs, strike1e9: p.strike1e9, side, quantity: p.quantity });
+    tx.moveCall({
+      target: target('predict', 'get_trade_amounts'),
+      arguments: [tx.object(PREDICT_ID), tx.object(oracleId), key, tx.pure.u64(p.quantity), tx.object(CLOCK)],
+    });
+  }
+  const res = await suiClient.devInspectTransactionBlock({ sender: operatorAddress, transactionBlock: tx });
+  if (res.effects?.status?.status !== 'success') {
+    throw new Error(`batch preview failed: ${res.effects?.status?.error ?? 'devInspect error'}`);
+  }
+  return probes.map((_, i) => {
+    const rv = res.results?.[2 * i + 1]?.returnValues;
+    if (!rv || rv.length < 2) throw new Error('batch preview returned no amounts');
+    return { cost: decodeU64(rv[0][0] as number[]), payout: decodeU64(rv[1][0] as number[]) };
+  });
+}
+
 export const previewRange = (p: RangeParams): Promise<TradeAmounts> =>
   tradeAmounts((tx) => rangeKey(tx, p), 'get_range_trade_amounts', p.oracleId, p.quantity);
 
@@ -272,5 +309,16 @@ export const buildRedeemPermissionless = (tx: Transaction, managerId: string, p:
     target: target('predict', 'redeem_permissionless'),
     typeArguments: [DUSDC_TYPE],
     arguments: [tx.object(PREDICT_ID), tx.object(managerId), tx.object(p.oracleId), binaryKey(tx, p), tx.pure.u64(p.quantity), tx.object(CLOCK)],
+  });
+};
+
+// The range twin of buildRedeemPermissionless: settled-only sweep of a range position into a
+// user's manager with no owner check, so the operator settles expired in-the-money range plays
+// on the user's behalf in either auth mode.
+export const buildRedeemRangePermissionless = (tx: Transaction, managerId: string, p: RangeParams): void => {
+  tx.moveCall({
+    target: target('predict', 'redeem_range_permissionless'),
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(PREDICT_ID), tx.object(managerId), tx.object(p.oracleId), rangeKey(tx, p), tx.pure.u64(p.quantity), tx.object(CLOCK)],
   });
 };

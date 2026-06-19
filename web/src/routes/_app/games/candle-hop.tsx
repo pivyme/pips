@@ -23,7 +23,7 @@ type Phase = 'title' | 'playing' | 'over'
 const EMPTY_HUD: FlapHud = { score: 0, elapsed: 0, alive: false }
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US')
 
-function CandleHopScreen() {
+export function CandleHopScreen() {
   const { user } = useAuth()
   const reduced = useReducedMotion()
 

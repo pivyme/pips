@@ -312,7 +312,8 @@ async function main(): Promise<void> {
           side,
           tierMultiplier: tier,
           betRaw,
-          preview: (strike1e9, quantity) => previewMint({ oracleId, expiryMs: m.expiryMs, strike1e9, side, quantity }),
+          preview: async (probes) =>
+            Promise.all(probes.map((p) => previewMint({ oracleId, expiryMs: m.expiryMs, strike1e9: p.strike1e9, side, quantity: p.quantity }))),
         });
         // Honest + mintable is the bar: a real grid strike, cost within the bet, a finite
         // multiple read off the live preview. Clamping to the nearest achievable tier is a
