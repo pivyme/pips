@@ -8,9 +8,9 @@ This repo is simple minded - no overengineering, no code poison, no early abstra
 
 ## Project Overview
 
-This is the **Pips** frontend: the gamified trading console. Pips makes trading simple, intuitive, and addictive, like a game, on Sui via DeepBook Predict. Read the root [`../CLAUDE.md`](../CLAUDE.md) for product context and the Sui stack, and [`../docs/DESIGN.md`](../docs/DESIGN.md) for the design language. This was forked from a React starter, so reframe anything still labeled "starter".
+This is the **Pips** frontend: the gamified trading console. Pips makes trading simple, intuitive, and addictive, like a game, on Sui via DeepBook Predict. Read the root [`../CLAUDE.md`](../CLAUDE.md) for product context and the Sui stack, [`../docs/DESIGN.md`](../docs/DESIGN.md) for the App Surface design language, [`../docs/SCREEN.md`](../docs/SCREEN.md) for the in-device screen language (the Teenage Engineering instrument style every `/games/*` screen follows), and [`../docs/FLOW.md`](../docs/FLOW.md) for the app flow (the surfaces, the on-device Home screen, the navigation map). This was forked from a React starter, so reframe anything still labeled "starter".
 
-**v1 build:** frontend work is planned in [`../bigdev/plans/`](../bigdev/plans/). Read `06-GAMES.md` (the three games + the 60fps chart, bound to the existing console controls), `07-DESIGN-SYSTEM.md` (screen states + verbatim copy; `../docs/DESIGN.md` is canonical), `05-SUI-PREDICT.md` (the thin client Predict wrapper), `04-AUTH.md` (dev + Enoki zkLogin), `02-API.md` (the backend contract). The console shell, Knob, `useConsoleControls`, and `Illo` are already built, do not rebuild them.
+**v1 build:** frontend work is planned in [`../bigdev/plans/`](../bigdev/plans/). Read `06-GAMES.md` (the three games + the 60fps chart, bound to the existing console controls), `07-DESIGN-SYSTEM.md` (screen states + verbatim copy; `../docs/DESIGN.md` is canonical), `05-SUI-PREDICT.md` (the thin client Predict wrapper), `LUCKY.md` §6 (dev + Privy auth, the current source of truth), `02-API.md` (the backend contract). The console shell, Knob, `useConsoleControls`, and `Illo` are already built, do not rebuild them.
 
 **Predict capability box (read before inventing a game mechanic):** the on-chain vocabulary is exactly two expiry-settled instruments, **binary up/down** and **vertical range**, both with live-bid early cash-out. No barrier/touch, no path-dependent or crash-style payoff, no in-Predict leverage, no fixed odds. The three games (Lucky, Range, Moonshot) all compose from those two. Full source-cited box in `../bigdev/plans/05-SUI-PREDICT.md` and the root [`../CLAUDE.md`](../CLAUDE.md).
 
@@ -33,17 +33,19 @@ The `/menu/*` routes use a native-style push/pop transition inside the persisten
 **Sui (verified mid 2026, reconfirm before coding):**
 - Core SDK `@mysten/sui` (v2.x, ESM only). PTBs use `Transaction` from `@mysten/sui/transactions` (renamed from `TransactionBlock`).
 - Wallet connect phase 1: `@suiet/wallet-kit` (`<WalletProvider>`, `<ConnectButton/>`, `useWallet`). The official standard is now the split `@mysten/dapp-kit-react` + `@mysten/dapp-kit-core`, both ride the same Wallet Standard.
-- zkLogin phase 2: Enoki `@mysten/enoki` (`/react`), registered into the wallet layer so Google login shows up as a connectable wallet.
-- Predict is hand-built PTBs via `@mysten/sui` against our own published predict package (the `@mysten/deepbook-v3` SDK has no Predict support). **Testnet only, ids unstable.** All Predict calls go through `src/lib/sui/predict.ts`; ids come from `src/lib/sui/config.ts` (fed by `env.ts`), never inline.
-- Env is typed/validated in `src/env.ts`. Add `VITE_SUI_NETWORK`, `VITE_ENOKI_API_KEY` etc there, import from `env.ts`, not `import.meta.env`.
+- Auth: **Privy** `@privy-io/react-auth` (+ `/extended-chains`). Google/email login + a non-custodial embedded ed25519 (Sui) wallet, driven by `src/lib/privy.tsx` (the provider + login -> wallet -> session-signer -> `/auth/privy/verify` bridge). Enoki/zkLogin is removed. Confirm the Privy API live, it moves fast.
+- Predict is hand-built PTBs via `@mysten/sui` against our own published predict package (the `@mysten/deepbook-v3` SDK has no Predict support). **Runs on our own Sui localnet (`https://rpc.playpips.fun`), not testnet; ids are per-deployment, never hardcode.** All Predict calls go through `src/lib/sui/predict.ts`; ids come from `src/lib/sui/config.ts` (fed by `env.ts`), never inline. `VITE_SUI_NETWORK=localnet` + `VITE_SUI_FULLNODE_URL` point the browser at the live node; the localnet itself is set up via `scripts/localnet.sh` at the repo root.
+- Env is typed/validated in `src/env.ts`. Add `VITE_SUI_NETWORK`, `VITE_PRIVY_APP_ID` etc there, import from `env.ts`, not `import.meta.env`.
 - **Bun + WASM gotcha:** the Sui crypto stack pulls WASM and `vite-plugin-wasm` can fail when the Vite dev server runs through Bun. If you hit a WASM load error, run the dev server on Node (bun stays the package manager).
 
 ## The console screen (the L-shaped aperture)
 
+**Visual language first:** everything that renders inside the screen (Home + all games) follows [`../docs/SCREEN.md`](../docs/SCREEN.md), the Teenage Engineering instrument style: flat true-black, electric high-contrast ink, hairline rules and full-bleed fills (no rounded cards, no `card-neo`, no domed surfaces, no blur, no emoji), mono uppercase micro-labels over big bold tabular numbers, one amber active accent, green/red for facts. **That is a different language from the App Surface / menu drawer.** The Home screen (`routes/_app/games/index.tsx`) is the reference. Read SCREEN.md before designing or redesigning any `/games/*` screen. This section below is the **layout mechanics** of the aperture; SCREEN.md is the look.
+
 Game screens (`/games/*`) render as an HTML layer **behind** the 3D device and show through a cutout in the body. `ConsoleCanvas` projects that cutout on every resize and positions the layer onto it; the device body masks anything outside it. Treat the screen as a real, oddly shaped, **variable-height** display, not a plain rectangle. Three rules, always:
 
 - **The bottom-right is not screen.** The aperture is an L: full width at the top, but the bottom-right corner is the device body, where the knob and the main PLAY button physically sit. The bottom row is **left-only**, keep its content to about 60% width. Never place anything in the bottom-right, it is occluded by the body.
-- **Pad everything off the rim.** The beveled rim frames the screen, so content touching the edge reads as broken. Inset the screen content (at least `p-4`) on the top, the sides, and the notch-safe bottom-left. The chart may bleed full width, but text and readouts never touch an edge.
+- **Inset text off the rim with `var(--screen-rim)`, never a fixed px.** The beveled, rounded cutout edge overlaps the HTML layer, and it **scales with the device** (the screen is responsive), so any hardcoded pad (`p-4`, `p-6`) crops once the device grows. `ConsoleCanvas` publishes `--screen-rim` (a rim-safe inset in px, recomputed every resize) on the screen layer; pad text/readout zones with it (`p-[var(--screen-rim,24px)]`). The shared games layout (`components/game/screen.tsx` `GameStage`/`GameReadout`) already does this. Structural fills (the chart, hairline rules, a selected-row highlight) **bleed full width** and tuck under the rim, that is what reads edge-to-edge, terminal-style; only text insets.
 - **Height is responsive, never fixed.** The device stretches the screen taller to fill frames taller than its natural ratio (`ConsoleCanvas` `screenExt`, the control deck stays put). So lay the screen out as a vertical flex stack that absorbs the extra height in the **chart**, and never assume a pixel height.
 
 **The layout contract, three zones top to bottom:**
@@ -114,10 +116,11 @@ src/
 ├── ui/                       # HeroUI v3 wrappers + Illo (Button, Card, Modal, TextField, Tooltip, Switch)
 ├── lib/                      # Integrations + app logic
 │   ├── api.ts                # Typed backend client + SSE; the demo seam lives here
-│   ├── auth.tsx              # Auth context (dev auto-login / Enoki zkLogin)
+│   ├── auth.tsx              # Auth context (dev auto-login / Privy login)
+│   ├── privy.tsx             # Privy provider + login->wallet->verify bridge (privy mode)
 │   ├── demo.ts               # The ONE sanctioned in-memory sim (demo mode)
 │   ├── achievements.ts, haptics.ts, sound.ts, shareCard.ts, errors.ts, polyfills.ts
-│   └── sui/                  # predict.ts (the one Predict wrapper), config.ts (ids from env), enoki.ts
+│   └── sui/                  # predict.ts (the one Predict wrapper), config.ts (ids from env)
 ├── hooks/                    # useLocalStorage, useReducedMotion
 ├── utils/                    # style.ts (cnm), format.ts, motion.ts
 ├── integrations/             # tanstack-query root provider
@@ -135,7 +138,8 @@ src/
 | `src/components/console/ConsoleShell.tsx` | The CSS/DOM console shell |
 | `src/components/game/Chart.tsx` | The live price chart on the screen |
 | `src/lib/api.ts` | Typed backend client + SSE streams; the demo-mode seam |
-| `src/lib/auth.tsx` | Auth context (dev auto-login + Enoki zkLogin) |
+| `src/lib/auth.tsx` | Auth context (dev auto-login + Privy login) |
+| `src/lib/privy.tsx` | Privy provider + login->embedded-Sui-wallet->session-signer->verify bridge (privy mode) |
 | `src/lib/demo.ts` | The in-memory mock for demo mode (the only sim) |
 | `src/lib/sui/predict.ts` | The one client-side Predict wrapper. All Predict calls route here |
 | `src/lib/sui/config.ts` | Predict / package ids, read from `env.ts` (never inline) |

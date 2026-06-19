@@ -13,8 +13,8 @@
   --color-surface: #242424;
   --color-surface-2: #2d2d2c;
 
-  --color-line: rgba(255, 255, 255, 0.06);
-  --color-line-strong: rgba(255, 255, 255, 0.1);
+  --color-line: rgba(255, 255, 255, 0.09);
+  --color-line-strong: rgba(255, 255, 255, 0.16);
 
   --color-brand-300: #ffe08a;
   --color-brand-400: #ffd24a;
@@ -34,9 +34,11 @@
   --color-viz-cyan: #2de2d6;
   --color-viz-line: rgba(255, 255, 255, 0.05);
 
-  --color-text: #dfdfdf;
-  --color-text-2: #8c8c8c;
-  --color-text-3: #5e5e5e;
+  /* High contrast on pure black. Old greys (#8c8c8c / #5e5e5e) vanished on the
+     OLED screen, so secondary + tertiary are pushed up to stay readable. */
+  --color-text: #f2f2f2;
+  --color-text-2: #b6b6b6;
+  --color-text-3: #8a8a8a;
 
   --font-sans:
     'Gabarito Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
@@ -51,6 +53,7 @@
 
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
 }
 
 @layer base {
@@ -160,6 +163,21 @@
     transform: scale(0.97);
   }
 
+  /* The destructive counterpart to the amber commit button. */
+  .btn-danger {
+    background: linear-gradient(180deg, #ff766a 0%, #e83e32 100%);
+    color: #260604;
+    font-weight: 700;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.38),
+      inset 0 -2px 0 rgba(103, 14, 9, 0.46),
+      0 2px 0 rgba(76, 9, 6, 0.72),
+      0 10px 20px -18px rgba(0, 0, 0, 1);
+  }
+  .btn-danger:active {
+    transform: scale(0.97);
+  }
+
   /* Toggle: a small physical slider, beveled with inset light instead of glow. */
   .pips-switch-control {
     position: relative;
@@ -252,6 +270,93 @@
       inset 0 2px 10px rgba(0, 0, 0, 0.9);
   }
 
+  /* Shared powered-screen finish. The content stays crisp and flat; restrained
+     emissive ink, scanlines, edge falloff, and a cool glass reflection make the
+     black aperture read as a physical display rather than an empty cutout. */
+  .console-screen-surface {
+    isolation: isolate;
+    background: #000;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+      inset 0 0 54px rgba(0, 0, 0, 0.74);
+  }
+
+  .console-screen-content {
+    position: absolute;
+    inset: 0;
+    opacity: 1;
+    transition: opacity 420ms cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: opacity;
+  }
+
+  .console-screen-content[data-visible='false'] {
+    pointer-events: none;
+    opacity: 0;
+    transition-duration: 120ms;
+  }
+
+  .console-screen-surface :where(
+    .text-text,
+    .text-text-2,
+    .text-text-3,
+    .text-brand-500,
+    .text-up,
+    .text-down
+  ) {
+    text-shadow:
+      0.4px 0 rgba(115, 190, 255, 0.16),
+      -0.4px 0 rgba(255, 120, 105, 0.09),
+      0 0 5px color-mix(in srgb, currentColor 48%, transparent),
+      0 0 16px color-mix(in srgb, currentColor 20%, transparent);
+  }
+
+  .console-screen-surface svg {
+    filter: drop-shadow(
+      0 0 4px color-mix(in srgb, currentColor 30%, transparent)
+    );
+  }
+
+  .console-screen-surface::before,
+  .console-screen-surface::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+  }
+
+  .console-screen-surface::before {
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.012) 0,
+      rgba(255, 255, 255, 0.012) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+  }
+
+  .console-screen-surface::after {
+    inset: -1px;
+    z-index: 51;
+    border-radius: inherit;
+    background: radial-gradient(
+      106% 90% at 49% 44%,
+      transparent 54%,
+      rgba(0, 0, 0, 0.18) 72%,
+      rgba(0, 0, 0, 0.68) 100%
+    );
+    box-shadow:
+      inset 16px 0 32px rgba(0, 0, 0, 0.32),
+      inset -16px 0 32px rgba(0, 0, 0, 0.32),
+      inset 0 0 54px rgba(0, 0, 0, 0.6);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .console-screen-content {
+      transition: none;
+    }
+  }
+
   .surface-skeuo {
     background:
       linear-gradient(180deg, #111110 0%, #0d0d0d 56%, #090909 100%), #0d0d0d;
@@ -260,6 +365,37 @@
       inset 0 1px 0 #242422,
       inset 0 -1px 4px rgba(0, 0, 0, 0.46),
       0 1px 0 #050505;
+  }
+
+  /* Trader card. A bright amber handheld plate (the bezel) holding a recessed
+     dark screen (the window). Skeuo: top gloss, hard bottom lip, deep drop. */
+  .trader-bezel {
+    background: linear-gradient(180deg, #ffd550 0%, #ffc016 46%, #ef9f0a 100%);
+    border: 1px solid #d9990f;
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.6),
+      inset 0 -3px 1px rgba(120, 74, 0, 0.42),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+      0 2px 0 rgba(86, 55, 0, 0.7),
+      0 26px 50px -26px rgba(0, 0, 0, 0.95);
+  }
+
+  /* The recessed window: the brand backdrop under a scrim, sunk into the bezel. */
+  .trader-screen {
+    background:
+      linear-gradient(
+        180deg,
+        rgba(0, 0, 0, 0.46) 0%,
+        rgba(0, 0, 0, 0.3) 40%,
+        rgba(0, 0, 0, 0.64) 100%
+      ),
+      url('/assets/images/stats-bg.png') center / cover no-repeat,
+      #0a0a0a;
+    border: 1px solid rgba(0, 0, 0, 0.55);
+    box-shadow:
+      inset 0 3px 7px rgba(0, 0, 0, 0.7),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.05),
+      0 1px 0 rgba(255, 255, 255, 0.16);
   }
 
   /* Knurled knob face: fine repeated ridges, like a real control. */
@@ -366,17 +502,38 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
-/* The menu drawer rises on mount and drops on close. Both directions are compositor keyframes, so
-   the slide never touches the main thread: opening /menu briefly hands the main thread to the 3D
-   console, and a JS/rAF-gated animation would freeze off-screen through that. Keyframes keep gliding.
-   Close is its own keyframe (not a transition) because flipping transform in the same frame an
-   animation is cancelled won't reliably start a transition in Chromium. */
+/* The menu drawer rises on mount and drops on close, and the dim/blur scrim fades with it so the
+   backdrop never pops in or out. Both directions are compositor keyframes, so the slide never touches
+   the main thread: opening /menu briefly hands the main thread to the 3D console, and a JS/rAF-gated
+   animation would freeze off-screen through that. Keyframes keep gliding. Close is its own keyframe
+   (not a transition) because flipping transform in the same frame an animation is cancelled won't
+   reliably start a transition in Chromium. data-closing on the drawer root drives both layers. */
 .drawer-sheet {
   animation: drawer-rise 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform;
 }
 
-.drawer-sheet[data-closing='true'] {
-  animation: drawer-fall 240ms cubic-bezier(0.32, 0, 0.67, 0) forwards;
+.drawer-scrim {
+  animation: scrim-in 420ms ease both;
+  will-change: opacity;
+}
+
+[data-closing] .drawer-sheet {
+  animation: drawer-fall 440ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+[data-closing] .drawer-scrim {
+  animation: scrim-out 400ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+/* Full-screen launches build their destination beneath the drawer as it leaves. The shorter exit
+   exposes that prepared surface quickly without turning every normal menu close into a fast cut. */
+[data-closing][data-launching] .drawer-sheet {
+  animation-duration: 320ms;
+}
+
+[data-closing][data-launching] .drawer-scrim {
+  animation-duration: 280ms;
 }
 
 @keyframes drawer-rise {
@@ -397,9 +554,88 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scrim-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .drawer-sheet,
-  .drawer-sheet[data-closing='true'] {
+  .drawer-scrim,
+  [data-closing] .drawer-sheet,
+  [data-closing] .drawer-scrim {
+    animation: none;
+  }
+}
+
+.app-loading-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #000;
+  transform: translateY(0);
+}
+
+.app-loading-screen-leaving {
+  pointer-events: none;
+  animation: app-loading-screen-exit 520ms var(--ease-in-out-quart) forwards;
+  will-change: transform;
+}
+
+@keyframes app-loading-screen-exit {
+  to {
+    transform: translateY(-100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loading-screen-leaving {
+    animation-duration: 0.001ms;
+  }
+}
+
+/* Desktop ambient: the device floats on a slow diagonal grid of Pips-logo tiles. The tiles carry the
+   native #222222 pattern; a slightly darker base shows through each tile's transparent gutter (~8px),
+   which reads as the grid lines. The field translates by exactly one cell, so the loop is seamless. */
+.pips-surround {
+  position: absolute;
+  /* Oversize on every side so the diagonal drift never exposes a bare edge. */
+  top: -440px;
+  right: -760px;
+  bottom: -440px;
+  left: -760px;
+  background-color: #161616; /* the grid-line color showing through the 8px gaps between tiles */
+  background-image: url('/assets/images/pips-tile.svg');
+  background-repeat: repeat;
+  background-size: 728px 414px; /* one cell = tile + gutter; the gutter reads as the grid line */
+  animation: pips-drift 60s linear infinite;
+  will-change: transform;
+}
+
+@keyframes pips-drift {
+  to {
+    transform: translate3d(728px, 414px, 0); /* exactly one cell, so the grid loops seamlessly */
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pips-surround {
     animation: none;
   }
 }
@@ -407,6 +643,44 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
 @layer utilities {
   .tnum {
     font-variant-numeric: tabular-nums;
+  }
+  .loading-icon {
+    --loading-icon-size: 3rem;
+
+    display: inline-grid;
+    width: var(--loading-icon-size);
+    height: var(--loading-icon-size);
+    place-items: center;
+  }
+  .loading-icon-mark {
+    display: block;
+    height: 100%;
+    aspect-ratio: 395 / 567;
+  }
+  .loading-icon-eyes {
+    animation: loading-icon-eyes 4s var(--ease-in-out-quart) infinite;
+    will-change: transform;
+  }
+  @keyframes loading-icon-eyes {
+    0%,
+    12.5% {
+      transform: translate(0, 0);
+    }
+    25%,
+    37.5% {
+      transform: translate(-82px, 0);
+    }
+    50%,
+    62.5% {
+      transform: translate(-82px, -210px);
+    }
+    75%,
+    87.5% {
+      transform: translate(0, -210px);
+    }
+    100% {
+      transform: translate(0, 0);
+    }
   }
   /* Loading shimmer for skeletons. */
   .shimmer {
@@ -577,6 +851,7 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .loading-icon-eyes,
     .viz-spin,
     .viz-spin-fast,
     .viz-sweep,

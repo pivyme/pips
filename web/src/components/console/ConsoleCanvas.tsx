@@ -4,11 +4,23 @@ import * as THREE from 'three'
 import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
 import { createConsoleGui } from './consoleGui'
 import { createCustomizeGui } from './customizeGui'
-import { roundedRect, roundedPoly, frontZeroed, setBoxUVs, roundedRectPath, roundedPolyPath } from './consoleGeo'
-import { createButtons, createKnob, createNumberWheel } from './consoleElements'
+import {
+  roundedRect,
+  roundedPoly,
+  frontZeroed,
+  setBoxUVs,
+  roundedRectPath,
+  roundedPolyPath,
+} from './consoleGeo'
+import {
+  createButtons,
+  createKnob,
+  createNumberWheel,
+  createActionScreens,
+} from './consoleElements'
 import { createAudio } from './consoleAudio'
-import type { ConsoleView } from './controls'
-import type { ConsoleTheme } from './themes'
+import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
+import { themeBackdrop, type ConsoleTheme } from './themes'
 
 // The 3D handheld, driven by the console controls registry. A game registers its bindings via
 // useConsoleControls(); this paints live labels on the buttons + knob and dispatches the physical
@@ -18,7 +30,9 @@ import type { ConsoleTheme } from './themes'
 // Parsed logo SVG, cached for the page lifetime. The scene effect remounts on every debug/customize
 // toggle, so without this the back logo + the main button's embossed P would re-fetch and re-parse
 // async on each rebuild and pop in a few frames late. Parsed once, every later mount builds it sync.
-type SvgPaths = Parameters<NonNullable<Parameters<SVGLoader['load']>[1]>>[0]['paths']
+type SvgPaths = Parameters<
+  NonNullable<Parameters<SVGLoader['load']>[1]>
+>[0]['paths']
 let svgPathsCache: SvgPaths | null = null
 
 type HandlersRef = {
@@ -41,21 +55,30 @@ interface ConsoleCanvasProps {
   // front/back, and `theme` repaints the materials live. Mutually exclusive with debug.
   customize?: boolean
   theme?: ConsoleTheme
-  // Asset export (dev only): builds on customize (transparent bg, screen off) but freezes the device
-  // dead front-on with no intro/float, and keeps the drawing buffer readable so the canvas can be
-  // grabbed as a PNG. Used by the /export route to dump one transparent png per skin.
-  exportMode?: boolean
-  // Export pose in radians: x = pitch (tilt up/down), y = yaw (spin left/right). Lets the export route
-  // angle the device off dead front-on. Live applied, no scene rebuild.
-  exportRot?: { x: number; y: number }
   // Done sequence: flip `outro` true and the device snaps front-on to the exact game position with
   // the screen black, then `onOutroComplete` fires (the studio commits + leaves, and the game fades
   // its own screen content in).
   outro?: boolean
   onOutroComplete?: () => void
+  // Keep the physical screen black while destination content mounts, then fade only the HTML UI in.
+  screenContentVisible?: boolean
+  // A prepared customize canvas renders once while hidden, then resumes its intro when revealed.
+  active?: boolean
 }
 
-export default function ConsoleCanvas({ view, handlers, onNav, children, debug = false, customize = false, theme, outro = false, onOutroComplete, exportMode = false, exportRot }: ConsoleCanvasProps) {
+export default function ConsoleCanvas({
+  view,
+  handlers,
+  onNav,
+  children,
+  debug = false,
+  customize = false,
+  theme,
+  outro = false,
+  onOutroComplete,
+  screenContentVisible = true,
+  active = true,
+}: ConsoleCanvasProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hintRef = useRef<HTMLDivElement>(null)
@@ -66,26 +89,32 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
   propsRef.current = { handlers, onNav, onOutroComplete }
   const viewRef = useRef(view)
   viewRef.current = view
+  const activeRef = useRef(active)
+  activeRef.current = active
   // The scene exposes its label/state updater here; the [view] effect calls it.
-  const applyViewRef = useRef<(v?: ConsoleView) => void>(() => { })
+  const applyViewRef = useRef<(v?: ConsoleView) => void>(() => {})
   // Same pattern for the skin: the [theme] effect repaints the live materials, no rebuild.
-  const applyThemeRef = useRef<(t?: ConsoleTheme) => void>(() => { })
+  const applyThemeRef = useRef<(t?: ConsoleTheme) => void>(() => {})
   // And for the Done outro: the [outro] effect arms the snap-to-screen + power-on sequence.
-  const applyOutroRef = useRef<(on: boolean) => void>(() => { })
-  // Export sliders push the pose here without rebuilding the scene.
-  const applyExportRotRef = useRef<(x: number, y: number) => void>(() => { })
+  const applyOutroRef = useRef<(on: boolean) => void>(() => {})
+  const applyActiveRef = useRef<(on: boolean) => void>(() => {})
 
   useEffect(() => {
     const canvas = canvasRef.current
     const hint = hintRef.current
     if (!canvas || !hint) return
 
-    const CREAM = 0xe9dbbf, RED = 0xd63a2e, BLUE = 0x3568c9, YELLOW = 0xefc03b
+    const CREAM = 0xe9dbbf,
+      RED = 0xd63a2e,
+      BLUE = 0x3568c9,
+      YELLOW = 0xefc03b
 
     /* renderer */
-    // preserveDrawingBuffer lets the export route read the canvas as a PNG after a render. It carries a
-    // small perf cost, so only the dev export path turns it on; live play renders on demand without it.
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: exportMode })
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: true,
+    })
     renderer.setClearColor(0x000000, 0)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.shadowMap.enabled = true
@@ -127,7 +156,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     scene.add(fill)
 
     /* coord helpers — maps pixel coords from the original layout to world units */
-    const SCALE = 1 / 200, CX = 585, CY = 1155
+    const SCALE = 1 / 200,
+      CX = 585,
+      CY = 1155
     const wx = (px: number) => (px - CX) * SCALE
     const wy = (py: number) => (CY - py) * SCALE
 
@@ -136,29 +167,100 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const buttons = [
       // pad = gap between button edge and pocket rim on each side
       // pills share a wall so their pad is capped to avoid holes touching (~0.14 max before they'd merge)
-      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.15 },
-      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.15 },
-      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.15 },
-      { w: 0.98, h: 0.31, r: 0.15, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.1 },
-      { w: 1.02, h: 0.31, r: 0.15, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.1 },
+      {
+        w: 1.6,
+        h: 1.5,
+        r: 0.15,
+        depth: 1,
+        dx: 0,
+        dy: 0,
+        baseZ: 0.35,
+        pressedZ: 0.2,
+        pad: 0.15,
+      },
+      // the two action caps are thin, recessed screen panels: a metal bezel + acrylic mounts over them
+      // (createActionScreens), so they sit low and read as little LCDs behind the frame, not pillows.
+      // Wide cap + small pad so the screen fills the aperture and the bezel stays a slim rim; the hole
+      // (w + pad*2) is unchanged from the old 1.6/0.15, so the two pockets still clear each other.
+      // Both caps press to the same deep travel so the click reads on either one.
+      {
+        w: 1.72,
+        h: 1.62,
+        r: 0.15,
+        depth: 0.44,
+        dx: 0,
+        dy: 0,
+        baseZ: 0.16,
+        pressedZ: -0.03,
+        pad: 0.09,
+      },
+      {
+        // The right cap is the coin screen. Its emissive press flash is hidden under the opaque coin,
+        // so the coin itself dims on press instead (see the loop); same deep travel as the left cap.
+        w: 1.72,
+        h: 1.62,
+        r: 0.15,
+        depth: 0.44,
+        dx: 0,
+        dy: 0,
+        baseZ: 0.16,
+        pressedZ: -0.03,
+        pad: 0.09,
+      },
+      {
+        w: 0.98,
+        h: 0.31,
+        r: 0.15,
+        depth: 0.3,
+        dx: 0,
+        dy: 0,
+        baseZ: 0.2,
+        pressedZ: 0.15,
+        pad: 0.1,
+      },
+      {
+        w: 1.02,
+        h: 0.31,
+        r: 0.15,
+        depth: 0.3,
+        dx: 0,
+        dy: 0,
+        baseZ: 0.2,
+        pressedZ: 0.15,
+        pad: 0.1,
+      },
     ]
     // button pixel centers — kept here so buildBodyShape stays in sync with makeButton calls below
     const BTN_PX = [
-      { x: 965, y: 1490 }, { x: 200, y: 1840 }, { x: 589, y: 1840 },
-      { x: 150, y: 2150 }, { x: 425, y: 2150 },
+      { x: 965, y: 1490 },
+      { x: 200, y: 1840 },
+      { x: 589, y: 1840 },
+      { x: 150, y: 2150 },
+      { x: 425, y: 2150 },
     ]
     // knob pocket config — w/h must stay in sync with kp.height / kp.radius*2 below
     // cylinder is rotated on Z so from the front it reads as w=height, h=radius*2
     const knobPocket = { px: 975, py: 1960, w: 1, h: 2.4, r: 0.1, pad: 0.08 }
     // Compact number drum, aligned with the Menu / Games row. It owns stake selection while the
     // yellow wheel remains available for the active game's signature control.
-    const numberWheelPocket = { px: 690, py: 2140, w: 0.86, h: 0.82, r: 0.12, pad: 0.035 }
+    const numberWheelPocket = {
+      px: 690,
+      py: 2140,
+      w: 0.86,
+      h: 0.82,
+      r: 0.12,
+      pad: 0.035,
+    }
 
     // screen L-shape in pixel coords — mirrors screenPts used for the screen mesh
     // screenMesh.position.y = 0.13 is baked in here as a world-space offset before converting to body-local
     const SCREEN_PX = [
-      { x: 30, y: 1680 }, { x: 760, y: 1680 }, { x: 760, y: 1325 },
-      { x: 1140, y: 1325 }, { x: 1140, y: 30 }, { x: 30, y: 30 },
+      { x: 30, y: 1680 },
+      { x: 760, y: 1680 },
+      { x: 760, y: 1325 },
+      { x: 1140, y: 1325 },
+      { x: 1140, y: 30 },
+      { x: 30, y: 30 },
     ]
     const SCREEN_MESH_Y_OFFSET = 0.13
 
@@ -176,9 +278,12 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     // Screen L-shape corners in world space, with the top edge raised by screenExt. Drives both the
     // body cutout and the projected HTML layer, so they always agree.
     function screenWorldPts() {
-      const yOf = (py: number) => wy(py) + SCREEN_MESH_Y_OFFSET + (py === 30 ? screenExt : 0)
+      const yOf = (py: number) =>
+        wy(py) + SCREEN_MESH_Y_OFFSET + (py === 30 ? screenExt : 0)
       // z carries the device-group offset so the projected HTML layer lands on the actual cutout.
-      return SCREEN_PX.map((p) => new THREE.Vector3(wx(p.x), yOf(p.y), DEVICE_Z + 0.06))
+      return SCREEN_PX.map(
+        (p) => new THREE.Vector3(wx(p.x), yOf(p.y), DEVICE_Z + 0.06),
+      )
     }
 
     function buildBodyShape() {
@@ -192,39 +297,75 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         const hw = buttons[i].w + pad * 2
         const hh = buttons[i].h + pad * 2
         // r + pad keeps the hole perfectly concentric with the button shape
-        s.holes.push(roundedRectPath(lx, ly, hw, hh, Math.min(buttons[i].r + pad, hw / 2, hh / 2)))
+        s.holes.push(
+          roundedRectPath(
+            lx,
+            ly,
+            hw,
+            hh,
+            Math.min(buttons[i].r + pad, hw / 2, hh / 2),
+          ),
+        )
       })
       // knob pocket — rectangular hole (cylinder lies on X-axis so front face is w×h)
       const klx = wx(knobPocket.px) - wx(585)
       const kly = wy(knobPocket.py) - cy
       const kw = knobPocket.w + knobPocket.pad * 2
       const kh = knobPocket.h + knobPocket.pad * 2
-      s.holes.push(roundedRectPath(klx, kly, kw, kh, Math.min(knobPocket.r + knobPocket.pad, kw / 2, kh / 2)))
+      s.holes.push(
+        roundedRectPath(
+          klx,
+          kly,
+          kw,
+          kh,
+          Math.min(knobPocket.r + knobPocket.pad, kw / 2, kh / 2),
+        ),
+      )
       const nlx = wx(numberWheelPocket.px) - wx(585)
       const nly = wy(numberWheelPocket.py) - cy
       const nw = numberWheelPocket.w + numberWheelPocket.pad * 2
       const nh = numberWheelPocket.h + numberWheelPocket.pad * 2
-      s.holes.push(roundedRectPath(nlx, nly, nw, nh, Math.min(numberWheelPocket.r + numberWheelPocket.pad, nw / 2, nh / 2)))
+      s.holes.push(
+        roundedRectPath(
+          nlx,
+          nly,
+          nw,
+          nh,
+          Math.min(numberWheelPocket.r + numberWheelPocket.pad, nw / 2, nh / 2),
+        ),
+      )
       // screen cutout — the L-shape (top raised by screenExt), converted to body-local coords
-      s.holes.push(roundedPolyPath(
-        screenWorldPts().map((v) => ({ x: v.x - wx(585), y: v.y - cy })),
-        0.25,
-      ))
+      s.holes.push(
+        roundedPolyPath(
+          screenWorldPts().map((v) => ({ x: v.x - wx(585), y: v.y - cy })),
+          0.25,
+        ),
+      )
       return s
     }
 
     /* audio */
     const audio = createAudio()
 
-    // Screen: a matte near-black panel set into the body. The live chart renders as an HTML
+    // Screen: a matte true-black panel set into the body. The live chart renders as an HTML
     // layer on top (positioned to this aperture), so this mesh is just the dark backing that
     // shows at the very edge seam.
     const matScreen = new THREE.MeshStandardMaterial({
-      color: 0x050505, roughness: 0.6, metalness: 0.2,
+      color: 0x000000,
+      roughness: 1,
+      metalness: 0,
     })
 
-    const matBody = new THREE.MeshStandardMaterial({ color: CREAM, roughness: 0.82, metalness: 0 })
-    const matKnob = new THREE.MeshStandardMaterial({ color: YELLOW, roughness: 0.55, metalness: 0 })
+    const matBody = new THREE.MeshStandardMaterial({
+      color: CREAM,
+      roughness: 0.82,
+      metalness: 0,
+    })
+    const matKnob = new THREE.MeshStandardMaterial({
+      color: YELLOW,
+      roughness: 0.55,
+      metalness: 0,
+    })
 
     const deck = new THREE.Group()
     scene.add(deck)
@@ -235,7 +376,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     deck.add(device)
 
     /* body */
-    const body = new THREE.Mesh(frontZeroed(buildBodyShape(), 0.6, 0.08), matBody)
+    const body = new THREE.Mesh(
+      frontZeroed(buildBodyShape(), 0.6, 0.08),
+      matBody,
+    )
     body.position.set(wx(585), wy(1130), 0)
     body.receiveShadow = true
     body.castShadow = true
@@ -244,9 +388,17 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     /* back panel — solid cream shell behind the body. Covers the open back (button + knob undersides)
        when the device is flipped; the slab is deep enough to swallow the deepest button and the knob.
        Same outline as the body, so it never peeks past the front silhouette. Grows with screenExt. */
-    const matBack = new THREE.MeshStandardMaterial({ color: CREAM, roughness: 0.88, metalness: 0 })
+    const matBack = new THREE.MeshStandardMaterial({
+      color: CREAM,
+      roughness: 0.88,
+      metalness: 0,
+    })
     const backPanel = new THREE.Mesh(
-      frontZeroed(roundedRect(6.2, 11.95 + screenExt, deviceCfg.corner), 1.2, 0.08),
+      frontZeroed(
+        roundedRect(6.2, 11.95 + screenExt, deviceCfg.corner),
+        1.2,
+        0.08,
+      ),
       matBack,
     )
     backPanel.position.set(wx(585), wy(1130) + screenExt / 2, -0.76)
@@ -261,7 +413,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     backPanel.geometry.computeBoundingBox()
     let backFaceLocalZ = backPanel.geometry.boundingBox!.min.z
 
-    const SVG_W = 1539, SVG_H = 629
+    const SVG_W = 1539,
+      SVG_H = 629
     const logoScale = 3.6 / SVG_W
     const logoW = SVG_W * logoScale
     const logoH = SVG_H * logoScale
@@ -274,7 +427,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     // geometry is built from these so a screen-stretch rebuild keeps the cut.
     const logoHoles: THREE.Path[] = []
     const toPanel = (p: THREE.Vector2) =>
-      new THREE.Vector2(-logoScale * p.x + logoW / 2, -logoScale * p.y + logoH / 2)
+      new THREE.Vector2(
+        -logoScale * p.x + logoW / 2,
+        -logoScale * p.y + logoH / 2,
+      )
     const signedArea = (pts: THREE.Vector2[]) => {
       let a = 0
       for (let i = 0; i < pts.length; i++) {
@@ -286,7 +442,11 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     function buildBackPanelGeo() {
       // The body extrudes with a 0.08 bevel, which grows its silhouette by that much on every side. We
       // run no bevel here (straight 90° letter cuts), so grow the outline by the same amount to match.
-      const s = roundedRect(6.2 + 0.16, 11.95 + screenExt + 0.16, deviceCfg.corner + 0.08)
+      const s = roundedRect(
+        6.2 + 0.16,
+        11.95 + screenExt + 0.16,
+        deviceCfg.corner + 0.08,
+      )
       for (const h of logoHoles) s.holes.push(h)
       // no bevel: a chamfer cuts the letter walls at 45° (a triangular notch) and swallows thin strokes.
       // 0 gives straight 90° cut walls so the carve keeps the letter shape, eyes included.
@@ -308,25 +468,40 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     backPanel.add(logoGroup)
 
     const logoGeo: THREE.BufferGeometry[] = []
-    const matLogoDark = new THREE.MeshStandardMaterial({ color: 0xff4444, roughness: 0.93, metalness: 0 })
-    const matLogoWhite = new THREE.MeshStandardMaterial({ color: 0x4488ff, roughness: 0.8, metalness: 0 })
+    const matLogoDark = new THREE.MeshStandardMaterial({
+      color: 0xff4444,
+      roughness: 0.93,
+      metalness: 0,
+    })
+    const matLogoWhite = new THREE.MeshStandardMaterial({
+      color: 0x4488ff,
+      roughness: 0.8,
+      metalness: 0,
+    })
     // Main-button glyph: its own tone so it reads as part of the button, not the back logo. The raised P
     // is a shade darker than the cap face; its counter stays open so the face shows through as the eye.
     // Recolored from t.main in applyTheme.
-    const matMainGlyph = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0 })
+    const matMainGlyph = new THREE.MeshStandardMaterial({
+      roughness: 0.6,
+      metalness: 0,
+    })
     // Dark letters (carved into the panel) and the eye ovals (raised in front), lifted from the
     // letters' own counters. The SVG's white rects were just flat backing and are dropped.
     const logoLetters: THREE.Shape[] = []
     const logoEyes: THREE.Shape[] = []
 
     // z = letter recess below the rear face, eyeZ = the eyes' depth (negative pops them out in front).
-    const pieceZ = (kind: string) => (kind === 'eye' ? logoCarve.eyeZ : logoCarve.z)
+    const pieceZ = (kind: string) =>
+      kind === 'eye' ? logoCarve.eyeZ : logoCarve.z
 
     // Re-seat the carved pieces at the current carve depth (cheap: position only, no new geometry).
     function placeLogoCarve() {
-      logoGroup.children.forEach((c) => { c.position.z = pieceZ(c.userData.kind) })
+      logoGroup.children.forEach((c) => {
+        c.position.z = pieceZ(c.userData.kind)
+      })
       // floor sits behind the deepest piece so counters always bottom out on cream
-      cavityFloor.position.z = backFaceLocalZ + Math.max(logoCarve.z, logoCarve.eyeZ) + 0.012
+      cavityFloor.position.z =
+        backFaceLocalZ + Math.max(logoCarve.z, logoCarve.eyeZ) + 0.012
       dirty = true
     }
 
@@ -335,7 +510,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       for (const c of [...logoGroup.children]) logoGroup.remove(c)
       while (logoGeo.length) logoGeo.pop()!.dispose()
       const add = (shape: THREE.Shape, mat: THREE.Material, kind: string) => {
-        const g = new THREE.ExtrudeGeometry(shape, { depth: logoCarve.depth, bevelEnabled: false })
+        const g = new THREE.ExtrudeGeometry(shape, {
+          depth: logoCarve.depth,
+          bevelEnabled: false,
+        })
         g.computeBoundingBox()
         g.translate(0, 0, -g.boundingBox!.max.z)
         g.computeVertexNormals()
@@ -354,7 +532,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     function buildFromSvg(paths: SvgPaths) {
       for (const path of paths) {
         const fillStr = (path.userData?.style?.fill as string) ?? ''
-        const isWhite = /^(white|#fff(fff)?|rgb\(\s*255,\s*255,\s*255\s*\))$/i.test(fillStr)
+        const isWhite =
+          /^(white|#fff(fff)?|rgb\(\s*255,\s*255,\s*255\s*\))$/i.test(fillStr)
         // Drop the flat white backing rects; the eyes are rebuilt from the dark letters' counters.
         if (isWhite) continue
         for (const shape of SVGLoader.createShapes(path)) {
@@ -387,7 +566,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     /* screen mesh — rebuilt by relayout() so the lit panel tracks the stretched cutout. The Done
        outro stretches it to the live game height so the handoff to the game device is seamless. */
     function buildScreenGeo() {
-      const pts = SCREEN_PX.map((p) => ({ x: wx(p.x), y: wy(p.y) + (p.y === 30 ? screenExt : 0) }))
+      const pts = SCREEN_PX.map((p) => ({
+        x: wx(p.x),
+        y: wy(p.y) + (p.y === 30 ? screenExt : 0),
+      }))
       const g = frontZeroed(roundedPoly(pts, 0.25), 0.12, 0.03)
       setBoxUVs(g)
       return g
@@ -411,16 +593,84 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
        the canvas only places them and keeps the handles the loop / theme / GUI need. The knob is built
        lower down (after its `kp` tuning block). */
     const interactive: THREE.Mesh[] = []
-    const matPocket = new THREE.MeshStandardMaterial({ color: 0x19160f, roughness: 0.95, metalness: 0 })
+    const matPocket = new THREE.MeshStandardMaterial({
+      color: 0x19160f,
+      roughness: 0.95,
+      metalness: 0,
+    })
 
-    const bm = createButtons(device, interactive, matPocket, buttons, BTN_PX, [
-      { color: RED, glow: 0xff5a3c },
-      { color: BLUE, glow: 0x5e9bff },
-      { color: BLUE, glow: 0x5e9bff },
-      { color: CREAM, glow: 0xff7a1a },
-      { color: CREAM, glow: 0xff7a1a },
-    ], wx, wy)
+    const bm = createButtons(
+      device,
+      interactive,
+      matPocket,
+      buttons,
+      BTN_PX,
+      [
+        { color: RED, glow: 0xff5a3c },
+        { color: BLUE, glow: 0x5e9bff },
+        { color: BLUE, glow: 0x5e9bff },
+        { color: CREAM, glow: 0xff7a1a },
+        { color: CREAM, glow: 0xff7a1a },
+      ],
+      wx,
+      wy,
+    )
     const bmOrigin = bm.map((m) => ({ x: m.position.x, y: m.position.y }))
+
+    // Frame the two action caps as mini LCD screens: a machined metal bezel + a glossy acrylic window
+    // over each. The cap stays bm[i] (the raycast + press target); we just drive its color like a panel.
+    const ACTION_IDX = [1, 2]
+    const { dispose: disposeActionScreens, glow: actionGlow } =
+      createActionScreens(device, bm, ACTION_IDX, buttons, BTN_PX, wx, wy)
+
+    // The binding's color lights the screen (LONG → green, SHORT → red, …); off-binding the cap idles
+    // dim at the theme's action tone, so it still reads as a powered screen. The loop adds the press
+    // flash onto baseEmissive.
+    // Pure-ish hues so the screen's own emissive glow keeps the color true instead of washing toward
+    // white (a red with green/blue in it goes pink once it self-lights). Neutral is a dark LCD, not a
+    // grey one, so the white label reads with full contrast (the references' black ENTER/SCAN screens).
+    const SCREEN_COLORS: Record<string, string> = {
+      up: '#15db6e',
+      down: '#ff2a20',
+      amber: '#f7b417',
+      neutral: '#171a21',
+    }
+    let actionThemeColor = '#3568c9'
+    function lightActionScreen(i: number, color: string, baseEmissive: number) {
+      const mat = bm[i].material as THREE.MeshStandardMaterial
+      mat.color.set(color)
+      mat.emissive.set(color)
+      bm[i].userData.baseEmissive = baseEmissive
+      // The bloom halo is tinted to the screen color; a dark/neutral color tints it near-black so it
+      // barely glows, a vivid up/down color glows strong. Idle screens bloom less.
+      const halo = actionGlow[i]
+      if (halo) {
+        halo.color.set(color)
+        halo.opacity = baseEmissive > 0.4 ? 0.4 : 0.14
+      }
+    }
+    function relightActionScreens() {
+      const one = (
+        i: number,
+        color: ButtonColor | undefined,
+        available: boolean,
+        display: ActionDisplay | undefined,
+      ) => {
+        if (display?.mode === 'token') {
+          lightActionScreen(i, '#000000', 0)
+          actionGlow[i].opacity = 0
+          return
+        }
+        const hex = (color && SCREEN_COLORS[color]) || actionThemeColor
+        lightActionScreen(i, hex, available ? 0.62 : 0.14)
+      }
+      one(1, state.a1Color, state.a1Available, state.a1Display)
+      one(2, state.a2Color, state.a2Available, state.a2Display)
+      dirty = true
+    }
+    // Ambient light-show clock + a scratch color, used by the loop while state.lightShow is on.
+    let lightT = 0
+    const lightColor = new THREE.Color()
 
     // The main button wears the first glyph of the Pips wordmark, raised proud of the cap face (built
     // once the logo SVG loads, see buildMainGlyph). The glyph is a separate mesh, so the cap stays a
@@ -437,29 +687,44 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       for (const s of logoLetters) {
         let minX = Infinity
         for (const p of s.getPoints(12)) minX = Math.min(minX, p.x)
-        if (minX < leftmost) { leftmost = minX; glyph = s }
+        if (minX < leftmost) {
+          leftmost = minX
+          glyph = s
+        }
       }
       if (!glyph) return
 
       const c = buttons[0]
       const outline = glyph.getPoints(24)
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+      let minX = Infinity,
+        maxX = -Infinity,
+        minY = Infinity,
+        maxY = -Infinity
       for (const p of outline) {
-        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x)
-        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y)
+        minX = Math.min(minX, p.x)
+        maxX = Math.max(maxX, p.x)
+        minY = Math.min(minY, p.y)
+        maxY = Math.max(maxY, p.y)
       }
-      const gw = maxX - minX, gh = maxY - minY
-      const gx = (minX + maxX) / 2, gy = (minY + maxY) / 2
+      const gw = maxX - minX,
+        gh = maxY - minY
+      const gx = (minX + maxX) / 2,
+        gy = (minY + maxY) / 2
       // Fit the glyph onto the face with margin; svg y is down, so flip y as we map to button-local.
       const scale = (Math.min(c.w, c.h) * 0.6) / Math.max(gw, gh)
-      const map = (p: THREE.Vector2) => new THREE.Vector2(scale * (p.x - gx), -scale * (p.y - gy))
+      const map = (p: THREE.Vector2) =>
+        new THREE.Vector2(scale * (p.x - gx), -scale * (p.y - gy))
 
       const outlinePts = outline.map(map)
       if (signedArea(outlinePts) > 0) outlinePts.reverse()
 
-      const raise = 0.06, depth = 0.2
+      const raise = 0.06,
+        depth = 0.2
       const extrude = (shape: THREE.Shape) => {
-        const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false })
+        const g = new THREE.ExtrudeGeometry(shape, {
+          depth,
+          bevelEnabled: false,
+        })
         g.computeBoundingBox()
         g.translate(0, 0, -g.boundingBox!.max.z) // front face to z=0
         g.computeVertexNormals()
@@ -470,7 +735,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       // The open counters let the cap face read through as the eye, the same look the back-panel carve
       // gets from its lifted ovals. castShadow drops a faint emboss shadow onto the glossy face.
       const letterShape = new THREE.Shape(outlinePts)
-      for (const h of glyph.holes) letterShape.holes.push(new THREE.Path(h.getPoints(40).map(map)))
+      for (const h of glyph.holes)
+        letterShape.holes.push(new THREE.Path(h.getPoints(40).map(map)))
       const letter = new THREE.Mesh(extrude(letterShape), matMainGlyph)
       letter.position.z = raise
       letter.castShadow = true
@@ -483,16 +749,35 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     if (svgPathsCache) {
       buildFromSvg(svgPathsCache)
     } else {
-      new SVGLoader().load('/assets/pips-horizontal-black.svg', ({ paths }) => {
-        svgPathsCache = paths
-        buildFromSvg(paths)
-      }, undefined, (e) => console.error('[ConsoleCanvas] back logo SVG failed:', e))
+      new SVGLoader().load(
+        '/assets/pips-horizontal-black.svg',
+        ({ paths }) => {
+          svgPathsCache = paths
+          buildFromSvg(paths)
+        },
+        undefined,
+        (e) => console.error('[ConsoleCanvas] back logo SVG failed:', e),
+      )
     }
 
-    const { numberWheelRoll } = createNumberWheel(device, interactive, matPocket, numberWheelPocket, wx, wy, body.position.z)
+    const { numberWheelRoll } = createNumberWheel(
+      device,
+      interactive,
+      matPocket,
+      numberWheelPocket,
+      wx,
+      wy,
+      body.position.z,
+    )
 
     // Canvas-texture label. Static caption (makeLabel) or live, updatable (makeDynLabel).
-    function drawLabel(c: HTMLCanvasElement, g: CanvasRenderingContext2D, text: string, color: string, fs = 64) {
+    function drawLabel(
+      c: HTMLCanvasElement,
+      g: CanvasRenderingContext2D,
+      text: string,
+      color: string,
+      fs = 64,
+    ) {
       g.font = `700 ${fs}px -apple-system,"Segoe UI",system-ui,sans-serif`
       const tw = Math.max(1, Math.ceil(g.measureText(text || ' ').width))
       c.width = tw + 24
@@ -505,32 +790,44 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       g.fillText(text, c.width / 2, c.height / 2)
     }
 
-    // Static caption on a flat plane. Defaults to a front-facing label on the device body; opts let it
-    // sit on another parent (e.g. the back panel), face both ways, and mirror x for the flipped view.
     function makeLabel(
-      text: string, cx: number, cy: number, cz: number, worldH: number, color: string, fs = 64,
-      opts: { parent?: THREE.Object3D; doubleSide?: boolean; mirrorX?: boolean } = {},
+      text: string,
+      cx: number,
+      cy: number,
+      worldH: number,
+      color: string,
     ) {
-      const c = document.createElement('canvas'), g = c.getContext('2d')!
-      drawLabel(c, g, text, color, fs)
+      const c = document.createElement('canvas'),
+        g = c.getContext('2d')!
+      drawLabel(c, g, text, color)
       const tex = new THREE.CanvasTexture(c)
       tex.colorSpace = THREE.SRGBColorSpace
       tex.anisotropy = MAXANISO
       const plane = new THREE.Mesh(
         new THREE.PlaneGeometry(worldH * (c.width / c.height), worldH),
-        new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: opts.doubleSide ? THREE.DoubleSide : THREE.FrontSide }),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
       )
-      plane.position.set(cx, cy, cz)
-      if (opts.mirrorX) plane.scale.x = -1
-        ; (opts.parent ?? device).add(plane)
+      plane.position.set(cx, cy, 0.06)
+      device.add(plane)
       // Repaint the caption when the skin changes its label tint.
-      const recolor = (col: string) => { drawLabel(c, g, text, col, fs); tex.needsUpdate = true; dirty = true }
+      const recolor = (col: string) => {
+        drawLabel(c, g, text, col)
+        tex.needsUpdate = true
+        dirty = true
+      }
       return { plane, recolor }
     }
 
     // Updatable label that lives on a button face (or the body) and reflects the registered view.
-    function makeDynLabel(worldH: number, color: string, opticalCenter = false, depthTest = false) {
-      const W = 640, H = 128, FS = 92
+    function makeDynLabel(
+      worldH: number,
+      color: string,
+      opticalCenter = false,
+      depthTest = false,
+    ) {
+      const W = 640,
+        H = 128,
+        FS = 92
       const c = document.createElement('canvas')
       c.width = W
       c.height = H
@@ -538,7 +835,12 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const tex = new THREE.CanvasTexture(c)
       tex.colorSpace = THREE.SRGBColorSpace
       tex.anisotropy = MAXANISO
-      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, depthTest })
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        depthWrite: false,
+        depthTest,
+      })
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat)
       plane.renderOrder = 10
       let cur = '\0'
@@ -556,7 +858,11 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
             if (opticalCenter) {
               g.textBaseline = 'alphabetic'
               const metrics = g.measureText(text)
-              const y = H / 2 + (metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2
+              const y =
+                H / 2 +
+                (metrics.actualBoundingBoxAscent -
+                  metrics.actualBoundingBoxDescent) /
+                  2
               g.fillText(text, W / 2, y)
             } else {
               g.textBaseline = 'middle'
@@ -576,41 +882,225 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
 
     const LABEL_DY = -0.45
-    const menuLbl = makeLabel('MENU', bm[3].position.x, bm[3].position.y + LABEL_DY, 0.06, 0.26, '#7c7870')
-    const gamesLbl = makeLabel('GAMES', bm[4].position.x, bm[4].position.y + LABEL_DY, 0.06, 0.26, '#7c7870')
+    const menuLbl = makeLabel(
+      'MENU',
+      bm[3].position.x,
+      bm[3].position.y + LABEL_DY,
+      0.26,
+      '#7c7870',
+    )
+    const gamesLbl = makeLabel(
+      'HOME',
+      bm[4].position.x,
+      bm[4].position.y + LABEL_DY,
+      0.26,
+      '#7c7870',
+    )
 
-    // "By PIVY Inc." caption under the carved back-panel PIPS logo (centered at backPanel-local 0,0).
-    // Parented to the panel, mirrored + double-sided so it reads upright from the flipped (back) view.
-    const pivyLbl = makeLabel('By PIVY Inc.', 0, -1, backFaceLocalZ + 0.15, 0.36, '#b9b6b1', 108, {
-      parent: backPanel,
-      doubleSide: true,
-      mirrorX: true,
-    })
-
-    // Live labels: action1 / action2 on their faces, knob value on the body. The main button wears the
-    // embossed Pips glyph instead of a text label (carved once the logo SVG loads, see buildMainGlyph).
-    const a1Lbl = makeDynLabel(0.5, '#ffffff')
+    // Live labels: action1 / action2 on their faces. The main button wears the embossed Pips glyph
+    // instead of a text label (carved once the logo SVG loads, see buildMainGlyph).
+    // Sits on the screen face under the acrylic. Kept small so even a 6-char label clears the bezel
+    // window (the label draws depth-test-free, so it must not overrun the metal frame).
+    const a1Lbl = makeDynLabel(0.36, '#ffffff')
     a1Lbl.plane.position.set(0, 0, 0.02)
     bm[1].add(a1Lbl.plane)
-    const a2Lbl = makeDynLabel(0.5, '#ffffff')
+    const a2Lbl = makeDynLabel(0.36, '#ffffff')
     a2Lbl.plane.position.set(0, 0, 0.02)
     bm[2].add(a2Lbl.plane)
-    const knobLbl = makeDynLabel(0.42, '#2c2722')
-    knobLbl.plane.position.set(wx(knobPocket.px), wy(knobPocket.py) - 1.55, 0.07)
-    device.add(knobLbl.plane)
+
+    // Token mode is opt-in per action button. A token-mode screen runs a live low-res coin flip on
+    // true black; normal buttons keep the standard colored CRT label treatment.
+    const COIN_LORES = 72
+    // 4x4 Bayer bias for the dither, normalized to ~[-0.5, 0.5).
+    const COIN_BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(
+      (v) => (v + 0.5) / 16 - 0.5,
+    )
+
+    function createTokenScreen(buttonIndex: 1 | 2) {
+      const coinCanvas = document.createElement('canvas')
+      coinCanvas.width = coinCanvas.height = COIN_LORES
+      const coinCtx = coinCanvas.getContext('2d', {
+        willReadFrequently: true,
+      })!
+      const coinTex = new THREE.CanvasTexture(coinCanvas)
+      coinTex.colorSpace = THREE.SRGBColorSpace
+      coinTex.magFilter = THREE.NearestFilter
+      coinTex.minFilter = THREE.NearestFilter
+      coinTex.generateMipmaps = false
+
+      const geo = new THREE.PlaneGeometry(1, 1)
+      const mat = new THREE.MeshBasicMaterial({
+        map: coinTex,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+      })
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.renderOrder = 8
+      const fit =
+        Math.max(buttons[buttonIndex].w, buttons[buttonIndex].h) +
+        buttons[buttonIndex].pad * 2 -
+        0.2
+      mesh.scale.set(fit, fit, 1)
+      mesh.position.set(0, 0, 0.012)
+      mesh.visible = false
+      bm[buttonIndex].add(mesh)
+
+      let display: Extract<ActionDisplay, { mode: 'token' }> | null = null
+      let coinAngle = 0
+      let image: HTMLImageElement | null = null
+      let loadedLogoSrc: string | undefined
+
+      function setDisplay(next: ActionDisplay | undefined) {
+        display = next?.mode === 'token' ? next : null
+        mesh.visible = !!display
+        if (!display) return
+
+        if (display.logoSrc !== loadedLogoSrc) {
+          loadedLogoSrc = display.logoSrc
+          image = null
+          if (display.logoSrc) {
+            const requestedSrc = display.logoSrc
+            const nextImage = new Image()
+            nextImage.onload = () => {
+              if (loadedLogoSrc !== requestedSrc) return
+              image = nextImage
+              draw(0)
+              dirty = true
+            }
+            nextImage.src = requestedSrc
+          }
+        }
+        draw(0)
+      }
+
+      function draw(dtSec: number) {
+        if (!display) return
+        coinAngle += (dtSec / 4.6) * Math.PI * 2
+        const W = COIN_LORES
+        const H = COIN_LORES
+        const cx = W / 2
+        const cy = H / 2
+        const diameter = Math.min(W, H) * 0.7
+        const radius = diameter / 2
+
+        coinCtx.fillStyle = '#000'
+        coinCtx.fillRect(0, 0, W, H)
+        const sx = Math.max(Math.abs(Math.cos(coinAngle)), 0.001)
+        coinCtx.save()
+        coinCtx.translate(cx, cy)
+        coinCtx.scale(sx, 1)
+        if (image) {
+          coinCtx.drawImage(
+            image,
+            -diameter / 2,
+            -diameter / 2,
+            diameter,
+            diameter,
+          )
+        } else {
+          const gradient = coinCtx.createRadialGradient(
+            -radius * 0.3,
+            -radius * 0.35,
+            radius * 0.08,
+            0,
+            0,
+            radius,
+          )
+          gradient.addColorStop(0, '#ffd66b')
+          gradient.addColorStop(0.55, '#d68a12')
+          gradient.addColorStop(1, '#5c3500')
+          coinCtx.fillStyle = gradient
+          coinCtx.beginPath()
+          coinCtx.arc(0, 0, radius, 0, Math.PI * 2)
+          coinCtx.fill()
+          coinCtx.fillStyle = '#2a1800'
+          coinCtx.font = `900 ${Math.round(radius * (display.ticker.length > 3 ? 0.52 : 0.72))}px ui-sans-serif, system-ui, sans-serif`
+          coinCtx.textAlign = 'center'
+          coinCtx.textBaseline = 'middle'
+          coinCtx.fillText(display.ticker, 0, radius * 0.04)
+        }
+        coinCtx.restore()
+
+        const edge = Math.pow(1 - sx, 2.2)
+        if (edge > 0.02) {
+          coinCtx.save()
+          coinCtx.globalAlpha = Math.min(edge, 1) * 0.9
+          coinCtx.fillStyle = '#ffd98a'
+          const edgeWidth = Math.max(W * 0.018, 1)
+          coinCtx.fillRect(
+            cx - edgeWidth / 2,
+            cy - diameter / 2,
+            edgeWidth,
+            diameter,
+          )
+          coinCtx.restore()
+        }
+
+        const buffer = coinCtx.getImageData(0, 0, W, H)
+        const pixels = buffer.data
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            const pixelIndex = (y * W + x) * 4
+            let brightness =
+              1 + COIN_BAYER[(y & 3) * 4 + (x & 3)] * 0.3
+            if (y % 2 === 1) brightness *= 0.62
+            pixels[pixelIndex] = Math.min(
+              255,
+              pixels[pixelIndex] * brightness,
+            )
+            pixels[pixelIndex + 1] = Math.min(
+              255,
+              pixels[pixelIndex + 1] * brightness,
+            )
+            pixels[pixelIndex + 2] = Math.min(
+              255,
+              pixels[pixelIndex + 2] * brightness,
+            )
+          }
+        }
+        coinCtx.putImageData(buffer, 0, 0)
+        coinTex.needsUpdate = true
+      }
+
+      return {
+        buttonIndex,
+        mat,
+        mesh,
+        setDisplay,
+        draw,
+        isActive: () => !!display,
+        dispose: () => {
+          coinTex.dispose()
+          mat.dispose()
+          geo.dispose()
+        },
+      }
+    }
+
+    const tokenScreens = [
+      createTokenScreen(1),
+      createTokenScreen(2),
+    ] as const
 
     const NUMBER_LABEL_ANGLE = 1.02
-    const NUMBER_LABEL_RADIUS = 0.375
+    const NUMBER_LABEL_RADIUS = 0.4
     const MAX_NUMBER_WHEEL_LABELS = 5
-    const numberWheelLabels = Array.from({ length: MAX_NUMBER_WHEEL_LABELS }, () => {
-      const label = makeDynLabel(0.46, '#ffffff', true, true)
-      numberWheelRoll.add(label.plane)
-      return { ...label, angle: 0, active: false }
-    })
+    const numberWheelLabels = Array.from(
+      { length: MAX_NUMBER_WHEEL_LABELS },
+      () => {
+        // Keep the digits above the drum instead of depth-fighting into its black surface.
+        const label = makeDynLabel(0.46, '#ffffff', true)
+        numberWheelRoll.add(label.plane)
+        return { ...label, angle: 0, active: false }
+      },
+    )
     let numberWheelAngle = 0
     let numberWheelTarget = 0
     let numberWheelInitialized = false
     let debugNumberValue = 1
+    let idleNumberValue = 2
+    const idleStakes = [1, 5, 10, 25, 50, 100]
     const debugNumberWheel = {
       min: 0,
       max: 9,
@@ -618,29 +1108,56 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       value: debugNumberValue,
       label: 'USDC',
       format: (value: number) => String(value),
-      disabled: false,
     }
     // In the studio no game binds the wheel, so it would read as an empty black drum. Park a sample
-    // value on it (disabled) so the device looks complete in the product shot.
+    // value on it so the device looks complete in the product shot.
     const customizeWheel = {
-      // Not disabled (so the digit shows full-bright); the studio's orbit grab already blocks any
-      // interaction with it.
-      min: 0, max: 9, step: 1, value: 5,
-      label: '', format: (value: number) => String(value), disabled: false,
+      // The studio's orbit grab already blocks interaction with it.
+      min: 0,
+      max: 9,
+      step: 1,
+      value: 5,
+      label: '',
+      format: (value: number) => String(value),
+    }
+    const idleNumberWheel = {
+      min: 0,
+      max: idleStakes.length - 1,
+      step: 1,
+      value: idleNumberValue,
+      label: 'USDC',
+      format: (value: number) => String(idleStakes[value]),
     }
 
-    // View state mirrored from the registry, read by the input handlers for gating.
+    // View state mirrored from the registry. Registered controls remain physically interactive;
+    // unbound controls still move and sound, but only registered controls dispatch into a screen.
     const state = {
-      mainDisabled: true, a1Disabled: true, a2Disabled: true, knobDisabled: true, numberWheelDisabled: true,
+      mainAvailable: false,
+      a1Available: false,
+      a2Available: false,
+      knobAvailable: false,
+      numberWheelBound: false,
+      a1Color: undefined as ButtonColor | undefined,
+      a2Color: undefined as ButtonColor | undefined,
+      a1Display: undefined as ActionDisplay | undefined,
+      a2Display: undefined as ActionDisplay | undefined,
       knob: null as null | NonNullable<ConsoleView['knob']>,
       numberWheel: null as null | NonNullable<ConsoleView['numberWheel']>,
+      lightShow: false,
     }
 
-    function setNumberWheelLabels(spec: NonNullable<ConsoleView['numberWheel']> | null) {
-      const count = spec ? Math.floor((spec.max - spec.min) / spec.step + 0.5) + 1 : 0
+    function setNumberWheelLabels(
+      spec: NonNullable<ConsoleView['numberWheel']> | null,
+    ) {
+      const count = spec
+        ? Math.floor((spec.max - spec.min) / spec.step + 0.5) + 1
+        : 0
       const visibleCount = Math.min(count, MAX_NUMBER_WHEEL_LABELS)
       const centerIndex = spec ? Math.round(numberWheelPosition(spec)) : 0
-      const startIndex = Math.max(0, Math.min(count - visibleCount, centerIndex - 2))
+      const startIndex = Math.max(
+        0,
+        Math.min(count - visibleCount, centerIndex - 2),
+      )
 
       numberWheelLabels.forEach((label, i) => {
         const valueIndex = startIndex + i
@@ -661,12 +1178,13 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       })
     }
 
-    function numberWheelPosition(spec: NonNullable<ConsoleView['numberWheel']>): number {
+    function numberWheelPosition(
+      spec: NonNullable<ConsoleView['numberWheel']>,
+    ): number {
       return (spec.value - spec.min) / spec.step
     }
 
     function updateNumberWheelLighting() {
-      const disabledOpacity = state.numberWheelDisabled ? 0.36 : 1
       for (const label of numberWheelLabels) {
         if (!label.active) continue
         const angle = Math.atan2(
@@ -675,7 +1193,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         )
         const facing = Math.max(0, Math.cos(angle))
         const light = Math.pow(facing, 2.2)
-        label.mat.opacity = facing > 0 ? (0.04 + 0.96 * light) * disabledOpacity : 0
+        label.mat.opacity = facing > 0 ? 0.12 + 0.88 * light : 0
         const brightness = 0.32 + 0.68 * Math.pow(facing, 1.6)
         label.mat.color.setRGB(brightness, brightness, brightness)
       }
@@ -683,22 +1201,40 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
 
     function applyView(v?: ConsoleView) {
       const m = v?.main
-      state.mainDisabled = !m || !!m.disabled || !!m.loading
-      const a1 = v?.action1
-      state.a1Disabled = !a1 || !!a1.disabled
-      a1Lbl.set(a1?.label ?? '', state.a1Disabled ? 0.34 : 1)
-      const a2 = v?.action2
-      state.a2Disabled = !a2 || !!a2.disabled
-      a2Lbl.set(a2?.label ?? '', state.a2Disabled ? 0.34 : 1)
+      state.mainAvailable = !!m
+      // The two action caps are lit screens. A bound game owns their label + color; in the playground
+      // there is no game, so seed LONG / SHORT to demo the screens lighting up dynamically.
+      const a1 =
+        v?.action1 ?? (debug ? { label: 'LONG', color: 'up' as const } : null)
+      const a2 =
+        v?.action2 ??
+        (debug ? { label: 'SHORT', color: 'down' as const } : null)
+      state.a1Available = !!a1
+      state.a1Color = a1?.color
+      state.a1Display = a1?.display
+      a1Lbl.set(a1?.label ?? '', state.a1Available ? 1 : 0.34)
+      state.a2Available = !!a2
+      state.a2Color = a2?.color
+      state.a2Display = a2?.display
+      a2Lbl.set(a2?.label ?? '', state.a2Available ? 1 : 0.34)
+      tokenScreens[0].setDisplay(state.a1Display)
+      tokenScreens[1].setDisplay(state.a2Display)
+      state.lightShow = !!v?.lightShow
+      // When the show ends, relight settles the screens back to their idle / bound color; while it runs
+      // the loop owns their color, so this is just the baseline it animates away from.
+      relightActionScreens()
       const k = v?.knob ?? null
       state.knob = k
-      state.knobDisabled = !k || !!k.disabled
-      knobLbl.set(k ? (k.format ? k.format(k.value) : String(k.value)) : '', state.knobDisabled ? 0.4 : 1)
+      state.knobAvailable = !!k
+      state.numberWheelBound = !!v?.numberWheel
       const n =
         v?.numberWheel ??
-        (debug ? { ...debugNumberWheel, value: debugNumberValue } : customize ? customizeWheel : null)
+        (debug
+          ? { ...debugNumberWheel, value: debugNumberValue }
+          : customize
+            ? customizeWheel
+            : { ...idleNumberWheel, value: idleNumberValue })
       state.numberWheel = n
-      state.numberWheelDisabled = !n || !!n.disabled
       setNumberWheelLabels(n)
       if (n && !numberWheelDrag) {
         numberWheelTarget = -numberWheelPosition(n) * NUMBER_LABEL_ANGLE
@@ -712,12 +1248,6 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
     applyViewRef.current = applyView
 
-    function isBtnDisabled(i: number) {
-      if (i === 0) return state.mainDisabled
-      if (i === 1) return state.a1Disabled
-      if (i === 2) return state.a2Disabled
-      return false // pills (nav) are never disabled
-    }
     function dispatch(i: number) {
       const h = propsRef.current.handlers?.current
       if (i === 0) h?.main?.()
@@ -728,9 +1258,13 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
 
     function rebuildBtnGeo(i: number) {
-      const m = bm[i], c = buttons[i]
+      const m = bm[i],
+        c = buttons[i]
       m.geometry.dispose()
-      m.geometry = i === 0 ? mainCapGeo() : frontZeroed(roundedRect(c.w, c.h, c.r), c.depth, 0.06)
+      m.geometry =
+        i === 0
+          ? mainCapGeo()
+          : frontZeroed(roundedRect(c.w, c.h, c.r), c.depth, 0.06)
       m.position.x = bmOrigin[i].x + c.dx
       m.position.y = bmOrigin[i].y + c.dy
       m.userData.depth = c.depth
@@ -739,16 +1273,33 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
 
     /* knob */
     const kp = {
-      ridgeWidth: 120, grooveWidth: 50, bumpScale: 45, ridgeRepeat: 20,
+      ridgeWidth: 120,
+      grooveWidth: 50,
+      bumpScale: 45,
+      ridgeRepeat: 20,
       cornerCurve: 0.2,
-      radius: 1.25, height: 0.95, edgeCurve: 0.1,
-      dragSensitivity: 0.5, pxPerStep: 22, ridgePhase: 0,
-      snapInterval: 20, snapSpeed: 5,
+      radius: 1.25,
+      height: 0.95,
+      edgeCurve: 0.1,
+      dragSensitivity: 0.5,
+      ridgePhase: 0,
+      snapInterval: 20,
+      snapSpeed: 5,
       ridgeLength: 0.825,
     }
 
     const { knobSlab, knobBump, matKnobSlab, redrawBump, knobProfile } =
-      createKnob(device, interactive, matPocket, matKnob, kp, knobPocket, wx, wy, body.position.z)
+      createKnob(
+        device,
+        interactive,
+        matPocket,
+        matKnob,
+        kp,
+        knobPocket,
+        wx,
+        wy,
+        body.position.z,
+      )
 
     // Body skin: some themes wrap an SVG across the front body instead of a flat color. We load it
     // once (cached), project it onto the body front as a normalized planar map, and cover-fit it so
@@ -764,7 +1315,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       setBoxUVs(body.geometry) // normalize the front face to 0..1 across the current body box
       const bb = body.geometry.boundingBox!
       const bodyA = (bb.max.x - bb.min.x) / (bb.max.y - bb.min.y)
-      const img = bodySkinTex.image as { width?: number; height?: number } | undefined
+      const img = bodySkinTex.image as
+        | { width?: number; height?: number }
+        | undefined
       const texA = (img?.width ?? 1400) / (img?.height ?? 2489)
       const ratio = bodyA / texA
       if (ratio <= 1) {
@@ -779,7 +1332,11 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
 
     function setBodySkin(url?: string) {
       if (!url) {
-        if (matBody.map) { matBody.map = null; matBody.needsUpdate = true; dirty = true }
+        if (matBody.map) {
+          matBody.map = null
+          matBody.needsUpdate = true
+          dirty = true
+        }
         bodySkinTex = null
         return
       }
@@ -792,15 +1349,23 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         dirty = true
       }
       const cached = skinCache.get(url)
-      if (cached) { apply(cached); return }
-      texLoader.load(url, (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace
-        tex.anisotropy = MAXANISO
-        tex.wrapS = THREE.ClampToEdgeWrapping
-        tex.wrapT = THREE.ClampToEdgeWrapping
-        skinCache.set(url, tex)
-        if (pendingSkinUrl === url) apply(tex) // ignore if the skin changed mid-load
-      }, undefined, (e) => console.error('[ConsoleCanvas] body skin SVG failed:', e))
+      if (cached) {
+        apply(cached)
+        return
+      }
+      texLoader.load(
+        url,
+        (tex) => {
+          tex.colorSpace = THREE.SRGBColorSpace
+          tex.anisotropy = MAXANISO
+          tex.wrapS = THREE.ClampToEdgeWrapping
+          tex.wrapT = THREE.ClampToEdgeWrapping
+          skinCache.set(url, tex)
+          if (pendingSkinUrl === url) apply(tex) // ignore if the skin changed mid-load
+        },
+        undefined,
+        (e) => console.error('[ConsoleCanvas] body skin SVG failed:', e),
+      )
     }
 
     // Repaint the device to a skin. Colors only, no geometry touched, so it's cheap enough to run on
@@ -827,15 +1392,16 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       paint(bm[0], t.main)
       // Raised P tracks the button: a shade darker than the face, its open counter reads as the eye.
       matMainGlyph.color.set(t.main).multiplyScalar(0.7)
-      paint(bm[1], t.action)
-      paint(bm[2], t.action)
+      // The action caps are screens, not flat buttons: the theme tone is just their dim idle glow; a
+      // bound game overrides it with the live up/down color (relightActionScreens).
+      actionThemeColor = t.action
+      relightActionScreens()
       paint(bm[3], t.pills)
       paint(bm[4], t.pills)
       // MENU / GAMES captions under the nav pills
       const labelColor = t.label ?? '#7c7870'
       menuLbl.recolor(labelColor)
       gamesLbl.recolor(labelColor)
-      pivyLbl.recolor(labelColor)
       dirty = true
     }
     applyThemeRef.current = applyTheme
@@ -883,7 +1449,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       pitch: [-0.03, -0.17] as const,
       introMs: 880,
       outroMs: 700,
-      fadeMs: 100, // a short black beat once the snap settles, then we hand off to the game
+      fadeMs: 40, // one clean black frame once the snap settles, then hand off to the live device
     }
     // Studio camera distance multiplier on the rest pose (1 = default, lower = pulled closer).
     const custCam = { zoom: 1 }
@@ -891,14 +1457,14 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     // tiltX/tiltZ = pitch/roll sway (radians). Set any to 0 to drop that axis.
     const FLOAT = { speed: 1.5, bob: 0.15, tiltX: 0.07, tiltZ: 0.05 }
     let floatPhase = 0 // drives the studio idle float
-    let introT = customize && !exportMode ? 0 : 1 // 0 → start, 1 → settled (export skips the intro)
+    let introT = customize ? 0 : 1 // 0 → start, 1 → settled
     let orbitYaw = 0 // persists, so you can park it facing back
     let orbitPitch = 0 // eases back to level on release
-    // Export pose, driven by the /export sliders (radians). Front-on at 0.
-    let exportPitch = exportRot?.x ?? 0
-    let exportYaw = exportRot?.y ?? 0
     let orbitDrag = false
-    let orbitStartX = 0, orbitStartY = 0, orbitBaseYaw = 0, orbitBasePitch = 0
+    let orbitStartX = 0,
+      orbitStartY = 0,
+      orbitBaseYaw = 0,
+      orbitBasePitch = 0
     // Done outro: 0 → product shot, 1 → snapped front-on with the screen lit.
     let outroActive = false
     let outroT = 0
@@ -906,31 +1472,29 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     let outroFired = false
 
     const easeOutExpo = (t: number) => (t >= 1 ? 1 : 1 - Math.pow(2, -10 * t))
-    const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
+    const easeInOutCubic = (t: number) =>
+      t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
     const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+    const responsiveScreenExt = () => {
+      const aspect = Math.max(camera.aspect, 0.0001)
+      return Math.max(0, Math.round((6.2 / aspect - 11.95) * 100) / 100)
+    }
 
-    // Power the off screen up: a cool LCD glow ramps in so the device reads as "booting".
+    // Keep zero power physically black. Non-zero values retain the optional cool LCD boot glow.
     function setScreenPower(p: number) {
+      if (p <= 0) {
+        matScreen.color.setRGB(0, 0, 0)
+        matScreen.emissive.setRGB(0, 0, 0)
+        matScreen.emissiveIntensity = 0
+        return
+      }
       matScreen.emissive.setRGB(0.1 * p, 0.16 * p, 0.28 * p)
       matScreen.emissiveIntensity = p * 2.6
-      const base = 0.02 + 0.06 * p
+      const base = 0.06 * p
       matScreen.color.setRGB(base, base + 0.01 * p, base + 0.04 * p)
     }
 
     function placeCustomizeCamera() {
-      if (exportMode) {
-        // Front-on by default, device contained by height, no float. A hair of margin off the rim.
-        // exportPitch/Yaw spin the deck in place so the export route can angle the device.
-        const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
-        const cy = wy(1130)
-        const frontZ = (11.95 * 0.5) / tanHalf * 1.04 + DEVICE_Z
-        camera.position.set(0, cy, frontZ * custCam.zoom)
-        camera.lookAt(0, cy, 0)
-        deck.rotation.set(exportPitch, exportYaw, 0)
-        // The solid back shows once the device is angled enough that its rim would otherwise gap.
-        backPanel.visible = Math.abs(exportYaw) > 0.25 || Math.abs(exportPitch) > 0.25
-        return
-      }
       const e = easeOutExpo(introT)
       let lookY = lerp(CUST.lookY[0], CUST.lookY[1], e)
       let camZ = lerp(CUST.camZ[0], CUST.camZ[1], e) * custCam.zoom
@@ -943,10 +1507,12 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         const o = easeInOutCubic(outroT)
         const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
         const aspect = Math.max(camera.aspect, 0.0001)
-        const ext = Math.max(0, Math.round((6.2 / aspect - 11.95) * 100) / 100)
+        const ext = responsiveScreenExt()
         const cy = wy(1130) + ext / 2
         const frontZ =
-          (ext > 0 ? (6.2 * 0.5) / (tanHalf * aspect) : (11.95 * 0.5) / tanHalf) + DEVICE_Z
+          (ext > 0
+            ? (6.2 * 0.5) / (tanHalf * aspect)
+            : (11.95 * 0.5) / tanHalf) + DEVICE_Z
         lookY = lerp(lookY, cy, o)
         camZ = lerp(camZ, frontZ, o)
         yaw = lerp(yaw, 0, o)
@@ -960,20 +1526,12 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       backPanel.visible = !outroActive || easeInOutCubic(outroT) < 0.9
     }
 
-    applyExportRotRef.current = (x: number, y: number) => {
-      exportPitch = x
-      exportYaw = y
-      placeCustomizeCamera()
-      dirty = true
-    }
-
     applyOutroRef.current = (on: boolean) => {
       if (on) {
         introT = 1 // settle instantly so the outro starts from the rest pose
         // Stretch the device to the live game height up front so the screen we zoom into is exactly
         // the one the games view mounts, keeping the handoff seamless.
-        const aspect = Math.max(camera.aspect, 0.0001)
-        relayout(Math.max(0, Math.round((6.2 / aspect - 11.95) * 100) / 100))
+        relayout(responsiveScreenExt())
         outroActive = true
         outroT = 0
         outroFade = 0
@@ -983,7 +1541,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         outroT = 0
         outroFade = 0
         outroFired = false
-        relayout(0)
+        relayout(customize ? responsiveScreenExt() : 0)
         setScreenPower(0)
       }
       dirty = true
@@ -992,21 +1550,50 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     /* GUI — the full dev panel when debugging (the /console playground), a slim carve panel in the studio */
     const gui = debug
       ? createConsoleGui({
-        kp, buttons, knobPocket, deviceCfg, bm, matKnobSlab, knobBump, matScreen, deck, backPanel,
-        lights: { key, fill, hemi, ambient },
-        logo: { carve: logoCarve, onPlace: placeLogoCarve, onRebuild: rebuildLogo },
-        onRedrawBump: redrawBump,
-        onRebuildBodyGeo: rebuildBodyGeo,
-        onRebuildBtnGeo: rebuildBtnGeo,
-        onRebuildKnobGeo: rebuildKnobGeo,
-        requestRender: () => { dirty = true },
-      })
+          kp,
+          buttons,
+          knobPocket,
+          deviceCfg,
+          bm,
+          matKnobSlab,
+          knobBump,
+          matScreen,
+          deck,
+          backPanel,
+          lights: { key, fill, hemi, ambient },
+          logo: {
+            carve: logoCarve,
+            onPlace: placeLogoCarve,
+            onRebuild: rebuildLogo,
+          },
+          onRedrawBump: redrawBump,
+          onRebuildBodyGeo: rebuildBodyGeo,
+          onRebuildBtnGeo: rebuildBtnGeo,
+          onRebuildKnobGeo: rebuildKnobGeo,
+          requestRender: () => {
+            dirty = true
+          },
+        })
       : customize
         ? createCustomizeGui({
-          carve: logoCarve, onPlaceLogo: placeLogoCarve, onRebuildLogo: rebuildLogo,
-          cam: custCam, onCam: () => { placeCustomizeCamera(); dirty = true },
-        })
+            carve: logoCarve,
+            onPlaceLogo: placeLogoCarve,
+            onRebuildLogo: rebuildLogo,
+            cam: custCam,
+            onCam: () => {
+              placeCustomizeCamera()
+              dirty = true
+            },
+          })
         : null
+    applyActiveRef.current = (on: boolean) => {
+      if (customize && gui) {
+        if (on) gui.show()
+        else gui.hide()
+      }
+      dirty = true
+    }
+    applyActiveRef.current(activeRef.current)
 
     /* pointer handling */
     const raycaster = new THREE.Raycaster()
@@ -1014,8 +1601,16 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const MIN_PRESS_MS = 120
     const pressTimers: ReturnType<typeof setTimeout>[] = []
     let active: THREE.Mesh | null = null
-    let knobDrag = false, knobStartY = 0, knobBase = 0, knobLastStep = 0, knobLastRidge = 0, knobStartValue = 0
-    let numberWheelDrag = false, numberWheelStartY = 0, numberWheelLastStep = 0, numberWheelStartValue = 0
+    let knobDrag = false,
+      knobStartY = 0,
+      knobBase = 0,
+      knobStartDetent = 0,
+      knobLastStep = 0,
+      knobStartValue = 0
+    let numberWheelDrag = false,
+      numberWheelStartY = 0,
+      numberWheelLastStep = 0,
+      numberWheelStartValue = 0
     let numberWheelStartPosition = 0
     const NUMBER_WHEEL_PX_PER_STEP = 28
 
@@ -1051,38 +1646,37 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const obj = pick()
       if (!obj) return
       if (obj.userData.kind === 'numberWheel') {
-        if (state.numberWheelDisabled && !debug) return
         canvas.setPointerCapture(e.pointerId)
         numberWheelDrag = true
         numberWheelStartY = e.clientY
         numberWheelLastStep = 0
         numberWheelStartValue = state.numberWheel?.value ?? debugNumberValue
-        numberWheelStartPosition = state.numberWheel ? numberWheelPosition(state.numberWheel) : 0
+        numberWheelStartPosition = state.numberWheel
+          ? numberWheelPosition(state.numberWheel)
+          : 0
         return
       }
       if (obj.userData.kind === 'knob') {
-        // In the standalone playground no game binds a view, so everything reads disabled. Let the
-        // controls still respond physically there (press + turn) so the device is testable on its own.
-        if (state.knobDisabled && !debug) return
         canvas.setPointerCapture(e.pointerId)
         knobDrag = true
         knobStartY = e.clientY
         knobBase = knobOffset
+        knobStartDetent = Math.round(knobOffset / kp.snapInterval)
         knobLastStep = 0
-        knobLastRidge = Math.round(knobOffset / kp.snapInterval)
         knobStartValue = state.knob?.value ?? 0
         return
       }
       const bi = bm.indexOf(obj)
-      if (isBtnDisabled(bi) && !debug) return
       canvas.setPointerCapture(e.pointerId)
       obj.userData.pressed = true
       obj.userData.pressedAt = performance.now()
       obj.userData.glow = Math.max(obj.userData.glow, 0.001)
       active = obj
-      if (bi === 0) audio.playSfx('mainPress')
-      else if (bi === 1 || bi === 2) audio.playSfx('actionPress')
-      else if (bi === 3 || bi === 4) audio.playSfx('pillPress')
+      if (bi === 0) audio.playSfx('mainPress', 'main')
+      else if (bi === 1) audio.playSfx('actionPress', 'action1')
+      else if (bi === 2) audio.playSfx('actionPress', 'action2')
+      else if (bi === 3) audio.playSfx('pillPress', 'menu')
+      else if (bi === 4) audio.playSfx('pillPress', 'home')
       dispatch(bi)
     }
 
@@ -1090,7 +1684,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       if (customize) {
         if (orbitDrag) {
           orbitYaw = orbitBaseYaw + (e.clientX - orbitStartX) * 0.011
-          orbitPitch = Math.max(-0.5, Math.min(0.46, orbitBasePitch + (e.clientY - orbitStartY) * 0.006))
+          orbitPitch = Math.max(
+            -0.5,
+            Math.min(0.46, orbitBasePitch + (e.clientY - orbitStartY) * 0.006),
+          )
         } else {
           canvas.style.cursor = 'grab'
         }
@@ -1100,7 +1697,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       if (numberWheelDrag) {
         const wheel = state.numberWheel
         if (!wheel) return
-        const rawSteps = (numberWheelStartY - e.clientY) / NUMBER_WHEEL_PX_PER_STEP
+        const rawSteps =
+          (numberWheelStartY - e.clientY) / NUMBER_WHEEL_PX_PER_STEP
         const minSteps = (wheel.min - numberWheelStartValue) / wheel.step
         const maxSteps = (wheel.max - numberWheelStartValue) / wheel.step
         const resistedSteps =
@@ -1109,26 +1707,46 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
             : rawSteps > maxSteps
               ? maxSteps + Math.min(0.28, (rawSteps - maxSteps) * 0.16)
               : rawSteps
-        const steps = Math.round(Math.min(maxSteps, Math.max(minSteps, resistedSteps)))
-        numberWheelAngle = -(numberWheelStartPosition + resistedSteps) * NUMBER_LABEL_ANGLE
+        const steps = Math.round(
+          Math.min(maxSteps, Math.max(minSteps, resistedSteps)),
+        )
+        numberWheelAngle =
+          -(numberWheelStartPosition + resistedSteps) * NUMBER_LABEL_ANGLE
         numberWheelTarget = numberWheelAngle
         if (steps !== numberWheelLastStep) {
-          numberWheelLastStep = steps
-          audio.playSfx('knob')
-          if (!state.numberWheelDisabled) {
-            const raw = numberWheelStartValue + steps * wheel.step
-            const next = Math.min(wheel.max, Math.max(wheel.min, Number(raw.toFixed(6))))
-            if (next !== wheel.value) {
-              const handler = propsRef.current.handlers?.current.numberWheel
-              if (handler) handler(next)
-              else if (debug) {
+          const direction = Math.sign(steps - numberWheelLastStep)
+          for (
+            let detent = numberWheelLastStep + direction;
+            detent !== steps + direction;
+            detent += direction
+          ) {
+            audio.playSfx('knob', 'thumbwheel')
+            const raw = numberWheelStartValue + detent * wheel.step
+            const next = Math.min(
+              wheel.max,
+              Math.max(wheel.min, Number(raw.toFixed(6))),
+            )
+            const handler = propsRef.current.handlers?.current.numberWheel
+            if (handler) {
+              handler(next)
+            } else if (!state.numberWheelBound) {
+              if (debug) {
                 debugNumberValue = next
-                const debugSpec = { ...debugNumberWheel, value: debugNumberValue }
+                const debugSpec = {
+                  ...debugNumberWheel,
+                  value: debugNumberValue,
+                }
                 state.numberWheel = debugSpec
                 setNumberWheelLabels(debugSpec)
+              } else if (!customize) {
+                idleNumberValue = next
+                const idleSpec = { ...idleNumberWheel, value: idleNumberValue }
+                state.numberWheel = idleSpec
+                setNumberWheelLabels(idleSpec)
               }
             }
           }
+          numberWheelLastStep = steps
         }
         return
       }
@@ -1136,24 +1754,34 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         const dyDown = e.clientY - knobStartY // down positive — drives the visual ridge scroll
         knobOffset = knobBase + dyDown * kp.dragSensitivity
         const detent = Math.round(knobOffset / kp.snapInterval)
-        if (detent !== knobLastRidge) {
-          knobLastRidge = detent
-          audio.playSfx('knob')
-        }
-        const k = state.knob
-        if (k && !state.knobDisabled) {
-          const steps = Math.round((knobStartY - e.clientY) / kp.pxPerStep) // up = increase
-          if (steps !== knobLastStep) {
-            knobLastStep = steps
-            const next = Math.min(k.max, Math.max(k.min, knobStartValue + steps * k.step))
-            if (next !== k.value) propsRef.current.handlers?.current.knob?.(next)
+        const steps = knobStartDetent - detent // dragging up advances one value per physical click
+        if (steps !== knobLastStep) {
+          const direction = Math.sign(steps - knobLastStep)
+          for (
+            let step = knobLastStep + direction;
+            step !== steps + direction;
+            step += direction
+          ) {
+            audio.playSfx('knob', 'knob')
+            const k = state.knob
+            if (k && state.knobAvailable) {
+              const next = Math.min(
+                k.max,
+                Math.max(k.min, knobStartValue + step * k.step),
+              )
+              propsRef.current.handlers?.current.knob?.(next)
+            }
           }
+          knobLastStep = steps
         }
         return
       }
       const target = pick()
       canvas.style.cursor = target
-        ? target.userData.kind === 'knob' || target.userData.kind === 'numberWheel' ? 'ns-resize' : 'pointer'
+        ? target.userData.kind === 'knob' ||
+          target.userData.kind === 'numberWheel'
+          ? 'ns-resize'
+          : 'pointer'
         : 'default'
     }
 
@@ -1164,7 +1792,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         return
       }
       if (numberWheelDrag) {
-        numberWheelTarget = -(numberWheelStartPosition + numberWheelLastStep) * NUMBER_LABEL_ANGLE
+        numberWheelTarget =
+          -(numberWheelStartPosition + numberWheelLastStep) * NUMBER_LABEL_ANGLE
         numberWheelDrag = false
       }
       if (knobDrag) {
@@ -1178,9 +1807,11 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         const elapsed = performance.now() - (btn.userData.pressedAt ?? 0)
         const delay = Math.max(0, MIN_PRESS_MS - elapsed)
         const t = setTimeout(() => {
-          if (bi === 0) audio.playSfx('mainRelease')
-          else if (bi === 1 || bi === 2) audio.playSfx('actionRelease')
-          else if (bi === 3 || bi === 4) audio.playSfx('pillRelease')
+          if (bi === 0) audio.playSfx('mainRelease', 'main')
+          else if (bi === 1) audio.playSfx('actionRelease', 'action1')
+          else if (bi === 2) audio.playSfx('actionRelease', 'action2')
+          else if (bi === 3) audio.playSfx('pillRelease', 'menu')
+          else if (bi === 4) audio.playSfx('pillRelease', 'home')
           btn.userData.pressed = false
         }, delay)
         pressTimers.push(t)
@@ -1193,7 +1824,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     window.addEventListener('pointercancel', release)
     // Returning to the tab can drop the drawing buffer; force one repaint so the device never
     // shows a blank frame after we have been idle (not rendering).
-    const onVisible = () => { dirty = true }
+    const onVisible = () => {
+      dirty = true
+    }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('focus', onVisible)
 
@@ -1201,14 +1834,16 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     function resize() {
       const container = rootRef.current
       if (!container) return
-      const w = container.clientWidth, h = container.clientHeight
+      const w = container.clientWidth,
+        h = container.clientHeight
       if (w === 0 || h === 0) return
       renderer.setSize(w, h)
       camera.aspect = w / h
 
       if (customize) {
-        // No screen layer to project (the device is off); the loop owns the camera during the
-        // intro + spin, this just keeps the aspect correct and paints the current pose.
+        // Match the live console's responsive height before the studio paints. Tall phones extend
+        // the screen instead of snapping the device back to its shorter natural geometry.
+        relayout(responsiveScreenExt())
         camera.updateProjectionMatrix()
         placeCustomizeCamera()
         camera.updateMatrixWorld()
@@ -1249,7 +1884,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const el = screenLayerRef.current
       if (el) {
         const M = 4
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+        let minX = Infinity,
+          minY = Infinity,
+          maxX = -Infinity,
+          maxY = -Infinity
         for (const v of screenWorld) {
           const n = v.clone().project(camera)
           const x = (n.x * 0.5 + 0.5) * w
@@ -1263,6 +1901,16 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         el.style.top = `${minY - M}px`
         el.style.width = `${maxX - minX + M * 2}px`
         el.style.height = `${maxY - minY + M * 2}px`
+        // Rim-safe inset for HTML content, published as --screen-rim. The device is responsive, so
+        // a fixed px pad crops once it scales up: this tracks the projected screen and clears the
+        // rounded, beveled cutout edge (~corner radius 0.25 world + bevel). Screens inset text by
+        // var(--screen-rim); rules and charts bleed full width and tuck under the rim. This is the
+        // layout boundary every console screen lays out against.
+        const scale = (maxX - minX) / (wx(1140) - wx(30))
+        el.style.setProperty(
+          '--screen-rim',
+          `${Math.max(16, Math.round(M + 0.33 * scale))}px`,
+        )
       }
       dirty = true // camera/geometry moved, repaint once
     }
@@ -1271,8 +1919,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     resize()
     applyView(viewRef.current)
 
-    // Game side only: the layer mounts black (opacity 0), then eases in on the next frame once it's
-    // been sized, so the studio→game handoff reads as one continuous screen powering up.
+    // Game side only: the layer starts hidden (opacity 0) only so it doesn't flash before it's been
+    // sized, then snaps to visible on the next frame. No fade, no entry animation, the screen just
+    // shows its content the instant it's laid out.
     if (!customize) {
       requestAnimationFrame(() => {
         if (screenLayerRef.current) screenLayerRef.current.style.opacity = '1'
@@ -1282,20 +1931,31 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     /* render loop */
     const clock = new THREE.Clock()
     let rafId: number
+    let coinAccum = 0
+    const COIN_FRAME = 1 / 30 // chunky pixels don't need 60fps; keeps the idle device cheap
 
     function loop() {
       rafId = requestAnimationFrame(loop)
       const dt = Math.min(clock.getDelta(), 0.05)
       let animating = false
 
-      if (customize && !exportMode) {
+      if (customize) {
+        if (!activeRef.current && !outroActive) {
+          if (dirty) {
+            renderer.shadowMap.needsUpdate = true
+            renderer.render(scene, camera)
+            dirty = false
+          }
+          return
+        }
         // Idle float: a slow sine bob plus a gentle tilt sway so the hero shot feels alive. The axes
         // run at offset rates so it never looks mechanical. Eases out during the Done snap so it
         // doesn't fight the front framing. Keeps the loop painting while the studio is open.
         floatPhase += dt * FLOAT.speed
         const floatFade = outroActive ? Math.max(0, 1 - outroT * 2.5) : 1
         device.position.y = Math.sin(floatPhase) * FLOAT.bob * floatFade
-        device.rotation.x = Math.sin(floatPhase * 0.8 + 0.6) * FLOAT.tiltX * floatFade
+        device.rotation.x =
+          Math.sin(floatPhase * 0.8 + 0.6) * FLOAT.tiltX * floatFade
         device.rotation.z = Math.cos(floatPhase * 0.6) * FLOAT.tiltZ * floatFade
         animating = true
         if (introT < 1) {
@@ -1334,10 +1994,25 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         const targetZ = d.pressed ? d.pressedZ : d.baseZ
         if (Math.abs(targetZ - o.position.z) > 0.0002) animating = true
         o.position.z += (targetZ - o.position.z) * Math.min(1, dt * 20)
-        if (d.pressed) { d.glow = Math.min(1, d.glow + dt * 9); animating = true }
-        else { if (d.glow > 0.002) animating = true; d.glow *= Math.pow(0.015, dt) }
-        ; (o.material as THREE.MeshStandardMaterial).emissiveIntensity = d.glow * 0.95
+        if (d.pressed) {
+          d.glow = Math.min(1, d.glow + dt * 9)
+          animating = true
+        } else {
+          if (d.glow > 0.002) animating = true
+          d.glow *= Math.pow(0.015, dt)
+        }
+        // Screen caps hold a steady idle glow (baseEmissive); the press flash rides on top of it.
+        ;(o.material as THREE.MeshStandardMaterial).emissiveIntensity =
+          (d.baseEmissive ?? 0) + d.glow * 0.95
       })
+
+      // Token overlays hide the cap's emissive flash, so dim the coin itself while its button sinks.
+      for (const tokenScreen of tokenScreens) {
+        if (!tokenScreen.isActive()) continue
+        tokenScreen.mat.color.setScalar(
+          1 - bm[tokenScreen.buttonIndex].userData.glow * 0.55,
+        )
+      }
 
       if (knobDrag) {
         knobTarget = knobOffset
@@ -1352,17 +2027,63 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       if (numberWheelDrag) {
         animating = true
       } else {
-        if (Math.abs(numberWheelTarget - numberWheelAngle) > 0.001) animating = true
-        numberWheelAngle += (numberWheelTarget - numberWheelAngle) * Math.min(1, dt * 12)
-        if (Math.abs(numberWheelTarget - numberWheelAngle) < 0.001) numberWheelAngle = numberWheelTarget
+        if (Math.abs(numberWheelTarget - numberWheelAngle) > 0.001)
+          animating = true
+        numberWheelAngle +=
+          (numberWheelTarget - numberWheelAngle) * Math.min(1, dt * 12)
+        if (Math.abs(numberWheelTarget - numberWheelAngle) < 0.001)
+          numberWheelAngle = numberWheelTarget
       }
       numberWheelRoll.rotation.x = numberWheelAngle
       updateNumberWheelLighting()
 
-      // Only touch the GPU when something actually changed. An idle device paints nothing; the
-      // shadow pass (the heavy bit) runs only on the frames we render.
+      // Ambient light show: while a game flags it (a live run), the two unbound action screens drift
+      // slowly through the spectrum as decoration. Pure color + glow, no geometry moves, so it must not
+      // trigger the shadow pass; `lightOnly` keeps these frames cheap so it never costs the game fps.
+      let lightOnly = false
+      if (state.lightShow) {
+        lightOnly = !animating && !dirty
+        lightT += dt
+        const hueBase = (lightT / 14) % 1 // a calm ~14s lap of the color wheel
+        ACTION_IDX.forEach((i, k) => {
+          lightColor.setHSL((hueBase + k * 0.5) % 1, 0.85, 0.5) // the two sit complementary
+          const mat = bm[i].material as THREE.MeshStandardMaterial
+          mat.color.copy(lightColor)
+          mat.emissive.copy(lightColor)
+          // gentle breathing, offset between the two so they don't pulse in lockstep
+          bm[i].userData.baseEmissive =
+            0.42 + 0.1 * Math.sin(lightT * 1.5 + k * Math.PI)
+          const tokenMode =
+            i === 1
+              ? state.a1Display?.mode === 'token'
+              : state.a2Display?.mode === 'token'
+          if (tokenMode) {
+            lightActionScreen(i, '#000000', 0)
+            return
+          }
+          const halo = actionGlow[i]
+          if (halo) {
+            halo.color.copy(lightColor)
+            halo.opacity = 0.34
+          }
+        })
+        animating = true
+      }
+
+      // Token-mode screens animate only while a game opts in. Normal HOME/Lucky buttons stay idle.
+      const tokenScreenActive = tokenScreens.some((screen) => screen.isActive())
+      if (tokenScreenActive) coinAccum += dt
+      if (tokenScreenActive && coinAccum >= COIN_FRAME) {
+        if (!animating && !dirty) lightOnly = true
+        for (const tokenScreen of tokenScreens) tokenScreen.draw(coinAccum)
+        coinAccum = 0
+        animating = true
+      }
+
+      // Only touch the GPU when something actually changed. An idle device paints nothing; the shadow
+      // pass (the heavy bit) runs only when geometry moved, never for the color-only light show.
       if (dirty || animating) {
-        renderer.shadowMap.needsUpdate = true
+        if (!lightOnly) renderer.shadowMap.needsUpdate = true
         renderer.render(scene, camera)
         dirty = false
       }
@@ -1379,10 +2100,13 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       window.removeEventListener('focus', onVisible)
       ro.disconnect()
       pressTimers.forEach(clearTimeout)
-      applyViewRef.current = () => { }
-      applyThemeRef.current = () => { }
-      applyOutroRef.current = () => { }
+      applyViewRef.current = () => {}
+      applyThemeRef.current = () => {}
+      applyOutroRef.current = () => {}
+      applyActiveRef.current = () => {}
       gui?.destroy()
+      disposeActionScreens()
+      for (const tokenScreen of tokenScreens) tokenScreen.dispose()
       logoGeo.forEach((g) => g.dispose())
       skinCache.forEach((t) => t.dispose())
       matLogoDark.dispose()
@@ -1409,10 +2133,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     applyOutroRef.current(outro)
   }, [outro])
 
-  // Push the export pose into the scene when the sliders move.
   useEffect(() => {
-    if (exportRot) applyExportRotRef.current(exportRot.x, exportRot.y)
-  }, [exportRot])
+    applyActiveRef.current(active)
+  }, [active])
 
   return (
     <div
@@ -1421,14 +2144,16 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         position: 'absolute',
         inset: 0,
         overflow: 'hidden',
-        // Playground sits the device on a warm backdrop to inspect the model; the real app stays
-        // black so the device reads as a product shot. Customize is transparent so the workshop
-        // backdrop shows around the floating device, and sits above it in the studio stack.
+        // Playground sits the device on a warm backdrop to inspect the model; the real app frames it
+        // on a deep tint of the active skin so the surround feels themed, not flat black. Customize is
+        // transparent so the workshop backdrop shows around the floating device.
         background: debug
           ? 'radial-gradient(circle at 50% 38%, #f4ead6 0%, #decdab 82%)'
           : customize
             ? 'transparent'
-            : '#000',
+            : theme
+              ? themeBackdrop(theme)
+              : '#000',
         zIndex: customize ? 10 : undefined,
       }}
     >
@@ -1436,6 +2161,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
           beveled rim frames it. Total black so any rim seam reads as screen, not a gap. */}
       <div
         ref={screenLayerRef}
+        className={debug || customize ? undefined : 'console-screen-surface'}
         style={{
           position: 'absolute',
           left: 0,
@@ -1448,18 +2174,30 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
           background: debug ? 'transparent' : '#000',
           // Customize uses the 3D screenMesh (it spins with the body), so the HTML layer is dead weight.
           display: customize ? 'none' : undefined,
-          // Fade the screen in on a fresh mount, so the studio→game handoff lands black then the game
-          // content eases up (the studio side stays black through the snap). Flipped to 1 after layout.
+          // Hidden until sized (so it doesn't flash mispositioned), then snapped to visible. No fade:
+          // the screen content appears instantly, no entry animation.
           opacity: customize ? undefined : 0,
-          transition: customize ? undefined : 'opacity 1s ease',
           overflow: 'hidden',
         }}
       >
-        {children}
+        <div
+          className="console-screen-content"
+          data-visible={screenContentVisible ? 'true' : 'false'}
+          aria-hidden={!screenContentVisible}
+        >
+          {children}
+        </div>
       </div>
 
       {/* device canvas on top — transparent through the screen hole + outside the body */}
-      <div style={{ position: 'absolute', inset: 0, zIndex: 10, touchAction: 'none' }}>
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 10,
+          touchAction: 'none',
+        }}
+      >
         <canvas ref={canvasRef} style={{ display: 'block' }} />
         <div
           ref={hintRef}
@@ -1479,8 +2217,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
             userSelect: 'none',
             fontFamily: '-apple-system, "Segoe UI", system-ui, sans-serif',
           }}
-        >
-        </div>
+        ></div>
       </div>
     </div>
   )

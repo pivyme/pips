@@ -430,6 +430,60 @@ public fun redeem_range<Quote>(
     });
 }
 
+/// Redeem a settled range position permissionlessly into the PredictManager's
+/// balance. Mirrors `redeem_permissionless` for the binary leg: drops the owner
+/// check for an `is_settled` gate and deposits via `deposit_permissionless`, so an
+/// operator can sweep an expired in-the-money range position on the user's behalf.
+public fun redeem_range_permissionless<Quote>(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(oracle.is_settled(), EOracleNotSettled);
+    assert!(quantity > 0, EZeroQuantity);
+    predict.oracle_config.assert_range_key_matches(oracle, &key);
+    oracle_config::assert_quoteable_oracle(oracle, clock);
+
+    manager.decrease_range(key, quantity);
+
+    let lower = key.lower_strike();
+    let higher = key.higher_strike();
+    let payout;
+    if (predict.vault.has_settled_oracle(oracle.id())) {
+        let (_, settled_payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
+        predict.vault.redeem_settled_position(oracle.id(), quantity, settled_payout);
+        payout = settled_payout;
+    } else {
+        predict.vault.remove_range(oracle.id(), lower, higher, quantity);
+        predict.refresh_oracle_risk(oracle);
+        let (_, live_payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
+        payout = live_payout;
+    };
+
+    let payout_balance = predict.vault.dispense_payout<Quote>(payout);
+    let payout_coin = payout_balance.into_coin(ctx);
+    manager.deposit_permissionless(payout_coin, ctx);
+
+    event::emit(RangeRedeemed {
+        predict_id: object::id(predict),
+        manager_id: object::id(manager),
+        trader: manager.owner(),
+        quote_asset: type_name::with_defining_ids<Quote>(),
+        oracle_id: key.oracle_id(),
+        expiry: key.expiry(),
+        lower_strike: lower,
+        higher_strike: higher,
+        quantity,
+        payout,
+        bid_price: math::div(payout, quantity),
+        is_settled: true,
+    });
+}
+
 /// Supply an accepted quote asset into the vault. Returns LP tokens representing shares.
 /// First depositor gets shares 1:1. Subsequent depositors get shares
 /// proportional to their deposit relative to current vault value.

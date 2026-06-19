@@ -3,15 +3,14 @@ import {
   Scripts,
   createRootRouteWithContext,
 } from '@tanstack/react-router'
-import LenisSmoothScrollProvider from '../providers/LenisSmoothScrollProvider'
 import { Toaster } from 'react-hot-toast'
 import ErrorPage from '../components/ErrorPage'
 import NotFoundPage from '../components/NotFoundPage'
-import { AuthProvider } from '@/lib/auth'
-
+import LenisSmoothScrollProvider from '../providers/LenisSmoothScrollProvider'
 import appCss from '../styles.css?url'
-
 import type { QueryClient } from '@tanstack/react-query'
+import { AuthProvider } from '@/lib/auth'
+import { AppPrivyProvider } from '@/lib/privy'
 
 interface MyRouterContext {
   queryClient: QueryClient
@@ -34,6 +33,9 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
         content:
           'Pips makes trading simple, intuitive, and addictive, like a game. A gamified trading console on Sui.',
       },
+      // Pips owns its dark palette. Extension-level recoloring can force the live Canvas/WebGL
+      // game surfaces through an expensive full-page filter on every frame.
+      { name: 'darkreader-lock', content: '' },
       { name: 'theme-color', content: '#000000' },
       // Social previews
       { property: 'og:title', content: 'Pips' },
@@ -69,6 +71,14 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         <HeadContent />
+        {/* Tint the iOS status-bar strip to the saved skin before first paint, so it never flashes
+            black on load. _app caches the color; the door ("/") clears it. Runs in <head>, so it can
+            touch the theme-color meta + html bg (body isn't parsed yet, that lands in _app's effect). */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var c=localStorage.getItem('pips_console_backdrop');if(c&&location.pathname!=='/'){document.documentElement.style.background=c;var m=document.querySelector('meta[name="theme-color"]');if(m)m.content=c;}}catch(e){}`,
+          }}
+        />
       </head>
       <body className="bg-canvas text-text antialiased">
         <LenisSmoothScrollProvider />
@@ -89,7 +99,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
             error: { iconTheme: { primary: 'var(--color-down)', secondary: 'white' } },
           }}
         />
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <AppPrivyProvider>{children}</AppPrivyProvider>
+        </AuthProvider>
         <Scripts />
       </body>
     </html>

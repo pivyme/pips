@@ -25,18 +25,24 @@ import type { ReactNode } from 'react'
 
 export type ButtonColor = 'amber' | 'up' | 'down' | 'neutral'
 
+export type ActionDisplay =
+  | { mode: 'text' }
+  | { mode: 'token'; ticker: string; logoSrc?: string }
+
+// Physical controls intentionally have no disabled state. They always remain tactile; handlers
+// own any boundary clamping or safe no-op behavior required by the active screen.
 export interface ActionSpec {
   label: string
   onPress: () => void
   color?: ButtonColor
-  disabled?: boolean
+  // Text is the default. Games opt into richer physical-screen treatments per button.
+  display?: ActionDisplay
 }
 
 export interface MainSpec {
   label: string
   onPress: () => void
   color?: ButtonColor
-  disabled?: boolean
   loading?: boolean
 }
 
@@ -48,7 +54,6 @@ export interface KnobSpec {
   onChange: (value: number) => void
   label?: string
   format?: (value: number) => string
-  disabled?: boolean
 }
 
 export interface StatusSpec {
@@ -63,6 +68,9 @@ export interface ConsoleControls {
   knob?: KnobSpec | null
   numberWheel?: KnobSpec | null
   status?: StatusSpec | null
+  // While true, any unbound action screen drifts through a slow ambient light show (the device's two
+  // mini-screens become decoration). Games flip it on during a live run, off on death/idle.
+  lightShow?: boolean
 }
 
 // Renderable snapshot (drives shell re-renders). Handlers live in a ref instead.
@@ -73,6 +81,7 @@ export interface ConsoleView {
   knob: Omit<KnobSpec, 'onChange'> | null
   numberWheel: Omit<KnobSpec, 'onChange'> | null
   status: StatusSpec | null
+  lightShow: boolean
 }
 
 interface Handlers {
@@ -90,6 +99,7 @@ const EMPTY_VIEW: ConsoleView = {
   knob: null,
   numberWheel: null,
   status: null,
+  lightShow: false,
 }
 
 interface Ctx {
@@ -125,13 +135,21 @@ export function useConsoleView() {
 function toView(c: ConsoleControls): ConsoleView {
   return {
     main: c.main
-      ? { label: c.main.label, color: c.main.color, disabled: c.main.disabled, loading: c.main.loading }
+      ? { label: c.main.label, color: c.main.color, loading: c.main.loading }
       : null,
     action1: c.action1
-      ? { label: c.action1.label, color: c.action1.color, disabled: c.action1.disabled }
+      ? {
+          label: c.action1.label,
+          color: c.action1.color,
+          display: c.action1.display,
+        }
       : null,
     action2: c.action2
-      ? { label: c.action2.label, color: c.action2.color, disabled: c.action2.disabled }
+      ? {
+          label: c.action2.label,
+          color: c.action2.color,
+          display: c.action2.display,
+        }
       : null,
     knob: c.knob
       ? {
@@ -141,7 +159,6 @@ function toView(c: ConsoleControls): ConsoleView {
           value: c.knob.value,
           label: c.knob.label,
           format: c.knob.format,
-          disabled: c.knob.disabled,
         }
       : null,
     numberWheel: c.numberWheel
@@ -152,24 +169,33 @@ function toView(c: ConsoleControls): ConsoleView {
           value: c.numberWheel.value,
           label: c.numberWheel.label,
           format: c.numberWheel.format,
-          disabled: c.numberWheel.disabled,
         }
       : null,
     status: c.status ?? null,
+    lightShow: !!c.lightShow,
   }
 }
 
 // Cheap key over the renderable bits, so the shell only re-renders on real change.
 function viewKey(v: ConsoleView): string {
-  const btn = (b: { label?: string; color?: string; disabled?: boolean; loading?: boolean } | null) =>
-    b ? `${b.label}/${b.color ?? ''}/${b.disabled ? 1 : 0}/${b.loading ? 1 : 0}` : '-'
+  const btn = (
+    b: {
+      label?: string
+      color?: string
+      loading?: boolean
+      display?: ActionDisplay
+    } | null,
+  ) =>
+    b
+      ? `${b.label}/${b.color ?? ''}/${b.loading ? 1 : 0}/${b.display?.mode ?? 'text'}/${b.display?.mode === 'token' ? `${b.display.ticker}/${b.display.logoSrc ?? ''}` : ''}`
+      : '-'
   const dial = (d: ConsoleView['knob']) => d
-    ? `${d.min}/${d.max}/${d.step}/${d.value}/${d.label ?? ''}/${d.disabled ? 1 : 0}`
+    ? `${d.min}/${d.max}/${d.step}/${d.value}/${d.label ?? ''}`
     : '-'
   const txt = (x: ReactNode) =>
     typeof x === 'string' || typeof x === 'number' ? String(x) : x ? '#' : '-'
   const status = v.status ? `${txt(v.status.left)}|${txt(v.status.right)}` : '-'
-  return [btn(v.main), btn(v.action1), btn(v.action2), dial(v.knob), dial(v.numberWheel), status].join(';')
+  return [btn(v.main), btn(v.action1), btn(v.action2), dial(v.knob), dial(v.numberWheel), status, v.lightShow ? 1 : 0].join(';')
 }
 
 // Write side: a game screen.

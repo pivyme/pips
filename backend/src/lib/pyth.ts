@@ -18,6 +18,8 @@ type HermesPrice = {
 };
 
 // Fetch latest USD spot for one or more assets. Returns a map symbol -> price.
+// Hermes is an external service with variable latency; one slow response should not kill a
+// solve/settle/push flow, so retry a couple times on timeout before giving up.
 export async function fetchSpots(assets: string[]): Promise<Record<string, number>> {
   const ids = assets.map((a) => PYTH_FEED_IDS[a]).filter(Boolean);
   if (ids.length === 0) return {};
@@ -25,21 +27,30 @@ export async function fetchSpots(assets: string[]): Promise<Record<string, numbe
   const url = new URL('/v2/updates/price/latest', PYTH_HERMES_URL);
   for (const id of ids) url.searchParams.append('ids[]', id);
 
-  const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-  if (!res.ok) throw new Error(`Pyth Hermes ${res.status}: ${await res.text()}`);
-  const body = (await res.json()) as { parsed?: HermesPrice[] };
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) throw new Error(`Pyth Hermes ${res.status}: ${await res.text()}`);
+      const body = (await res.json()) as { parsed?: HermesPrice[] };
 
-  const byId: Record<string, number> = {};
-  for (const p of body.parsed ?? []) {
-    byId[p.id.toLowerCase()] = Number(p.price.price) * 10 ** p.price.expo;
-  }
+      const byId: Record<string, number> = {};
+      for (const p of body.parsed ?? []) {
+        byId[p.id.toLowerCase()] = Number(p.price.price) * 10 ** p.price.expo;
+      }
 
-  const out: Record<string, number> = {};
-  for (const asset of assets) {
-    const id = PYTH_FEED_IDS[asset]?.toLowerCase();
-    if (id && byId[id] != null) out[asset] = byId[id];
+      const out: Record<string, number> = {};
+      for (const asset of assets) {
+        const id = PYTH_FEED_IDS[asset]?.toLowerCase();
+        if (id && byId[id] != null) out[asset] = byId[id];
+      }
+      return out;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * attempt));
+    }
   }
-  return out;
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 export async function fetchSpot(asset: string): Promise<number> {

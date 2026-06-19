@@ -12,13 +12,19 @@ datasource db {
 
 model User {
   id               String    @id @default(cuid())
-  address          String    @unique          // Sui address (zkLogin or dev wallet). renamed from walletAddress
-  provider         String    @default("dev")  // 'enoki' | 'dev'
+  address          String    @unique          // Sui address (Privy embedded wallet or dev wallet). renamed from walletAddress
+  provider         String    @default("dev")  // 'privy' | 'dev'
   email            String?
   displayName      String                     // generated handle, e.g. "Lucky Otter"
-  nonce            String?                     // auth challenge (enoki personal-message sign)
+  nonce            String?                     // auth challenge (legacy enoki personal-message sign, removed in the privy swap)
+
+  privyUserId      String?   @unique           // Privy DID (sub claim), the stable account key
+  suiPublicKey     String?                     // Privy ed25519 public key, for signature assembly
+  privyWalletId    String?                     // Privy embedded-wallet id used by server rawSign
+
   predictManagerId String?                     // their PredictManager object id (lazily created)
-  dusdcFunded      Boolean   @default(false)   // free starting balance minted
+  dusdcFunded      Boolean   @default(false)   // free starting USDC chips minted
+  suiGasFunded     Boolean   @default(false)   // free SUI for gas transferred (localnet)
 
   soundEnabled     Boolean   @default(true)
   hapticsEnabled   Boolean   @default(true)

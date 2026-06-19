@@ -10,7 +10,7 @@ const VARIANTS: Record<Variant, string> = {
   primary: 'btn-primary',
   secondary: 'card-neo text-text',
   ghost: 'text-text-2 active:text-text',
-  danger: 'border border-down/40 bg-down/15 text-down',
+  danger: 'btn-danger',
 }
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

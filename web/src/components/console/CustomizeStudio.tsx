@@ -15,11 +15,17 @@ import { cnm } from '@/utils/style'
 
 export function CustomizeStudio({
   initialThemeId,
-  onDone,
+  visible = true,
+  active = true,
+  onCommit,
+  onOutroComplete,
   onCancel,
 }: {
   initialThemeId: string
-  onDone: (themeId: string) => void
+  visible?: boolean
+  active?: boolean
+  onCommit: (themeId: string) => void
+  onOutroComplete: () => void
   onCancel: () => void
 }) {
   const reduced = useReducedMotion()
@@ -27,8 +33,7 @@ export function CustomizeStudio({
   // Once Done is tapped the device plays its snap-to-screen + power-on; the chrome bows out and
   // taps are locked until the canvas reports the outro is finished.
   const [exiting, setExiting] = useState(false)
-  // Let the workshop paint (and the old games canvas dispose) one beat before the heavy WebGL build,
-  // so the device drops cleanly into the bench instead of janking the first frames of its intro.
+  // Let the workshop paint one beat before the prepared WebGL view mounts.
   const [ready, setReady] = useState(reduced)
   const theme = THEME_BY_ID[selectedId] ?? THEMES[0]
 
@@ -58,10 +63,18 @@ export function CustomizeStudio({
     haptic('success')
     setReady(true) // make sure the canvas is mounted so the outro can play + report completion
     setExiting(true)
+    onCommit(selectedId)
   }
 
   return (
-    <div className="absolute inset-0 overflow-hidden">
+    <div
+      className="absolute inset-0 z-20 overflow-hidden"
+      style={{
+        opacity: visible ? 1 : 0,
+        pointerEvents: visible ? undefined : 'none',
+      }}
+      aria-hidden={!visible}
+    >
       <WorkshopBackdrop />
 
       {/* The floating device. Transparent canvas → the workshop shows around it. Mounted a beat late
@@ -69,9 +82,10 @@ export function CustomizeStudio({
       {ready && (
         <ConsoleCanvas
           customize
+          active={active}
           theme={theme}
           outro={exiting}
-          onOutroComplete={() => onDone(selectedId)}
+          onOutroComplete={onOutroComplete}
         />
       )}
 
@@ -139,19 +153,79 @@ function ThemeRail({
   onSelect: (id: string) => void
 }) {
   const railRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef({
+    pointerId: -1,
+    startX: 0,
+    startScrollLeft: 0,
+    moved: false,
+  })
 
-  // Keep the active card in view when it changes (e.g. landing on a saved skin off-screen).
+  // Keep the active card centered, scrolling the rail itself. scrollIntoView would bubble up when the
+  // last cards can't be centered (no rail left to their right) and scroll the overflow-hidden studio
+  // root too, dragging the whole device off-center. Touching only the rail keeps the device put.
   useEffect(() => {
-    const el = railRef.current?.querySelector<HTMLElement>(`[data-id="${selectedId}"]`)
-    el?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+    const rail = railRef.current
+    const el = rail?.querySelector<HTMLElement>(`[data-id="${selectedId}"]`)
+    if (!rail || !el) return
+    const railRect = rail.getBoundingClientRect()
+    const elRect = el.getBoundingClientRect()
+    const delta = elRect.left + elRect.width / 2 - (railRect.left + railRect.width / 2)
+    rail.scrollTo({ left: rail.scrollLeft + delta, behavior: 'smooth' })
   }, [selectedId])
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Touch uses the browser's native horizontal scrolling. Capturing it here breaks taps on the
+    // theme buttons and is less reliable than native momentum scrolling on mobile Safari.
+    if (e.pointerType === 'touch' || e.button !== 0) return
+    const rail = e.currentTarget
+    dragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startScrollLeft: rail.scrollLeft,
+      moved: false,
+    }
+  }
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (drag.pointerId !== e.pointerId) return
+    const dx = e.clientX - drag.startX
+    if (Math.abs(dx) > 4 && !drag.moved) {
+      drag.moved = true
+      e.currentTarget.setPointerCapture(e.pointerId)
+    }
+    if (!drag.moved) return
+    e.preventDefault()
+    e.currentTarget.scrollLeft = drag.startScrollLeft - dx
+  }
+
+  const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (drag.pointerId !== e.pointerId) return
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    drag.pointerId = -1
+    // Keep the flag through the synthetic click that follows pointerup, then clear it.
+    if (drag.moved) setTimeout(() => { drag.moved = false }, 0)
+  }
 
   return (
     <div
       ref={railRef}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onClickCapture={(e) => {
+        if (!dragRef.current.moved) return
+        e.preventDefault()
+        e.stopPropagation()
+      }}
+      onDragStart={(e) => e.preventDefault()}
       // pt/pb leave room for the selected card to lift + tilt; overflow-x forces overflow-y, so
       // without the padding the raised card clips.
-      className="-mx-4 flex gap-3 overflow-x-auto px-5 pb-4 pt-7 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="-mx-4 flex cursor-grab touch-pan-x select-none gap-3 overflow-x-auto px-5 pb-4 pt-7 active:cursor-grabbing [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {THEMES.map((t) => (
         <ThemeCard

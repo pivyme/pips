@@ -1,17 +1,22 @@
-// Auth context. One token, two modes. dev auto-logs-in the testing wallet on load; enoki runs
-// the Google (zkLogin) handshake and signs a nonce so our JWT-protected API works. The token
-// lives in localStorage and is mirrored into the api client so every request carries it.
+// Auth context. One token, two modes. dev auto-logs-in the testing wallet on load; privy runs the
+// Google/email login + non-custodial embedded Sui wallet handshake so our JWT-protected API works.
+// The token lives in localStorage and is mirrored into the api client so every request carries it.
+// The Privy hooks live inside PrivyProvider, so privy mode is driven by a bridge (lib/privy.tsx)
+// that talks to this context through AuthControlContext. dev + demo never touch Privy.
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 
+import type { UserDTO } from '@/lib/api'
 import { env } from '@/env'
-import { api, ApiError, setAuthToken, type UserDTO } from '@/lib/api'
-import { isDemo, demoUser } from '@/lib/demo'
+import { ApiError, api, setAuthToken } from '@/lib/api'
+import { demoUser, isDemo } from '@/lib/demo'
 import { setHapticsEnabled } from '@/lib/haptics'
 import { setSoundEnabled } from '@/lib/sound'
+import { readWalletBalances } from '@/lib/sui/predict'
 
 const TOKEN_KEY = 'pips_token'
-const loadToken = (): string | null => {
+const WALLET_DEBUG_INTERVAL_MS = 30_000
+export const loadToken = (): string | null => {
   if (typeof window === 'undefined') return null
   try {
     return window.localStorage.getItem(TOKEN_KEY)
@@ -41,13 +46,27 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
-// The exact bytes the backend reconstructs and verifies. Keep in lockstep with auth.ts.
-const authMessage = (nonce: string): string => `Sign in to Pips\n\nNonce: ${nonce}`
+// Internal seam for the Privy bridge: apply a session, set status, and register Privy's own
+// login/logout so signIn/signOut can drive them. Not part of the public auth surface.
+interface AuthControl {
+  apply: (token: string, user: UserDTO) => void
+  setStatus: (s: AuthStatus) => void
+  registerPrivy: (c: { signIn: () => Promise<void>; signOut: () => Promise<void> } | null) => void
+}
+const AuthControlContext = createContext<AuthControl | null>(null)
+export function useAuthControl(): AuthControl {
+  const ctx = useContext(AuthControlContext)
+  if (!ctx) throw new Error('useAuthControl must be used within AuthProvider')
+  return ctx
+}
+
+const isPrivy = env.VITE_AUTH_MODE === 'privy'
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading')
   const [user, setUser] = useState<UserDTO | null>(null)
   const started = useRef(false)
+  const privyControl = useRef<{ signIn: () => Promise<void>; signOut: () => Promise<void> } | null>(null)
 
   const apply = useCallback((token: string, u: UserDTO) => {
     saveToken(token)
@@ -60,17 +79,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { token, user: u } = await api.authDev()
     apply(token, u)
   }, [apply])
-
-  const enokiHandshake = useCallback(
-    async (address: string) => {
-      const { nonce } = await api.authNonce(address)
-      const { enokiSignPersonalMessage } = await import('./sui/enoki')
-      const signature = await enokiSignPersonalMessage(authMessage(nonce))
-      const { token, user: u } = await api.authVerify(address, signature)
-      apply(token, u)
-    },
-    [apply],
-  )
 
   const refresh = useCallback(async () => {
     try {
@@ -96,11 +104,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await devLogin()
       return
     }
-    const { enokiSignIn } = await import('./sui/enoki')
-    await enokiSignIn(env.VITE_APP_URL ?? window.location.origin)
+    // privy: the bridge owns the Privy login modal + the verify handshake.
+    if (privyControl.current) await privyControl.current.signIn()
   }, [apply, devLogin])
 
-  const signOut = useCallback(() => {
+  const signOut = useCallback(async () => {
+    // Await Privy's logout so the session is fully cleared before the door shows again. Fire-and-forget
+    // left Privy still authenticated, so the next login skipped the modal and the bridge silently
+    // re-authed the same account. Then drop our app session.
+    if (isPrivy && privyControl.current) {
+      try {
+        await privyControl.current.signOut()
+      } catch (e) {
+        console.error('[auth] privy logout failed', e)
+      }
+    }
     saveToken(null)
     setAuthToken(null)
     setUser(null)
@@ -115,6 +133,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setSoundEnabled(user?.settings.sound ?? true)
   }, [user?.settings.sound])
+
+  const address = user?.address
+  useEffect(() => {
+    if (!address || isDemo()) return
+
+    let active = true
+    let reading = false
+
+    const logWallet = async () => {
+      if (reading) return
+      reading = true
+      try {
+        const balances = await readWalletBalances(address)
+        if (!active) return
+        console.info(
+          `[Pips wallet]\nAddress: ${address}\nSUI: ${balances.sui}\nUSDC: ${balances.usdc ?? 'not configured'}\nUpdated: ${new Date().toISOString()}`,
+        )
+      } catch (error) {
+        if (active) console.warn(`[Pips wallet] Failed to read balances for ${address}`, error)
+      } finally {
+        reading = false
+      }
+    }
+
+    void logWallet()
+    const interval = window.setInterval(() => void logWallet(), WALLET_DEBUG_INTERVAL_MS)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+    }
+  }, [address])
 
   useEffect(() => {
     if (started.current) return
@@ -154,26 +203,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return
       }
 
-      // enoki: complete a Google redirect if we are landing on the callback, else stay anon.
-      if (typeof window !== 'undefined' && window.location.hash.includes('id_token')) {
-        try {
-          const { enokiHandleCallback } = await import('./sui/enoki')
-          const address = await enokiHandleCallback()
-          if (address) {
-            await enokiHandshake(address)
-            window.history.replaceState(null, '', window.location.pathname)
-            return
-          }
-        } catch {
-          setStatus('error')
-          return
-        }
-      }
-      setStatus('anon')
+      // privy: the bridge resolves status from the live Privy session (anon, or run the verify
+      // handshake once Privy is ready). Stay 'loading' until it does.
     })()
-  }, [apply, devLogin, enokiHandshake])
+  }, [apply, devLogin])
 
-  return <AuthContext.Provider value={{ status, user, signIn, signOut, refresh }}>{children}</AuthContext.Provider>
+  const control: AuthControl = {
+    apply,
+    setStatus,
+    registerPrivy: (c) => {
+      privyControl.current = c
+    },
+  }
+
+  return (
+    <AuthContext.Provider value={{ status, user, signIn, signOut, refresh }}>
+      <AuthControlContext.Provider value={control}>{children}</AuthControlContext.Provider>
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth(): AuthContextValue {

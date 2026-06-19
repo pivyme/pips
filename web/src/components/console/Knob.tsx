@@ -12,7 +12,7 @@ type KnobView = Omit<KnobSpec, 'onChange'> | null
 
 export function Knob({ spec, onChange }: { spec: KnobView; onChange: (v: number) => void }) {
   const drag = useRef<{ y: number; value: number } | null>(null)
-  const disabled = !spec || spec.disabled
+  const unavailable = !spec
 
   const clampSnap = (v: number) => {
     if (!spec) return v
@@ -21,7 +21,7 @@ export function Knob({ spec, onChange }: { spec: KnobView; onChange: (v: number)
   }
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (disabled || !spec) return
+    if (!spec) return
     e.preventDefault()
     ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
     drag.current = { y: e.clientY, value: spec.value }
@@ -47,7 +47,7 @@ export function Knob({ spec, onChange }: { spec: KnobView; onChange: (v: number)
 
   // Keyboard operability for the slider role: arrows step, Home/End jump.
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (disabled || !spec) return
+    if (!spec) return
     let next: number
     switch (e.key) {
       case 'ArrowUp':
@@ -75,10 +75,8 @@ export function Knob({ spec, onChange }: { spec: KnobView; onChange: (v: number)
   }
 
   const pct = spec && spec.max > spec.min ? (spec.value - spec.min) / (spec.max - spec.min) : 0
-  const display = spec ? (spec.format ? spec.format(spec.value) : String(spec.value)) : '·'
-
   return (
-    <div className="flex flex-1 flex-col items-center justify-end gap-1">
+    <div className="flex flex-1 flex-col items-center justify-end">
       <div
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -87,11 +85,11 @@ export function Knob({ spec, onChange }: { spec: KnobView; onChange: (v: number)
         onKeyDown={onKeyDown}
         className={cnm(
           'relative w-full flex-1 touch-none overflow-hidden rounded-md border border-line-strong',
-          disabled ? 'opacity-40' : 'cursor-ns-resize',
+          unavailable ? 'opacity-40' : 'cursor-ns-resize',
         )}
         style={{ background: 'linear-gradient(180deg,#2a2a2a,#161616)' }}
         role="slider"
-        tabIndex={disabled ? -1 : 0}
+        tabIndex={unavailable ? -1 : 0}
         aria-valuenow={spec?.value}
         aria-valuemin={spec?.min}
         aria-valuemax={spec?.max}
@@ -109,14 +107,6 @@ export function Knob({ spec, onChange }: { spec: KnobView; onChange: (v: number)
           className="absolute inset-x-1 h-[3px] rounded-full bg-brand-500 shadow-[0_0_8px_rgba(255,192,22,0.6)]"
           style={{ bottom: `calc(${Math.round(pct * 100)}% - 1.5px)` }}
         />
-      </div>
-      <div className="text-center leading-tight">
-        <div className="tnum text-[13px] font-semibold text-text">{display}</div>
-        {spec?.label ? (
-          <div className="text-[9px] font-semibold uppercase tracking-[0.08em] text-text-3">
-            {spec.label}
-          </div>
-        ) : null}
       </div>
     </div>
   )

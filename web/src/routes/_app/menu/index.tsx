@@ -87,21 +87,11 @@ function StatsSection() {
   }
 
   return (
-    <Link
-      to="/menu/stats"
-      viewTransition
-      onClick={() => {
-        prepareMenuTransition('forward')
-        haptic('selection')
-      }}
-      className="block transition-transform active:scale-[0.99]"
-    >
-      <StatsCard
-        stats={stats}
-        displayName={user?.displayName ?? 'Player'}
-        address={user?.address ?? ''}
-      />
-    </Link>
+    <StatsCard
+      stats={stats}
+      displayName={user?.displayName ?? 'Player'}
+      address={user?.address ?? ''}
+    />
   )
 }
 

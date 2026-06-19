@@ -13,8 +13,7 @@ import { useConsoleView } from './controls'
 import type { ButtonColor, ConsoleView } from './controls'
 import { Knob } from './Knob'
 
-function colorClasses(color: ButtonColor = 'neutral', disabled?: boolean): string {
-  if (disabled) return 'bg-surface/40 text-text-3 border border-line'
+function colorClasses(color: ButtonColor = 'neutral'): string {
   switch (color) {
     case 'amber':
       return 'btn-primary'
@@ -34,16 +33,16 @@ function ActionButton({
   spec: ConsoleView['action1']
   onPress: () => void
 }) {
-  const disabled = !spec || spec.disabled
+  const unavailable = !spec
   return (
     <button
       type="button"
-      disabled={disabled}
-      onPointerDown={() => !disabled && haptic('medium')}
-      onClick={() => !disabled && onPress()}
+      disabled={unavailable}
+      onPointerDown={() => !unavailable && haptic('medium')}
+      onClick={() => !unavailable && onPress()}
       className={cnm(
         'flex h-full w-full items-center justify-center rounded-md text-center text-sm font-bold uppercase tracking-wide transition-transform',
-        colorClasses(spec?.color, disabled),
+        unavailable ? 'bg-surface/40 text-text-3 border border-line' : colorClasses(spec.color),
       )}
     >
       {spec?.label ?? ''}
@@ -58,16 +57,16 @@ function MainButton({
   spec: ConsoleView['main']
   onPress: () => void
 }) {
-  const disabled = !spec || spec.disabled || spec.loading
+  const unavailable = !spec
   return (
     <button
       type="button"
-      disabled={disabled}
-      onPointerDown={() => !disabled && haptic('rigid')}
-      onClick={() => !disabled && onPress()}
+      disabled={unavailable}
+      onPointerDown={() => !unavailable && haptic('rigid')}
+      onClick={() => !unavailable && onPress()}
       className={cnm(
         'flex h-[68px] w-full items-center justify-center rounded-card text-center text-base font-extrabold uppercase tracking-wide transition-transform',
-        colorClasses(spec?.color ?? 'amber', disabled),
+        unavailable ? 'bg-surface/40 text-text-3 border border-line' : colorClasses(spec.color ?? 'amber'),
       )}
     >
       {spec?.loading ? '···' : (spec?.label ?? 'PLAY')}
@@ -125,7 +124,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       <StatusStrip status={view.status} balance={user?.balance ?? null} />
 
       {/* The screen: true black, recessed. Routed content renders inside. */}
-      <div className="screen relative mx-3 min-h-0 flex-1 overflow-hidden rounded-[28px]">
+      <div className="screen console-screen-surface relative mx-3 min-h-0 flex-1 overflow-hidden rounded-[28px]">
         <div className="h-full w-full overflow-y-auto overflow-x-hidden">{children}</div>
       </div>
 
@@ -142,7 +141,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
               {({ isActive }) => <TabPill label="Menu" active={isActive} />}
             </Link>
             <Link to="/games" activeOptions={{ exact: false }} onClick={() => haptic('selection')} className="flex-1">
-              {({ isActive }) => <TabPill label="Games" active={isActive} />}
+              {({ isActive }) => <TabPill label="Home" active={isActive} />}
             </Link>
           </div>
         </div>

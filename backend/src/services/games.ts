@@ -5,11 +5,11 @@
 
 import {
   EXPIRY_SAFETY_MS,
+  LUCKY_ROUND_MS,
+  LUCKY_MIN_ORACLE_LIFE_MS,
   MIN_STAKE,
   MAX_STAKE,
   GAME_DURATIONS,
-  DEMO_LUCKY_LEVERAGE,
-  DEMO_LUCKY_DURATION,
 } from '../config/main-config.ts';
 import {
   DUSDC_DECIMALS,
@@ -21,7 +21,7 @@ import {
 } from '../lib/sui/config.ts';
 import { liveByAsset, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
 import {
-  previewMint,
+  previewBinaryBatch,
   previewRange,
   readOracle,
   type BinaryParams,
@@ -29,7 +29,24 @@ import {
   type Side,
   type TradeAmounts,
 } from '../lib/sui/predict.ts';
-import { newSeed, seedFloat, pickWeighted, BUCKET_WEIGHTS, LEVERAGE_BUCKETS as RNG_BUCKETS } from './rng.ts';
+import { solveStrike, type BatchPreviewFn, type ScanCurve } from '../lib/sui/solver.ts';
+import { newSeed, seedFloat, pickTier } from './rng.ts';
+
+// Cache the dense strike-price curve per (oracle, side) for a short TTL. The curve only drifts as
+// spot moves (price-pusher every ~2s), so within the TTL a play reuses it and skips the scan round
+// trip, leaving just the sizing probe. The sizing preview re-prices fresh, so a warm curve never
+// makes the reported cost/multiplier stale. Bounded so a long-lived process never grows it without
+// limit; entries fall out as oracles roll.
+const SOLVE_CURVE_TTL_MS = 3000;
+const curveCache = new Map<string, { curve: ScanCurve; at: number }>();
+function getFreshCurve(key: string, now: number): ScanCurve | undefined {
+  const hit = curveCache.get(key);
+  return hit && now - hit.at < SOLVE_CURVE_TTL_MS ? hit.curve : undefined;
+}
+function putCurve(key: string, curve: ScanCurve, now: number): void {
+  if (curveCache.size > 64) for (const [k, v] of curveCache) if (now - v.at >= SOLVE_CURVE_TTL_MS) curveCache.delete(k);
+  curveCache.set(key, { curve, at: now });
+}
 
 // === Errors ===
 
@@ -74,29 +91,6 @@ export const httpStatusForPlayError = (code: PlayErrorCode): number => {
   }
 };
 
-// === Leverage buckets (Lucky) ===
-
-export const LEVERAGE_BUCKETS = RNG_BUCKETS;
-
-// Risk tier (Lucky's Action 2). Constrains which leverage buckets the spin can land on, so the
-// player sets the flavor while asset/side stay random. Chill hugs ATM (small, frequent wins);
-// Lotto only draws the far, big-multiple strikes. The fair RNG still picks within the tier.
-export type RiskTier = 'chill' | 'wild' | 'lotto';
-const RISK_BUCKETS: Record<RiskTier, readonly number[]> = {
-  chill: [2, 5],
-  wild: [5, 10, 25],
-  lotto: [25, 100],
-};
-const isRiskTier = (v: unknown): v is RiskTier => v === 'chill' || v === 'wild' || v === 'lotto';
-const riskWeights = (allowed: readonly number[]): Record<number, number> =>
-  Object.fromEntries(allowed.map((b) => [b, BUCKET_WEIGHTS[b] ?? 1]));
-export { isRiskTier };
-
-// Strike distance from spot per bucket (fraction). Further out = cheaper = bigger multiple.
-const BUCKET_DISTANCE_PCT: Record<number, number> = { 2: 0.0008, 5: 0.002, 10: 0.004, 25: 0.009, 100: 0.025 };
-// Floor on tick-distance so coarse-tick assets keep the buckets monotonic, not collapsed.
-const BUCKET_MIN_TICKS: Record<number, bigint> = { 2: 0n, 5: 1n, 10: 2n, 25: 4n, 100: 8n };
-
 // === Market + grid helpers ===
 
 const now = (): number => Date.now();
@@ -106,6 +100,21 @@ function pickMarket(asset: string): Market {
   const m = live[0];
   if (!m) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
   return m;
+}
+
+// The live oracle a LUCKY play routes to. Two-stage pick so a play never lands on an oracle that
+// expires mid-mint (the EOracleExpired → retry → 10-20s stall): first keep only oracles with enough
+// life that the build+sign+submit can't outrun expiry (LUCKY_MIN_ORACLE_LIFE_MS), then take the one
+// expiring nearest the round target so rounds stay ~30s. If the ladder is thin and nothing clears
+// the life floor, fall back to the longest-lived live oracle rather than failing the play.
+function roundOracle(asset: string): Market | undefined {
+  const t = now();
+  const live = liveByAsset(asset, t, EXPIRY_SAFETY_MS);
+  if (live.length === 0) return undefined;
+  const roomy = live.filter((m) => m.expiryMs - t >= LUCKY_MIN_ORACLE_LIFE_MS);
+  if (roomy.length === 0) return live.reduce((best, m) => (m.expiryMs > best.expiryMs ? m : best));
+  const target = t + LUCKY_ROUND_MS;
+  return roomy.reduce((best, m) => (Math.abs(m.expiryMs - target) < Math.abs(best.expiryMs - target) ? m : best));
 }
 
 export function liveAssets(): string[] {
@@ -129,10 +138,6 @@ const gridOf = (m: Market): Grid => {
   return { tick, min, max: min + tick * (ORACLE_STRIKE_GRID_TICKS - 1n) };
 };
 
-const nearestTick = (v: bigint, tick: bigint): bigint => {
-  const floor = (v / tick) * tick;
-  return v - floor >= tick / 2n ? floor + tick : floor;
-};
 const floorTick = (v: bigint, tick: bigint): bigint => (v / tick) * tick;
 const ceilTick = (v: bigint, tick: bigint): bigint => {
   const floor = (v / tick) * tick;
@@ -144,20 +149,6 @@ const clampStrike = (v: bigint, g: Grid): bigint => {
   if (v > g.max - g.tick) return g.max - g.tick;
   return v;
 };
-
-// Binary strike for a leverage bucket: spot offset by the bucket distance, in the side's
-// direction (call above spot, put below), snapped to the oracle grid.
-function binaryStrike(spot1e9: bigint, side: Side, leverage: number, g: Grid): bigint {
-  const pct = BUCKET_DISTANCE_PCT[leverage] ?? 0.004;
-  const rawDist = (spot1e9 * BigInt(Math.round(pct * 1e6))) / 1_000_000n;
-  let distTicks = rawDist / g.tick;
-  if (rawDist % g.tick >= g.tick / 2n) distTicks += 1n;
-  const minTicks = BUCKET_MIN_TICKS[leverage] ?? 0n;
-  if (distTicks < minTicks) distTicks = minTicks;
-  const base = nearestTick(spot1e9, g.tick);
-  const raw = side === 'up' ? base + distTicks * g.tick : base - distTicks * g.tick;
-  return clampStrike(raw, g);
-}
 
 // Range band [lower, upper] around spot for a width percentage, snapped out to the grid so
 // the band is at least one tick wide.
@@ -233,12 +224,12 @@ export type ResolvedBinary = {
   params: BinaryParams;
   asset: string;
   side: Side;
-  leverage: number;
+  tier: number; // the nominal tier the reel dealt (legacy Play.leverage column)
   duration: number;
   strikeDisplay: string;
   entryCost: bigint;
   maxPayout: bigint; // settled ITM payout = quantity ($1 per contract)
-  multiplier: number;
+  multiplier: number; // payout / entry cost = 1/ask, the live on-chain odds the position pays (what the UI shows)
   seed: string;
 };
 
@@ -254,66 +245,96 @@ export type ResolvedRange = {
   duration: number;
   entryCost: bigint;
   maxPayout: bigint;
-  multiplier: number;
+  multiplier: number; // payout / entry cost = 1/ask, the live on-chain odds the band pays
 };
 
 export type Resolved = ResolvedBinary | ResolvedRange;
 
-// I Feel Lucky: fair server RNG picks asset/side, the player sets the bet (knob), round length
-// (Action 1) and risk tier (Action 2); we draw the leverage within the tier and size the binary.
-export async function resolveLucky(stakeRaw: bigint, opts: { duration?: number; risk?: RiskTier } = {}): Promise<ResolvedBinary> {
+// LUCKY: a fair server RNG deals the whole spin (asset, direction, multiplier tier); the player
+// only sets the bet. The dealt tier is then priced HONESTLY off the live oracle, the §5 solver
+// finds the grid strike whose real multiple matches it and sizes the quantity so cost ~= bet, so
+// the multiplier we surface is always one we can actually mint. The round settles at the routed
+// oracle's expiry (~30s), never one oracle per play.
+export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
   const assets = liveAssets();
   if (assets.length === 0) throw new PlayError('MARKET_UNAVAILABLE', 'No markets are live right now');
 
   const seed = newSeed();
   const asset = assets[Math.floor(seedFloat(seed, 0) * assets.length)];
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
-  // Leverage: a rehearsed demo can pin it via env; otherwise fair RNG within the chosen risk tier.
-  const allowed = RISK_BUCKETS[opts.risk ?? 'wild'] ?? LEVERAGE_BUCKETS;
-  const leverage = LEVERAGE_BUCKETS.includes(DEMO_LUCKY_LEVERAGE as (typeof LEVERAGE_BUCKETS)[number])
-    ? DEMO_LUCKY_LEVERAGE
-    : pickWeighted(seedFloat(seed, 2), riskWeights(allowed));
-  // Round length: env pin (demo) > the player's pick > fair RNG.
-  const duration = GAME_DURATIONS.includes(DEMO_LUCKY_DURATION)
-    ? DEMO_LUCKY_DURATION
-    : opts.duration != null && GAME_DURATIONS.includes(opts.duration)
-      ? opts.duration
-      : GAME_DURATIONS[Math.floor(seedFloat(seed, 3) * GAME_DURATIONS.length)] ?? GAME_DURATIONS[0];
+  const tier = pickTier(seedFloat(seed, 2)); // slot-weighted reel deal (LUCKY.md §4)
 
-  const market = pickMarket(asset);
-  const spot = await freshSpot(market);
-  const g = gridOf(market);
-  const strike = binaryStrike(spot, side, leverage, g);
+  // Route to the oracle expiring nearest the round target and solve in a few batched round trips.
+  // The asset/side/tier are fixed by the seed (fairness); only the oracle is re-picked if the first
+  // one expires mid-solve, which the batched preview surfaces as a thrown error.
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const market = roundOracle(asset);
+    if (!market) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
+    const g = gridOf(market);
 
-  const mk = (q: bigint): BinaryParams => ({ oracleId: market.oracleId, expiryMs: market.expiryMs, strike1e9: strike, side, quantity: q });
-  const { quantity, amounts } = await solveQuantity((q) => previewMint(mk(q)), stakeRaw);
+    // One batched devInspect per solver round. cost == 0 means that strike is unmintable.
+    const preview: BatchPreviewFn = async (probes) => {
+      const amts = await previewBinaryBatch(market.oracleId, market.expiryMs, side, probes);
+      return amts.map((a) => (a.cost > 0n ? a : null));
+    };
 
-  return {
-    kind: 'binary',
-    game: 'lucky',
-    market,
-    params: mk(quantity),
-    asset,
-    side,
-    leverage,
-    duration,
-    strikeDisplay: fmt1e9(strike),
-    entryCost: amounts.cost,
-    maxPayout: quantity,
-    multiplier: multiplierOf(amounts.cost, quantity),
-    seed,
-  };
+    try {
+      // Reuse a fresh cached scan for this oracle/side when one exists, so a warm play skips the
+      // scan round trip and only pays for sizing. Cache whatever scan the solve ended up using.
+      const cacheKey = `${market.oracleId}:${side}`;
+      const t0 = now();
+      const curve = getFreshCurve(cacheKey, t0);
+      // The live spot centers the scan window on ATM (the cached spot1e9 is pusher-fresh, ~2s old).
+      const atm1e9 = market.spot1e9 ? BigInt(market.spot1e9) : undefined;
+      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve, atm1e9, analyticSize: true });
+      if (!curve) putCurve(cacheKey, solution.curve, t0);
+      if (solution.clamped) {
+        // Dealt tier was past the live ask bounds; we minted the closest achievable one and report it.
+        console.log(
+          `[Lucky] ${asset} ${side} ${tier}x unreachable, solved ${solution.multiplier.toFixed(2)}x (tier ${solution.achievedTier}x)`,
+        );
+      }
+      // The round runs to the routed oracle's expiry, so the UI countdown matches the real settle.
+      const duration = Math.max(1, Math.round((market.expiryMs - now()) / 1000));
+      return {
+        kind: 'binary',
+        game: 'lucky',
+        market,
+        params: { oracleId: market.oracleId, expiryMs: market.expiryMs, strike1e9: solution.strike1e9, side, quantity: solution.quantity },
+        asset,
+        side,
+        tier: solution.achievedTier,
+        duration,
+        strikeDisplay: fmt1e9(solution.strike1e9),
+        entryCost: solution.entryCost,
+        maxPayout: solution.quantity,
+        multiplier: solution.multiplier,
+        seed,
+      };
+    } catch (e) {
+      lastErr = e;
+      // First failure re-routes to a fresh oracle (the old one likely expired mid-solve); a
+      // second failure is real, surface it as a friendly price error.
+      if (attempt === 0) continue;
+      throw new PlayError('MINT_FAILED', `Could not price this play: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  throw new PlayError('MINT_FAILED', `Could not price this play: ${lastErr instanceof Error ? lastErr.message : lastErr}`);
 }
 
-// Range: the knob's band width sets [lower, upper] around spot; tighter pays more.
-export async function resolveRange(stakeRaw: bigint, asset: string, widthPct: number, duration: number): Promise<ResolvedRange> {
-  if (!GAME_DURATIONS.includes(duration)) throw new PlayError('INVALID_PARAMS', 'Unsupported round duration');
+// Range: the knob's band width sets [lower, upper] around spot; tighter pays more. The round
+// holds to the routed oracle's real expiry and settles to a true win/lose (inside the band pays
+// $1*qty spread-free, else 0), so the duration is the oracle's time-to-expiry, never a client
+// choice. An early cash-out still exits at the live mark whenever the player wants.
+export async function resolveRange(stakeRaw: bigint, asset: string, widthPct: number): Promise<ResolvedRange> {
   if (!(widthPct > 0) || widthPct > 10) throw new PlayError('INVALID_PARAMS', 'Band width out of range');
 
   const market = pickMarket(asset);
   const spot = await freshSpot(market);
   const g = gridOf(market);
   const { lower, higher } = rangeBand(spot, widthPct, g);
+  const duration = Math.max(1, Math.round((market.expiryMs - now()) / 1000));
 
   const mk = (q: bigint): RangeParams => ({ oracleId: market.oracleId, expiryMs: market.expiryMs, lower1e9: lower, higher1e9: higher, quantity: q });
   const { quantity, amounts } = await solveQuantity((q) => previewRange(mk(q)), stakeRaw);

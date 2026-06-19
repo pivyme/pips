@@ -1,7 +1,7 @@
-// Auth + onboarding. One JWT plumbing, two identity modes (dev / enoki). ensureUser is the
-// idempotent onboarding called from both login paths: it upserts the row, seeds an empty
-// stats row, mints the free starting chips exactly once, and (dev only) creates the user's
-// PredictManager. Never re-mints chips, never makes a second manager. See 04-AUTH.md.
+// Auth + onboarding. One JWT plumbing, two identity modes (dev / privy). ensureUser is the
+// idempotent onboarding called from both login paths: it upserts the row, seeds an empty stats
+// row, mints the free starting chips + SUI gas exactly once, and creates the user's
+// PredictManager. Never re-mints chips, never makes a second manager. See LUCKY.md §6-7.
 
 import jwt from 'jsonwebtoken';
 import { Transaction } from '@mysten/sui/transactions';
@@ -9,9 +9,10 @@ import { Transaction } from '@mysten/sui/transactions';
 import type { User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
 import { AUTH_MODE, JWT_SECRET, JWT_EXPIRES_IN, STARTING_BALANCE } from '../config/main-config.ts';
-import { getAlphanumericId } from '../utils/miscUtils.ts';
 import { mintDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
-import { executeAsOperator } from '../lib/sui/execute.ts';
+import { ensureSuiGas } from '../lib/sui/gas.ts';
+import { SPONSOR_ENABLED } from '../lib/sui/sponsor.ts';
+import { executeAsOperator, executeForUser } from '../lib/sui/execute.ts';
 import { buildCreateManager, getManagerBalanceRaw } from '../lib/sui/predict.ts';
 import { fromDusdcRaw } from '../lib/sui/config.ts';
 import type { UserDTO } from '../types/api.ts';
@@ -22,31 +23,47 @@ const ANIMALS = ['Otter', 'Falcon', 'Tiger', 'Lynx', 'Heron', 'Wolf', 'Fox', 'Or
 const generateHandle = (): string =>
   `${ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]} ${ANIMALS[Math.floor(Math.random() * ANIMALS.length)]}`;
 
-// The exact bytes the client signs in the enoki handshake. Keep this in lockstep with the
-// web auth flow, the verifier reconstructs the same string from the stored nonce.
-export const buildAuthMessage = (nonce: string): string => `Sign in to Pips\n\nNonce: ${nonce}`;
-
-// dev only: create + share the user's PredictManager now (the backend signs every play, so
-// the operator owns it). Returns the shared manager id read from the tx object changes.
-async function createDevManager(): Promise<string> {
+// Create + share the user's PredictManager. deposit/withdraw on it assert sender == owner, so it
+// must be created by whoever signs the plays: dev = the operator, privy = the user's own wallet
+// (a session-signed tx). Returns the shared manager id read from the tx object changes.
+async function createManagerForUser(user: User): Promise<string> {
   const tx = new Transaction();
   buildCreateManager(tx);
-  const res = await executeAsOperator(tx, 'create_manager');
-  const created = res.objectChanges.find(
+  const exec =
+    AUTH_MODE === 'dev'
+      ? await executeAsOperator(tx, 'create_manager')
+      : await executeForUser(tx, { address: user.address, walletId: user.privyWalletId, publicKey: user.suiPublicKey });
+  const created = exec.objectChanges.find(
     (c) => c.type === 'created' && c.objectType?.includes('::predict_manager::PredictManager'),
   );
   if (!created?.objectId) throw new Error('create_manager: PredictManager id not found in object changes');
   return created.objectId;
 }
 
+export type EnsureUserParams = {
+  address: string;
+  provider: 'dev' | 'privy';
+  email?: string | null;
+  privyUserId?: string | null;
+  suiPublicKey?: string | null;
+  privyWalletId?: string | null;
+};
+
 // Idempotent onboarding. Safe to call on every login.
-export async function ensureUser(params: { address: string; provider: 'dev' | 'enoki'; email?: string | null }): Promise<User> {
-  const { address, provider, email } = params;
+export async function ensureUser(params: EnsureUserParams): Promise<User> {
+  const { address, provider, email, privyUserId, suiPublicKey, privyWalletId } = params;
+
+  // Only write the privy identity fields when present, so a dev login never nulls them.
+  const privyFields = {
+    ...(privyUserId ? { privyUserId } : {}),
+    ...(suiPublicKey ? { suiPublicKey } : {}),
+    ...(privyWalletId ? { privyWalletId } : {}),
+  };
 
   let user = await prismaQuery.user.upsert({
     where: { address },
-    update: { provider, lastSignIn: new Date(), ...(email ? { email } : {}) },
-    create: { address, provider, displayName: generateHandle(), email: email ?? null, lastSignIn: new Date() },
+    update: { provider, lastSignIn: new Date(), ...(email ? { email } : {}), ...privyFields },
+    create: { address, provider, displayName: generateHandle(), email: email ?? null, lastSignIn: new Date(), ...privyFields },
   });
 
   // Empty stats row so the menu reads cleanly from the first login.
@@ -58,26 +75,27 @@ export async function ensureUser(params: { address: string; provider: 'dev' | 'e
     user = await prismaQuery.user.update({ where: { id: user.id }, data: { dusdcFunded: true } });
   }
 
-  // PredictManager: dev creates it eagerly (operator-signed). enoki defers to the first
-  // sponsored play, where it lands in one tx signed by the user's own zkLogin key.
-  if (!user.predictManagerId && AUTH_MODE === 'dev') {
-    const managerId = await createDevManager();
-    user = await prismaQuery.user.update({ where: { id: user.id }, data: { predictManagerId: managerId } });
+  // Free SUI for gas, ONLY when gas sponsorship is off. With a sponsor, every play is paid from the
+  // sponsor's address balance, so users never hold SUI. Without one, fund each user once then top up
+  // below the floor so they can pay their own play gas. Always a no-op in dev mode (operator signs).
+  if (!SPONSOR_ENABLED && (await ensureSuiGas(address, user.suiGasFunded))) {
+    user = await prismaQuery.user.update({ where: { id: user.id }, data: { suiGasFunded: true } });
+  }
+
+  // PredictManager. dev creates it eagerly (operator-owned + signed). privy needs a user-signed
+  // tx, so it requires the embedded wallet provisioned + the session signer granted (validated in
+  // the Phase 12 spike); if that is not ready yet, leave it null and retry on the next login.
+  if (!user.predictManagerId && (AUTH_MODE === 'dev' || (user.privyWalletId && user.suiPublicKey))) {
+    try {
+      const managerId = await createManagerForUser(user);
+      user = await prismaQuery.user.update({ where: { id: user.id }, data: { predictManagerId: managerId } });
+    } catch (e) {
+      if (AUTH_MODE === 'dev') throw e; // dev must have a manager to play
+      console.warn('[auth] privy manager creation deferred:', e instanceof Error ? e.message : e);
+    }
   }
 
   return user;
-}
-
-// enoki: store a fresh challenge nonce on the user row (create the row if this is their
-// first touch). No onboarding here, that runs on verify once the signature checks out.
-export async function setNonce(address: string): Promise<string> {
-  const nonce = getAlphanumericId(32);
-  await prismaQuery.user.upsert({
-    where: { address },
-    update: { nonce },
-    create: { address, provider: 'enoki', displayName: generateHandle(), nonce },
-  });
-  return nonce;
 }
 
 // Mint the session JWT. Payload matches the existing authMiddleware (reads userId).
@@ -97,8 +115,8 @@ export async function userFromToken(token: string): Promise<User | null> {
 }
 
 // Fresh public view of a user, including the live on-chain DUSDC balance. Chips live in the
-// wallet (onboarding mint) and migrate into the PredictManager as plays run, so the
-// spendable balance is the sum of both.
+// wallet (onboarding mint) and migrate into the PredictManager as plays run, so the spendable
+// balance is the sum of both.
 export async function toUserDTO(user: User): Promise<UserDTO> {
   const [wallet, manager] = await Promise.all([
     getDusdcBalanceRaw(user.address),
@@ -108,7 +126,7 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
     id: user.id,
     address: user.address,
     displayName: user.displayName,
-    provider: user.provider === 'enoki' ? 'enoki' : 'dev',
+    provider: user.provider === 'privy' ? 'privy' : 'dev',
     balance: fromDusdcRaw(wallet + manager).toFixed(2),
     managerReady: Boolean(user.predictManagerId),
     settings: {

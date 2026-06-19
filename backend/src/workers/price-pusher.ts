@@ -11,7 +11,7 @@ import { usd1e9 } from '../lib/sui/config.ts';
 import { executeAsOperator } from '../lib/sui/execute.ts';
 import { appendPriceUpdate } from '../lib/sui/predict.ts';
 import { getMarket, tradeableMarkets } from '../lib/sui/markets.ts';
-import { fetchSpots } from '../lib/pyth.ts';
+import { gameSpot } from '../lib/game-price.ts';
 import { Transaction } from '@mysten/sui/transactions';
 
 let isRunning = false;
@@ -25,7 +25,15 @@ const pushPrices = async (): Promise<void> => {
     if (due.length === 0) return;
 
     const assets = [...new Set(due.map((m) => m.underlying))];
-    const spots = await fetchSpots(assets);
+    // The synthetic game price (real Pyth anchor + vol), the same value the chart streams, so the
+    // oracle the play settles against carries exactly what the player watched.
+    const spots: Record<string, number> = {};
+    await Promise.all(
+      assets.map(async (a) => {
+        const s = await gameSpot(a);
+        if (s) spots[a] = s.price;
+      }),
+    );
 
     // group by cap so each owned cap is used in exactly one in-flight tx (no version race)
     const byCap = new Map<string, typeof due>();

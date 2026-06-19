@@ -21,10 +21,11 @@
   "description": "",
   "dependencies": {
     "@fastify/cors": "^11.2.0",
-    "@mysten/enoki": "^1.1.0",
     "@mysten/sui": "^2.18.0",
+    "@noble/hashes": "^2.2.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@privy-io/node": "^0.22.0",
     "axios": "^1.16.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.8.5",

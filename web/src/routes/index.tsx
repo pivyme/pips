@@ -9,8 +9,8 @@ import { isDemo, setDemoOverride } from '@/lib/demo'
 import { useAuth } from '@/lib/auth'
 
 // Landing is the one full-width surface: hero + footer, one screen, no scroll. The door in.
-// dev mode auto-signs-in behind the scenes (Enter just walks through); enoki mode kicks off
-// the Google handshake. Either way, first entry drops a welcome toast and lands on Games.
+// dev mode auto-signs-in behind the scenes (Enter just walks through); privy mode opens the
+// Google/email login. Either way, first entry drops a welcome toast and lands on Games.
 export const Route = createFileRoute('/')({ component: Landing })
 
 const WELCOME_KEY = 'pips_welcomed'
@@ -30,7 +30,7 @@ function Landing() {
   const navigate = useNavigate()
   const [connecting, setConnecting] = useState(false)
   const demo = isDemo()
-  const isEnoki = env.VITE_AUTH_MODE === 'enoki'
+  const isPrivy = env.VITE_AUTH_MODE === 'privy'
 
   // Flip demo mode and reload so the api client, streams, and auth all re-resolve cleanly.
   const toggleDemo = useCallback((on: boolean) => {
@@ -44,11 +44,20 @@ function Landing() {
     void navigate({ to: '/games' })
   }, [navigate])
 
-  // A session landed while we are on the door: dev (auto, or right after Enter) or the enoki
-  // redirect back from Google. Walk them in.
+  // A session landed while we are on the door: dev (auto, or right after Enter) or privy (after
+  // the Google/email login resolves). Walk them in.
   useEffect(() => {
-    if (status === 'authed' && (connecting || isEnoki)) enter()
-  }, [status, connecting, isEnoki, enter])
+    if (status === 'authed' && (connecting || isPrivy)) enter()
+  }, [status, connecting, isPrivy, enter])
+
+  // Sign-in failed (e.g. the verify handshake errored): drop the spinner so the door is usable
+  // again instead of hanging on "Signing you in..." forever.
+  useEffect(() => {
+    if (status === 'error') {
+      setConnecting(false)
+      toast.error('Could not sign you in. Try again.')
+    }
+  }, [status])
 
   const onCta = useCallback(async () => {
     haptic('rigid')
@@ -59,7 +68,7 @@ function Landing() {
     setConnecting(true)
     try {
       // dev: resolves to an authed session (the effect walks us in).
-      // enoki: redirects to Google and never returns here.
+      // privy: opens the Google/email login; the effect walks us in once it resolves.
       await signIn()
     } catch {
       setConnecting(false)
@@ -68,7 +77,7 @@ function Landing() {
   }, [status, signIn, enter])
 
   const busy = connecting || status === 'loading'
-  const label = busy ? 'Signing you in...' : demo ? 'Enter demo' : isEnoki ? 'Continue with Google' : 'Enter'
+  const label = busy ? 'Signing you in...' : demo ? 'Enter demo' : isPrivy ? 'Continue with Google' : 'Enter'
 
   return (
     <div className="flex min-h-dvh flex-col bg-black">

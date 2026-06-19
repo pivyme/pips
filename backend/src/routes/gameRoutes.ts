@@ -1,6 +1,6 @@
-// Markets + the play lifecycle. Mode-aware: dev returns a finalized PlayDTO, enoki returns a
-// SponsorEnvelope the client signs and posts back to /plays/:id/confirm. Predict errors come
-// through as PlayError and map to friendly codes, never a raw Move abort.
+// Markets + the play lifecycle. Both auth modes finalize server-side and return a PlayDTO (dev
+// signs as the operator, privy signs with the user's wallet via a session signer). Predict errors
+// come through as PlayError and map to friendly codes, never a raw Move abort.
 
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 
@@ -8,11 +8,10 @@ import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { EXPIRY_SAFETY_MS, GAME_DURATIONS } from '../config/main-config.ts';
 import { allMarkets, tradeableMarkets } from '../lib/sui/markets.ts';
-import { getSpot } from '../lib/price-cache.ts';
-import { PlayError, httpStatusForPlayError, isRiskTier } from '../services/games.ts';
+import { gameSpot } from '../lib/game-price.ts';
+import { PlayError, httpStatusForPlayError } from '../services/games.ts';
 import {
   createPlay,
-  confirmPlay,
   cashoutPlay,
   listPlays,
   getPlay,
@@ -21,6 +20,15 @@ import {
 import type { Game, MarketDTO } from '../types/api.ts';
 
 const GAMES: Game[] = ['lucky', 'range', 'tap'];
+
+// Stable display order for the market list. The live oracle set reshuffles as the ladder rolls
+// (oracles added/retired every few seconds), so without a fixed order the client's asset picker
+// would keep jumping to a different token. Unknown assets sort after these, alphabetically.
+const ASSET_ORDER = ['BTC', 'ETH', 'SOL', 'SUI', 'DEEP'];
+const assetRank = (a: string): number => {
+  const i = ASSET_ORDER.indexOf(a);
+  return i < 0 ? ASSET_ORDER.length : i;
+};
 
 // Funnel any thrown value to the envelope: PlayError keeps its friendly code, anything else
 // is a 500 we do not leak details of.
@@ -36,11 +44,13 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     try {
       const now = Date.now();
       const live = new Set(tradeableMarkets(now, EXPIRY_SAFETY_MS).map((m) => m.underlying));
-      const assets = [...new Set(allMarkets().map((m) => m.underlying))];
+      const assets = [...new Set(allMarkets().map((m) => m.underlying))].sort(
+        (a, b) => assetRank(a) - assetRank(b) || a.localeCompare(b),
+      );
 
       const markets: MarketDTO[] = await Promise.all(
         assets.map(async (asset) => {
-          const spot = await getSpot(asset);
+          const spot = await gameSpot(asset);
           return { asset, spot: spot ? String(spot.price) : '0', durations: GAME_DURATIONS, live: live.has(asset) };
         }),
       );
@@ -58,34 +68,19 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     const body = (request.body ?? {}) as Record<string, unknown>;
     try {
       const input = buildCreateInput(game, body);
-      const result = await createPlay(request.user!, input);
-      const data = result.mode === 'dev' ? { play: result.play } : { envelope: result.envelope };
-      return reply.code(200).send({ success: true, error: null, data });
+      const { play } = await createPlay(request.user!, input);
+      return reply.code(200).send({ success: true, error: null, data: { play } });
     } catch (error) {
       return fail(reply, error, 'PLAY_FAILED', 'Could not place that play');
     }
   });
 
-  // enoki: finalize a sponsored play (mint or cash-out) once the client has signed.
-  app.post('/plays/:id/confirm', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const id = (request.params as { id: string }).id;
-    const { signature } = (request.body ?? {}) as { signature?: string };
-    if (!signature) return handleError(reply, 400, 'Missing signature', 'VALIDATION_ERROR');
-    try {
-      const { play, unlocked } = await confirmPlay(request.user!, id, signature);
-      return reply.code(200).send({ success: true, error: null, data: { play, unlocked } });
-    } catch (error) {
-      return fail(reply, error, 'CONFIRM_FAILED', 'Could not confirm that play');
-    }
-  });
-
-  // Early cash-out at the live mark. dev finalizes; enoki returns an envelope to sign.
+  // Early cash-out at the live mark. Finalized server-side in both auth modes.
   app.post('/plays/:id/cashout', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const id = (request.params as { id: string }).id;
     try {
-      const result = await cashoutPlay(request.user!, id);
-      const data = result.mode === 'dev' ? { play: result.play, unlocked: result.unlocked } : { envelope: result.envelope };
-      return reply.code(200).send({ success: true, error: null, data });
+      const { play, unlocked } = await cashoutPlay(request.user!, id);
+      return reply.code(200).send({ success: true, error: null, data: { play, unlocked } });
     } catch (error) {
       return fail(reply, error, 'CASHOUT_FAILED', 'Could not cash out');
     }
@@ -123,21 +118,18 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
   if (stake == null) throw new PlayError('INVALID_PARAMS', 'Enter a bet amount');
 
   if (game === 'lucky') {
-    // Optional: the player's round length (Action 1) and risk tier (Action 2). Invalid values
-    // fall back to fair RNG / the default tier inside resolveLucky.
-    const duration = body.duration != null && Number.isFinite(Number(body.duration)) ? Number(body.duration) : undefined;
-    const risk = isRiskTier(body.risk) ? body.risk : undefined;
-    return { game, stake, duration, risk };
+    // LUCKY takes only the bet. The reel deals asset, direction, and multiplier tier server-side.
+    return { game, stake };
   }
 
   if (game === 'range') {
+    // The round holds to the routed oracle's real expiry, so the client sends no duration.
     const widthPct = Number(body.widthPct);
-    const duration = Number(body.duration);
     const asset = String(body.asset ?? '');
-    if (!asset || !Number.isFinite(widthPct) || !Number.isFinite(duration)) {
-      throw new PlayError('INVALID_PARAMS', 'Pick an asset, band width, and duration');
+    if (!asset || !Number.isFinite(widthPct)) {
+      throw new PlayError('INVALID_PARAMS', 'Pick an asset and band width');
     }
-    return { game, stake, asset, widthPct, duration };
+    return { game, stake, asset, widthPct };
   }
 
   // tap

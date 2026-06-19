@@ -4,3 +4,7 @@
 .wrangler
 .output
 .vinxi
+
+# Visual E2E artifacts
+e2e-screenshots/
+.auth-state.json

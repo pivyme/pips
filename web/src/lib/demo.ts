@@ -59,6 +59,24 @@ const DEMO_HANDLE = 'demo-otter'
 const SEED_PRICES: Record<string, number> = { BTC: 104_000, ETH: 3_900, SUI: 4.2, SOL: 195, DEEP: 0.182 }
 const ASSETS = Object.keys(SEED_PRICES)
 const DURATIONS = [10, 30, 60]
+const RANGE_ROUND_SEC = 30 // Range is one real settled round; the client no longer picks a duration
+
+// === Lucky: the slot-weighted multiplier reel (LUCKY.md §4-5) ===
+// The reel deals one tier per spin, weighted for fun (NOT by win odds). Each tier then settles at its
+// own honest odds = 1/mult, so a 2x is a real coinflip and a 25x is a rare-but-real jackpot. The strike
+// (the TARGET line) sits at the distance that yields those odds, so the multiplier we show is always one
+// we could actually pay. z is the precomputed standard-normal quantile invNorm(1 - 1/mult) for the strike.
+const LUCKY_ASSETS = ['BTC', 'SUI', 'ETH']
+const LUCKY_ROUND_SEC = 30 // fixed fast round
+const ROUND_VOL = 0.022 // fractional std of price over a 30s round; sets how far the TARGET sits per tier
+const LUCKY_TIERS = [
+  { mult: 1.5, weight: 0.28, z: -0.4307 },
+  { mult: 2, weight: 0.34, z: 0 },
+  { mult: 3, weight: 0.22, z: 0.4307 },
+  { mult: 5, weight: 0.11, z: 0.8416 },
+  { mult: 10, weight: 0.04, z: 1.2816 },
+  { mult: 25, weight: 0.01, z: 1.7507 },
+] as const
 const TICK_MS = 300 // denser ticks read as continuous motion
 const VOL = 0.0004 // per-tick impulse on velocity (not price), small so trends stay smooth
 const MOMENTUM = 0.92 // velocity persistence: turns white-noise jitter into smooth trending paths
@@ -191,10 +209,11 @@ interface MarkCtx {
   stake: number
   entry: number
   side?: Side
-  leverage?: number
   lower?: number
   upper?: number
-  lockedMult: number
+  lockedMult: number // the payout multiplier: lucky's dealt tier, or range/tap's locked estimate
+  target?: number // lucky: the strike the price must cross (the TARGET line)
+  roundVol?: number // lucky: fractional round volatility, for the live mark-to-market value
   openedMs: number
   expiryMs: number
 }
@@ -275,19 +294,25 @@ function newId(): string {
 const str = (n: number): string => n.toFixed(2)
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-function pickLeverage(risk?: string): number {
-  // The risk tier (Lucky's Action 2) constrains the bucket set; default weights toward the mid
-  // buckets so the hero swing reads nicely, not a 100x coin flip.
-  const tiers: Record<string, Array<[number, number]>> = {
-    chill: [[2, 1], [5, 1]],
-    wild: [[5, 2], [10, 3], [25, 3]],
-    lotto: [[25, 1], [100, 1]],
-  }
-  const buckets = tiers[risk ?? ''] ?? [[2, 1], [5, 2], [10, 3], [25, 3], [100, 1]]
-  const total = buckets.reduce((a, [, w]) => a + w, 0)
-  let r = Math.random() * total
-  for (const [v, w] of buckets) if ((r -= w) <= 0) return v
-  return buckets[0][0]
+function pickTier(): (typeof LUCKY_TIERS)[number] {
+  // Slot-weighted: which bet you are dealt is weighted for fun (usually a winnable tier), but you then
+  // win it at its own honest odds. Weights sum to 1, so a single uniform draw picks the tier.
+  let r = Math.random()
+  for (const t of LUCKY_TIERS) if ((r -= t.weight) <= 0) return t
+  return LUCKY_TIERS[0]
+}
+
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
+
+// Standard normal CDF (Zelen & Severo approximation). Marks an open lucky ticket to its live fair
+// value, bet × mult × P(finish on your side of TARGET given the live price and the time left). At open
+// that is exactly the bet; a favorable move lifts it toward bet × mult, so an early cash-out pays a
+// believable partial before the price has fully reached the target.
+function normCdf(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x))
+  const poly = t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
+  const upper = 0.39894228 * Math.exp((-x * x) / 2) * poly
+  return x >= 0 ? 1 - upper : upper
 }
 
 // Same shape as the Range screen's client estimate, so the locked multiple feels consistent.
@@ -358,11 +383,15 @@ function evaluateUnlocks(): string[] {
 // Value an open position against a live price. Returns display-unit value + win flag.
 function mark(c: MarkCtx, price: number): { markValue: number; pnl: number; multiplier: number; win: boolean } {
   if (c.game === 'lucky') {
-    const changePct = (price - c.entry) / c.entry
-    const signed = c.side === 'up' ? changePct : -changePct
-    const valueMult = Math.max(0, 1 + (c.leverage ?? 1) * signed)
-    const markValue = c.stake * valueMult
-    return { markValue, pnl: markValue - c.stake, multiplier: valueMult, win: markValue >= c.stake }
+    const dir = c.side === 'up' ? 1 : -1
+    const target = c.target ?? c.entry
+    // Favorable gap past the TARGET as a fraction of entry (positive = in the money).
+    const gap = (dir * (price - target)) / c.entry
+    const remaining = clamp01((c.expiryMs - nowMs()) / Math.max(1, c.expiryMs - c.openedMs))
+    const sigma = (c.roundVol ?? ROUND_VOL) * Math.sqrt(Math.max(remaining, 0.0008))
+    const pLive = clamp01(normCdf(gap / sigma))
+    const markValue = c.stake * c.lockedMult * pLive
+    return { markValue, pnl: markValue - c.stake, multiplier: c.lockedMult, win: gap >= 0 }
   }
   const inside = price >= (c.lower ?? 0) && price <= (c.upper ?? Infinity)
   const progress = Math.max(0, Math.min(1, (nowMs() - c.openedMs) / Math.max(1, c.expiryMs - c.openedMs)))
@@ -390,8 +419,9 @@ function closePlay(id: string, mode: 'cashout' | 'settle'): { play: PlayDTO; unl
     status = 'cashed_out'
     payout = Math.max(0, m.markValue)
   } else if (m.win) {
+    // A settle win is spread-free: the full bet × multiplier. Cash-out takes the live mark instead.
     status = 'won'
-    payout = c.game === 'lucky' ? m.markValue : c.stake * c.lockedMult
+    payout = c.stake * c.lockedMult
   } else {
     status = 'lost'
     payout = 0
@@ -453,12 +483,17 @@ function registerOpen(p: PlayDTO, c: MarkCtx): void {
 function createLucky(body: Record<string, unknown>): PlayDTO {
   const stake = Number(body.stake ?? 25)
   ensureBalance(stake)
-  const asset = ASSETS[Math.floor(Math.random() * ASSETS.length)]
+  // "I feel lucky": the reel deals the asset, direction, and tier. None of it is the player's pick.
+  const asset = LUCKY_ASSETS[Math.floor(Math.random() * LUCKY_ASSETS.length)]
   const side: Side = Math.random() < 0.5 ? 'up' : 'down'
-  const risk = typeof body.risk === 'string' ? body.risk : undefined
-  const leverage = pickLeverage(risk)
-  const duration = Number(body.duration ?? (Math.random() < 0.7 ? 30 : 60))
+  const tier = pickTier()
+  const duration = LUCKY_ROUND_SEC
   const entry = currentPrice(asset)
+  const roundVol = ROUND_VOL * Math.sqrt(duration / LUCKY_ROUND_SEC)
+  const dir = side === 'up' ? 1 : -1
+  // The strike sits where the chosen tier's honest odds land it: in the money for the safe tiers,
+  // a real reach for the jackpots. The TARGET line on the chart draws here.
+  const target = entry * (1 + dir * roundVol * tier.z)
   const openedMs = nowMs()
   const expiryMs = openedMs + duration * 1000
   const id = newId()
@@ -467,15 +502,15 @@ function createLucky(body: Record<string, unknown>): PlayDTO {
     game: 'lucky',
     status: 'open',
     stake: str(stake),
-    params: { asset, side, leverage, duration },
-    market: { asset, oracleId: `demo-oracle-${asset}`, expiry: expiryMs, strike: String(entry) },
+    params: { asset, side, multiplier: tier.mult, duration },
+    market: { asset, oracleId: `demo-oracle-${asset}`, expiry: expiryMs, strike: String(target) },
     entryValue: str(stake),
     markValue: str(stake),
     pnl: '0.00',
-    multiplier: 1,
+    multiplier: tier.mult,
     openedAt: new Date(openedMs).toISOString(),
   }
-  registerOpen(p, { game: 'lucky', asset, stake, entry, side, leverage, lockedMult: 1, openedMs, expiryMs })
+  registerOpen(p, { game: 'lucky', asset, stake, entry, side, lockedMult: tier.mult, target, roundVol, openedMs, expiryMs })
   return p
 }
 
@@ -483,7 +518,7 @@ function createRange(body: Record<string, unknown>): PlayDTO {
   const stake = Number(body.stake ?? 10)
   ensureBalance(stake)
   const asset = String(body.asset ?? ASSETS[0])
-  const duration = Number(body.duration ?? 30)
+  const duration = RANGE_ROUND_SEC // one real settled round; matches the backend's oracle-expiry round
   const widthPct = Number(body.widthPct ?? 2) // full band width %
   const halfPct = widthPct / 2
   const entry = currentPrice(asset)
@@ -595,8 +630,10 @@ export const demoApi = {
     await delay(120)
     return { token: 'demo-token', user: userDTO() }
   },
-  authNonce: async (_address: string) => ({ nonce: 'demo-nonce' }),
-  authVerify: async (_address: string, _signature: string) => ({ token: 'demo-token', user: userDTO() }),
+  authPrivyVerify: async (_input: unknown) => {
+    await delay(120)
+    return { token: 'demo-token', user: userDTO() }
+  },
   me: async () => ({ user: userDTO() }),
 
   markets: async (): Promise<{ markets: MarketDTO[] }> => {
@@ -608,12 +645,6 @@ export const demoApi = {
     await delay(140)
     const play = game === 'lucky' ? createLucky(body) : game === 'range' ? createRange(body) : createTap(body)
     return { play }
-  },
-
-  confirm: async (playId: string, _signature: string) => {
-    const play = byId.get(playId)
-    if (!play) throw new ApiError('PLAY_FAILED', 'That play did not go through. Your bet is safe.', 404)
-    return { play, unlocked: [] as string[] }
   },
 
   cashout: async (playId: string): Promise<CashoutResult> => {
@@ -731,7 +762,7 @@ function buildSeedPlay(s: SeedSpec, i: number, past: (mins: number) => string): 
   let params: PlayDTO['params']
   if (s.game === 'lucky') {
     market.strike = String(entry)
-    params = { asset: s.asset, side: i % 2 === 0 ? 'up' : 'down', leverage: Math.max(2, Math.round(s.mult)) || 5, duration: 30 }
+    params = { asset: s.asset, side: i % 2 === 0 ? 'up' : 'down', multiplier: s.mult || 1, duration: 30 }
   } else {
     const lower = entry * 0.998
     const upper = entry * 1.002
