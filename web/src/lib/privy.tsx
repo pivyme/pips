@@ -98,6 +98,11 @@ function PrivyBridge() {
         }
 
         const sui = await ensureSuiWallet()
+        // Dev aid for the Phase 12 signing spike: copy these into SPIKE_PRIVY_* to run
+        // backend/scripts/verify-privy.ts against this exact wallet.
+        if (import.meta.env.DEV) {
+          console.info('[privy] sui wallet', { walletId: sui.walletId, publicKey: sui.publicKey, address: sui.address })
+        }
         await grantSessionSigner(sui.address)
         const token = await getAccessToken()
         if (!token) throw new Error('Privy access token unavailable')
