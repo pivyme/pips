@@ -33,7 +33,7 @@ export interface MarketDTO {
 export interface LuckyParams {
   asset: string
   side: Side
-  leverage: number
+  multiplier: number
   duration: number
 }
 export interface RangeParams {
