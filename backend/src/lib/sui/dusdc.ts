@@ -5,10 +5,12 @@
 import { Transaction } from '@mysten/sui/transactions';
 
 import { suiClient } from './client.ts';
-import { operatorKeypair, operatorAddress } from './signer.ts';
+import { executeAsOperator } from './execute.ts';
 import { DUSDC_TYPE, DUSDC_TREASURY_CAP_ID, toDusdcRaw } from './config.ts';
 
-// Mint `amount` DUSDC (display units) and send it to `to`. Returns the tx digest.
+// Mint `amount` DUSDC (display units) and send it to `to`. Returns the tx digest. Routes
+// through the operator executor (not a direct sign) so it shares the same gas coin + queue as
+// the workers and never desyncs their object cache.
 export async function mintDusdc(to: string, amount: number): Promise<string> {
   if (amount <= 0) throw new Error('mintDusdc: amount must be positive');
 
@@ -19,18 +21,8 @@ export async function mintDusdc(to: string, amount: number): Promise<string> {
     arguments: [tx.object(DUSDC_TREASURY_CAP_ID), tx.pure.u64(toDusdcRaw(amount))],
   });
   tx.transferObjects([coin], tx.pure.address(to));
-  tx.setSender(operatorAddress);
 
-  const res = await suiClient.signAndExecuteTransaction({
-    transaction: tx,
-    signer: operatorKeypair,
-    options: { showEffects: true },
-  });
-  if (res.effects?.status.status !== 'success') {
-    throw new Error(`mintDusdc failed: ${JSON.stringify(res.effects?.status)}`);
-  }
-  await suiClient.waitForTransaction({ digest: res.digest });
-  return res.digest;
+  return (await executeAsOperator(tx, 'mintDusdc')).digest;
 }
 
 // Read an address's wallet DUSDC balance in 6dp base units.

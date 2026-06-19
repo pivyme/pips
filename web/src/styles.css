@@ -332,6 +332,37 @@
       0 1px 0 #050505;
   }
 
+  /* Trader card. A bright amber handheld plate (the bezel) holding a recessed
+     dark screen (the window). Skeuo: top gloss, hard bottom lip, deep drop. */
+  .trader-bezel {
+    background: linear-gradient(180deg, #ffd550 0%, #ffc016 46%, #ef9f0a 100%);
+    border: 1px solid #d9990f;
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.6),
+      inset 0 -3px 1px rgba(120, 74, 0, 0.42),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+      0 2px 0 rgba(86, 55, 0, 0.7),
+      0 26px 50px -26px rgba(0, 0, 0, 0.95);
+  }
+
+  /* The recessed window: the brand backdrop under a scrim, sunk into the bezel. */
+  .trader-screen {
+    background:
+      linear-gradient(
+        180deg,
+        rgba(0, 0, 0, 0.46) 0%,
+        rgba(0, 0, 0, 0.3) 40%,
+        rgba(0, 0, 0, 0.64) 100%
+      ),
+      url('/assets/images/stats-bg.png') center / cover no-repeat,
+      #0a0a0a;
+    border: 1px solid rgba(0, 0, 0, 0.55);
+    box-shadow:
+      inset 0 3px 7px rgba(0, 0, 0, 0.7),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.05),
+      0 1px 0 rgba(255, 255, 255, 0.16);
+  }
+
   /* Knurled knob face: fine repeated ridges, like a real control. */
   .knurl {
     background-image: repeating-linear-gradient(

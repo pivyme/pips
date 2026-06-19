@@ -62,6 +62,9 @@ export interface ConsoleControls {
   knob?: KnobSpec | null
   numberWheel?: KnobSpec | null
   status?: StatusSpec | null
+  // While true, any unbound action screen drifts through a slow ambient light show (the device's two
+  // mini-screens become decoration). Games flip it on during a live run, off on death/idle.
+  lightShow?: boolean
 }
 
 // Renderable snapshot (drives shell re-renders). Handlers live in a ref instead.
@@ -72,6 +75,7 @@ export interface ConsoleView {
   knob: Omit<KnobSpec, 'onChange'> | null
   numberWheel: Omit<KnobSpec, 'onChange'> | null
   status: StatusSpec | null
+  lightShow: boolean
 }
 
 interface Handlers {
@@ -89,6 +93,7 @@ const EMPTY_VIEW: ConsoleView = {
   knob: null,
   numberWheel: null,
   status: null,
+  lightShow: false,
 }
 
 interface Ctx {
@@ -153,6 +158,7 @@ function toView(c: ConsoleControls): ConsoleView {
         }
       : null,
     status: c.status ?? null,
+    lightShow: !!c.lightShow,
   }
 }
 
@@ -166,7 +172,7 @@ function viewKey(v: ConsoleView): string {
   const txt = (x: ReactNode) =>
     typeof x === 'string' || typeof x === 'number' ? String(x) : x ? '#' : '-'
   const status = v.status ? `${txt(v.status.left)}|${txt(v.status.right)}` : '-'
-  return [btn(v.main), btn(v.action1), btn(v.action2), dial(v.knob), dial(v.numberWheel), status].join(';')
+  return [btn(v.main), btn(v.action1), btn(v.action2), dial(v.knob), dial(v.numberWheel), status, v.lightShow ? 1 : 0].join(';')
 }
 
 // Write side: a game screen.

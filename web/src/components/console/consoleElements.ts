@@ -254,3 +254,152 @@ export function createNumberWheel(
 
   return { numberWheelHousing, numberWheelRoll, numberWheelDrum }
 }
+
+// Turns the two flat action caps into framed mini-screens: a machined metal bezel mounted on the body
+// (with corner screws), the cap recessed inside it as the lit LCD, and a glossy domed acrylic window
+// over it. The bezel stays put; the cap + acrylic press together (the acrylic is parented to the cap).
+// The cap itself is still bm[i], so it stays the raycast target and the canvas drives its screen color.
+export function createActionScreens(
+  device: THREE.Group, bm: THREE.Mesh[], indices: number[],
+  buttons: ButtonCfg[], BTN_PX: { x: number; y: number }[], wx: Px, wy: Px,
+): { dispose(): void; glow: Record<number, THREE.MeshBasicMaterial> } {
+  const trash: { dispose(): void }[] = []
+  // Shared so both screens read as the same part. No envMap in the scene, so metalness stays moderate
+  // and the beveled edges do the light-catching; a fully metallic frame would just go black.
+  const bezelMat = new THREE.MeshStandardMaterial({ color: 0x44474e, metalness: 0.82, roughness: 0.34 })
+  const screwMat = new THREE.MeshStandardMaterial({ color: 0x767a83, metalness: 0.9, roughness: 0.28 })
+  const screwGeo = new THREE.CylinderGeometry(0.032, 0.038, 0.04, 16)
+  screwGeo.rotateX(Math.PI / 2) // axis Y → faces the camera (+z)
+  trash.push(bezelMat, screwMat, screwGeo)
+
+  const FRAME = 0.1 // metal rim thickness: just enough to read as a machined bezel, screen takes the rest
+
+  // Faint glass glint: just a hint of acrylic catching the upper-left key light. Kept low so it reads
+  // as a sheen on the cover, not a glare blowing out the screen.
+  const sheenCanvas = document.createElement('canvas')
+  sheenCanvas.width = sheenCanvas.height = 256
+  const sg = sheenCanvas.getContext('2d')!
+  const grad = sg.createRadialGradient(74, 56, 4, 110, 120, 150)
+  grad.addColorStop(0, 'rgba(255,255,255,0.5)')
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.1)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  sg.fillStyle = grad
+  sg.fillRect(0, 0, 256, 256)
+  const sheenTex = new THREE.CanvasTexture(sheenCanvas)
+  sheenTex.colorSpace = THREE.SRGBColorSpace
+  const sheenMat = new THREE.MeshBasicMaterial({
+    map: sheenTex, transparent: true, opacity: 0.16, depthWrite: false, depthTest: false,
+    blending: THREE.AdditiveBlending,
+  })
+  const sheenGeo = new THREE.PlaneGeometry(1, 1)
+  trash.push(sheenTex, sheenMat, sheenGeo)
+
+  // CRT face: fine horizontal scanlines plus an edge vignette, baked once and overlaid on every screen.
+  // Darkening the lit color in bands and at the rim is what makes it read as a real display behind glass.
+  const crtCanvas = document.createElement('canvas')
+  crtCanvas.width = crtCanvas.height = 256
+  const cg = crtCanvas.getContext('2d')!
+  cg.clearRect(0, 0, 256, 256)
+  cg.fillStyle = 'rgba(0,0,0,0.5)'
+  for (let y = 0; y < 256; y += 8) cg.fillRect(0, y, 256, 3) // ~32 scanlines (3px line, 5px gap)
+  const vig = cg.createRadialGradient(128, 120, 56, 128, 128, 178)
+  vig.addColorStop(0, 'rgba(0,0,0,0)')
+  vig.addColorStop(1, 'rgba(0,0,0,0.5)')
+  cg.fillStyle = vig
+  cg.fillRect(0, 0, 256, 256)
+  const crtTex = new THREE.CanvasTexture(crtCanvas)
+  crtTex.colorSpace = THREE.SRGBColorSpace
+  const crtMat = new THREE.MeshBasicMaterial({ map: crtTex, transparent: true, opacity: 0.6, depthWrite: false, depthTest: false })
+  const crtGeo = new THREE.PlaneGeometry(1, 1)
+  trash.push(crtTex, crtMat, crtGeo)
+
+  // Bloom: a soft glow that bleeds the screen color past the window onto the frame, the light spill a
+  // lit display gives off. One per screen so the canvas can tint it live (a dark neutral screen tints
+  // it near-black, so it barely glows; green/red glow strongly, for free).
+  const haloCanvas = document.createElement('canvas')
+  haloCanvas.width = haloCanvas.height = 128
+  const hg = haloCanvas.getContext('2d')!
+  const hgrad = hg.createRadialGradient(64, 64, 6, 64, 64, 64)
+  hgrad.addColorStop(0, 'rgba(255,255,255,1)')
+  hgrad.addColorStop(0.5, 'rgba(255,255,255,0.45)')
+  hgrad.addColorStop(1, 'rgba(255,255,255,0)')
+  hg.fillStyle = hgrad
+  hg.fillRect(0, 0, 128, 128)
+  const haloTex = new THREE.CanvasTexture(haloCanvas)
+  const haloGeo = new THREE.PlaneGeometry(1, 1)
+  trash.push(haloTex, haloGeo)
+  const glow: Record<number, THREE.MeshBasicMaterial> = {}
+
+  for (const i of indices) {
+    const c = buttons[i]
+    const cx = wx(BTN_PX[i].x), cy = wy(BTN_PX[i].y)
+    const frontZ = c.baseZ + 0.18 // bezel face stands proud; the cap (at baseZ) reads as recessed glass
+
+    const outerW = c.w + c.pad * 2 - 0.06, outerH = c.h + c.pad * 2 - 0.06 // fills the body hole
+    const innerW = outerW - FRAME * 2, innerH = outerH - FRAME * 2 // slim rim; window still overlaps the cap
+    const frame = roundedRect(outerW, outerH, 0.18)
+    frame.holes.push(roundedRectPath(0, 0, innerW, innerH, 0.13))
+    const bezelGeo = frontZeroed(frame, 0.22, 0.025)
+    const bezel = new THREE.Mesh(bezelGeo, bezelMat)
+    bezel.position.set(cx, cy, frontZ)
+    bezel.castShadow = true
+    bezel.receiveShadow = true
+    device.add(bezel)
+    trash.push(bezelGeo)
+
+    // Four corner screws, the machined detail the references lean on. Tiny and low so they read as
+    // hardware, not buttons. Seated on the diagonal midline of the frame corner so they sit centered,
+    // not crowding the inner window edge.
+    const sx = outerW / 2 - 0.095, sy = outerH / 2 - 0.095
+    for (const [dx, dy] of [[-sx, sy], [sx, sy], [-sx, -sy], [sx, -sy]]) {
+      const screw = new THREE.Mesh(screwGeo, screwMat)
+      screw.position.set(cx + dx, cy + dy, frontZ + 0.01)
+      screw.castShadow = true
+      device.add(screw)
+    }
+
+    // Domed acrylic window: a thin slab with a bevel wider than its depth so the top pillows and a
+    // single specular streak rolls across it (sells the gloss without an envMap). Clear, so the lit
+    // screen color reads straight through; parented to the cap so it sinks on press.
+    const acrGeo = frontZeroed(roundedRect(innerW - 0.04, innerH - 0.04, 0.16), 0.05, 0.07)
+    const acrMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.16, depthWrite: false,
+      roughness: 0.05, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.04, ior: 1.45,
+    })
+    const acrylic = new THREE.Mesh(acrGeo, acrMat)
+    acrylic.position.z = frontZ - 0.05 - c.baseZ // local to the cap; front sits just under the bezel face
+    acrylic.renderOrder = 5
+    bm[i].add(acrylic)
+    trash.push(acrGeo, acrMat)
+
+    // CRT scanlines + vignette, on the screen face under the glass. The label (depth-test-free, drawn
+    // later) stays crisp over the lines.
+    const crt = new THREE.Mesh(crtGeo, crtMat)
+    crt.scale.set(innerW - 0.02, innerH - 0.02, 1)
+    crt.position.z = acrylic.position.z - 0.02
+    crt.renderOrder = 4
+    bm[i].add(crt)
+
+    // Bloom halo, wider than the window so the glow spills onto the frame and a touch of the body.
+    const haloMat = new THREE.MeshBasicMaterial({
+      map: haloTex, transparent: true, opacity: 0.36, depthWrite: false, depthTest: false,
+      blending: THREE.AdditiveBlending,
+    })
+    const halo = new THREE.Mesh(haloGeo, haloMat)
+    halo.scale.set(outerW + 0.22, outerH + 0.22, 1)
+    halo.position.z = acrylic.position.z - 0.03
+    halo.renderOrder = 3
+    bm[i].add(halo)
+    glow[i] = haloMat
+    trash.push(haloMat)
+
+    // The faint glass glint, on top of the scanlines.
+    const sheen = new THREE.Mesh(sheenGeo, sheenMat)
+    sheen.scale.set(innerW - 0.06, innerH - 0.06, 1)
+    sheen.position.z = acrylic.position.z - 0.01
+    sheen.renderOrder = 6
+    bm[i].add(sheen)
+  }
+
+  return { dispose: () => trash.forEach((t) => t.dispose()), glow }
+}

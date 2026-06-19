@@ -49,13 +49,14 @@ import { executeAsOperator } from '../src/lib/sui/execute.ts';
 import { allMarkets, removeMarket, upsertMarket, getMarket, liveByAsset } from '../src/lib/sui/markets.ts';
 import { solveStrike } from '../src/lib/sui/solver.ts';
 import { ensureUser } from '../src/services/auth.ts';
-import { createPlay, cashoutPlay, getLiveMarkRaw, settleDuePlays } from '../src/services/plays.ts';
+import { createPlay, cashoutPlay, getLiveMarkRaw, settleDuePlays, playableBalanceRaw } from '../src/services/plays.ts';
+import type { User } from '../prisma/generated/client.js';
 import { prismaQuery } from '../src/lib/prisma.ts';
 import { toDusdcRaw } from '../src/lib/sui/math.ts';
 
 const ASSETS = ['BTC', 'SUI', 'ETH'] as const;
-const LONG_MS = 180_000; // working-oracle life: survives the slow sequential remote setup
-const SHORT_MS = 28_000; // settle-test oracle: room for the solve+mint, then settles in seconds
+const LONG_MS = 600_000; // working-oracle life: roomy so a slow remote create->activate never races expiry
+const SHORT_MS = 45_000; // settle-test oracle: room for the solve+mint over a slow remote node, then settles in seconds
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const dp = (asset: string): number => (asset === 'SUI' ? 4 : 2);
 
@@ -85,7 +86,17 @@ async function standUpOracle(asset: string, spot: number, expiryMs: number): Pro
 
   const liveTx = new Transaction();
   buildActivateOracle(liveTx, oracleId, capId, spot); // includes the first price push
-  await executeAsOperator(liveTx, `activate ${asset} oracle`);
+  const { digest } = await executeAsOperator(liveTx, `activate ${asset} oracle`);
+  // The serial executor skips waitForTransaction for throughput, so a read right after the write
+  // can still see the pre-push oracle version on the remote node. Wait for finality, then poll
+  // until the pushed price is actually readable (read replicas can lag a beat behind finality),
+  // so every caller sees a live, fresh oracle.
+  await suiClient.waitForTransaction({ digest });
+  for (let i = 0; i < 8; i++) {
+    const st = await readOracle(oracleId);
+    if (st && st.spot1e9 > 0n && Date.now() - st.timestampMs < 30_000) break;
+    await sleep(600);
+  }
 
   upsertMarket({
     oracleId,
@@ -122,6 +133,43 @@ async function refresh(oracleId: string, asset: string): Promise<void> {
   await pushPrice(oracleId, await fetchSpot(asset));
 }
 
+// A live price-pusher for one oracle, exactly the production worker's job: the solver scan +
+// mint + redeem round-trip the remote node many times and can outlast the 30s freshness gate,
+// so we keep re-pushing every few seconds. `target` is retargetable: null streams live Pyth
+// spot (the default, like prod), a fixed number pins the oracle to a chosen price while staying
+// fresh (used to hold the cash-out mark in the money). stop() awaits the in-flight push so a
+// late tick can never clobber a price the test forces next (e.g. the frozen settlement).
+function startPusher(oracleId: string, asset: string): {
+  setPrice: (price: number | null) => void;
+  stop: () => Promise<void>;
+} {
+  let stopped = false;
+  let target: number | null = null; // null => stream live spot
+  let chain: Promise<void> = Promise.resolve();
+  const doPush = async (): Promise<void> => {
+    if (stopped) return;
+    try {
+      await pushPrice(oracleId, target ?? (await fetchSpot(asset)));
+    } catch {
+      // a single missed tick is fine; the next one re-pushes
+    }
+  };
+  const timer = setInterval(() => {
+    chain = chain.then(doPush);
+  }, 5_000);
+  return {
+    setPrice: (price) => {
+      target = price;
+      chain = chain.then(doPush); // push the new target right away, do not wait for the next tick
+    },
+    stop: async () => {
+      stopped = true;
+      clearInterval(timer);
+      await chain;
+    },
+  };
+}
+
 // Guard against a stale PredictManager id: if the DB row points at a manager that does not
 // exist on this deployment (e.g. the row predates a redeploy), create a fresh one and persist
 // it. Returns the id that is actually live on chain.
@@ -149,6 +197,12 @@ async function vaultBalance(): Promise<number> {
 }
 
 const money = (raw: bigint): string => `$${(Number(raw) / 1_000_000).toFixed(2)}`;
+
+// True spendable chips = wallet DUSDC + whatever sits in the PredictManager. Plays move money
+// between the two (the stake is deposited into the manager, mint debits it, redeem/settle
+// credits it), so only the sum reflects a real win or loss. Measuring the wallet alone is
+// misleading.
+const spendable = async (u: User): Promise<number> => Number(await playableBalanceRaw(u)) / 1_000_000;
 
 async function gasSui(): Promise<number> {
   const b = await suiClient.getBalance({ owner: operatorAddress, coinType: '0x2::sui::SUI' });
@@ -235,10 +289,24 @@ async function main(): Promise<void> {
   // the dealt oracle age out before the mint executes on a slow remote node).
   console.log('\n3a) Cash-out round trip (mint -> mark climbs -> redeem)');
   for (const m of allMarkets()) removeMarket(m.oracleId);
-  await standUpOracle('BTC', await fetchSpot('BTC'), Date.now() + LONG_MS);
-  const before3a = await getDusdcBalance(operatorAddress);
-  const created = await createPlay(user, { game: 'lucky', stake: 25 });
-  if (created.mode !== 'dev') throw new Error('expected dev-mode play');
+  const btcOracle = await standUpOracle('BTC', await fetchSpot('BTC'), Date.now() + LONG_MS);
+  const before3a = await spendable(user);
+  // Run the price-pusher analog for the whole round trip: it keeps the oracle inside the 30s
+  // gate across the slow solve, mint, AND redeem. After the mint we retarget it to a favorable
+  // price so the live mark climbs while staying fresh, instead of a single push that ages out
+  // over the redeem's read round-trips on the remote node.
+  const pusher3a = startPusher(btcOracle, 'BTC');
+  let created;
+  try {
+    created = await createPlay(user, { game: 'lucky', stake: 25 });
+  } catch (e) {
+    await pusher3a.stop();
+    throw e;
+  }
+  if (created.mode !== 'dev') {
+    await pusher3a.stop();
+    throw new Error('expected dev-mode play');
+  }
   const dto = created.play;
   const side = ('side' in dto.params ? dto.params.side : 'up') ?? 'up';
   const strike = Number(dto.market.strike ?? '0');
@@ -247,20 +315,29 @@ async function main(): Promise<void> {
 
   const playRow = await prismaQuery.play.findUniqueOrThrow({ where: { id: dto.id } });
   const mark0 = await getLiveMarkRaw(playRow);
-  // Push a tick decisively past the strike in the play's favour (~2%), like the price-pusher
-  // feeding a real move, so the live mark climbs into the green before cash out.
-  const favorable = side === 'down' ? strike * 0.98 : strike * 1.02;
-  await pushPrice(playRow.oracleId, favorable);
-  await sleep(1200);
+  // Pin the price decisively into the money for the play's side (past both spot and the strike),
+  // like the price-pusher feeding a real move, so the live mark climbs before cash out. Favour
+  // is relative to spot, not the strike: a low-tier play can already be ITM, where nudging toward
+  // the strike would actually hurt the mark.
+  const spotNow = await fetchSpot(dto.market.asset);
+  const favorable = side === 'down' ? Math.min(spotNow, strike) * 0.97 : Math.max(spotNow, strike) * 1.03;
+  pusher3a.setPrice(favorable);
+  await sleep(1500);
   const mark1 = await getLiveMarkRaw(playRow);
   pass('live mark climbed on a favorable move', mark1 > mark0, `${money(mark0)} -> ${money(mark1)}`);
 
-  const cash = await cashoutPlay(user, dto.id);
+  let cash;
+  try {
+    cash = await cashoutPlay(user, dto.id);
+  } finally {
+    await pusher3a.stop();
+  }
   if (cash.mode !== 'dev') throw new Error('expected dev-mode cashout');
   pass('redeem tx on chain', Boolean(cash.play.txRedeem), cash.play.txRedeem ? explorerTxUrl(cash.play.txRedeem) : '');
   info('cashed out', `payout $${cash.play.payout ?? '0'}, pnl $${cash.play.pnl}`);
-  const after3a = await getDusdcBalance(operatorAddress);
-  pass('USDC balance moved (real position)', after3a !== before3a, `$${before3a.toFixed(2)} -> $${after3a.toFixed(2)}`);
+  const after3a = await spendable(user);
+  const pnl3a = Number(cash.play.pnl);
+  pass('spendable moved by the cash-out pnl', Math.abs(after3a - before3a - pnl3a) < 0.05, `$${before3a.toFixed(2)} -> $${after3a.toFixed(2)} (pnl $${pnl3a.toFixed(2)})`);
 
   // === 3b + 3c. Held to settle: a forced WIN, then a forced LOSS, with STREAK ===
   // Route these to a short-lived oracle so settlement lands in seconds. Clear the cache so the
@@ -272,8 +349,9 @@ async function main(): Promise<void> {
     const oracleId = await standUpOracle(asset, spot, Date.now() + SHORT_MS);
 
     const statsBefore = await prismaQuery.userStats.findUniqueOrThrow({ where: { userId: user.id } });
-    const balBefore = await getDusdcBalance(operatorAddress);
-    const res = await createPlay(user, { game: 'lucky', stake: 25 });
+    const balBefore = await spendable(user);
+    const pusher = startPusher(oracleId, asset); // keep it fresh through the solve + mint
+    const res = await createPlay(user, { game: 'lucky', stake: 25 }).finally(() => pusher.stop());
     if (res.mode !== 'dev') throw new Error('expected dev-mode play');
     const p = await prismaQuery.play.findUniqueOrThrow({ where: { id: res.play.id } });
     const key = JSON.parse(p.marketKey) as { side: Side; strike1e9: string };
@@ -295,16 +373,16 @@ async function main(): Promise<void> {
 
     const settled = await prismaQuery.play.findUniqueOrThrow({ where: { id: p.id } });
     const statsAfter = await prismaQuery.userStats.findUniqueOrThrow({ where: { userId: user.id } });
-    const balAfter = await getDusdcBalance(operatorAddress);
+    const balAfter = await spendable(user);
     if (outcome === 'win') {
       pass('play settled WON', settled.status === 'won', `payout ${settled.payout != null ? money(settled.payout) : 'n/a'}, pnl ${settled.pnl != null ? money(settled.pnl) : 'n/a'}`);
       pass('STREAK advanced on win', statsAfter.currentStreak > statsBefore.currentStreak, `${statsBefore.currentStreak} -> ${statsAfter.currentStreak} (max ${statsAfter.maxStreak})`);
-      pass('balance up after win', balAfter > balBefore, `$${balBefore.toFixed(2)} -> $${balAfter.toFixed(2)}`);
+      pass('spendable up after win', balAfter > balBefore, `$${balBefore.toFixed(2)} -> $${balAfter.toFixed(2)}`);
       if (settled.txRedeem) info('win redeem tx', explorerTxUrl(settled.txRedeem));
     } else {
       pass('play settled LOST', settled.status === 'lost', `payout ${settled.payout != null ? money(settled.payout) : 'n/a'}, pnl ${settled.pnl != null ? money(settled.pnl) : 'n/a'}`);
       pass('STREAK reset on loss', statsAfter.currentStreak < statsBefore.currentStreak && statsAfter.currentStreak <= 0, `${statsBefore.currentStreak} -> ${statsAfter.currentStreak}`);
-      pass('balance down after loss (stake lost)', balAfter < balBefore, `$${balBefore.toFixed(2)} -> $${balAfter.toFixed(2)}`);
+      pass('spendable down after loss (stake lost)', balAfter < balBefore, `$${balBefore.toFixed(2)} -> $${balAfter.toFixed(2)}`);
     }
   };
 

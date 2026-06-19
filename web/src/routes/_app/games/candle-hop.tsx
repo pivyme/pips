@@ -1,20 +1,21 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CandlestickChart } from 'lucide-react'
+import type { FlapHud } from '@/components/game/flapEngine'
+import type { ScoreEntry, SubmitResult } from '@/lib/leaderboard'
 import { useConsoleControls } from '@/components/console/controls'
+import { FlapEngine } from '@/components/game/flapEngine'
 import { GameReadout, GameScreen, GameStage } from '@/components/game/screen'
-import { FlapEngine, type FlapHud } from '@/components/game/flapEngine'
-import { haptic } from '@/lib/haptics'
-import { sound } from '@/lib/sound'
-import { useAuth } from '@/lib/auth'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
-import { getScores, submitScore, type ScoreEntry, type SubmitResult } from '@/lib/leaderboard'
+import { useAuth } from '@/lib/auth'
+import { haptic } from '@/lib/haptics'
+import { getScores, submitScore } from '@/lib/leaderboard'
+import { sound } from '@/lib/sound'
 import { cnm } from '@/utils/style'
 
-// Candle Hop. A one-button flappy minigame (no Sui, no backend): tap the big button to flap an
-// amber pip up, gravity drags it down, thread it through the gaps between scrolling candlesticks.
-// Clear a gap and the score ticks; clip a candle, the floor or the ceiling and the run ends,
-// straight into the leaderboard. Runs on the 3D handheld's L-shaped aperture.
+// Candle Hop. A one-button flappy minigame (no Sui, no backend): tap the big button to fly the
+// Pips face through scrolling candlesticks. A hit shakes the screen, then drops the character
+// before the leaderboard appears. Runs on the 3D handheld's L-shaped aperture.
 export const Route = createFileRoute('/_app/games/candle-hop')({ component: CandleHopScreen })
 
 const GAME = 'candle-hop'
@@ -28,7 +29,7 @@ function CandleHopScreen() {
 
   const [phase, setPhase] = useState<Phase>('title')
   const [hud, setHud] = useState<FlapHud>(EMPTY_HUD)
-  const [board, setBoard] = useState<ScoreEntry[]>(() => getScores(GAME))
+  const [board, setBoard] = useState<Array<ScoreEntry>>(() => getScores(GAME))
   const [result, setResult] = useState<SubmitResult | null>(null)
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -45,9 +46,6 @@ function CandleHopScreen() {
     if (res.isBest) {
       haptic('success')
       sound('win')
-    } else {
-      haptic('error')
-      sound('lose')
     }
     setResult(res)
     setBoard(res.scores)
@@ -62,6 +60,10 @@ function CandleHopScreen() {
       onHud: setHud,
       onEnd: (s) => endRef.current(s),
       onScore: () => haptic('selection'), // cleared a gap: a light tick
+      onCrash: () => {
+        haptic('error')
+        sound('lose')
+      },
       reduced,
     })
     engineRef.current = eng
@@ -69,9 +71,7 @@ function CandleHopScreen() {
       eng.destroy()
       engineRef.current = null
     }
-    // reduced is read once at build; it effectively never flips mid-session.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [reduced])
 
   const start = useCallback(() => {
     setResult(null)
@@ -87,11 +87,13 @@ function CandleHopScreen() {
   }, [])
 
   const playing = phase === 'playing'
-  // One button is the whole game: it flaps while a run is live, starts / restarts otherwise.
+  // One button is the whole game: it flaps while a run is live, starts / restarts otherwise. The two
+  // idle action screens drift through an ambient light show while a run is live, calm on death/title.
   useConsoleControls({
     main: playing
       ? { label: 'FLAP', color: 'amber', onPress: flap }
       : { label: phase === 'over' ? 'PLAY AGAIN' : 'PLAY', color: 'amber', onPress: start },
+    lightShow: playing,
   })
 
   const liveBest = Math.max(best, hud.score) // best ticks up the moment you pass it
@@ -132,7 +134,7 @@ function CandleHopScreen() {
 }
 
 // Title: the pitch, the board, the prompt. Full-screen over the canvas.
-function TitleOverlay({ best, board }: { best: number; board: ScoreEntry[] }) {
+function TitleOverlay({ best, board }: { best: number; board: Array<ScoreEntry> }) {
   return (
     <div className="absolute inset-0 z-20 flex flex-col justify-center bg-black/93 p-[var(--screen-rim,24px)] backdrop-blur-[1px]">
       <div className="flex items-center gap-2.5">
@@ -140,7 +142,7 @@ function TitleOverlay({ best, board }: { best: number; board: ScoreEntry[] }) {
         <h1 className="text-4xl font-extrabold leading-none tracking-tight text-text">Candle Hop</h1>
       </div>
       <p className="mt-2 max-w-[82%] text-sm leading-snug text-text-2">
-        Tap to flap the pip up, let it fall, and slip through the gaps between the candles. One nick and the run is done.
+        Tap to lift Pips, let it fall, and slip through the candle gaps. It moves calmly, but one bad line ends the run.
       </p>
       <div className="mt-5 w-full">
         <Board rows={board.slice(0, 5)} />
@@ -177,7 +179,7 @@ function OverOverlay({ result }: { result: SubmitResult }) {
 }
 
 // The shared leaderboard list. The player's just-set row glows.
-function Board({ rows }: { rows: ScoreEntry[] }) {
+function Board({ rows }: { rows: Array<ScoreEntry> }) {
   return (
     <div className="flex w-full flex-col font-mono">
       {rows.map((r, i) => (

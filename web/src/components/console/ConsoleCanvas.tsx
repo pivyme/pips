@@ -5,9 +5,9 @@ import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
 import { createConsoleGui } from './consoleGui'
 import { createCustomizeGui } from './customizeGui'
 import { roundedRect, roundedPoly, frontZeroed, setBoxUVs, roundedRectPath, roundedPolyPath } from './consoleGeo'
-import { createButtons, createKnob, createNumberWheel } from './consoleElements'
+import { createButtons, createKnob, createNumberWheel, createActionScreens } from './consoleElements'
 import { createAudio } from './consoleAudio'
-import type { ConsoleView } from './controls'
+import type { ConsoleView, ButtonColor } from './controls'
 import { themeBackdrop, type ConsoleTheme } from './themes'
 
 // The 3D handheld, driven by the console controls registry. A game registers its bindings via
@@ -126,8 +126,12 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       // pad = gap between button edge and pocket rim on each side
       // pills share a wall so their pad is capped to avoid holes touching (~0.14 max before they'd merge)
       { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.15 },
-      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.15 },
-      { w: 1.6, h: 1.5, r: 0.15, depth: 1, dx: 0, dy: 0, baseZ: 0.35, pressedZ: 0.2, pad: 0.15 },
+      // the two action caps are thin, recessed screen panels: a metal bezel + acrylic mounts over them
+      // (createActionScreens), so they sit low and read as little LCDs behind the frame, not pillows.
+      // Wide cap + small pad so the screen fills the aperture and the bezel stays a slim rim; the hole
+      // (w + pad*2) is unchanged from the old 1.6/0.15, so the two pockets still clear each other.
+      { w: 1.72, h: 1.62, r: 0.15, depth: 0.44, dx: 0, dy: 0, baseZ: 0.16, pressedZ: 0.09, pad: 0.09 },
+      { w: 1.72, h: 1.62, r: 0.15, depth: 0.44, dx: 0, dy: 0, baseZ: 0.16, pressedZ: 0.09, pad: 0.09 },
       { w: 0.98, h: 0.31, r: 0.15, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.1 },
       { w: 1.02, h: 0.31, r: 0.15, depth: 0.3, dx: 0, dy: 0, baseZ: 0.2, pressedZ: 0.15, pad: 0.1 },
     ]
@@ -411,6 +415,47 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     ], wx, wy)
     const bmOrigin = bm.map((m) => ({ x: m.position.x, y: m.position.y }))
 
+    // Frame the two action caps as mini LCD screens: a machined metal bezel + a glossy acrylic window
+    // over each. The cap stays bm[i] (the raycast + press target); we just drive its color like a panel.
+    const ACTION_IDX = [1, 2]
+    const { dispose: disposeActionScreens, glow: actionGlow } = createActionScreens(device, bm, ACTION_IDX, buttons, BTN_PX, wx, wy)
+
+    // The binding's color lights the screen (LONG → green, SHORT → red, …); off-binding the cap idles
+    // dim at the theme's action tone, so it still reads as a powered screen. The loop adds the press
+    // flash onto baseEmissive.
+    // Pure-ish hues so the screen's own emissive glow keeps the color true instead of washing toward
+    // white (a red with green/blue in it goes pink once it self-lights). Neutral is a dark LCD, not a
+    // grey one, so the white label reads with full contrast (the references' black ENTER/SCAN screens).
+    const SCREEN_COLORS: Record<string, string> = {
+      up: '#15db6e', down: '#ff2a20', amber: '#f7b417', neutral: '#171a21',
+    }
+    let actionThemeColor = '#3568c9'
+    function lightActionScreen(i: number, color: string, baseEmissive: number) {
+      const mat = bm[i].material as THREE.MeshStandardMaterial
+      mat.color.set(color)
+      mat.emissive.set(color)
+      bm[i].userData.baseEmissive = baseEmissive
+      // The bloom halo is tinted to the screen color; a dark/neutral color tints it near-black so it
+      // barely glows, a vivid up/down color glows strong. Idle screens bloom less.
+      const halo = actionGlow[i]
+      if (halo) {
+        halo.color.set(color)
+        halo.opacity = baseEmissive > 0.4 ? 0.4 : 0.14
+      }
+    }
+    function relightActionScreens() {
+      const one = (i: number, color: ButtonColor | undefined, available: boolean) => {
+        const hex = (color && SCREEN_COLORS[color]) || actionThemeColor
+        lightActionScreen(i, hex, available ? 0.62 : 0.14)
+      }
+      one(1, state.a1Color, state.a1Available)
+      one(2, state.a2Color, state.a2Available)
+      dirty = true
+    }
+    // Ambient light-show clock + a scratch color, used by the loop while state.lightShow is on.
+    let lightT = 0
+    const lightColor = new THREE.Color()
+
     // The main button wears the first glyph of the Pips wordmark, raised proud of the cap face (built
     // once the logo SVG loads, see buildMainGlyph). The glyph is a separate mesh, so the cap stays a
     // solid full-bevel pillow and keeps its glossy, light-catching rim. Cutting the glyph through the
@@ -564,10 +609,12 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
 
     // Live labels: action1 / action2 on their faces. The main button wears the embossed Pips glyph
     // instead of a text label (carved once the logo SVG loads, see buildMainGlyph).
-    const a1Lbl = makeDynLabel(0.5, '#ffffff')
+    // Sits on the screen face under the acrylic. Kept small so even a 6-char label clears the bezel
+    // window (the label draws depth-test-free, so it must not overrun the metal frame).
+    const a1Lbl = makeDynLabel(0.36, '#ffffff')
     a1Lbl.plane.position.set(0, 0, 0.02)
     bm[1].add(a1Lbl.plane)
-    const a2Lbl = makeDynLabel(0.5, '#ffffff')
+    const a2Lbl = makeDynLabel(0.36, '#ffffff')
     a2Lbl.plane.position.set(0, 0, 0.02)
     bm[2].add(a2Lbl.plane)
 
@@ -614,8 +661,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     // unbound controls still move and sound, but only registered controls dispatch into a screen.
     const state = {
       mainAvailable: false, a1Available: false, a2Available: false, knobAvailable: false, numberWheelBound: false,
+      a1Color: undefined as ButtonColor | undefined, a2Color: undefined as ButtonColor | undefined,
       knob: null as null | NonNullable<ConsoleView['knob']>,
       numberWheel: null as null | NonNullable<ConsoleView['numberWheel']>,
+      lightShow: false,
     }
 
     function setNumberWheelLabels(spec: NonNullable<ConsoleView['numberWheel']> | null) {
@@ -665,12 +714,20 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     function applyView(v?: ConsoleView) {
       const m = v?.main
       state.mainAvailable = !!m
-      const a1 = v?.action1
+      // The two action caps are lit screens. A bound game owns their label + color; in the playground
+      // there is no game, so seed LONG / SHORT to demo the screens lighting up dynamically.
+      const a1 = v?.action1 ?? (debug ? { label: 'LONG', color: 'up' as const } : null)
+      const a2 = v?.action2 ?? (debug ? { label: 'SHORT', color: 'down' as const } : null)
       state.a1Available = !!a1
+      state.a1Color = a1?.color
       a1Lbl.set(a1?.label ?? '', state.a1Available ? 1 : 0.34)
-      const a2 = v?.action2
       state.a2Available = !!a2
+      state.a2Color = a2?.color
       a2Lbl.set(a2?.label ?? '', state.a2Available ? 1 : 0.34)
+      state.lightShow = !!v?.lightShow
+      // When the show ends, relight settles the screens back to their idle / bound color; while it runs
+      // the loop owns their color, so this is just the baseline it animates away from.
+      relightActionScreens()
       const k = v?.knob ?? null
       state.knob = k
       state.knobAvailable = !!k
@@ -804,8 +861,10 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       paint(bm[0], t.main)
       // Raised P tracks the button: a shade darker than the face, its open counter reads as the eye.
       matMainGlyph.color.set(t.main).multiplyScalar(0.7)
-      paint(bm[1], t.action)
-      paint(bm[2], t.action)
+      // The action caps are screens, not flat buttons: the theme tone is just their dim idle glow; a
+      // bound game overrides it with the live up/down color (relightActionScreens).
+      actionThemeColor = t.action
+      relightActionScreens()
       paint(bm[3], t.pills)
       paint(bm[4], t.pills)
       // MENU / GAMES captions under the nav pills
@@ -1303,7 +1362,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
         o.position.z += (targetZ - o.position.z) * Math.min(1, dt * 20)
         if (d.pressed) { d.glow = Math.min(1, d.glow + dt * 9); animating = true }
         else { if (d.glow > 0.002) animating = true; d.glow *= Math.pow(0.015, dt) }
-        ; (o.material as THREE.MeshStandardMaterial).emissiveIntensity = d.glow * 0.95
+        // Screen caps hold a steady idle glow (baseEmissive); the press flash rides on top of it.
+        ; (o.material as THREE.MeshStandardMaterial).emissiveIntensity = (d.baseEmissive ?? 0) + d.glow * 0.95
       })
 
       if (knobDrag) {
@@ -1326,10 +1386,31 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       numberWheelRoll.rotation.x = numberWheelAngle
       updateNumberWheelLighting()
 
-      // Only touch the GPU when something actually changed. An idle device paints nothing; the
-      // shadow pass (the heavy bit) runs only on the frames we render.
+      // Ambient light show: while a game flags it (a live run), the two unbound action screens drift
+      // slowly through the spectrum as decoration. Pure color + glow, no geometry moves, so it must not
+      // trigger the shadow pass; `lightOnly` keeps these frames cheap so it never costs the game fps.
+      let lightOnly = false
+      if (state.lightShow) {
+        lightOnly = !animating && !dirty
+        lightT += dt
+        const hueBase = (lightT / 14) % 1 // a calm ~14s lap of the color wheel
+        ACTION_IDX.forEach((i, k) => {
+          lightColor.setHSL((hueBase + k * 0.5) % 1, 0.85, 0.5) // the two sit complementary
+          const mat = bm[i].material as THREE.MeshStandardMaterial
+          mat.color.copy(lightColor)
+          mat.emissive.copy(lightColor)
+          // gentle breathing, offset between the two so they don't pulse in lockstep
+          bm[i].userData.baseEmissive = 0.42 + 0.1 * Math.sin(lightT * 1.5 + k * Math.PI)
+          const halo = actionGlow[i]
+          if (halo) { halo.color.copy(lightColor); halo.opacity = 0.34 }
+        })
+        animating = true
+      }
+
+      // Only touch the GPU when something actually changed. An idle device paints nothing; the shadow
+      // pass (the heavy bit) runs only when geometry moved, never for the color-only light show.
       if (dirty || animating) {
-        renderer.shadowMap.needsUpdate = true
+        if (!lightOnly) renderer.shadowMap.needsUpdate = true
         renderer.render(scene, camera)
         dirty = false
       }
@@ -1350,6 +1431,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       applyThemeRef.current = () => { }
       applyOutroRef.current = () => { }
       gui?.destroy()
+      disposeActionScreens()
       logoGeo.forEach((g) => g.dispose())
       skinCache.forEach((t) => t.dispose())
       matLogoDark.dispose()

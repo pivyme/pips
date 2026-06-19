@@ -4,20 +4,22 @@
 import type { UserStatsDTO } from '@/lib/api'
 
 const W = 1080
-const H = 1350
+const H = 960
 const FONT = '"Gabarito Variable", ui-sans-serif, system-ui, sans-serif'
 
-// Mirror of the design tokens (docs/DESIGN.md). Canvas can't read CSS vars.
+// Mirror of the trader-card tokens in styles.css / StatsCard.tsx. Canvas can't read CSS vars.
 const C = {
   black: '#000000',
-  cardTop: '#2d2d2c',
-  cardBot: '#202020',
-  line: 'rgba(255,255,255,0.08)',
-  amber: '#ffc016',
+  amberTop: '#ffd550',
+  amberMid: '#ffc016',
+  amberBot: '#ef9f0a',
+  amberBorder: '#d9990f',
+  ink: '#1a1200',
+  brand400: '#ffd24a',
   up: '#34d399',
   down: '#ff5a4d',
-  text: '#dfdfdf',
-  text3: '#5e5e5e',
+  white: '#ffffff',
+  screen: '#0a0a0a',
 }
 
 function loadImage(src: string): Promise<HTMLImageElement | null> {
@@ -37,6 +39,32 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.arcTo(x, y + h, x, y, r)
   ctx.arcTo(x, y, x + w, y, r)
   ctx.closePath()
+}
+
+// Draw an image cropped to cover the target box (object-fit: cover), centered.
+function drawCover(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  const target = w / h
+  const source = img.width / img.height
+  let sw: number, sh: number, sx: number, sy: number
+  if (source > target) {
+    sh = img.height
+    sw = sh * target
+    sx = (img.width - sw) / 2
+    sy = 0
+  } else {
+    sw = img.width
+    sh = sw / target
+    sx = 0
+    sy = (img.height - sh) / 2
+  }
+  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h)
 }
 
 const shortAddr = (a: string): string => (a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a)
@@ -63,83 +91,165 @@ async function renderCard(
 
   ctx.fillStyle = C.black
   ctx.fillRect(0, 0, W, H)
-  const halo = ctx.createRadialGradient(W / 2, 300, 60, W / 2, 300, 720)
-  halo.addColorStop(0, 'rgba(255,192,22,0.20)')
-  halo.addColorStop(1, 'rgba(255,192,22,0)')
-  ctx.fillStyle = halo
-  ctx.fillRect(0, 0, W, H)
 
-  // The card panel: card-neo gradient + faint border.
-  const m = 56
-  const cw = W - m * 2
-  const ch = H - m * 2
-  const grad = ctx.createLinearGradient(0, m, 0, m + ch)
-  grad.addColorStop(0, C.cardTop)
-  grad.addColorStop(1, C.cardBot)
-  roundRect(ctx, m, m, cw, ch, 56)
-  ctx.fillStyle = grad
-  ctx.fill()
-  ctx.lineWidth = 2
-  ctx.strokeStyle = C.line
-  ctx.stroke()
-
-  const px = m + 64
   ctx.textBaseline = 'alphabetic'
 
-  // Header: logo + wordmark on the left, a tag on the right.
-  let y = m + 120
-  const logo = await loadImage('/assets/logos/pips-512.png')
-  if (logo) ctx.drawImage(logo, px, y - 64, 72, 72)
-  ctx.textAlign = 'left'
-  ctx.fillStyle = C.amber
-  ctx.font = `800 46px ${FONT}`
-  ctx.fillText('PIPS', px + (logo ? 90 : 0), y)
-  ctx.textAlign = 'right'
-  ctx.fillStyle = C.text3
-  ctx.font = `700 26px ${FONT}`
-  ctx.fillText('TRADER CARD', W - px, y - 10)
+  // ── The amber bezel (the device body) ───────────────────────────────────
+  const m = 48
+  const pad = 40
+  const bx = m
+  const by = m
+  const bw = W - m * 2
+  const bh = H - m * 2
+  const bodyR = 72
 
-  // Handle + address.
+  ctx.save()
+  ctx.shadowColor = 'rgba(0,0,0,0.6)'
+  ctx.shadowBlur = 70
+  ctx.shadowOffsetY = 32
+  const body = ctx.createLinearGradient(0, by, 0, by + bh)
+  body.addColorStop(0, C.amberTop)
+  body.addColorStop(0.46, C.amberMid)
+  body.addColorStop(1, C.amberBot)
+  roundRect(ctx, bx, by, bw, bh, bodyR)
+  ctx.fillStyle = body
+  ctx.fill()
+  ctx.restore()
+
+  // Top gloss + bottom inner shade, clipped to the body for the skeuo read.
+  ctx.save()
+  roundRect(ctx, bx, by, bw, bh, bodyR)
+  ctx.clip()
+  const gloss = ctx.createLinearGradient(0, by, 0, by + 240)
+  gloss.addColorStop(0, 'rgba(255,255,255,0.4)')
+  gloss.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = gloss
+  ctx.fillRect(bx, by, bw, 240)
+  const shade = ctx.createLinearGradient(0, by + bh - 120, 0, by + bh)
+  shade.addColorStop(0, 'rgba(108,66,0,0)')
+  shade.addColorStop(1, 'rgba(108,66,0,0.42)')
+  ctx.fillStyle = shade
+  ctx.fillRect(bx, by + bh - 120, bw, 120)
+  ctx.restore()
+
+  roundRect(ctx, bx, by, bw, bh, bodyR)
+  ctx.lineWidth = 2
+  ctx.strokeStyle = C.amberBorder
+  ctx.stroke()
+
+  // ── Header nameplate on the bezel ───────────────────────────────────────
+  const chip = 54
+  const chipX = bx + pad
+  const chipY = by + pad + 6
+  ctx.save()
+  roundRect(ctx, chipX, chipY, chip, chip, 14)
+  ctx.fillStyle = C.ink
+  ctx.fill()
+  ctx.restore()
+  const logo = await loadImage('/assets/logos/pips-512.png')
+  if (logo) ctx.drawImage(logo, chipX + 9, chipY + 9, chip - 18, chip - 18)
+
   ctx.textAlign = 'left'
-  y += 130
-  ctx.fillStyle = C.text
-  ctx.font = `800 76px ${FONT}`
-  ctx.fillText(user.displayName, px, y)
+  ctx.fillStyle = C.ink
+  ctx.font = `800 46px ${FONT}`
+  ctx.fillText('PIPS', chipX + chip + 22, chipY + 40)
+
+  ctx.textAlign = 'right'
+  ctx.fillStyle = 'rgba(46,30,0,0.6)'
+  ctx.font = `800 26px ${FONT}`
+  ctx.fillText('TRADER CARD', bx + bw - pad, chipY + 36)
+
+  // ── The recessed screen window ──────────────────────────────────────────
+  const sx = bx + pad
+  const sy = by + pad + 116
+  const sw = bw - pad * 2
+  const sh = by + bh - pad - sy
+  const sr = 42
+
+  ctx.save()
+  roundRect(ctx, sx, sy, sw, sh, sr)
+  ctx.clip()
+  ctx.fillStyle = C.screen
+  ctx.fillRect(sx, sy, sw, sh)
+  const bg = await loadImage('/assets/images/stats-bg.png')
+  if (bg) drawCover(ctx, bg, sx, sy, sw, sh)
+  // Scrim so text always reads over the backdrop.
+  const scrim = ctx.createLinearGradient(0, sy, 0, sy + sh)
+  scrim.addColorStop(0, 'rgba(0,0,0,0.46)')
+  scrim.addColorStop(0.4, 'rgba(0,0,0,0.3)')
+  scrim.addColorStop(1, 'rgba(0,0,0,0.64)')
+  ctx.fillStyle = scrim
+  ctx.fillRect(sx, sy, sw, sh)
+  // Inner top shadow for the sunk-in read.
+  const recess = ctx.createLinearGradient(0, sy, 0, sy + 44)
+  recess.addColorStop(0, 'rgba(0,0,0,0.55)')
+  recess.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = recess
+  ctx.fillRect(sx, sy, sw, 44)
+  ctx.restore()
+
+  roundRect(ctx, sx, sy, sw, sh, sr)
+  ctx.lineWidth = 2
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)'
+  ctx.stroke()
+
+  // ── Screen content ──────────────────────────────────────────────────────
+  const sp = 56
+  const cx = sx + sp
+  const cr = sx + sw - sp
+
+  ctx.textAlign = 'left'
+  let y = sy + 96
+  ctx.fillStyle = C.white
+  ctx.font = `800 60px ${FONT}`
+  ctx.fillText(user.displayName, cx, y)
   y += 46
-  ctx.fillStyle = C.text3
+  ctx.fillStyle = 'rgba(255,255,255,0.45)'
   ctx.font = `500 30px ${FONT}`
-  ctx.fillText(shortAddr(user.address), px, y)
+  ctx.fillText(shortAddr(user.address), cx, y)
 
   // Divider.
-  y += 70
-  ctx.strokeStyle = C.line
+  y += 56
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)'
+  ctx.lineWidth = 2
   ctx.beginPath()
-  ctx.moveTo(px, y)
-  ctx.lineTo(W - px, y)
+  ctx.moveTo(cx, y)
+  ctx.lineTo(cr, y)
   ctx.stroke()
 
   // Hero: win rate (left) and net P&L (right).
-  y += 80
-  ctx.fillStyle = C.text3
-  ctx.font = `700 30px ${FONT}`
-  ctx.fillText('WIN RATE', px, y)
+  y += 60
+  ctx.fillStyle = 'rgba(255,255,255,0.55)'
+  ctx.font = `700 27px ${FONT}`
+  ctx.fillText('WIN RATE', cx, y)
   ctx.textAlign = 'right'
-  ctx.fillText('NET P&L', W - px, y)
-  y += 150
+  ctx.fillText('NET P&L', cr, y)
+
+  y += 134
   ctx.textAlign = 'left'
-  ctx.fillStyle = C.amber
-  ctx.font = `800 170px ${FONT}`
-  ctx.fillText(`${Math.round(stats.winRate * 100)}%`, px - 4, y)
+  ctx.save()
+  ctx.shadowColor = 'rgba(255,192,22,0.5)'
+  ctx.shadowBlur = 42
+  ctx.fillStyle = C.brand400
+  ctx.font = `800 150px ${FONT}`
+  ctx.fillText(`${Math.round(stats.winRate * 100)}%`, cx - 2, y)
+  ctx.restore()
+
   const net = parseFloat(stats.netPnl)
   ctx.textAlign = 'right'
+  ctx.save()
+  ctx.shadowColor = net >= 0 ? 'rgba(52,211,153,0.4)' : 'rgba(255,90,77,0.4)'
+  ctx.shadowBlur = 30
   ctx.fillStyle = net >= 0 ? C.up : C.down
-  ctx.font = `800 88px ${FONT}`
-  ctx.fillText(`${net >= 0 ? '+' : '-'}$${commas(Math.abs(net))}`, W - px, y)
+  ctx.font = `800 80px ${FONT}`
+  ctx.fillText(`${net >= 0 ? '+' : '-'}$${commas(Math.abs(net))}`, cr, y)
+  ctx.restore()
 
-  // Stat grid (2 x 2).
-  ctx.textAlign = 'left'
-  y += 110
-  const colX = [px, W / 2 + 8]
+  // Stat grid (2 x 2) as inset glass cells.
+  const gap = 24
+  const cellW = (sw - sp * 2 - gap) / 2
+  const cellH = 150
+  const gridY = y + 70
   const cells: Array<[string, string]> = [
     ['GAMES PLAYED', commas(stats.gamesPlayed)],
     ['VOLUME', `$${commas(parseFloat(stats.totalVolume))}`],
@@ -147,21 +257,30 @@ async function renderCard(
     ['BEST STREAK', commas(stats.maxStreak)],
   ]
   cells.forEach(([label, value], i) => {
-    const cx = colX[i % 2]
-    const cy = y + Math.floor(i / 2) * 160
-    ctx.fillStyle = C.text3
-    ctx.font = `700 26px ${FONT}`
-    ctx.fillText(label, cx, cy)
-    ctx.fillStyle = C.text
-    ctx.font = `800 64px ${FONT}`
-    ctx.fillText(value, cx, cy + 66)
+    const col = i % 2
+    const row = Math.floor(i / 2)
+    const ex = cx + col * (cellW + gap)
+    const ey = gridY + row * (cellH + gap)
+    roundRect(ctx, ex, ey, cellW, cellH, 18)
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'
+    ctx.fill()
+    ctx.lineWidth = 1.5
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)'
+    ctx.stroke()
+    ctx.textAlign = 'left'
+    ctx.fillStyle = 'rgba(255,255,255,0.55)'
+    ctx.font = `700 24px ${FONT}`
+    ctx.fillText(label, ex + 28, ey + 46)
+    ctx.fillStyle = C.white
+    ctx.font = `800 54px ${FONT}`
+    ctx.fillText(value, ex + 28, ey + 110)
   })
 
-  // Footer.
-  ctx.fillStyle = C.text3
-  ctx.font = `600 28px ${FONT}`
+  // Footer, on the screen.
+  ctx.fillStyle = 'rgba(255,255,255,0.42)'
+  ctx.font = `600 27px ${FONT}`
   ctx.textAlign = 'center'
-  ctx.fillText('Built on Sui · DeepBook Predict', W / 2, H - m - 56)
+  ctx.fillText('Built on Sui · DeepBook Predict', W / 2, sy + sh - 46)
 
   return new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'))
 }

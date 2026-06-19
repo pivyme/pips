@@ -3,36 +3,50 @@
 // backend IS the user); enoki mode sponsors the play via Enoki and hands the client bytes
 // to sign, then submits on confirm. Enoki method names verified against @mysten/enoki 1.1.
 
-import { Transaction } from '@mysten/sui/transactions';
+import { Transaction, SerialTransactionExecutor } from '@mysten/sui/transactions';
 import { toBase64 } from '@mysten/sui/utils';
 import { EnokiClient } from '@mysten/enoki';
 
 import { AUTH_MODE, ENOKI_PRIVATE_API_KEY, SUI_NETWORK } from '../../config/main-config.ts';
 import { suiClient } from './client.ts';
-import { operatorKeypair, operatorAddress } from './signer.ts';
+import { operatorKeypair } from './signer.ts';
 
 export type ExecResult = {
   digest: string;
   objectChanges: Array<{ type: string; objectId?: string; objectType?: string }>;
 };
 
-// Sign with the operator key and submit. Throws on a non-success status so callers can
-// surface a clean error. Waits for the tx so reads after it see the new state.
+// One serial executor for EVERY operator-signed tx: the cron workers (push, roll, settle), the
+// settle redeems, dev-mode plays, and DUSDC mints. The operator has a single gas coin and the
+// single oracle cap, both fast-path owned objects, so concurrent submissions from the same
+// sender equivocate ("object unavailable for consumption / already locked by a different
+// transaction"). SerialTransactionExecutor fixes that at the root: it runs every tx through one
+// internal queue, reuses the gas coin, and chains owned-object versions from each tx's effects
+// instead of re-reading them from the node. That removes the version races AND the extra
+// waitForTransaction round-trip, dropping operator latency from ~3.9s to ~0.8s per tx over the
+// remote node, which is what lets the 3-asset 30s ladder actually stay fresh. The gas budget is
+// a generous cap (covers the storage-heavy create_oracle; the rest is refunded). EVERY operator
+// tx must go through here, a side path that signs as the operator would desync the gas cache.
+const operatorExecutor = new SerialTransactionExecutor({
+  client: suiClient,
+  signer: operatorKeypair,
+  defaultGasBudget: 1_000_000_000n,
+});
+
+// Sign + submit as the operator through the serial executor. Throws on a reverted/failed tx.
+// objectChanges is reduced to the created objects (with their Move type), which is all any
+// caller reads (the new oracle / manager id).
 export async function executeAsOperator(tx: Transaction, label: string): Promise<ExecResult> {
-  tx.setSenderIfNotSet(operatorAddress);
-  const res = await suiClient.signAndExecuteTransaction({
-    transaction: tx,
-    signer: operatorKeypair,
-    options: { showEffects: true, showObjectChanges: true },
-  });
-  if (res.effects?.status.status !== 'success') {
-    throw new Error(`${label} failed: ${JSON.stringify(res.effects?.status)}`);
+  const out = await operatorExecutor.executeTransaction(tx, { objectTypes: true });
+  const t = out.$kind === 'Transaction' ? out.Transaction : null;
+  if (!t || t.effects?.status?.success !== true) {
+    const status = t?.effects?.status ?? (out.$kind === 'FailedTransaction' ? out.FailedTransaction.status : out);
+    throw new Error(`${label} failed: ${JSON.stringify(status)}`);
   }
-  await suiClient.waitForTransaction({ digest: res.digest });
-  return {
-    digest: res.digest,
-    objectChanges: (res.objectChanges as ExecResult['objectChanges']) ?? [],
-  };
+  const objectChanges = (t.effects.changedObjects ?? [])
+    .filter((o) => o.idOperation === 'Created')
+    .map((o) => ({ type: 'created', objectId: o.objectId, objectType: t.objectTypes?.[o.objectId] }));
+  return { digest: t.digest ?? t.effects.transactionDigest ?? '', objectChanges };
 }
 
 // Enoki has no localnet prover; localnet always runs dev auth mode (this path is never hit
@@ -59,17 +73,9 @@ export type UserExec =
 // Execute (dev) or sponsor (enoki) a user's play transaction.
 export async function executeForUser(tx: Transaction, ctx: UserContext): Promise<UserExec> {
   if (AUTH_MODE === 'dev') {
-    tx.setSenderIfNotSet(operatorAddress);
-    const res = await suiClient.signAndExecuteTransaction({
-      transaction: tx,
-      signer: operatorKeypair,
-      options: { showEffects: true, showObjectChanges: true },
-    });
-    if (res.effects?.status.status !== 'success') {
-      throw new Error(`play failed: ${JSON.stringify(res.effects?.status)}`);
-    }
-    await suiClient.waitForTransaction({ digest: res.digest });
-    return { mode: 'dev', digest: res.digest, objectChanges: (res.objectChanges as ExecResult['objectChanges']) ?? [] };
+    // dev plays sign as the operator too, so they share the same serial executor (one gas coin).
+    const res = await executeAsOperator(tx, 'play');
+    return { mode: 'dev', digest: res.digest, objectChanges: res.objectChanges };
   }
 
   // enoki: build the kind bytes, let Enoki own gas, return bytes for the client to sign.
