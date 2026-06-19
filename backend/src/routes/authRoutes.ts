@@ -5,9 +5,8 @@ import { validateRequiredFields } from '../utils/validationUtils.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { AUTH_MODE } from '../config/main-config.ts';
 import { operatorAddress } from '../lib/sui/signer.ts';
-import { verifyWalletSignature } from '../lib/sui/verify.ts';
-import { prismaQuery } from '../lib/prisma.ts';
-import { buildAuthMessage, ensureUser, mintToken, setNonce, toUserDTO } from '../services/auth.ts';
+import { verifyPrivyToken } from '../lib/sui/privy.ts';
+import { ensureUser, mintToken, toUserDTO } from '../services/auth.ts';
 
 export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
   // dev mode: auto-login the operator wallet. The backend is the user and signs its plays.
@@ -21,43 +20,32 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     }
   });
 
-  // enoki mode: hand the client a challenge nonce to sign with its zkLogin key.
-  app.post('/nonce', async (request: FastifyRequest, reply: FastifyReply) => {
-    if (AUTH_MODE !== 'enoki') return handleNotFoundError(reply, 'Route');
-    const body = (request.body ?? {}) as { address?: string };
-    const valid = await validateRequiredFields(body as Record<string, unknown>, ['address'], reply);
-    if (valid !== true) return;
-    try {
-      const nonce = await setNonce(body.address as string);
-      return reply.code(200).send({ success: true, error: null, data: { nonce } });
-    } catch (error) {
-      return handleError(reply, 500, 'Could not start sign-in', 'AUTH_NONCE_FAILED', error as Error);
-    }
-  });
-
-  // enoki mode: verify the signed nonce, onboard, mint the JWT.
-  app.post('/verify', async (request: FastifyRequest, reply: FastifyReply) => {
-    if (AUTH_MODE !== 'enoki') return handleNotFoundError(reply, 'Route');
-    const body = (request.body ?? {}) as { address?: string; signature?: string };
-    const valid = await validateRequiredFields(body as Record<string, unknown>, ['address', 'signature'], reply);
+  // privy mode: the client signs in with Privy (Google/email), creating a non-custodial embedded
+  // Sui wallet. It sends the Privy access token + the wallet's Sui address, public key, and wallet
+  // id. We verify the token, upsert + onboard the user keyed by the Sui address, and mint our JWT.
+  app.post('/privy/verify', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (AUTH_MODE !== 'privy') return handleNotFoundError(reply, 'Route');
+    const body = (request.body ?? {}) as { token?: string; address?: string; publicKey?: string; walletId?: string; email?: string };
+    const valid = await validateRequiredFields(body as Record<string, unknown>, ['token', 'address', 'publicKey', 'walletId'], reply);
     if (valid !== true) return;
 
-    const address = body.address as string;
-    const user = await prismaQuery.user.findUnique({ where: { address } });
-    if (!user || !user.nonce) {
-      return handleError(reply, 400, 'Sign-in expired, please try again', 'NONCE_INVALID');
-    }
-
+    let privyUserId: string;
     try {
-      await verifyWalletSignature(buildAuthMessage(user.nonce), body.signature as string, address);
+      ({ privyUserId } = await verifyPrivyToken(body.token as string));
     } catch (error) {
-      return handleError(reply, 401, 'Signature did not match', 'SIGNATURE_INVALID', error as Error);
+      return handleError(reply, 401, 'Sign-in could not be verified', 'PRIVY_TOKEN_INVALID', error as Error);
     }
 
     try {
-      await prismaQuery.user.update({ where: { id: user.id }, data: { nonce: null } });
-      const onboarded = await ensureUser({ address, provider: 'enoki' });
-      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(onboarded), user: await toUserDTO(onboarded) } });
+      const user = await ensureUser({
+        address: body.address as string,
+        provider: 'privy',
+        email: body.email ?? null,
+        privyUserId,
+        suiPublicKey: body.publicKey as string,
+        privyWalletId: body.walletId as string,
+      });
+      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user) } });
     } catch (error) {
       return handleError(reply, 500, 'Could not finish sign-in', 'AUTH_VERIFY_FAILED', error as Error);
     }

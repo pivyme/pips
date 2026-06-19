@@ -1,7 +1,8 @@
-// The play lifecycle: create (mint), confirm (enoki), cash out (redeem), and expiry settle.
-// The user's chips live in their PredictManager's BalanceManager: mint debits it, redeem
-// credits it, so a play funds the manager up to the stake, then mints. dev mode signs +
-// submits server-side; enoki mode returns a sponsor envelope and finalizes on /confirm.
+// The play lifecycle: create (mint), cash out (redeem), and expiry settle. The user's chips live
+// in their PredictManager's BalanceManager: mint debits it, redeem credits it, so a play funds
+// the manager up to the stake, then mints. Both modes finalize server-side: dev signs as the
+// operator; privy signs with the user's embedded wallet via a session signer. No client round
+// trip, no sponsor envelope.
 
 import { Transaction } from '@mysten/sui/transactions';
 import { coinWithBalance } from '@mysten/sui/transactions';
@@ -25,7 +26,7 @@ import {
   type BinaryParams,
   type RangeParams,
 } from '../lib/sui/predict.ts';
-import { executeForUser, executeSponsored, executeAsOperator } from '../lib/sui/execute.ts';
+import { executeForUser, executeAsOperator } from '../lib/sui/execute.ts';
 import {
   resolveLucky,
   resolveRange,
@@ -37,7 +38,7 @@ import {
 } from './games.ts';
 import { recordSettlement } from './stats.ts';
 import { evaluateAndUnlock } from './achievements.ts';
-import type { Game, PlayDTO, PlayStatus, SponsorEnvelope, Side } from '../types/api.ts';
+import type { Game, PlayDTO, PlayStatus, Side } from '../types/api.ts';
 
 // === Redeem key descriptor (stored on Play.marketKey) ===
 // Holds the exact 1e9 strikes + quantity so redeem reconstructs the on-chain key precisely,
@@ -93,7 +94,10 @@ export type CreatePlayInput =
   | { game: 'range'; stake: string | number; asset: string; widthPct: number; duration: number }
   | { game: 'tap'; stake: string | number; asset: string; band: { lower: number; upper: number }; duration: number };
 
-export type CreateResult = { mode: 'dev'; play: PlayDTO } | { mode: 'enoki'; envelope: SponsorEnvelope };
+export type CreateResult = { play: PlayDTO };
+
+// What executeForUser needs to sign: the user (dev = operator-signed; privy = the user's wallet).
+const userCtx = (user: User) => ({ address: user.address, walletId: user.privyWalletId, publicKey: user.suiPublicKey });
 
 async function resolveByGame(input: CreatePlayInput, stakeRaw: bigint): Promise<Resolved> {
   if (input.game === 'lucky') return resolveLucky(stakeRaw);
@@ -116,20 +120,16 @@ export async function createPlay(user: User, input: CreatePlayInput): Promise<Cr
   if (resolved.kind === 'binary') buildMint(tx, managerId, resolved.params);
   else buildMintRange(tx, managerId, resolved.params);
 
-  // Persist pending first so we hold an id even when exec returns an envelope to sign.
+  // Persist pending first so we hold an id even if signing/submit throws.
   const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw) });
 
   try {
-    const exec = await executeForUser(tx, { address: user.address });
-    if (exec.mode === 'dev') {
-      const opened = await prismaQuery.play.update({
-        where: { id: play.id },
-        data: { status: 'open', txMint: exec.digest, openedAt: new Date() },
-      });
-      return { mode: 'dev', play: await toPlayDTO(opened) };
-    }
-    await prismaQuery.play.update({ where: { id: play.id }, data: { txMint: exec.digest } });
-    return { mode: 'enoki', envelope: { playId: play.id, txBytes: exec.bytes, needsSignature: true } };
+    const exec = await executeForUser(tx, userCtx(user));
+    const opened = await prismaQuery.play.update({
+      where: { id: play.id },
+      data: { status: 'open', txMint: exec.digest, openedAt: new Date() },
+    });
+    return { play: await toPlayDTO(opened) };
   } catch (e) {
     await prismaQuery.play.update({ where: { id: play.id }, data: { status: 'error' } });
     throw asPlayError(e, 'MINT_FAILED', 'Could not place that play. Your chips are safe.');
@@ -158,31 +158,9 @@ function mapResolvedToPlay(userId: string, r: Resolved, stakeRaw: bigint) {
   return { ...base, lower: r.lowerDisplay, upper: r.upperDisplay, widthPct: r.widthPct ?? null };
 }
 
-// === Confirm (enoki) ===
-
-// Finalize a sponsored play after the client signs. A pending play is a mint (-> open);
-// an open play with a stored redeem digest is a cash-out (-> cashed_out).
-export async function confirmPlay(user: User, playId: string, signature: string): Promise<{ play: PlayDTO; unlocked: string[] }> {
-  const play = await prismaQuery.play.findFirst({ where: { id: playId, userId: user.id } });
-  if (!play) throw new PlayError('PLAY_NOT_OPEN', 'Play not found');
-
-  if (play.status === 'pending' && play.txMint) {
-    await executeSponsored(play.txMint, signature);
-    const opened = await prismaQuery.play.update({ where: { id: play.id }, data: { status: 'open', openedAt: new Date() } });
-    return { play: await toPlayDTO(opened), unlocked: [] };
-  }
-
-  if (play.status === 'open' && play.txRedeem) {
-    await executeSponsored(play.txRedeem, signature);
-    return finalizeCashout(play, play.markValue ?? 0n, play.txRedeem);
-  }
-
-  throw new PlayError('PLAY_NOT_OPEN', 'Nothing to confirm for this play');
-}
-
 // === Cash out (redeem at the live mark) ===
 
-export type CashoutResult = { mode: 'dev'; play: PlayDTO; unlocked: string[] } | { mode: 'enoki'; envelope: SponsorEnvelope };
+export type CashoutResult = { play: PlayDTO; unlocked: string[] };
 
 export async function cashoutPlay(user: User, playId: string): Promise<CashoutResult> {
   const play = await prismaQuery.play.findFirst({ where: { id: playId, userId: user.id } });
@@ -199,13 +177,8 @@ export async function cashoutPlay(user: User, playId: string): Promise<CashoutRe
   else buildRedeemRange(tx, managerId, key.params);
 
   try {
-    const exec = await executeForUser(tx, { address: user.address });
-    if (exec.mode === 'enoki') {
-      await prismaQuery.play.update({ where: { id: play.id }, data: { markValue: amounts.payout, txRedeem: exec.digest } });
-      return { mode: 'enoki', envelope: { playId: play.id, txBytes: exec.bytes, needsSignature: true } };
-    }
-    const { play: dto, unlocked } = await finalizeCashout(play, amounts.payout, exec.digest);
-    return { mode: 'dev', play: dto, unlocked };
+    const exec = await executeForUser(tx, userCtx(user));
+    return finalizeCashout(play, amounts.payout, exec.digest);
   } catch (e) {
     throw asPlayError(e, 'REDEEM_FAILED', 'Could not cash out right now. Try again.');
   }

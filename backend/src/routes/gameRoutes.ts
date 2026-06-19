@@ -1,6 +1,6 @@
-// Markets + the play lifecycle. Mode-aware: dev returns a finalized PlayDTO, enoki returns a
-// SponsorEnvelope the client signs and posts back to /plays/:id/confirm. Predict errors come
-// through as PlayError and map to friendly codes, never a raw Move abort.
+// Markets + the play lifecycle. Both auth modes finalize server-side and return a PlayDTO (dev
+// signs as the operator, privy signs with the user's wallet via a session signer). Predict errors
+// come through as PlayError and map to friendly codes, never a raw Move abort.
 
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 
@@ -12,7 +12,6 @@ import { getSpot } from '../lib/price-cache.ts';
 import { PlayError, httpStatusForPlayError } from '../services/games.ts';
 import {
   createPlay,
-  confirmPlay,
   cashoutPlay,
   listPlays,
   getPlay,
@@ -58,34 +57,19 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     const body = (request.body ?? {}) as Record<string, unknown>;
     try {
       const input = buildCreateInput(game, body);
-      const result = await createPlay(request.user!, input);
-      const data = result.mode === 'dev' ? { play: result.play } : { envelope: result.envelope };
-      return reply.code(200).send({ success: true, error: null, data });
+      const { play } = await createPlay(request.user!, input);
+      return reply.code(200).send({ success: true, error: null, data: { play } });
     } catch (error) {
       return fail(reply, error, 'PLAY_FAILED', 'Could not place that play');
     }
   });
 
-  // enoki: finalize a sponsored play (mint or cash-out) once the client has signed.
-  app.post('/plays/:id/confirm', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const id = (request.params as { id: string }).id;
-    const { signature } = (request.body ?? {}) as { signature?: string };
-    if (!signature) return handleError(reply, 400, 'Missing signature', 'VALIDATION_ERROR');
-    try {
-      const { play, unlocked } = await confirmPlay(request.user!, id, signature);
-      return reply.code(200).send({ success: true, error: null, data: { play, unlocked } });
-    } catch (error) {
-      return fail(reply, error, 'CONFIRM_FAILED', 'Could not confirm that play');
-    }
-  });
-
-  // Early cash-out at the live mark. dev finalizes; enoki returns an envelope to sign.
+  // Early cash-out at the live mark. Finalized server-side in both auth modes.
   app.post('/plays/:id/cashout', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const id = (request.params as { id: string }).id;
     try {
-      const result = await cashoutPlay(request.user!, id);
-      const data = result.mode === 'dev' ? { play: result.play, unlocked: result.unlocked } : { envelope: result.envelope };
-      return reply.code(200).send({ success: true, error: null, data });
+      const { play, unlocked } = await cashoutPlay(request.user!, id);
+      return reply.code(200).send({ success: true, error: null, data: { play, unlocked } });
     } catch (error) {
       return fail(reply, error, 'CASHOUT_FAILED', 'Could not cash out');
     }

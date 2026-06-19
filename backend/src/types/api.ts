@@ -7,9 +7,9 @@ export type Side = 'up' | 'down'; // up = call/long, down = put/short
 
 export interface UserDTO {
   id: string;
-  address: string; // Sui address (zkLogin or dev wallet)
+  address: string; // Sui address (Privy embedded wallet or dev wallet)
   displayName: string; // generated handle, e.g. "Lucky Otter"
-  provider: 'enoki' | 'dev';
+  provider: 'privy' | 'dev';
   balance: string; // DUSDC, e.g. "983.50" (wallet + manager chips)
   managerReady: boolean; // PredictManager exists
   settings: { sound: boolean; haptics: boolean; reducedMotion: boolean };
@@ -57,13 +57,6 @@ export interface PlayDTO {
   settledAt?: string;
   txMint?: string;
   txRedeem?: string;
-}
-
-// enoki mode: a tx the client must sign. dev mode never returns this.
-export interface SponsorEnvelope {
-  playId: string;
-  txBytes: string;
-  needsSignature: true;
 }
 
 export interface UserStatsDTO {

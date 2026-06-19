@@ -99,7 +99,6 @@ async function main(): Promise<void> {
 
   const before = await getDusdcBalance(operatorAddress);
   const res = await createPlay(user, { game: 'lucky', stake: 25 });
-  if (res.mode !== 'dev') throw new Error('expected dev-mode play (server-signed)');
   const dto = res.play;
   const side = 'side' in dto.params ? (dto.params.side ?? 'up') : 'up';
   const strike = Number(dto.market.strike ?? '0');
@@ -123,7 +122,6 @@ async function main(): Promise<void> {
   console.log(`  live mark: $${(Number(mark0) / 1e6).toFixed(2)} -> $${(Number(mark1) / 1e6).toFixed(2)} (climbed: ${mark1 > mark0})`);
 
   const cash = await cashoutPlay(user, dto.id);
-  if (cash.mode !== 'dev') throw new Error('expected dev-mode cashout');
   const settled = cash.play;
   check('redeem tx on chain', Boolean(settled.txRedeem), settled.txRedeem ? explorerTxUrl(settled.txRedeem) : '');
   console.log(`  cashed out: payout $${settled.payout ?? '0'}, pnl $${settled.pnl}`);

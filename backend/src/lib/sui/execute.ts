@@ -1,15 +1,15 @@
-// Transaction execution. Operator txs (price pushes, oracle ops) sign with the operator
-// key. User plays split by AUTH_MODE: dev mode signs + submits with the dev key (the
-// backend IS the user); enoki mode sponsors the play via Enoki and hands the client bytes
-// to sign, then submits on confirm. Enoki method names verified against @mysten/enoki 1.1.
+// Transaction execution. Operator txs (price pushes, oracle ops, DUSDC/SUI funding) sign with
+// the operator key. User plays split by AUTH_MODE: dev mode signs + submits with the operator
+// key (the backend IS the user); privy mode signs with the user's embedded ed25519 wallet via
+// Privy rawSign under a session signer, then submits. Both modes finalize server-side, no client
+// round trip and no sponsor envelope.
 
 import { Transaction, SerialTransactionExecutor } from '@mysten/sui/transactions';
-import { toBase64 } from '@mysten/sui/utils';
-import { EnokiClient } from '@mysten/enoki';
 
-import { AUTH_MODE, ENOKI_PRIVATE_API_KEY, SUI_NETWORK } from '../../config/main-config.ts';
+import { AUTH_MODE } from '../../config/main-config.ts';
 import { suiClient } from './client.ts';
 import { operatorKeypair } from './signer.ts';
+import { signSuiTxWithPrivy } from './privy.ts';
 
 export type ExecResult = {
   digest: string;
@@ -17,8 +17,8 @@ export type ExecResult = {
 };
 
 // One serial executor for EVERY operator-signed tx: the cron workers (push, roll, settle), the
-// settle redeems, dev-mode plays, and DUSDC mints. The operator has a single gas coin and the
-// single oracle cap, both fast-path owned objects, so concurrent submissions from the same
+// settle redeems, dev-mode plays, and DUSDC/SUI funding. The operator has a single gas coin and
+// the single oracle cap, both fast-path owned objects, so concurrent submissions from the same
 // sender equivocate ("object unavailable for consumption / already locked by a different
 // transaction"). SerialTransactionExecutor fixes that at the root: it runs every tx through one
 // internal queue, reuses the gas coin, and chains owned-object versions from each tx's effects
@@ -49,51 +49,36 @@ export async function executeAsOperator(tx: Transaction, label: string): Promise
   return { digest: t.digest ?? t.effects.transactionDigest ?? '', objectChanges };
 }
 
-// Enoki has no localnet prover; localnet always runs dev auth mode (this path is never hit
-// there), so fall back to testnet to keep the type honest.
-const ENOKI_NETWORK = (SUI_NETWORK === 'localnet' ? 'testnet' : SUI_NETWORK) as 'mainnet' | 'testnet' | 'devnet';
+// What a privy play needs to sign on the user's behalf.
+export type UserContext = { address: string; walletId?: string | null; publicKey?: string | null };
 
-let enoki: EnokiClient | null = null;
-function enokiClient(): EnokiClient {
-  if (!enoki) {
-    if (!ENOKI_PRIVATE_API_KEY) throw new Error('ENOKI_PRIVATE_API_KEY is not set (required in enoki mode)');
-    enoki = new EnokiClient({ apiKey: ENOKI_PRIVATE_API_KEY });
-  }
-  return enoki;
-}
-
-export type UserContext = { address: string };
-
-// dev: the play already executed (digest + object changes). enoki: a sponsored envelope the
-// client must sign, then send back to /plays/:id/confirm to submit via executeSponsored.
-export type UserExec =
-  | { mode: 'dev'; digest: string; objectChanges: ExecResult['objectChanges'] }
-  | { mode: 'enoki'; digest: string; bytes: string };
-
-// Execute (dev) or sponsor (enoki) a user's play transaction.
-export async function executeForUser(tx: Transaction, ctx: UserContext): Promise<UserExec> {
+// Execute a user's play. dev signs as the operator (same serial executor, one gas coin). privy
+// builds the PTB with the user as sender, signs the intent digest with the user's wallet via
+// Privy rawSign (session signer), and submits. Both return the finalized result.
+export async function executeForUser(tx: Transaction, ctx: UserContext): Promise<ExecResult> {
   if (AUTH_MODE === 'dev') {
-    // dev plays sign as the operator too, so they share the same serial executor (one gas coin).
-    const res = await executeAsOperator(tx, 'play');
-    return { mode: 'dev', digest: res.digest, objectChanges: res.objectChanges };
+    return executeAsOperator(tx, 'play');
   }
 
-  // enoki: build the kind bytes, let Enoki own gas, return bytes for the client to sign.
-  // Sender must be set so coin-selection intents (coinWithBalance) resolve the user's
-  // DUSDC, even though the sender is not encoded into the kind-only bytes.
-  tx.setSenderIfNotSet(ctx.address);
-  const kindBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
-  const sponsored = await enokiClient().createSponsoredTransaction({
-    network: ENOKI_NETWORK,
-    sender: ctx.address,
-    transactionKindBytes: toBase64(kindBytes),
-  });
-  return { mode: 'enoki', digest: sponsored.digest, bytes: sponsored.bytes };
-}
+  // privy: the user owns the wallet, so they sign. The session signer lets the server produce
+  // the signature with no popup. Requires the provisioned wallet id + public key.
+  if (!ctx.walletId || !ctx.publicKey) {
+    throw new Error('privy play: user wallet not provisioned (missing walletId / publicKey)');
+  }
+  tx.setSender(ctx.address);
+  const txBytes = await tx.build({ client: suiClient });
+  const signature = await signSuiTxWithPrivy({ walletId: ctx.walletId, publicKey: ctx.publicKey, txBytes });
 
-// Submit a sponsored tx once the client has signed the envelope bytes (enoki confirm path).
-export async function executeSponsored(digest: string, signature: string): Promise<string> {
-  const res = await enokiClient().executeSponsoredTransaction({ digest, signature });
-  await suiClient.waitForTransaction({ digest: res.digest });
-  return res.digest;
+  const res = await suiClient.executeTransactionBlock({
+    transactionBlock: txBytes,
+    signature,
+    options: { showEffects: true, showObjectChanges: true },
+  });
+  if (res.effects?.status?.status !== 'success') {
+    throw new Error(`privy play failed: ${JSON.stringify(res.effects?.status ?? res)}`);
+  }
+  const objectChanges = (res.objectChanges ?? [])
+    .filter((c) => c.type === 'created')
+    .map((c) => ({ type: 'created', objectId: 'objectId' in c ? c.objectId : undefined, objectType: 'objectType' in c ? c.objectType : undefined }));
+  return { digest: res.digest, objectChanges };
 }

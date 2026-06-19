@@ -354,10 +354,6 @@ async function main(): Promise<void> {
     await pusher3a.stop();
     throw e;
   }
-  if (created.mode !== 'dev') {
-    await pusher3a.stop();
-    throw new Error('expected dev-mode play');
-  }
   const dto = created.play;
   const side = ('side' in dto.params ? dto.params.side : 'up') ?? 'up';
   const strike = Number(dto.market.strike ?? '0');
@@ -390,7 +386,6 @@ async function main(): Promise<void> {
   } finally {
     await pusher3a.stop();
   }
-  if (cash.mode !== 'dev') throw new Error('expected dev-mode cashout');
   pass('redeem tx on chain', Boolean(cash.play.txRedeem), cash.play.txRedeem ? explorerTxUrl(cash.play.txRedeem) : '');
   info('cashed out', `payout $${cash.play.payout ?? '0'}, pnl $${cash.play.pnl}`);
   const after3a = await spendable(user);
@@ -413,7 +408,6 @@ async function main(): Promise<void> {
     const res = await placeLuckyPlay(user, async () => {
       await pushPrice(oracleId, spot);
     }).finally(() => pusher.stop());
-    if (res.mode !== 'dev') throw new Error('expected dev-mode play');
     const p = await prismaQuery.play.findUniqueOrThrow({ where: { id: res.play.id } });
     const key = JSON.parse(p.marketKey) as { side: Side; strike1e9: string };
     const strikeUsd = Number(BigInt(key.strike1e9)) / 1e9;

@@ -27,17 +27,25 @@ export const JWT_SECRET: string = process.env.JWT_SECRET as string;
 export const JWT_EXPIRES_IN: string = process.env.JWT_EXPIRES_IN || '7d';
 export const ALLOWED_ORIGIN: string = process.env.ALLOWED_ORIGIN || '';
 
-// Auth + signing mode. 'dev' auto-logs-in the testing wallet and the backend
-// signs txs. 'enoki' is Google zkLogin with client signing + gas sponsorship.
-export type AuthMode = 'dev' | 'enoki';
-export const AUTH_MODE: AuthMode = process.env.PIPS_AUTH_MODE === 'enoki' ? 'enoki' : 'dev';
+// Auth + signing mode. 'dev' auto-logs-in the testing wallet and the backend signs txs.
+// 'privy' is Google/email login with a non-custodial embedded Sui wallet; the server signs the
+// user's plays via Privy rawSign under a session signer (no per-spin popup).
+export type AuthMode = 'dev' | 'privy';
+export const AUTH_MODE: AuthMode = process.env.PIPS_AUTH_MODE === 'privy' ? 'privy' : 'dev';
 
 // Sui. Testnet only pre-mainnet. The dev key doubles as the Predict operator.
 export const SUI_NETWORK: string = process.env.SUI_NETWORK || 'testnet';
 export const SUI_FULLNODE_URL: string = process.env.SUI_FULLNODE_URL || '';
 export const TESTING_WALLET_PK: string = process.env.TESTING_WALLET_PK || '';
-export const ENOKI_PRIVATE_API_KEY: string = process.env.ENOKI_PRIVATE_API_KEY || '';
 export const PYTH_HERMES_URL: string = process.env.PYTH_HERMES_URL || 'https://hermes.pyth.network';
+
+// Privy (privy mode only). App id + secret authenticate the server SDK; the authorization key
+// is the session-signer private key the user delegated to, used to sign their plays server-side.
+// The JWT verification key is optional, set it to skip Privy's per-verify network fetch.
+export const PRIVY_APP_ID: string = process.env.PRIVY_APP_ID || '';
+export const PRIVY_APP_SECRET: string = process.env.PRIVY_APP_SECRET || '';
+export const PRIVY_AUTHORIZATION_KEY: string = process.env.PRIVY_AUTHORIZATION_KEY || '';
+export const PRIVY_JWT_VERIFICATION_KEY: string = process.env.PRIVY_JWT_VERIFICATION_KEY || '';
 
 // Free DUSDC starting balance per new user, in display units (6dp DUSDC).
 export const STARTING_BALANCE: number = Number(process.env.PIPS_STARTING_BALANCE) || 1000;
@@ -128,7 +136,10 @@ export default {
   SUI_NETWORK,
   SUI_FULLNODE_URL,
   TESTING_WALLET_PK,
-  ENOKI_PRIVATE_API_KEY,
+  PRIVY_APP_ID,
+  PRIVY_APP_SECRET,
+  PRIVY_AUTHORIZATION_KEY,
+  PRIVY_JWT_VERIFICATION_KEY,
   PYTH_HERMES_URL,
   STARTING_BALANCE,
   GAS_FUND_SUI,
