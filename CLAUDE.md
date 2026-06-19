@@ -15,7 +15,7 @@ The twist that makes Pips Pips: the whole interface looks and behaves like a **p
 1. This is a **monorepo** with three pillars: `web/` (frontend), `backend/` (API), `contracts/` (Sui Move). Working in a pillar? Read its own `CLAUDE.md` too.
 2. The chain is **our own Sui localnet**, deployed and live at `https://rpc.playpips.fun`. **Not Sui testnet.** We publish and run our own copy of **DeepBook Predict** (an on-chain prediction-market protocol) on it. Setup and redeploy are one command: `scripts/localnet.sh`. Read the "The chain" section below before touching anything Sui.
 3. The frontend is **not a normal dashboard**. It is a persistent console shell with a swappable screen. Read [`docs/DESIGN.md`](./docs/DESIGN.md) (how it looks) and [`docs/FLOW.md`](./docs/FLOW.md) (how it moves: the surfaces, the Home screen, the navigation map) before touching UI. The UI has **two distinct visual languages**: the App Surface (the menu drawer, settings, landing, modals) is iOS clean with rounded cards, per DESIGN.md; **everything inside the device screen (Home + all games) is the Teenage Engineering instrument language in [`docs/SCREEN.md`](./docs/SCREEN.md), flat black with electric high-contrast ink, no rounded cards.** Read SCREEN.md before touching any `/games/*` screen.
-4. Auth is **Sui zkLogin via Enoki (Google sign-in)** plus a **dev auto-login** for local and the build loop. Suiet wallet connect is not in v1. See [`bigdev/plans/04-AUTH.md`](./bigdev/plans/04-AUTH.md).
+4. Auth is **Privy (Google/email sign-in + a non-custodial embedded Sui wallet)** plus a **dev auto-login** for local and the build loop. `AUTH_MODE = dev | privy` (Enoki/zkLogin removed). Suiet wallet connect is not in v1. See the "Auth" section below and [`bigdev/plans/LUCKY.md`](./bigdev/plans/LUCKY.md) §6.
 5. The Sui SDK surface moves fast. The package names and APIs in this file were verified mid 2026. When you write integration code, confirm the current API before coding, never guess from memory.
 
 ---
@@ -68,9 +68,9 @@ These are the packages and patterns we standardize on. The Mysten SDK had a 2.0 
 | RPC client | `SuiGrpcClient` (`@mysten/sui/grpc`) preferred | `SuiClient` (JSON-RPC) still works but is legacy. `SuiGraphQLClient` for complex queries. |
 | Wallet connect (phase 1) | `@suiet/wallet-kit` | `<WalletProvider>` + `<ConnectButton/>` + `useWallet`. Maintained, rides the Sui Wallet Standard. |
 | Official dApp kit | `@mysten/dapp-kit-react` + `@mysten/dapp-kit-core` | The single `@mysten/dapp-kit` is now legacy. The split packages are the current standard (gRPC based). Both kits share the same Wallet Standard, so wallets are interchangeable. |
-| zkLogin (phase 2) | **Enoki**: `@mysten/enoki` (+ `@mysten/enoki/react`) | Managed zkLogin. `registerEnokiWallets({ apiKey, providers: ['google'] })` surfaces Google login as a connectable wallet. Non custodial, ephemeral key stays in the browser. Avoid hand rolling a prover. |
+| Auth (login + wallet) | **Privy**: `@privy-io/react-auth` (client, + `/extended-chains`) and `@privy-io/node` (server) | Google/email login + a non-custodial embedded **ed25519 (Sui)** wallet (Tier 2). Server signs plays with Privy `rawSign` (`blake2b256`) under a session signer. Confirm the API live, the SDK moves fast. |
 | Trading mechanic | Hand-built Predict PTBs via `@mysten/sui` | The `@mysten/deepbook-v3` SDK has no Predict support. See DeepBook Predict section below. |
-| Backend signature verify | `verifyPersonalMessageSignature` from `@mysten/sui/verify` | Pass `{ address }` so it throws on mismatch. For zkLogin sigs on testnet, pass a testnet `SuiGraphQLClient`. |
+| Sui signature assembly | `toSerializedSignature` + `Ed25519PublicKey` (`@mysten/sui`) | The raw ed25519 sig from Privy is wrapped into the Sui serialized format. The signing digest is `blake2b256(messageWithIntent('TransactionData', txBytes))`. |
 
 **Runtime versions:** target Bun/Node >= 22 (the SDK 2.0 tooling requires it).
 
@@ -124,14 +124,14 @@ Runtime node resolves as `PIPS_LOCALNET_RPC` > `backend/.env` `SUI_FULLNODE_URL`
 
 ---
 
-## Auth (v1)
+## Auth
 
-Two modes behind one JWT plumbing, selected by `AUTH_MODE`. Full spec in [`bigdev/plans/04-AUTH.md`](./bigdev/plans/04-AUTH.md).
+Two modes behind one JWT plumbing, selected by `AUTH_MODE` = `dev | privy` (Enoki/zkLogin is removed). Source of truth for the swap is [`bigdev/plans/LUCKY.md`](./bigdev/plans/LUCKY.md) §6; the JWT plumbing, `authMiddleware`, and onboarding in [`bigdev/plans/04-AUTH.md`](./bigdev/plans/04-AUTH.md) still stand.
 
-- **`enoki` (product + demo):** Google sign-in via **Sui zkLogin (Enoki)**, so users get a real Sui address with no wallet or seed phrase. The client signs its own plays; the backend sponsors gas (Enoki server key) so plays are gasless. To auth our backend: nonce, client signs a personal message, server verifies (`verifyPersonalMessageSignature({ address })`, and zkLogin sigs on testnet need a testnet `SuiGraphQLClient`), mints the JWT.
-- **`dev` (local + build loop):** auto-login the testing wallet (`TESTING_WALLET_PK`); the backend signs txs directly. No OAuth, real Predict on our localnet.
+- **`privy` (product + demo):** Google/email sign-in via **Privy**, which mints a non-custodial embedded **ed25519 (Sui)** wallet, so users get a real Sui address with no seed phrase. The client (`web/src/lib/privy.tsx`) creates the wallet, grants a **session signer** to the app, and posts the Privy access token + Sui address/public key/walletId to `POST /auth/privy/verify`. The backend verifies the token (`@privy-io/node` `verifyAccessToken`), upserts the user keyed by the Sui address, runs onboarding, mints our JWT. Plays are **server-signed**: `executeForUser` signs the tx intent digest with the user's wallet via Privy `rawSign` (`hash_function: 'blake2b256'`) under the session signer, so there is no per-spin popup and no client sponsor envelope.
+- **`dev` (local + build loop):** auto-login the testing wallet (`TESTING_WALLET_PK`); the backend signs txs directly as the operator. No OAuth, real Predict on our localnet.
 
-Suiet wallet connect is not in v1 (`@suiet/wallet-kit` stays available but unused).
+Demo mode (`VITE_DEMO_MODE`) stays the one sanctioned no-backend sim. Suiet wallet connect is not in v1 (`@suiet/wallet-kit` stays available but unused).
 
 ---
 
@@ -160,7 +160,7 @@ Suiet wallet connect is not in v1 (`@suiet/wallet-kit` stays available but unuse
 
 The full v1 build (auth, the three games, menu, backend, indexer, the Predict integration) is planned under [`bigdev/`](./bigdev/) and built by an autonomous loop (`./bigdev/autobuild`). Durable steering lives in [`bigdev/claude/requirements-log.md`](./bigdev/claude/requirements-log.md) (committed, read every iteration); one-shot corrections go to `bigdev/claude/inject.md` (gitignored). Use `./bigdev/autobuild say "rule"` for durable, `./bigdev/autobuild fix "msg"` for transient.
 
-**The spine (decided):** Pips runs its **own** DeepBook Predict deployment on its **own Sui localnet** (live at `rpc.playpips.fun`, no longer testnet: we publish `packages/predict` ourselves, seed the vault with free DUSDC, run short-expiry oracles via a backend price-pusher). Every play is a real `mint`/`redeem`. No sim. Gasless via Enoki, dev mode backend-signs. Fast paced is the priority. The why and how: `bigdev/plans/01-ARCHITECTURE.md` and `05-SUI-PREDICT.md`; the deploy mechanics live in "The chain" above.
+**The spine (decided):** Pips runs its **own** DeepBook Predict deployment on its **own Sui localnet** (live at `rpc.playpips.fun`, no longer testnet: we publish `packages/predict` ourselves, seed the vault with free DUSDC, run short-expiry oracles via a backend price-pusher). Every play is a real `mint`/`redeem`. No sim. Plays are server-signed (privy mode = the user's embedded wallet via Privy `rawSign` under a session signer; dev mode = the operator key), gas is free localnet SUI. Fast paced is the priority. The why and how: `bigdev/plans/01-ARCHITECTURE.md` and `05-SUI-PREDICT.md`; the deploy mechanics live in "The chain" above.
 
 **Plans (source of truth, read the relevant one before each phase):**
 
@@ -169,7 +169,7 @@ The full v1 build (auth, the three games, menu, backend, indexer, the Predict in
 | `bigdev/plans/01-ARCHITECTURE.md` | System overview, the settlement spine, modes, data flow, risks |
 | `bigdev/plans/02-API.md` | Backend routes, DTOs, SSE streams, error codes |
 | `bigdev/plans/03-DATABASE.md` | Prisma schema, queries, seed |
-| `bigdev/plans/04-AUTH.md` | dev + Enoki zkLogin, JWT, sponsorship, onboarding |
+| `bigdev/plans/04-AUTH.md` | JWT plumbing, `authMiddleware`, onboarding (the Enoki design is superseded by LUCKY.md §6, Privy) |
 | `bigdev/plans/05-SUI-PREDICT.md` | The verified Predict recipe, wrappers, operator workers, gotchas |
 | `bigdev/plans/06-GAMES.md` | The three games, console bindings, the 60fps chart |
 | `bigdev/plans/07-DESIGN-SYSTEM.md` | Screen states + verbatim copy (defers to `docs/DESIGN.md`) |

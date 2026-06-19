@@ -109,8 +109,8 @@ function AppLayout() {
             ? '/games/candle-hop'
             : '/games'
 
-  // Not signed in (enoki, signed out): send them back to the door. dev auto-logs-in, so
-  // this only fires when there is genuinely no session.
+  // Not signed in (privy logged out, or signed out): send them back to the door. dev auto-logs-in,
+  // so this only fires when there is genuinely no session.
   useEffect(() => {
     if (status === 'anon') void navigate({ to: '/' })
   }, [status, navigate])

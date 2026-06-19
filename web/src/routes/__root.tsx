@@ -8,6 +8,7 @@ import { Toaster } from 'react-hot-toast'
 import ErrorPage from '../components/ErrorPage'
 import NotFoundPage from '../components/NotFoundPage'
 import { AuthProvider } from '@/lib/auth'
+import { AppPrivyProvider } from '@/lib/privy'
 
 import appCss from '../styles.css?url'
 
@@ -97,7 +98,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
             error: { iconTheme: { primary: 'var(--color-down)', secondary: 'white' } },
           }}
         />
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <AppPrivyProvider>{children}</AppPrivyProvider>
+        </AuthProvider>
         <Scripts />
       </body>
     </html>

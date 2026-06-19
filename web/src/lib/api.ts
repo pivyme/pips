@@ -17,7 +17,7 @@ export interface UserDTO {
   id: string
   address: string
   displayName: string
-  provider: 'enoki' | 'dev'
+  provider: 'privy' | 'dev'
   balance: string
   managerReady: boolean
   settings: { sound: boolean; haptics: boolean; reducedMotion: boolean }
@@ -67,12 +67,6 @@ export interface PlayDTO {
   txRedeem?: string
 }
 
-export interface SponsorEnvelope {
-  playId: string
-  txBytes: string
-  needsSignature: true
-}
-
 export interface UserStatsDTO {
   gamesPlayed: number
   wins: number
@@ -96,8 +90,16 @@ export interface AchievementDTO {
   progress?: { current: number; target: number }
 }
 
-export type PlayResult = { play: PlayDTO } | { envelope: SponsorEnvelope }
-export type CashoutResult = { play: PlayDTO; unlocked: string[] } | { envelope: SponsorEnvelope }
+// Both auth modes finalize server-side, so play + cashout always come back resolved.
+export type PlayResult = { play: PlayDTO }
+export type CashoutResult = { play: PlayDTO; unlocked: string[] }
+export interface PrivyVerifyInput {
+  token: string
+  address: string
+  publicKey: string
+  walletId: string
+  email?: string
+}
 
 // === Core ===
 
@@ -157,14 +159,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 const realApi = {
   // auth
   authDev: () => request<{ token: string; user: UserDTO }>('POST', '/auth/dev', {}),
-  authNonce: (address: string) => request<{ nonce: string }>('POST', '/auth/nonce', { address }),
-  authVerify: (address: string, signature: string) => request<{ token: string; user: UserDTO }>('POST', '/auth/verify', { address, signature }),
+  authPrivyVerify: (input: PrivyVerifyInput) => request<{ token: string; user: UserDTO }>('POST', '/auth/privy/verify', input),
   me: () => request<{ user: UserDTO }>('GET', '/auth/me'),
 
   // markets + plays
   markets: () => request<{ markets: MarketDTO[] }>('GET', '/markets'),
   play: (game: Game, body: Record<string, unknown>) => request<PlayResult>('POST', `/games/${game}/play`, body),
-  confirm: (playId: string, signature: string) => request<{ play: PlayDTO; unlocked: string[] }>('POST', `/plays/${playId}/confirm`, { signature }),
   cashout: (playId: string) => request<CashoutResult>('POST', `/plays/${playId}/cashout`, {}),
   plays: (q: { status?: string; limit?: number } = {}) => {
     const params = new URLSearchParams()

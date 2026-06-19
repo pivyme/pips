@@ -629,8 +629,10 @@ export const demoApi = {
     await delay(120)
     return { token: 'demo-token', user: userDTO() }
   },
-  authNonce: async (_address: string) => ({ nonce: 'demo-nonce' }),
-  authVerify: async (_address: string, _signature: string) => ({ token: 'demo-token', user: userDTO() }),
+  authPrivyVerify: async (_input: unknown) => {
+    await delay(120)
+    return { token: 'demo-token', user: userDTO() }
+  },
   me: async () => ({ user: userDTO() }),
 
   markets: async (): Promise<{ markets: MarketDTO[] }> => {
@@ -642,12 +644,6 @@ export const demoApi = {
     await delay(140)
     const play = game === 'lucky' ? createLucky(body) : game === 'range' ? createRange(body) : createTap(body)
     return { play }
-  },
-
-  confirm: async (playId: string, _signature: string) => {
-    const play = byId.get(playId)
-    if (!play) throw new ApiError('PLAY_FAILED', 'That play did not go through. Your bet is safe.', 404)
-    return { play, unlocked: [] as string[] }
   },
 
   cashout: async (playId: string): Promise<CashoutResult> => {

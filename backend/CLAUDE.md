@@ -8,15 +8,15 @@
 
 ## Pips context
 
-This is the **Pips** backend (gamified trading on Sui via DeepBook Predict). Read the root [`../CLAUDE.md`](../CLAUDE.md) for product and Sui stack context. Its job: auth (zkLogin via Enoki + a dev auto-login), game engine, the Predict operator (price-pusher, oracle ladder, settle), indexing, and sponsored Sui txs.
+This is the **Pips** backend (gamified trading on Sui via DeepBook Predict). Read the root [`../CLAUDE.md`](../CLAUDE.md) for product and Sui stack context. Its job: auth (Privy + a dev auto-login), game engine, the Predict operator (price-pusher, oracle ladder, settle), indexing, and server-signing the user's plays (`@privy-io/node` `rawSign` under a session signer; dev = the operator key).
 
 **The chain is our own Sui localnet, not testnet.** It is deployed and live at `https://rpc.playpips.fun`. `scripts/bootstrap.ts` is network-aware via `SUI_NETWORK` and is driven by the repo-root `scripts/localnet.sh` (`setup` once, `redeploy` after any `contracts/` change). It writes the deployed ids into `src/lib/sui/deployed.localnet.json` (gitignored, read via `src/lib/sui/config.ts`) and the headline ids into `.env`. Runtime RPC is `SUI_FULLNODE_URL` (the proxied url); `PIPS_DEPLOY_RPC` is the gRPC origin the CLI publishes through. See "The chain" in the root CLAUDE.md for the gRPC-origin gotcha. Never hardcode ids.
 
-**v1 build:** planned in [`../bigdev/plans/`](../bigdev/plans/). Read `05-SUI-PREDICT.md` (we publish + operate our own Predict instance: the verified bootstrap recipe, the wrappers, and the price-pusher / oracle-roll / settle workers), `02-API.md` (routes + SSE streams), `03-DATABASE.md` (schema + seed), `04-AUTH.md` (dev + Enoki, sponsorship, onboarding). All Sui ids come from config, never hardcode.
+**v1 build:** planned in [`../bigdev/plans/`](../bigdev/plans/). Read `05-SUI-PREDICT.md` (we publish + operate our own Predict instance: the verified bootstrap recipe, the wrappers, and the price-pusher / oracle-roll / settle workers), `02-API.md` (routes + SSE streams), `03-DATABASE.md` (schema + seed), `LUCKY.md` §6 (dev + Privy auth, the current source of truth; `04-AUTH.md` keeps the JWT plumbing + onboarding). All Sui ids come from config, never hardcode.
 
 **Sui (verified mid 2026, reconfirm before coding):**
 - Use `@mysten/sui` (v2.x, ESM only). RPC via `SuiGrpcClient` (`@mysten/sui/grpc`) preferred, `SuiClient` is legacy.
-- **Auth:** verify wallet signatures with `verifyPersonalMessageSignature` from `@mysten/sui/verify`, pass `{ address }` so it throws on mismatch, then mint the existing JWT. For zkLogin signatures on testnet, pass a testnet `SuiGraphQLClient` to the verifier.
+- **Auth:** privy mode verifies the Privy access token with `@privy-io/node` `verifyAccessToken`, then mints the existing JWT. Plays are server-signed: the tx intent digest is signed via Privy `rawSign` (`blake2b256`) and wrapped with `toSerializedSignature` + `Ed25519PublicKey`. All Privy server calls funnel through `src/lib/sui/privy.ts`.
 - All Sui code lives in `src/lib/sui/`. Read package IDs and addresses from config, never hardcode (DeepBook Predict IDs are unstable pre mainnet).
 
 **Sui only:** the EVM (`ethers`) and Solana (`@solana/web3.js`, `bs58`) starter deps have been removed. If any `ethers` / `@solana/*` reference survives, it is dead, delete it, do not build on it.
@@ -61,7 +61,7 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 ├── src/
 │   ├── config/main-config.ts    # Centralized env config (import from here, not process.env)
 │   ├── routes/              # Fastify plugins, grouped by prefix
-│   │   ├── authRoutes.ts    # /auth: dev login, nonce, verify, me
+│   │   ├── authRoutes.ts    # /auth: dev login, privy/verify, me
 │   │   ├── gameRoutes.ts    # /games/* play, /plays/* confirm + cashout
 │   │   ├── menuRoutes.ts    # /stats, /achievements, /settings
 │   │   ├── streamRoutes.ts  # SSE: /stream/prices, /stream/plays/:id
@@ -80,7 +80,7 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │       ├── prisma.ts        # Database client
 │       ├── pyth.ts          # Pyth price reads
 │       ├── price-cache.ts   # In-memory price cache
-│       └── sui/             # client, predict, markets, math, signer, verify, dusdc, execute, config, deployed.json
+│       └── sui/             # client, predict, solver, markets, math, signer, privy, dusdc, gas, execute, config, deployed.json
 ```
 
 ---
