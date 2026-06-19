@@ -8,8 +8,7 @@ import {
   MIN_STAKE,
   MAX_STAKE,
   GAME_DURATIONS,
-  DEMO_LUCKY_LEVERAGE,
-  DEMO_LUCKY_DURATION,
+  ORACLE_LIFETIME_MS,
 } from '../config/main-config.ts';
 import {
   DUSDC_DECIMALS,
@@ -19,7 +18,7 @@ import {
   usd1e9,
   multiplier as multiplierOf,
 } from '../lib/sui/config.ts';
-import { liveByAsset, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
+import { liveByAsset, nearestOracle, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
 import {
   previewMint,
   previewRange,
@@ -29,7 +28,8 @@ import {
   type Side,
   type TradeAmounts,
 } from '../lib/sui/predict.ts';
-import { newSeed, seedFloat, pickWeighted, BUCKET_WEIGHTS, LEVERAGE_BUCKETS as RNG_BUCKETS } from './rng.ts';
+import { solveStrike, type PreviewFn } from '../lib/sui/solver.ts';
+import { newSeed, seedFloat, pickTier } from './rng.ts';
 
 // === Errors ===
 
@@ -74,29 +74,6 @@ export const httpStatusForPlayError = (code: PlayErrorCode): number => {
   }
 };
 
-// === Leverage buckets (Lucky) ===
-
-export const LEVERAGE_BUCKETS = RNG_BUCKETS;
-
-// Risk tier (Lucky's Action 2). Constrains which leverage buckets the spin can land on, so the
-// player sets the flavor while asset/side stay random. Chill hugs ATM (small, frequent wins);
-// Lotto only draws the far, big-multiple strikes. The fair RNG still picks within the tier.
-export type RiskTier = 'chill' | 'wild' | 'lotto';
-const RISK_BUCKETS: Record<RiskTier, readonly number[]> = {
-  chill: [2, 5],
-  wild: [5, 10, 25],
-  lotto: [25, 100],
-};
-const isRiskTier = (v: unknown): v is RiskTier => v === 'chill' || v === 'wild' || v === 'lotto';
-const riskWeights = (allowed: readonly number[]): Record<number, number> =>
-  Object.fromEntries(allowed.map((b) => [b, BUCKET_WEIGHTS[b] ?? 1]));
-export { isRiskTier };
-
-// Strike distance from spot per bucket (fraction). Further out = cheaper = bigger multiple.
-const BUCKET_DISTANCE_PCT: Record<number, number> = { 2: 0.0008, 5: 0.002, 10: 0.004, 25: 0.009, 100: 0.025 };
-// Floor on tick-distance so coarse-tick assets keep the buckets monotonic, not collapsed.
-const BUCKET_MIN_TICKS: Record<number, bigint> = { 2: 0n, 5: 1n, 10: 2n, 25: 4n, 100: 8n };
-
 // === Market + grid helpers ===
 
 const now = (): number => Date.now();
@@ -129,10 +106,6 @@ const gridOf = (m: Market): Grid => {
   return { tick, min, max: min + tick * (ORACLE_STRIKE_GRID_TICKS - 1n) };
 };
 
-const nearestTick = (v: bigint, tick: bigint): bigint => {
-  const floor = (v / tick) * tick;
-  return v - floor >= tick / 2n ? floor + tick : floor;
-};
 const floorTick = (v: bigint, tick: bigint): bigint => (v / tick) * tick;
 const ceilTick = (v: bigint, tick: bigint): bigint => {
   const floor = (v / tick) * tick;
@@ -144,20 +117,6 @@ const clampStrike = (v: bigint, g: Grid): bigint => {
   if (v > g.max - g.tick) return g.max - g.tick;
   return v;
 };
-
-// Binary strike for a leverage bucket: spot offset by the bucket distance, in the side's
-// direction (call above spot, put below), snapped to the oracle grid.
-function binaryStrike(spot1e9: bigint, side: Side, leverage: number, g: Grid): bigint {
-  const pct = BUCKET_DISTANCE_PCT[leverage] ?? 0.004;
-  const rawDist = (spot1e9 * BigInt(Math.round(pct * 1e6))) / 1_000_000n;
-  let distTicks = rawDist / g.tick;
-  if (rawDist % g.tick >= g.tick / 2n) distTicks += 1n;
-  const minTicks = BUCKET_MIN_TICKS[leverage] ?? 0n;
-  if (distTicks < minTicks) distTicks = minTicks;
-  const base = nearestTick(spot1e9, g.tick);
-  const raw = side === 'up' ? base + distTicks * g.tick : base - distTicks * g.tick;
-  return clampStrike(raw, g);
-}
 
 // Range band [lower, upper] around spot for a width percentage, snapped out to the grid so
 // the band is at least one tick wide.
@@ -233,12 +192,12 @@ export type ResolvedBinary = {
   params: BinaryParams;
   asset: string;
   side: Side;
-  leverage: number;
+  tier: number; // the nominal tier the reel dealt (legacy Play.leverage column)
   duration: number;
   strikeDisplay: string;
   entryCost: bigint;
   maxPayout: bigint; // settled ITM payout = quantity ($1 per contract)
-  multiplier: number;
+  multiplier: number; // the REAL solved multiple from the live preview (what the UI shows)
   seed: string;
 };
 
@@ -259,48 +218,58 @@ export type ResolvedRange = {
 
 export type Resolved = ResolvedBinary | ResolvedRange;
 
-// I Feel Lucky: fair server RNG picks asset/side, the player sets the bet (knob), round length
-// (Action 1) and risk tier (Action 2); we draw the leverage within the tier and size the binary.
-export async function resolveLucky(stakeRaw: bigint, opts: { duration?: number; risk?: RiskTier } = {}): Promise<ResolvedBinary> {
+// LUCKY: a fair server RNG deals the whole spin (asset, direction, multiplier tier); the player
+// only sets the bet. The dealt tier is then priced HONESTLY off the live oracle, the §5 solver
+// finds the grid strike whose real multiple matches it and sizes the quantity so cost ~= bet, so
+// the multiplier we surface is always one we can actually mint. The round settles at the routed
+// oracle's expiry (~30s), never one oracle per play.
+export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
   const assets = liveAssets();
   if (assets.length === 0) throw new PlayError('MARKET_UNAVAILABLE', 'No markets are live right now');
 
   const seed = newSeed();
   const asset = assets[Math.floor(seedFloat(seed, 0) * assets.length)];
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
-  // Leverage: a rehearsed demo can pin it via env; otherwise fair RNG within the chosen risk tier.
-  const allowed = RISK_BUCKETS[opts.risk ?? 'wild'] ?? LEVERAGE_BUCKETS;
-  const leverage = LEVERAGE_BUCKETS.includes(DEMO_LUCKY_LEVERAGE as (typeof LEVERAGE_BUCKETS)[number])
-    ? DEMO_LUCKY_LEVERAGE
-    : pickWeighted(seedFloat(seed, 2), riskWeights(allowed));
-  // Round length: env pin (demo) > the player's pick > fair RNG.
-  const duration = GAME_DURATIONS.includes(DEMO_LUCKY_DURATION)
-    ? DEMO_LUCKY_DURATION
-    : opts.duration != null && GAME_DURATIONS.includes(opts.duration)
-      ? opts.duration
-      : GAME_DURATIONS[Math.floor(seedFloat(seed, 3) * GAME_DURATIONS.length)] ?? GAME_DURATIONS[0];
+  const tier = pickTier(seedFloat(seed, 2)); // slot-weighted reel deal (LUCKY.md §4)
 
-  const market = pickMarket(asset);
-  const spot = await freshSpot(market);
+  const ts = now();
+  const market = nearestOracle(asset, ts, ts + ORACLE_LIFETIME_MS, EXPIRY_SAFETY_MS);
+  if (!market) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
+  await freshSpot(market); // freshness gate: throws ORACLE_STALE if the oracle price is stale
   const g = gridOf(market);
-  const strike = binaryStrike(spot, side, leverage, g);
 
-  const mk = (q: bigint): BinaryParams => ({ oracleId: market.oracleId, expiryMs: market.expiryMs, strike1e9: strike, side, quantity: q });
-  const { quantity, amounts } = await solveQuantity((q) => previewMint(mk(q)), stakeRaw);
+  const preview: PreviewFn = (strike1e9, quantity) =>
+    previewMint({ oracleId: market.oracleId, expiryMs: market.expiryMs, strike1e9, side, quantity });
+
+  let solution;
+  try {
+    solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview });
+  } catch (e) {
+    throw new PlayError('MINT_FAILED', `Could not price this play: ${e instanceof Error ? e.message : e}`);
+  }
+  if (solution.clamped) {
+    // Dealt tier was past the live ask bounds; we minted the closest achievable one and report it.
+    console.log(
+      `[Lucky] ${asset} ${side} ${tier}x unreachable, solved ${solution.multiplier.toFixed(2)}x (tier ${solution.achievedTier}x)`,
+    );
+  }
+
+  // The round runs to the routed oracle's expiry, so the UI countdown matches the real settle.
+  const duration = Math.max(1, Math.round((market.expiryMs - ts) / 1000));
 
   return {
     kind: 'binary',
     game: 'lucky',
     market,
-    params: mk(quantity),
+    params: { oracleId: market.oracleId, expiryMs: market.expiryMs, strike1e9: solution.strike1e9, side, quantity: solution.quantity },
     asset,
     side,
-    leverage,
+    tier: solution.achievedTier,
     duration,
-    strikeDisplay: fmt1e9(strike),
-    entryCost: amounts.cost,
-    maxPayout: quantity,
-    multiplier: multiplierOf(amounts.cost, quantity),
+    strikeDisplay: fmt1e9(solution.strike1e9),
+    entryCost: solution.entryCost,
+    maxPayout: solution.quantity,
+    multiplier: solution.multiplier,
     seed,
   };
 }

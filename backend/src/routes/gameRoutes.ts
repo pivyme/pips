@@ -9,7 +9,7 @@ import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { EXPIRY_SAFETY_MS, GAME_DURATIONS } from '../config/main-config.ts';
 import { allMarkets, tradeableMarkets } from '../lib/sui/markets.ts';
 import { getSpot } from '../lib/price-cache.ts';
-import { PlayError, httpStatusForPlayError, isRiskTier } from '../services/games.ts';
+import { PlayError, httpStatusForPlayError } from '../services/games.ts';
 import {
   createPlay,
   confirmPlay,
@@ -123,11 +123,8 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
   if (stake == null) throw new PlayError('INVALID_PARAMS', 'Enter a bet amount');
 
   if (game === 'lucky') {
-    // Optional: the player's round length (Action 1) and risk tier (Action 2). Invalid values
-    // fall back to fair RNG / the default tier inside resolveLucky.
-    const duration = body.duration != null && Number.isFinite(Number(body.duration)) ? Number(body.duration) : undefined;
-    const risk = isRiskTier(body.risk) ? body.risk : undefined;
-    return { game, stake, duration, risk };
+    // LUCKY takes only the bet. The reel deals asset, direction, and multiplier tier server-side.
+    return { game, stake };
   }
 
   if (game === 'range') {

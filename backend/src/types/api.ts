@@ -25,7 +25,7 @@ export interface MarketDTO {
 export interface LuckyParams {
   asset: string;
   side: Side;
-  leverage: number; // strike-distance bucket (2,5,10,25,100)
+  multiplier: number; // the real solved payout multiple (LUCKY.md §5)
   duration: number;
 }
 export interface RangeParams {
