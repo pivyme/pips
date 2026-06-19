@@ -50,20 +50,58 @@ const OPERATOR_TX_TIMEOUT_MS = 25_000;
 const SUBMIT_TIMEOUT_MS = 25_000;
 const SUBMIT_RECONCILE_MS = 20_000;
 
+// Stale owned-object cache. The serial executor chains owned-object versions from each tx's effects
+// instead of re-reading the node, which is the whole latency win. But this backend is NOT the only
+// thing signing as the operator: the deployed backend runs the operator workers + onboarding too,
+// against the same chain with the same key. When that other signer advances a shared owned object
+// (the operator gas coin, the DUSDC TreasuryCap), our cache still holds the previous version, so the
+// node rejects the BUILD at input-object check ("object ... unavailable for consumption, current
+// version ..."). The tx never executes, so a rebuild from fresh node state is always safe: it cannot
+// double-spend. resetCache() drops the stale owned + gas-coin entries (and waits out our own last
+// tx); the next executeTransaction re-resolves versions fresh from the node. We bound the retries and
+// jitter the backoff so a brief race with the other operator resolves instead of 500ing a login.
+const STALE_OBJECT_RETRIES = 5;
+
+function isStaleObjectError(e: unknown): boolean {
+  if (e instanceof TimeoutError) return false; // a timed-out tx may still be in flight, never retry it
+  const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return (
+    m.includes('unavailable for consumption') ||
+    m.includes('not available for consumption') ||
+    m.includes('needs to be rebuilt') ||
+    m.includes('locked by a different') ||
+    m.includes('objectversionunavailable') ||
+    m.includes('equivocat')
+  );
+}
+
 // Sign + submit as the operator through the serial executor. Throws on a reverted/failed tx (or a
-// timeout). objectChanges is reduced to the created objects (with their Move type), which is all any
-// caller reads (the new oracle / manager id).
+// timeout). Retries a stale-object-cache rejection after resetting the cache (see above), since the
+// rejected build never ran. A genuine revert (Move abort) does not match isStaleObjectError and
+// surfaces on the first attempt. objectChanges is reduced to the created objects (with their Move
+// type), which is all any caller reads (the new oracle / manager id).
 export async function executeAsOperator(tx: Transaction, label: string): Promise<ExecResult> {
-  const out = await withTimeout(operatorExecutor.executeTransaction(tx, { objectTypes: true }), OPERATOR_TX_TIMEOUT_MS, `operator ${label}`);
-  const t = out.$kind === 'Transaction' ? out.Transaction : null;
-  if (!t || t.effects?.status?.success !== true) {
-    const status = t?.effects?.status ?? (out.$kind === 'FailedTransaction' ? out.FailedTransaction.status : out);
-    throw new Error(`${label} failed: ${JSON.stringify(status)}`);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const out = await withTimeout(operatorExecutor.executeTransaction(tx, { objectTypes: true }), OPERATOR_TX_TIMEOUT_MS, `operator ${label}`);
+      const t = out.$kind === 'Transaction' ? out.Transaction : null;
+      if (!t || t.effects?.status?.success !== true) {
+        const status = t?.effects?.status ?? (out.$kind === 'FailedTransaction' ? out.FailedTransaction.status : out);
+        throw new Error(`${label} failed: ${JSON.stringify(status)}`);
+      }
+      const objectChanges = (t.effects.changedObjects ?? [])
+        .filter((o) => o.idOperation === 'Created')
+        .map((o) => ({ type: 'created', objectId: o.objectId, objectType: t.objectTypes?.[o.objectId] }));
+      return { digest: t.digest ?? t.effects.transactionDigest ?? '', objectChanges };
+    } catch (e) {
+      if (!isStaleObjectError(e) || attempt >= STALE_OBJECT_RETRIES - 1) throw e;
+      console.warn(`[operator] ${label}: stale object cache, resetting and retrying (${attempt + 1}/${STALE_OBJECT_RETRIES - 1})`);
+      // Bounded so a wedged waitForLastTransaction can't hang the retry; failure to reset is non-fatal,
+      // the next build still re-resolves against the node.
+      await withTimeout(operatorExecutor.resetCache(), 8_000, 'resetCache').catch(() => {});
+      await new Promise((r) => setTimeout(r, 120 * (attempt + 1) + Math.floor(Math.random() * 120)));
+    }
   }
-  const objectChanges = (t.effects.changedObjects ?? [])
-    .filter((o) => o.idOperation === 'Created')
-    .map((o) => ({ type: 'created', objectId: o.objectId, objectType: t.objectTypes?.[o.objectId] }));
-  return { digest: t.digest ?? t.effects.transactionDigest ?? '', objectChanges };
 }
 
 // Cache the network's reference gas price (per-epoch, near-constant on localnet). Setting it on the

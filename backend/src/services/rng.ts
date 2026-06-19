@@ -34,7 +34,10 @@ export const pickLeverage = (r: number): number => pickWeighted(r, BUCKET_WEIGHT
 // LUCKY slot-weighted multiplier reel (LUCKY.md §4). Weights are the reel-DEAL frequency (how
 // often the slot hands you that tier), NOT the win odds; each dealt tier then wins at its own
 // honest odds (~1/mult) from the live market. Keyed by multiplier so pickTier returns the tier.
-export const LUCKY_TIER_WEIGHTS: Record<number, number> = { 1.5: 28, 2: 34, 3: 22, 5: 11, 10: 4, 25: 1 };
+// The ladder starts at 2x: every tier is a real directional move (the target sits in the bet
+// direction, OTM), so "down" always needs the price to fall. A sub-2x tier would force an
+// in-the-money target sitting on the wrong side of entry, which is the confusion we removed.
+export const LUCKY_TIER_WEIGHTS: Record<number, number> = { 2: 50, 3: 30, 5: 13, 10: 5, 25: 2 };
 
 // Deal one tier for a spin from a uniform draw. The strike solver then prices that tier honestly.
 export const pickTier = (r: number): number => pickWeighted(r, LUCKY_TIER_WEIGHTS);

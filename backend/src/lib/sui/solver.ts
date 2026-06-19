@@ -19,8 +19,9 @@ import type { TradeAmounts } from './predict.ts';
 
 // The nominal multiplier tiers the reel can deal (LUCKY.md §4). The solver snaps a solved
 // multiple back to the nearest nominal for logging + the achieved-tier report; the UI always
-// shows the real solved multiple, not the nominal.
-export const LUCKY_TIERS = [1.5, 2, 3, 5, 10, 25] as const;
+// shows the real solved multiple, not the nominal. Starts at 2x: the strike is always OTM (in the
+// bet direction), and ~2x (ATM) is the lowest honest multiple a directional target can pay.
+export const LUCKY_TIERS = [2, 3, 5, 10, 25] as const;
 
 const nearestTier = (m: number): number =>
   LUCKY_TIERS.reduce((best, t) => (Math.abs(t - m) < Math.abs(best - m) ? t : best), LUCKY_TIERS[0] as number);
@@ -163,18 +164,34 @@ export async function solveStrike(args: {
 
   // ---- Strike select (pure): the sampled strike whose multiple is closest to the tier among the
   // mintable ones. The multiple is monotonic in the index, so when the tier sits past the ask
-  // bounds this naturally lands on the mintable ceiling, which is where a too-high tier clamps. ----
-  let best = -1;
-  let bestErr = Infinity;
-  for (let k = 0; k < curve.cost.length; k++) {
-    const m = multAt(curve.cost[k]);
-    if (!Number.isFinite(m)) continue;
-    const err = Math.abs(m - tierMultiplier);
-    if (err < bestErr) {
-      bestErr = err;
-      best = k;
+  // bounds this naturally lands on the mintable ceiling, which is where a too-high tier clamps.
+  //
+  // Direction honesty: only consider strikes on the OTM side of spot (at or beyond it) so an UP
+  // play's target sits at/above entry and a DOWN play's at/below. That is what makes "DOWN means
+  // the price must fall" always true; the lowest reachable multiple is then ~2x (ATM), which is
+  // why the tier ladder starts at 2x. Skipped when no spot is supplied (the pure unit tests). ----
+  const atm = args.atm1e9;
+  const isOtm = (strike: bigint): boolean =>
+    atm == null ? true : side === 'up' ? strike >= atm : strike <= atm;
+  const selectBest = (otmOnly: boolean): number => {
+    let b = -1;
+    let bErr = Infinity;
+    for (let k = 0; k < curve.cost.length; k++) {
+      const m = multAt(curve.cost[k]);
+      if (!Number.isFinite(m)) continue;
+      if (otmOnly && !isOtm(curve.strikes[k])) continue;
+      const err = Math.abs(m - tierMultiplier);
+      if (err < bErr) {
+        bErr = err;
+        b = k;
+      }
     }
-  }
+    return b;
+  };
+  // OTM-only first; fall back to any mintable strike only if the scan window held none (it always
+  // straddles ATM, so this is a safety net, not a normal path).
+  let best = selectBest(true);
+  if (best < 0) best = selectBest(false);
   if (best < 0) throw new Error('solveStrike: no mintable strike on this grid');
 
   const strike = curve.strikes[best];

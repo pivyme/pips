@@ -56,6 +56,10 @@ export interface PlayDTO {
   pnl: string
   multiplier: number
   payout?: string
+  // Spot at entry (the price the strike was solved against). The chart's ENTRY line + the live P/L
+  // anchor to this so entry, target, and settlement always agree.
+  entrySpot?: string
+  settlePrice?: string
   openedAt?: string
   settledAt?: string
   txMint?: string

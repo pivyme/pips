@@ -57,11 +57,16 @@ describe('solveStrike: grid-strike selection', () => {
     expect(s.strike1e9).toBeLessThan(SPOT); // OTM put sits below spot
   });
 
-  it('puts a 1.5x tier in the money (strike below spot for an up bet)', async () => {
-    const s = await solveStrike({ grid: GRID, side: 'up', tierMultiplier: 1.5, betRaw: BET, preview: mockPreview('up') });
-    expect(s.multiplier).toBeGreaterThan(1.3);
-    expect(s.multiplier).toBeLessThan(1.7);
-    expect(s.strike1e9).toBeLessThan(SPOT); // 1.5x is the favorable (ITM) side
+  it('keeps the strike on the OTM side of spot when a live spot is supplied (up)', async () => {
+    // With atm1e9 set, the solver must never pick an in-the-money strike, even for the lowest tier,
+    // so an UP target always sits at/above entry. A 2x lands at the ATM edge (>= spot).
+    const s = await solveStrike({ grid: GRID, side: 'up', tierMultiplier: 2, betRaw: BET, preview: mockPreview('up'), atm1e9: SPOT });
+    expect(s.strike1e9).toBeGreaterThanOrEqual(SPOT);
+  });
+
+  it('keeps the strike on the OTM side of spot when a live spot is supplied (down)', async () => {
+    const s = await solveStrike({ grid: GRID, side: 'down', tierMultiplier: 2, betRaw: BET, preview: mockPreview('down'), atm1e9: SPOT });
+    expect(s.strike1e9).toBeLessThanOrEqual(SPOT); // a DOWN target sits at/below entry
   });
 });
 
@@ -97,7 +102,7 @@ describe('solveStrike: fallback when the tier is past the ask bounds', () => {
 });
 
 describe('LUCKY_TIERS', () => {
-  it('is the locked §4 tier ladder', () => {
-    expect([...LUCKY_TIERS]).toEqual([1.5, 2, 3, 5, 10, 25]);
+  it('is the locked §4 tier ladder (directional, 2x floor)', () => {
+    expect([...LUCKY_TIERS]).toEqual([2, 3, 5, 10, 25]);
   });
 });

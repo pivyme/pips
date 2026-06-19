@@ -111,7 +111,7 @@ const TICK_SIZE_UNIT = 10_000n;
 
 // Per-asset tick size in display USD. Sized to ~0.1% of spot so 500 ticks span ~+-25% around spot:
 // wide enough that a strike stays on the grid as the game price strays, tight enough that the dense
-// solve resolves the near-money tiers (the common 1.5x-3x sit within ~+-1.5% now that implied vol is
+// solve resolves the near-money tiers (the common 2x-3x sit within ~+-1.5% now that implied vol is
 // game-calibrated, so a coarse grid would smear them). Keep each a clean multiple of the tick unit.
 export const ASSET_TICK_USD: Record<string, number> = {
   BTC: 100,
