@@ -5,9 +5,10 @@
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 
 import { handleError } from '../utils/errorHandler.ts';
+import { PLAY_STREAM_INTERVAL_MS } from '../config/main-config.ts';
 import { userFromToken } from '../services/auth.ts';
 import { gameSpot } from '../lib/game-price.ts';
-import { getLiveMarkRaw, toPlayDTO } from '../services/plays.ts';
+import { getLiveMarkCached, toPlayDTO } from '../services/plays.ts';
 import { prismaQuery } from '../lib/prisma.ts';
 import { PYTH_FEED_IDS } from '../lib/pyth.ts';
 
@@ -68,7 +69,7 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
       if (closed) return;
       const current = await prismaQuery.play.findUnique({ where: { id } });
       if (!current) return;
-      const mark = current.status === 'open' ? await getLiveMarkRaw(current).catch(() => undefined) : undefined;
+      const mark = current.status === 'open' ? await getLiveMarkCached(current).catch(() => undefined) : undefined;
       const dto = await toPlayDTO(current, mark);
       send({ markValue: dto.markValue, pnl: dto.pnl, multiplier: dto.multiplier, status: dto.status, ts: Date.now() });
       if (TERMINAL.has(current.status)) {
@@ -79,7 +80,7 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
     };
 
     void tick();
-    timer = setInterval(() => void tick(), 1000);
+    timer = setInterval(() => void tick(), PLAY_STREAM_INTERVAL_MS);
     onClose(() => {
       closed = true;
       clearInterval(timer);

@@ -6,10 +6,10 @@ import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { Chart } from '@/components/game/Chart'
-import { Cell, GameReadout, GameScreen, GameStage, ScreenMessage } from '@/components/game/screen'
+import { Cell, GameScreen, ScreenMessage } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { haptic } from '@/lib/haptics'
-import { sound } from '@/lib/sound'
+import { sound, slotSpin, slotTick, slotLock } from '@/lib/sound'
 import { api, streamPlay, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { explorerTxUrl } from '@/lib/sui/config'
@@ -22,9 +22,10 @@ import { formatStringToNumericDecimals } from '@/utils/format'
 // LUCKY, the hero. Hit SPIN: three reels (asset, direction, multiplier) snap to a server-dealt slot
 // pull, the position opens on the chart with a TARGET line, then ride the live value and CASH OUT, or
 // hold to the buzzer for a spread-free WIN/LOSE. Every round is a real Predict mint/redeem; demo mode
-// runs the same flow on the in-memory model. The screen is the L-aperture (web/CLAUDE.md): a top bar +
-// reel cluster float over the chart, a notch-safe readout sits below. Teenage Engineering language
-// throughout (docs/SCREEN.md): flat black, mono labels, one amber accent, green/red for facts.
+// runs the same flow on the in-memory model. The screen layout, top to bottom: a header (live price,
+// balance) over a full-width slot band, a bounded chart, then a full-width readout footer (the device
+// body owns the bottom-right). Teenage Engineering language throughout (docs/SCREEN.md): flat black,
+// mono labels, one amber accent, green/red for facts.
 export const Route = createFileRoute('/_app/games/lucky')({ component: LuckyScreen })
 
 // BET ladder, scrubbed on the number wheel and clamped to the live USDC balance.
@@ -38,6 +39,9 @@ const SPIN_TOTAL = 1320
 const RESULT_MS = 4200
 const ROUND_SEC = 30 // fixed fast round; the play carries the authoritative duration
 const TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out', 'error'])
+// Terminal states that resolve to a win/loss RESULT screen. 'error' is excluded: an errored play is
+// a background mint that could not open (chips safe), handled as a clean re-rack, not a result.
+const RESULT_TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out'])
 
 type Phase = 'idle' | 'placing' | 'spinning' | 'open' | 'cashing' | 'result'
 type Live = { markValue: string; pnl: string; multiplier: number; status: PlayStatus }
@@ -59,11 +63,14 @@ export function LuckyScreen() {
   const [play, setPlay] = useState<PlayDTO | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [spot, setSpot] = useState<number | null>(null)
+  const [entryPrice, setEntryPrice] = useState<number | null>(null)
   const [secsLeft, setSecsLeft] = useState<number | null>(null)
   const [overlay, setOverlay] = useState<Overlay>('none')
 
   const finalized = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Latest spot, read at SPIN press to mark the entry line (state would be stale in the callback).
+  const spotRef = useRef<number | null>(null)
 
   const marketsQ = useQuery({ queryKey: ['markets'], queryFn: () => api.markets(), refetchInterval: 10_000 })
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
@@ -81,7 +88,8 @@ export function LuckyScreen() {
 
   const lp = play ? (play.params as LuckyParams) : null
   const chartAsset = lp?.asset ?? liveAssets[0] ?? 'BTC'
-  const showStrike = play != null && (phase === 'spinning' || phase === 'open' || phase === 'cashing' || phase === 'result')
+  // The entry line shows once a round is live (placed through to the result), marking where you got in.
+  const showEntry = play != null && (phase === 'spinning' || phase === 'open' || phase === 'cashing' || phase === 'result')
   const strike = play?.market.strike ? parseFloat(play.market.strike) : undefined
   const spinning = phase === 'spinning'
   // Reels tumble from the instant SPIN is pressed through to the snap: the 'placing' wait (the
@@ -120,15 +128,28 @@ export function LuckyScreen() {
     [refresh, qc],
   )
 
-  // Live value while a play is open. The stream closes on a terminal frame (the buzzer settle); we
-  // then refetch the finalized play to grab the payout + redeem digest for the result + explorer link.
+  // Live value while a play is open. The play comes back 'pending' the instant it's dealt (the reels
+  // snap right away); the real Predict mint lands a moment later and the stream flips it to 'open'.
+  // The stream closes on a terminal frame (the buzzer settle); we then refetch the finalized play to
+  // grab the payout + redeem digest for the result + explorer link. A 'pending' that flips to 'error'
+  // means the background mint could not open it (rare): chips are safe (a failed mint debits nothing),
+  // so we re-rack cleanly instead of showing a loss.
   useEffect(() => {
     if (!play || phase !== 'open') return
     const unsub = streamPlay(
       play.id,
       (tick) => {
         setLive({ markValue: tick.markValue, pnl: tick.pnl, multiplier: tick.multiplier, status: tick.status })
-        if (TERMINAL.has(tick.status) && !finalized.current) {
+        if (tick.status === 'error' && !finalized.current) {
+          finalized.current = true
+          toast.error('Could not open that play. Your chips are safe, spin again.')
+          clearResetTimer()
+          setPlay(null)
+          setLive(null)
+          setPhase('idle')
+          return
+        }
+        if (RESULT_TERMINAL.has(tick.status) && !finalized.current) {
           finalized.current = true
           void api
             .getPlay(play.id)
@@ -145,6 +166,14 @@ export function LuckyScreen() {
 
   useEffect(() => () => clearResetTimer(), [])
 
+  // Ratchet under the spin: a quiet tick stream while the reels tumble, ended the moment they
+  // settle. One stream for the whole slot (not per reel) keeps the texture subtle.
+  useEffect(() => {
+    if (!reelsCycling) return
+    const iv = setInterval(() => slotTick(), 70)
+    return () => clearInterval(iv)
+  }, [reelsCycling])
+
   const doPlay = useCallback(async () => {
     if (phase !== 'idle' && phase !== 'result') return
     if (!canPlay) {
@@ -155,7 +184,9 @@ export function LuckyScreen() {
     finalized.current = false
     setOverlay('none')
     setPhase('placing')
+    setEntryPrice(spotRef.current)
     haptic('rigid')
+    slotSpin()
     try {
       const { play: p } = await placePlay('lucky', { stake: bet })
       setPlay(p)
@@ -216,7 +247,11 @@ export function LuckyScreen() {
     setOverlay((o) => (o === 'history' ? 'none' : 'history'))
   }, [])
 
-  const isOpen = phase === 'open'
+  // The mint lands a beat after the reels snap, so CASH OUT only arms once the play is confirmed
+  // 'open' on-chain; until then the button reads OPENING (cashing a not-yet-minted play would revert).
+  const confirmed = live?.status === 'open'
+  const isOpen = phase === 'open' && confirmed
+  const isOpening = phase === 'open' && !confirmed
   useConsoleControls({
     numberWheel: {
       label: 'BET',
@@ -231,18 +266,21 @@ export function LuckyScreen() {
     action2: { label: 'HISTORY', color: 'neutral', onPress: toggleHistory },
     main: isOpen
       ? { label: 'CASH OUT', color: 'up', onPress: () => void doCashOut() }
-      : phase === 'cashing'
-        ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true }
-        : {
-            label: 'SPIN',
-            color: 'amber',
-            onPress: () => void doPlay(),
-            loading: phase === 'placing' || phase === 'spinning',
-          },
+      : isOpening
+        ? { label: 'OPENING', color: 'up', onPress: () => {}, loading: true }
+        : phase === 'cashing'
+          ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true }
+          : {
+              label: 'SPIN',
+              color: 'amber',
+              onPress: () => void doPlay(),
+              loading: phase === 'placing' || phase === 'spinning',
+            },
   })
 
-  // The L-aperture (web/CLAUDE.md "The console screen"): the chart fills the slack height with the top
-  // bar + reels floating over it, then a notch-safe readout band the chart stops above.
+  // Layout: a solid header (price/balance over the reel cluster) divides off the chart with a foot
+  // hairline, so the live line never runs behind the slot. The chart then bleeds full width to the
+  // very bottom, and the readout hangs off the bottom-left as a flat black panel over it.
   return (
     <GameScreen>
       {marketsQ.isLoading ? (
@@ -254,131 +292,129 @@ export function LuckyScreen() {
       ) : noLiveMarket ? (
         <ScreenMessage title="Market catching up" action="Retry" onAction={() => void marketsQ.refetch()} />
       ) : (
-        <>
-          <GameStage
-            top={
-              <div className="space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    {lp ? (
-                      <>
-                        <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Lucky · {lp.asset}</div>
-                        <div className="tnum text-2xl font-extrabold leading-none text-text">{spot != null ? priceLabel(spot) : '—'}</div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Pips</div>
-                        <div className="text-2xl font-extrabold uppercase leading-none tracking-tight text-text">I Feel Lucky</div>
-                      </>
-                    )}
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                      {showReadouts && secsLeft != null ? 'Time' : 'Balance'}
-                    </div>
-                    <div className="tnum text-xl font-bold leading-none text-text-2">
-                      {showReadouts && secsLeft != null
-                        ? `${secsLeft}s`
-                        : user?.balance != null
-                          ? `$${formatStringToNumericDecimals(user.balance, 2)}`
-                          : '—'}
-                    </div>
-                    {streak > 0 && (
-                      <div className="mt-1 inline-flex items-center border border-brand-500/60 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-brand-500">
-                        Streak {streak}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2">
-                  <Reel label="Asset" pool={REEL_ASSETS} target={lp?.asset} cycling={reelsCycling} landing={spinning} stopAt={SPIN_STOPS[0]} />
-                  <Reel
-                    label="Up Down"
-                    pool={DIR_POOL}
-                    target={lp ? sideLabel(lp.side) : undefined}
-                    cycling={reelsCycling}
-                    landing={spinning}
-                    stopAt={SPIN_STOPS[1]}
-                    accent={lp?.side === 'up' ? 'up' : lp?.side === 'down' ? 'down' : undefined}
-                  />
-                  <Reel
-                    label="Multiplier"
-                    pool={MULT_POOL}
-                    target={play ? fmtMult(play.multiplier) : undefined}
-                    cycling={reelsCycling}
-                    landing={spinning}
-                    stopAt={SPIN_STOPS[2]}
-                    accent="amber"
-                  />
-                </div>
+        <div className="relative flex h-full flex-col">
+          {/* HEADER — persistent context (price · balance) over the slot band. No foot hairline; the
+              full-width slot runs straight into the chart to save vertical room. */}
+          <div className="shrink-0 bg-black pt-[calc(var(--screen-rim,24px)+12px)]">
+            <div className="flex items-start justify-between gap-3 px-[var(--screen-rim,24px)] pb-4">
+              <div className="min-w-0">
+                <div className="tnum text-[34px] font-extrabold leading-none text-text">{spot != null ? priceLabel(spot) : '—'}</div>
               </div>
-            }
-          >
+              <div className="shrink-0 text-right">
+                <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                  {showReadouts && secsLeft != null ? 'Time' : 'Balance'}
+                </div>
+                <div className="tnum text-xl font-bold leading-none text-text-2">
+                  {showReadouts && secsLeft != null
+                    ? `${secsLeft}s`
+                    : user?.balance != null
+                      ? `$${formatStringToNumericDecimals(user.balance, 2)}`
+                      : '—'}
+                </div>
+                {streak > 0 && (
+                  <div className="mt-1 inline-flex items-center border border-brand-500/60 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-brand-500">
+                    Streak {streak}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* The three reels: one full-width slot band, hairline-divided cells, no foot border. */}
+            <div className="flex border-t border-line-strong">
+              <Reel index={0} label="Asset" pool={REEL_ASSETS} target={lp?.asset} cycling={reelsCycling} landing={spinning} stopAt={SPIN_STOPS[0]} />
+              <Reel
+                index={1}
+                label="Up Down"
+                pool={DIR_POOL}
+                target={lp ? sideLabel(lp.side) : undefined}
+                cycling={reelsCycling}
+                landing={spinning}
+                stopAt={SPIN_STOPS[1]}
+                accent={lp?.side === 'up' ? 'up' : lp?.side === 'down' ? 'down' : undefined}
+              />
+              <Reel
+                index={2}
+                label="Multiplier"
+                pool={MULT_POOL}
+                target={play ? fmtMult(play.multiplier) : undefined}
+                cycling={reelsCycling}
+                landing={spinning}
+                stopAt={SPIN_STOPS[2]}
+                accent="amber"
+              />
+            </div>
+          </div>
+
+          {/* CHART — its own band, bounded between the slot header and the footer so the leading
+              dot never spills behind either zone (no full-bleed overflow). */}
+          <div className="relative min-h-0 flex-1">
             {chartAsset ? (
               <Chart
                 asset={chartAsset}
-                overlays={showStrike && strike != null ? { strike } : undefined}
-                onPrice={(p) => setSpot(p)}
+                overlays={showEntry && entryPrice != null ? { entry: entryPrice } : undefined}
+                onPrice={(p) => {
+                  spotRef.current = p
+                  setSpot(p)
+                }}
                 className="absolute inset-0"
               />
             ) : null}
-          </GameStage>
+          </div>
 
-          {/* readout band — the live VALUE once a play runs, the bet setup at rest */}
-          <GameReadout>
-            {settling ? (
-              <>
-                <div>
+          {/* FOOTER — full-width readout bar under the chart, one top hairline. The live VALUE while
+              a round runs, the bet + how-to-start at rest. Content hugs the left, clear of the PLAY
+              body in the bottom-right. */}
+          <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5">
+            {/* Fixed height: the readout swaps between bet / dealing / value, but the card must not
+                jump size as the copy changes, so the tallest state sets the floor for all of them. */}
+            <div className="max-w-[60%] min-h-[120px]">
+              {settling ? (
+                <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Status</div>
-                  <div className="text-[34px] font-extrabold leading-none text-brand-500">
+                  <div className="text-[30px] font-extrabold leading-none text-brand-500">
                     SETTLING<span className="animate-pulse">...</span>
                   </div>
-                </div>
-                <div className="font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-text-2">Locking in your round</div>
-              </>
-            ) : showReadouts ? (
-              <>
-                <div>
+                  <div className="mt-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-text-2">Locking in your round</div>
+                </>
+              ) : showReadouts ? (
+                <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Value</div>
-                  <div className={cnm('text-[40px] font-extrabold leading-none', pnlNum >= 0 ? 'text-up' : 'text-down')}>
+                  <div className={cnm('text-[34px] font-extrabold leading-none', pnlNum >= 0 ? 'text-up' : 'text-down')}>
                     $<Stat value={value} />
                   </div>
                   <div className={cnm('mt-0.5 font-mono text-[12px] font-bold uppercase tracking-[0.08em]', pnlNum >= 0 ? 'text-up' : 'text-down')}>
                     {pnlNum >= 0 ? '+' : '-'}${money(Math.abs(pnlNum))}
                   </div>
-                </div>
-                <div className="grid grid-cols-3 gap-x-3">
-                  <Cell label="Multiplier" value={fmtMult(multiplier)} />
-                  <Cell label="Target" value={strike != null ? priceLabel(strike) : '—'} />
-                  <Cell label="Bet" value={`$${money(playBet)}`} />
-                </div>
-              </>
-            ) : firstRun ? (
-              <>
-                <div>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Welcome</div>
-                  <div className="tnum text-[40px] font-extrabold leading-none text-brand-500">
-                    ${formatStringToNumericDecimals(user?.balance ?? '0', 0)}
+                  <div className="mt-2.5 grid grid-cols-3 gap-x-3">
+                    <Cell label="Multiplier" value={fmtMult(multiplier)} />
+                    <Cell label="Target" value={strike != null ? priceLabel(strike) : '—'} />
+                    <Cell label="Bet" value={`$${money(playBet)}`} />
                   </div>
-                </div>
-                <div className="font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-text-2">
-                  in play chips · hit <span className="text-brand-500">SPIN</span>
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Bet</div>
-                  <div className="tnum text-[40px] font-extrabold leading-none text-brand-500">${bet}</div>
-                </div>
-                <div className="font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-text-2">
-                  Hit <span className="text-brand-500">SPIN</span> to deal your reels
-                </div>
-              </>
-            )}
-          </GameReadout>
-        </>
+                </>
+              ) : reelsCycling ? (
+                <>
+                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Dealing</div>
+                  <div className="text-[30px] font-extrabold leading-none text-brand-500">
+                    SPINNING<span className="animate-pulse">...</span>
+                  </div>
+                  <div className="mt-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-text-2">Dealing your reels</div>
+                </>
+              ) : (
+                <>
+                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">{firstRun ? 'Welcome' : 'Lucky'}</div>
+                  <div className="text-[22px] font-extrabold uppercase leading-none tracking-[0.02em] text-text">I Feel Lucky</div>
+                  <div className="mt-3 flex items-baseline gap-2">
+                    <span className="tnum text-[30px] font-extrabold leading-none text-brand-500">${bet}</span>
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-text-3">Bet</span>
+                  </div>
+                  <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
+                    Press the button on the right to spin
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {phase === 'result' && play && <LuckyResult play={play} streak={streak} onDismiss={() => setPhase('idle')} />}
@@ -391,9 +427,10 @@ export function LuckyScreen() {
 // One reel. It flickers through its pool the whole time the deal is in flight (`cycling`, which
 // covers both the server round trip and the spin window), so SPIN feels instant even while the
 // backend resolves. Once the play lands and the reels are `landing`, it snaps to the dealt target
-// at its staggered stop time with a haptic tick. Flat, sharp-cornered, opaque so it reads over the
-// live chart (docs/SCREEN.md, no rounded cards).
+// at its staggered stop time with a haptic tick. Sits flush in the connected slot strip (shared
+// hairline dividers), big and punchy (docs/SCREEN.md, no rounded cards).
 function Reel({
+  index,
   label,
   pool,
   target,
@@ -402,6 +439,7 @@ function Reel({
   stopAt,
   accent,
 }: {
+  index: number
   label: string
   pool: string[]
   target?: string
@@ -434,20 +472,43 @@ function Reel({
             clearInterval(iv)
             setShown(target)
             haptic('rigid')
+            slotLock(index)
           }, stopAt)
         : undefined
     return () => {
       clearInterval(iv)
       if (to) clearTimeout(to)
     }
-  }, [cycling, landing, target, stopAt])
+  }, [cycling, landing, target, stopAt, index])
 
-  const tone =
-    accent === 'amber' ? 'text-brand-500' : accent === 'up' ? 'text-up' : accent === 'down' ? 'text-down' : 'text-text'
+  // Role palette: each window owns one tone, shared across the locked value, its halo, the foot bar,
+  // and a faint cell wash, so the slot reads in color instead of three plain black boxes. Neutral
+  // (the asset window, anything undealt) stays white-on-black.
+  const palette =
+    accent === 'amber'
+      ? { text: 'text-brand-500', bar: 'bg-brand-500', wash: 'bg-brand-500/10', glow: 'var(--color-brand-500)' }
+      : accent === 'up'
+        ? { text: 'text-up', bar: 'bg-up', wash: 'bg-up/10', glow: 'var(--color-up)' }
+        : accent === 'down'
+          ? { text: 'text-down', bar: 'bg-down', wash: 'bg-down/10', glow: 'var(--color-down)' }
+          : { text: 'text-text', bar: 'bg-text-3', wash: '', glow: 'var(--color-text)' }
+  const locked = !cycling && shown !== '—'
   return (
-    <div className="flex flex-col items-center gap-1 border border-line-strong bg-black px-2 py-2.5">
-      <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-text-3">{label}</span>
-      <span className={cnm('tnum text-[19px] font-extrabold leading-none', cycling ? 'text-text-2' : tone)}>{shown}</span>
+    <div
+      className={cnm(
+        'relative flex flex-1 flex-col items-center justify-center gap-2 overflow-hidden border-l border-line-strong bg-black px-2 py-4 first:border-l-0',
+        locked && palette.wash,
+      )}
+    >
+      <span className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-text-3">{label}</span>
+      <span
+        className={cnm('tnum text-[28px] font-extrabold leading-none transition-colors duration-200', cycling ? 'text-text-2' : palette.text)}
+        style={locked ? { textShadow: `0 0 16px ${palette.glow}` } : undefined}
+      >
+        {shown}
+      </span>
+      {/* foot bar: the slot band's colored baseline, lit when the window lands. */}
+      <span className={cnm('absolute inset-x-0 bottom-0 h-[3px] transition-opacity duration-200', palette.bar, locked ? 'opacity-100' : 'opacity-25')} />
     </div>
   )
 }

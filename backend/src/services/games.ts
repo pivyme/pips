@@ -6,6 +6,7 @@
 import {
   EXPIRY_SAFETY_MS,
   LUCKY_ROUND_MS,
+  LUCKY_MIN_ORACLE_LIFE_MS,
   MIN_STAKE,
   MAX_STAKE,
   GAME_DURATIONS,
@@ -18,7 +19,7 @@ import {
   usd1e9,
   multiplier as multiplierOf,
 } from '../lib/sui/config.ts';
-import { liveByAsset, nearestOracle, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
+import { liveByAsset, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
 import {
   previewBinaryBatch,
   previewRange,
@@ -101,12 +102,19 @@ function pickMarket(asset: string): Market {
   return m;
 }
 
-// The live oracle for an asset expiring nearest LUCKY_ROUND_MS out. Oracles outlive the round
-// (so create + activate never race expiry), and routing to the nearest-to-round one keeps Lucky
-// rounds ~30s while still settling at a real on-chain expiry. Falls back to whatever is live during
-// ladder warmup (a longer round) rather than failing the play.
+// The live oracle a LUCKY play routes to. Two-stage pick so a play never lands on an oracle that
+// expires mid-mint (the EOracleExpired → retry → 10-20s stall): first keep only oracles with enough
+// life that the build+sign+submit can't outrun expiry (LUCKY_MIN_ORACLE_LIFE_MS), then take the one
+// expiring nearest the round target so rounds stay ~30s. If the ladder is thin and nothing clears
+// the life floor, fall back to the longest-lived live oracle rather than failing the play.
 function roundOracle(asset: string): Market | undefined {
-  return nearestOracle(asset, now(), now() + LUCKY_ROUND_MS, EXPIRY_SAFETY_MS);
+  const t = now();
+  const live = liveByAsset(asset, t, EXPIRY_SAFETY_MS);
+  if (live.length === 0) return undefined;
+  const roomy = live.filter((m) => m.expiryMs - t >= LUCKY_MIN_ORACLE_LIFE_MS);
+  if (roomy.length === 0) return live.reduce((best, m) => (m.expiryMs > best.expiryMs ? m : best));
+  const target = t + LUCKY_ROUND_MS;
+  return roomy.reduce((best, m) => (Math.abs(m.expiryMs - target) < Math.abs(best.expiryMs - target) ? m : best));
 }
 
 export function liveAssets(): string[] {
@@ -277,7 +285,9 @@ export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
       const cacheKey = `${market.oracleId}:${side}`;
       const t0 = now();
       const curve = getFreshCurve(cacheKey, t0);
-      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve, analyticSize: true });
+      // The live spot centers the scan window on ATM (the cached spot1e9 is pusher-fresh, ~2s old).
+      const atm1e9 = market.spot1e9 ? BigInt(market.spot1e9) : undefined;
+      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve, atm1e9, analyticSize: true });
       if (!curve) putCurve(cacheKey, solution.curve, t0);
       if (solution.clamped) {
         // Dealt tier was past the live ask bounds; we minted the closest achievable one and report it.

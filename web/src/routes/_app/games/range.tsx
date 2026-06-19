@@ -38,6 +38,9 @@ const TOKEN_LOGOS: Record<string, string> = {
 const NOMINAL_ROUND_SEC = 30 // the idle multiplier preview's reference; the real round = oracle expiry
 const RESULT_MS = 4200
 const TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out', 'error'])
+// Terminal states that resolve to a win/loss RESULT screen. 'error' is excluded: an errored play is
+// a background mint that could not open (chips safe), handled as a clean re-rack, not a result.
+const RESULT_TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out'])
 
 type Phase = 'idle' | 'placing' | 'open' | 'cashing' | 'result'
 type Live = { markValue: string; pnl: string; multiplier: number; status: PlayStatus }
@@ -143,16 +146,27 @@ export function RangeScreen() {
     [refresh, qc],
   )
 
-  // Live value while a play is open. The stream closes on a terminal frame (the settle worker drives
-  // the oracle to settlement and redeems an in-the-money position); we then refetch the finalized play
-  // to grab the payout + redeem digest for the result + explorer link.
+  // Live value while a play is open. The play comes back 'pending' the instant it's placed; the real
+  // mint_range lands a moment later and the stream flips it to 'open'. The stream closes on a terminal
+  // frame (the settle worker drives the oracle to settlement and redeems an in-the-money position); we
+  // then refetch the finalized play to grab the payout + redeem digest. A 'pending' that flips to
+  // 'error' means the background mint could not open it (rare): chips are safe, so we re-rack cleanly.
   useEffect(() => {
     if (!play || phase !== 'open') return
     const unsub = streamPlay(
       play.id,
       (tick) => {
         setLive({ markValue: tick.markValue, pnl: tick.pnl, multiplier: tick.multiplier, status: tick.status })
-        if (TERMINAL.has(tick.status) && !finalized.current) {
+        if (tick.status === 'error' && !finalized.current) {
+          finalized.current = true
+          toast.error('Could not open that play. Your chips are safe, play again.')
+          clearResetTimer()
+          setPlay(null)
+          setLive(null)
+          setPhase('idle')
+          return
+        }
+        if (RESULT_TERMINAL.has(tick.status) && !finalized.current) {
           finalized.current = true
           void api
             .getPlay(play.id)
@@ -251,7 +265,11 @@ export function RangeScreen() {
     setOverlay((o) => (o === 'howto' ? 'none' : 'howto'))
   }, [])
 
-  const isOpen = phase === 'open'
+  // The mint lands a beat after PLAY, so CASH OUT only arms once the play is confirmed 'open'
+  // on-chain; until then the button reads OPENING (cashing a not-yet-minted play would revert).
+  const confirmed = live?.status === 'open'
+  const isOpen = phase === 'open' && confirmed
+  const isOpening = phase === 'open' && !confirmed
   useConsoleControls({
     knob: {
       label: 'RANGE',
@@ -284,14 +302,16 @@ export function RangeScreen() {
     },
     main: isOpen
       ? { label: 'CASH OUT', color: 'up', onPress: () => void doCashOut() }
-      : phase === 'cashing'
-        ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true }
-        : {
-            label: 'PLAY',
-            color: 'amber',
-            onPress: () => void doPlay(),
-            loading: phase === 'placing',
-          },
+      : isOpening
+        ? { label: 'OPENING', color: 'up', onPress: () => {}, loading: true }
+        : phase === 'cashing'
+          ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true }
+          : {
+              label: 'PLAY',
+              color: 'amber',
+              onPress: () => void doPlay(),
+              loading: phase === 'placing',
+            },
   })
 
   const pnlNum = live ? parseFloat(live.pnl) : 0

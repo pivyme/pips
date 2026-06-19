@@ -160,10 +160,17 @@ function ThemeRail({
     moved: false,
   })
 
-  // Keep the active card in view when it changes (e.g. landing on a saved skin off-screen).
+  // Keep the active card centered, scrolling the rail itself. scrollIntoView would bubble up when the
+  // last cards can't be centered (no rail left to their right) and scroll the overflow-hidden studio
+  // root too, dragging the whole device off-center. Touching only the rail keeps the device put.
   useEffect(() => {
-    const el = railRef.current?.querySelector<HTMLElement>(`[data-id="${selectedId}"]`)
-    el?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+    const rail = railRef.current
+    const el = rail?.querySelector<HTMLElement>(`[data-id="${selectedId}"]`)
+    if (!rail || !el) return
+    const railRect = rail.getBoundingClientRect()
+    const elRect = el.getBoundingClientRect()
+    const delta = elRect.left + elRect.width / 2 - (railRect.left + railRect.width / 2)
+    rail.scrollTo({ left: rail.scrollLeft + delta, behavior: 'smooth' })
   }, [selectedId])
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {

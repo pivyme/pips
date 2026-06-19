@@ -97,13 +97,15 @@ export const ORACLE_STRIKE_GRID_TICKS = 500n;
 // Tick granularity unit: every 1e9-scaled tickSize must be a multiple of this.
 const TICK_SIZE_UNIT = 10_000n;
 
-// Per-asset tick size in display USD, chosen so 500 ticks covers a sensible band
-// around spot (BTC: $200*500 = $100k). Keep each a clean multiple of the tick unit.
+// Per-asset tick size in display USD. Sized to ~0.1% of spot so 500 ticks span ~+-25% around spot:
+// wide enough that a strike stays on the grid as the game price strays, tight enough that the dense
+// solve resolves the near-money tiers (the common 1.5x-3x sit within ~+-1.5% now that implied vol is
+// game-calibrated, so a coarse grid would smear them). Keep each a clean multiple of the tick unit.
 export const ASSET_TICK_USD: Record<string, number> = {
-  BTC: 200,
-  ETH: 5,
-  SOL: 0.5,
-  SUI: 0.01,
+  BTC: 100,
+  ETH: 3,
+  SOL: 0.15,
+  SUI: 0.0035,
 };
 
 // Build a grid (minStrike, tickSize) centered on the current spot so strikes near the

@@ -111,17 +111,42 @@ export const OPERATOR_ENABLED: boolean = process.env.PIPS_OPERATOR_ENABLED === '
 export const PRICE_PUSH_CRON: string = process.env.PIPS_PRICE_PUSH_CRON || '*/2 * * * * *';
 export const ORACLE_ROLL_CRON: string = process.env.PIPS_ORACLE_ROLL_CRON || '*/5 * * * * *';
 export const SETTLE_CRON: string = process.env.PIPS_SETTLE_CRON || '*/3 * * * * *';
+// Cap the on-chain redeems a single settle tick fires, so a backlog of expired ITM plays drains
+// gradually instead of monopolizing the one serial operator executor (which oracle-roll shares) and
+// starving the ladder. The rest carry over to the next tick (every 3s).
+export const SETTLE_MAX_REDEEMS_PER_TICK: number = Number(process.env.PIPS_SETTLE_MAX_REDEEMS_PER_TICK) || 6;
 // Stop streaming live prices within this window before expiry so an in-flight mint
 // cannot race settlement (gotcha #3 in 05-SUI-PREDICT.md).
 export const EXPIRY_SAFETY_MS: number = Number(process.env.PIPS_EXPIRY_SAFETY_MS) || 5000;
 
+// Live-PnL SSE (/stream/plays/:id). The mark is a real per-play devInspect (~1.5s on the remote
+// node), so a 1s tick per open play saturates the single-validator node and starves the operator
+// ladder. A 2.5s tick + a short mark cache cuts that load ~60% with no felt loss (a binary mark
+// barely moves in 2.5s). PLAY_STREAM_INTERVAL_MS is the tick; LIVE_MARK_TTL_MS dedupes overlapping
+// reads (the stream tick + a getPlay) onto one devInspect.
+export const PLAY_STREAM_INTERVAL_MS: number = Number(process.env.PIPS_PLAY_STREAM_INTERVAL_MS) || 2500;
+export const LIVE_MARK_TTL_MS: number = Number(process.env.PIPS_LIVE_MARK_TTL_MS) || 2000;
+
 // Game volatility. Real spot is too quiet over a 30-60s round, so we run a synthetic, Pyth-anchored
 // vol layer (lib/game-price.ts) that makes the chart feel alive and a tight range band a real
 // gamble. It is the SINGLE source for the chart stream, the oracle push, and the settle price, so
-// what the player sees is exactly what settles. 1 = the tuned default, 0 = off (pure Pyth, the kill
-// switch), >1 = wilder. The one sanctioned synthetic layer on the real path.
+// what the player sees is exactly what settles. 2 = the tuned default (~1.2% realized move per 30s
+// round), 0 = off (pure Pyth, the kill switch), >2 = wilder. The one sanctioned synthetic layer on
+// the real path. Must track IMPLIED_VOL: the realized move and the price the option is quoted at have
+// to be the same order, or the spread drowns the signal and a play just bleeds (see IMPLIED_VOL).
 export const GAME_VOL: number =
-  process.env.PIPS_GAME_VOL != null && process.env.PIPS_GAME_VOL !== '' ? Number(process.env.PIPS_GAME_VOL) : 1;
+  process.env.PIPS_GAME_VOL != null && process.env.PIPS_GAME_VOL !== '' ? Number(process.env.PIPS_GAME_VOL) : 2;
+
+// Implied vol the binary is priced at (total vol to expiry, fed into the oracle SVI surface in
+// lib/sui/predict.ts). The single biggest game-feel knob: it sets both how hard the mark moves when
+// spot moves (delta ~ 1/vol) and how far OTM each multiplier tier's strike sits. Too high and a play
+// feels dead while the big multipliers sit unreachably far out (the old 0.04/0.1/0.6 SVI was ~31.6%
+// vol, ~50x the realized move, so 25x lived ~65% away, unwinnable); too low and the strike grid
+// can't resolve the near tiers. Keep it ~1.5-2.5x the per-round realized move (GAME_VOL): a touch
+// above realized is a thin honest house lean. 0.03 = 3% pairs with GAME_VOL 2 (~1.2% realized): 2x
+// sits ATM and swings live, 25x sits ~5% OTM, a real but rare jackpot.
+export const IMPLIED_VOL: number =
+  process.env.PIPS_IMPLIED_VOL != null && process.env.PIPS_IMPLIED_VOL !== '' ? Number(process.env.PIPS_IMPLIED_VOL) : 0.03;
 
 // Oracle ladder, the LUCKY tier. A play settles at its oracle's expiry (key.expiry ==
 // oracle.expiry). Crucially the oracle's on-chain LIFETIME is decoupled from the ROUND length:
@@ -143,10 +168,15 @@ export const ORACLE_LIFETIME_MS: number = Number(process.env.PIPS_ORACLE_LIFETIM
 // The LUCKY round target: each play routes to the live oracle expiring nearest this far out and
 // settles there, so rounds stay ~30s regardless of how long the oracles themselves live.
 export const LUCKY_ROUND_MS: number = Number(process.env.PIPS_LUCKY_ROUND_MS) || 30_000;
+// Minimum oracle life a LUCKY play will route to. A play takes a few seconds to build+sign+submit;
+// routing it to an oracle with less life than this risks the mint outrunning expiry (EOracleExpired
+// → retry → the 10-20s stall). When the ladder is thin and nothing clears this bar, routing falls
+// back to the longest-lived live oracle instead of failing. Must exceed the worst-case mint time.
+export const LUCKY_MIN_ORACLE_LIFE_MS: number = Number(process.env.PIPS_LUCKY_MIN_ORACLE_LIFE_MS) || 12_000;
 // Oracles kept live per asset, spread evenly across the lifetime (~ORACLE_LIFETIME_MS / depth apart)
-// so a near-round one always exists. Higher = tighter round consistency but more operator txs;
-// with a single shared oracle cap every push serializes, so this is the throughput knob, not gas.
-export const ORACLE_LADDER_DEPTH: number = Number(process.env.PIPS_ORACLE_LADDER_DEPTH) || 4;
+// so a near-round one always exists. Higher = more buffer when the operator briefly falls behind
+// (free localnet gas), at the cost of bigger push PTBs and more settle work, both bounded.
+export const ORACLE_LADDER_DEPTH: number = Number(process.env.PIPS_ORACLE_LADDER_DEPTH) || 6;
 // Reclaim a settled oracle's strike matrix to recover its storage rebate. Only worth it on a
 // gas-scarce chain; on free localnet it is pure extra load on the serial operator queue, so off.
 export const ORACLE_COMPACT_SETTLED: boolean = process.env.PIPS_ORACLE_COMPACT_SETTLED === 'true';
@@ -197,11 +227,15 @@ export default {
   PRICE_PUSH_CRON,
   ORACLE_ROLL_CRON,
   SETTLE_CRON,
+  SETTLE_MAX_REDEEMS_PER_TICK,
   EXPIRY_SAFETY_MS,
+  PLAY_STREAM_INTERVAL_MS,
+  LIVE_MARK_TTL_MS,
   GAME_VOL,
   ORACLE_ASSETS,
   ORACLE_LIFETIME_MS,
   LUCKY_ROUND_MS,
+  LUCKY_MIN_ORACLE_LIFE_MS,
   ORACLE_LADDER_DEPTH,
   ORACLE_COMPACT_SETTLED,
   PREDICT_PACKAGE_ID,

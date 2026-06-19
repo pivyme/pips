@@ -52,12 +52,3 @@ export const tradeableMarkets = (now: number, safetyMs: number): Market[] =>
 
 export const liveByAsset = (asset: string, now: number, minRemainingMs: number): Market[] =>
   allMarkets().filter((m) => m.underlying === asset && !m.settled && m.expiryMs - now > minRemainingMs);
-
-// Route a LUCKY play to the live oracle expiring nearest to `targetMs` (now + the round
-// length) among those still tradeable (life > safetyMs), so a fixed ~30s round settles at the
-// oracle's expiry. Never one oracle per play (gotcha #11). Returns undefined if none are live.
-export const nearestOracle = (asset: string, now: number, targetMs: number, safetyMs: number): Market | undefined => {
-  const live = liveByAsset(asset, now, safetyMs);
-  if (live.length === 0) return undefined;
-  return live.reduce((best, m) => (Math.abs(m.expiryMs - targetMs) < Math.abs(best.expiryMs - targetMs) ? m : best));
-};

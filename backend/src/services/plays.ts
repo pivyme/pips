@@ -9,6 +9,7 @@ import { coinWithBalance } from '@mysten/sui/transactions';
 
 import type { Play, User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
+import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS } from '../config/main-config.ts';
 import { DUSDC_TYPE } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import {
@@ -73,15 +74,34 @@ function deserializeKey(play: Play): PlayKey {
 
 type Balances = { wallet: bigint; manager: bigint; total: bigint };
 
+// Best-effort spendable-total cache, keyed by user id, seeded by every real balance read (the
+// background mint reads fresh each play). It exists ONLY to fast-reject an obviously-unaffordable
+// bet on the optimistic hot path WITHOUT a ~1.5s manager devInspect: a fresh cache that says
+// "insufficient" rejects before the reels spin; anything else proceeds and the background mint is
+// the real check. So it can be stale-high (never wrongly rejects) but must not be stale-low after a
+// credit, hence callers invalidate it on cash-out / settle wins. The manager read stays off the hot
+// path entirely; it runs in the background mint.
+const balCache = new Map<string, { total: bigint; at: number }>();
+const BAL_TTL_MS = 8000;
+const seedBalCache = (userId: string, total: bigint): void => {
+  balCache.set(userId, { total, at: Date.now() });
+  if (balCache.size > 512) for (const [k, v] of balCache) if (Date.now() - v.at >= BAL_TTL_MS) balCache.delete(k);
+};
+const invalidateBal = (userId: string): void => {
+  balCache.delete(userId);
+};
+
 // Wallet DUSDC + whatever already sits in the manager from prior plays, read in parallel (two
-// independent RPCs). Returns the parts so createPlay can reuse the manager figure for funding
-// instead of reading it a second time.
+// independent RPCs). Returns the parts so the mint can reuse the manager figure for funding instead
+// of reading it a second time. Seeds the spendable-total cache for the next play's hot-path gate.
 async function loadBalances(user: User): Promise<Balances> {
   const [wallet, manager] = await Promise.all([
     getDusdcBalanceRaw(user.address),
     user.predictManagerId ? getManagerBalanceRaw(user.predictManagerId) : Promise.resolve(0n),
   ]);
-  return { wallet, manager, total: wallet + manager };
+  const total = wallet + manager;
+  seedBalCache(user.id, total);
+  return { wallet, manager, total };
 }
 
 // Spendable chips. Kept as a thin wrapper for callers outside the play hot path.
@@ -162,57 +182,86 @@ const isRetriableMint = (e: unknown): boolean => {
   );
 };
 
-export function createPlay(user: User, input: CreatePlayInput): Promise<CreateResult> {
-  return withUserLock(user.id, () => createPlayLocked(user, input));
+// Optimistic create: resolve the deal (the only thing the player waits on, ~1 scan round trip),
+// persist it 'pending', and return immediately so the reels snap on the real dealt asset/side/
+// multiplier. The actual Predict mint (balance read, funding, build, sign, submit) runs in the
+// BACKGROUND under the per-user lock and flips the play 'open' (or 'error'), surfaced live over the
+// play SSE. Pre-deal failures (bad params, no market, plainly insufficient) still throw here so the
+// client gets a clean error and shows no reel; only the rare post-deal mint failure is async.
+export async function createPlay(user: User, input: CreatePlayInput): Promise<CreateResult> {
+  const stakeRaw = parseStake(input.stake);
+  if (!user.predictManagerId) throw new PlayError('MANAGER_NOT_READY', 'Your account is still getting ready');
+
+  // Fast affordability gate: reject only when a FRESH cached total is confidently short, so the hot
+  // path takes no ~1.5s manager devInspect. Anything else proceeds; the background mint reads the
+  // real balance and is the source of truth (a wrong guess there just re-racks, gracefully).
+  const cached = balCache.get(user.id);
+  if (cached && Date.now() - cached.at < BAL_TTL_MS && cached.total < stakeRaw) {
+    throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that bet');
+  }
+
+  // Resolve + price the deal off the live oracle (honest multiplier). The player waits only on this.
+  const resolved = await resolveByGame(input, stakeRaw);
+  const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw) });
+
+  // Mint behind the spin animation; mintPending never throws (it marks the play 'error' on failure).
+  void withUserLock(user.id, () => mintPending(user, resolved, stakeRaw, play.id));
+  return { play: await toPlayDTO(play) };
 }
 
-async function createPlayLocked(user: User, input: CreatePlayInput): Promise<CreateResult> {
-  const stakeRaw = parseStake(input.stake);
-  const managerId = user.predictManagerId;
-  if (!managerId) throw new PlayError('MANAGER_NOT_READY', 'Your account is still getting ready');
+// Funding plan for one mint: how much to deposit given the freshly read balances. Funds a bit above
+// the bet (FUND_BUFFER_PCT) so the post-trade mint price never overdraws, and in bulk
+// (BULK_FUND_PLAYS) so the next few spins skip the deposit. Never above the player's chips.
+function fundingPlan(stakeRaw: bigint, total: bigint): { cappedNeed: bigint; refillTo: bigint } {
+  const need = stakeRaw + (stakeRaw * FUND_BUFFER_PCT) / 100n;
+  const cappedNeed = need > total ? total : need;
+  const bulk = stakeRaw * BULK_FUND_PLAYS;
+  const refill = bulk > total ? total : bulk;
+  return { cappedNeed, refillTo: refill < cappedNeed ? cappedNeed : refill };
+}
 
-  // Up to 3 attempts. A mint that aborts on a stale oracle, a tight post-trade price, the matrix
-  // pricing edge, or an owned-coin version race is re-resolved: each retry re-draws a fresh
-  // asset/side/tier (so a different strike + quantity) and re-selects current coins, so independent
-  // attempts converge fast. The balance read runs concurrently with the (chain-bound) resolve.
-  const MAX_ATTEMPTS = 3;
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const [balances, resolved] = await Promise.all([loadBalances(user), resolveByGame(input, stakeRaw)]);
-    if (balances.total < stakeRaw) throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that bet');
-
-    // What this one play needs in the manager (bet + impact buffer), capped at the player's chips.
-    const need = stakeRaw + (stakeRaw * FUND_BUFFER_PCT) / 100n;
-    const cappedNeed = need > balances.total ? balances.total : need;
-    // When the manager is short, refill in bulk (several bets' worth) so the next spins skip funding.
-    // Never below this play's need, never above what the player holds.
-    const bulkRefill = stakeRaw * BULK_FUND_PLAYS;
-    const refillTo = bulkRefill > balances.total ? balances.total : bulkRefill;
-    const refillToFinal = refillTo < cappedNeed ? cappedNeed : refillTo;
-
-    const tx = new Transaction();
-    fundManager(tx, managerId, cappedNeed, refillToFinal, balances.manager);
-    if (resolved.kind === 'binary') buildMint(tx, managerId, resolved.params);
-    else buildMintRange(tx, managerId, resolved.params);
-
-    // Persist pending first so we hold an id even if signing/submit throws.
-    const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw) });
-
-    try {
-      const exec = await executeForUser(tx, userCtx(user));
-      const opened = await prismaQuery.play.update({
-        where: { id: play.id },
-        data: { status: 'open', txMint: exec.digest, openedAt: new Date() },
-      });
-      return { play: await toPlayDTO(opened) };
-    } catch (e) {
-      await prismaQuery.play.update({ where: { id: play.id }, data: { status: 'error' } });
-      lastErr = e;
-      if (attempt < MAX_ATTEMPTS - 1 && isRetriableMint(e)) continue;
-      throw asPlayError(e, 'MINT_FAILED', 'Could not place that play. Your chips are safe.');
+// Background mint for an already-resolved, already-persisted pending play. Runs under the per-user
+// lock so a user's owned deposit coins never equivocate. Retries the SAME dealt params on a transient
+// race (a coin version still settling, a momentary tight price) and NEVER re-deals a result already
+// shown; a dead oracle or a real failure marks the play 'error' so the player re-racks. Chips are
+// safe either way: the fund+mint is one atomic PTB, so a failed mint debits nothing. Resolves quietly.
+async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, playId: string): Promise<void> {
+  const managerId = user.predictManagerId!;
+  try {
+    const balances = await loadBalances(user);
+    if (balances.total < stakeRaw) {
+      await prismaQuery.play.update({ where: { id: playId }, data: { status: 'error' } });
+      return;
     }
+    const { cappedNeed, refillTo } = fundingPlan(stakeRaw, balances.total);
+
+    const MAX_ATTEMPTS = 2;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const tx = new Transaction();
+      fundManager(tx, managerId, cappedNeed, refillTo, balances.manager);
+      if (resolved.kind === 'binary') buildMint(tx, managerId, resolved.params);
+      else buildMintRange(tx, managerId, resolved.params);
+      try {
+        const exec = await executeForUser(tx, userCtx(user));
+        await prismaQuery.play.update({
+          where: { id: playId },
+          data: { status: 'open', txMint: exec.digest, openedAt: new Date() },
+        });
+        invalidateBal(user.id); // the manager just changed; the next gate re-reads
+        return;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < MAX_ATTEMPTS - 1 && isRetriableMint(e)) continue;
+        throw e;
+      }
+    }
+    throw lastErr;
+  } catch (e) {
+    console.error(`[plays] mint failed for ${playId}:`, e instanceof Error ? e.message : e);
+    await prismaQuery.play.update({ where: { id: playId }, data: { status: 'error' } }).catch(() => {});
+    invalidateBal(user.id);
   }
-  throw asPlayError(lastErr, 'MINT_FAILED', 'Could not place that play. Your chips are safe.');
 }
 
 function mapResolvedToPlay(userId: string, r: Resolved, stakeRaw: bigint) {
@@ -273,6 +322,7 @@ async function finalizeCashout(play: Play, payoutRaw: bigint, digest: string): P
     where: { id: play.id },
     data: { status: 'cashed_out', payout: payoutRaw, markValue: payoutRaw, pnl, txRedeem: digest, settledAt: new Date() },
   });
+  invalidateBal(play.userId); // the redeem credited the manager; the next gate must re-read
   await recordSettlement(play.userId, { game: play.game, stakeRaw: play.stake, pnlRaw: pnl, won: pnl > 0n });
   const unlocked = await evaluateAndUnlock(play.userId);
   return { play: await toPlayDTO(updated), unlocked };
@@ -290,15 +340,50 @@ const isItm = (key: PlayKey, settlement1e9: bigint): boolean =>
       : settlement1e9 <= key.params.strike1e9
     : settlement1e9 > key.params.lower1e9 && settlement1e9 <= key.params.higher1e9;
 
-// Settle every open play whose oracle has settled. Reads the oracle directly so it works
-// even after the market left the live cache. Idempotent: only touches status 'open' plays.
+// An optimistic play whose background mint never completed (process died/hung between persist and
+// the open/error write) would otherwise sit 'pending' forever. Sweep any older than this to 'error'
+// so the client stops waiting. The threshold is well beyond a real mint's worst case (build+sign+
+// submit timeouts), so a still-in-flight mint is never swept out from under itself.
+const STUCK_PENDING_MS = 60_000;
+async function sweepStuckPendings(): Promise<void> {
+  const res = await prismaQuery.play.updateMany({
+    where: { status: 'pending', createdAt: { lt: new Date(Date.now() - STUCK_PENDING_MS) } },
+    data: { status: 'error' },
+  });
+  if (res.count > 0) console.log(`[Settle] swept ${res.count} stuck pending play(s) to error`);
+}
+
+// Settle every open play whose oracle has settled. Reads the oracle directly so it works even after
+// the market left the live cache. Idempotent: only touches 'open' plays. Two guards keep a backlog
+// from starving the operator ladder: oracle reads are DEDUPED (many plays share one oracle), and the
+// ITM redeems (each an operator tx through the one serial executor) are CAPPED per tick, the rest
+// carrying to the next 3s tick. Losses settle freely (no on-chain tx).
 export async function settleDuePlays(): Promise<void> {
+  await sweepStuckPendings();
   const due = await prismaQuery.play.findMany({ where: { status: 'open', expiry: { lte: BigInt(Date.now()) } } });
+  if (due.length === 0) return;
+
+  const oracleIds = [...new Set(due.map((p) => p.oracleId))];
+  const states = new Map<string, Awaited<ReturnType<typeof readOracle>>>();
+  await Promise.all(
+    oracleIds.map(async (id) => {
+      try {
+        states.set(id, await readOracle(id));
+      } catch {
+        states.set(id, null);
+      }
+    }),
+  );
+
+  let redeems = 0;
   for (const play of due) {
+    const st = states.get(play.oracleId);
+    if (!st || !st.settled || st.settlementPrice1e9 == null) continue; // not settled yet, retry next tick
+    const itm = isItm(deserializeKey(play), st.settlementPrice1e9);
+    if (itm && redeems >= SETTLE_MAX_REDEEMS_PER_TICK) continue; // over the per-tick redeem budget
     try {
-      const st = await readOracle(play.oracleId);
-      if (!st || !st.settled || st.settlementPrice1e9 == null) continue; // not settled yet, retry next tick
       await settleOnePlay(play, st.settlementPrice1e9);
+      if (itm) redeems++;
     } catch (e) {
       console.error(`[Settle] play ${play.id} settle failed:`, e instanceof Error ? e.message : e);
     }
@@ -338,6 +423,7 @@ async function settleOnePlay(play: Play, settlement1e9: bigint): Promise<void> {
     where: { id: play.id },
     data: { status: itm ? 'won' : 'lost', payout: payoutRaw, markValue: payoutRaw, pnl, txRedeem: digest ?? play.txRedeem, settledAt: new Date() },
   });
+  if (itm) invalidateBal(play.userId); // the settle redeem credited the manager; the next gate re-reads
   await recordSettlement(play.userId, { game: play.game, stakeRaw: play.stake, pnlRaw: pnl, won: itm });
   await evaluateAndUnlock(play.userId);
 }
@@ -345,12 +431,28 @@ async function settleOnePlay(play: Play, settlement1e9: bigint): Promise<void> {
 // === Reads / DTO ===
 
 // Live cash-out value for an open play (the redeem bid). Settled/closed plays use the
-// stored payout. Used by /plays/:id and the play SSE stream.
+// stored payout. The raw read is a ~1.5s devInspect on the remote node.
 export async function getLiveMarkRaw(play: Play): Promise<bigint> {
   if (play.status !== 'open') return play.payout ?? play.markValue ?? 0n;
   const key = deserializeKey(play);
   const amounts = key.kind === 'binary' ? await previewRedeem(key.params) : await previewRange(key.params);
   return amounts.payout;
+}
+
+// Cached live mark for the hot read paths (the play SSE tick + /plays/:id). A binary/range mark
+// barely moves second to second, so a short TTL collapses the per-open-play devInspect storm that
+// otherwise saturates the single-validator remote node (and starves the operator ladder). Pending/
+// settled plays never hit the chain here.
+const markCache = new Map<string, { mark: bigint; at: number }>();
+export async function getLiveMarkCached(play: Play): Promise<bigint> {
+  if (play.status !== 'open') return play.payout ?? play.markValue ?? 0n;
+  const now = Date.now();
+  const hit = markCache.get(play.id);
+  if (hit && now - hit.at < LIVE_MARK_TTL_MS) return hit.mark;
+  const mark = await getLiveMarkRaw(play);
+  markCache.set(play.id, { mark, at: now });
+  if (markCache.size > 512) for (const [k, v] of markCache) if (now - v.at >= LIVE_MARK_TTL_MS) markCache.delete(k);
+  return mark;
 }
 
 const money = (raw: bigint): string => (Number(raw) / 1_000_000).toFixed(2);
@@ -408,7 +510,7 @@ export async function listPlays(userId: string, opts: { status?: string; limit?:
 export async function getPlay(userId: string, playId: string): Promise<PlayDTO | null> {
   const play = await prismaQuery.play.findFirst({ where: { id: playId, userId } });
   if (!play) return null;
-  const mark = play.status === 'open' ? await getLiveMarkRaw(play).catch(() => undefined) : undefined;
+  const mark = play.status === 'open' ? await getLiveMarkCached(play).catch(() => undefined) : undefined;
   return toPlayDTO(play, mark);
 }
 

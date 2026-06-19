@@ -17,11 +17,22 @@ import {
   target,
   usd1e9,
 } from './config.ts';
+import { IMPLIED_VOL } from '../../config/main-config.ts';
 
-// Smooth, near-flat SVI surface. Small positive a/sigma with rho=m=0 keeps the variance
-// strictly positive and the forward non-zero, dodging EZeroVariance / EZeroForward.
-// Pushed once per oracle right after activate; afterwards we only stream prices.
-const SVI = { a: usd1e9(0.04), b: usd1e9(0.1), sigma: usd1e9(0.6) };
+// Flat SVI surface calibrated to IMPLIED_VOL (the move the option is priced for over a round). With
+// rho=m=0 the total variance is w(k) = a + b*sqrt(k^2 + sigma^2); sigma dwarfs our ~+-12% strike
+// range, so w stays ~= a + b*sigma = IMPLIED_VOL^2, flat across the strikes we actually trade. `a`
+// is the variance floor that keeps w strictly positive (dodges EZeroVariance / EZeroForward). Pushed
+// once per oracle right after activate; afterwards we only stream prices. The magnitude is the whole
+// game: the old 0.04/0.1/0.6 was w=0.10 (~31.6% vol), ~50x the realized move, so binaries barely
+// twitched and the big multipliers sat unreachably far OTM. See IMPLIED_VOL in main-config.
+const W0 = IMPLIED_VOL * IMPLIED_VOL; // ATM total variance to expiry
+const SVI_SIGMA = 0.6; // smoothing width, >> our strike range so the surface is flat where we trade
+const SVI = {
+  a: usd1e9(W0 * 0.5),
+  b: usd1e9((W0 * 0.5) / SVI_SIGMA),
+  sigma: usd1e9(SVI_SIGMA),
+};
 
 // === Oracle lifecycle (PTB builders) ===
 

@@ -80,14 +80,65 @@ const strikeIndexer = (grid: Grid, side: 'up' | 'down') => {
   return { lastIdx, strikeAt };
 };
 
-// Price the whole grid densely in ONE devInspect. The result is cacheable per (oracle, side).
-export async function scanGrid(grid: Grid, side: 'up' | 'down', preview: BatchPreviewFn, probeArg?: bigint): Promise<ScanCurve> {
+// Where the dense scan starts, as a fraction of the half-grid each side of ATM. The on-chain strike
+// grid is far wider than the band that actually prices: a 30s round only quotes within a few percent
+// of spot, while the grid spans ~±20%. The deep-ITM/-OTM extremes saturate the fair price to exactly
+// $1/$0, which aborts the per-strike quote (quote_spread_from_fair_price), and a devInspect aborts
+// the WHOLE batch, so a single saturating strike kills the scan. 12% covers every tier (the 25x edge
+// sits well inside) while usually clearing the saturation in one pass.
+const SCAN_HALF_FRAC = 0.12;
+const SCAN_SHRINK = 0.6; // on a saturation abort, pull the window this much toward ATM and retry
+
+// The grid index whose strike is nearest the live spot (ATM), per side. Centering the scan here, not
+// at the grid midpoint, is what makes it robust: the grid is built centered on spot at CREATION, but
+// spot drifts, so a midpoint-centered window can land entirely in the saturated (unquotable) deep
+// region and never recover. At ATM the fair price is ~0.5, always quotable.
+const atmIndex = (grid: Grid, side: 'up' | 'down', lastIdx: number, atm1e9: bigint): number => {
+  const raw = side === 'up' ? (atm1e9 - grid.min) / grid.tick - 1n : (grid.max - atm1e9) / grid.tick - 1n;
+  return Math.max(0, Math.min(lastIdx, Number(raw)));
+};
+
+// Price the grid densely in ONE devInspect. The result is cacheable per (oracle, side).
+//
+// Tries the WHOLE grid first: when every sampled strike quotes (a sanely sized grid, and every unit
+// test), that is one round trip and the original behavior. If a strike saturates and aborts the batch
+// (a grid far wider than the live quotable band, the production case), fall back to an ATM-centered
+// window that shrinks toward spot until it prices, keeping the unmintable extremes out of the curve.
+// atm1e9 is the live oracle spot; without it the window falls back to the grid midpoint.
+export async function scanGrid(grid: Grid, side: 'up' | 'down', preview: BatchPreviewFn, probeArg?: bigint, atm1e9?: bigint): Promise<ScanCurve> {
   const probe = probeArg ?? DUSDC_DECIMALS;
   const { lastIdx, strikeAt } = strikeIndexer(grid, side);
-  const idx = spread(DENSE_SAMPLES, 0, lastIdx);
-  const strikes = idx.map(strikeAt);
-  const amts = await preview(strikes.map((strike1e9) => ({ strike1e9, quantity: probe })));
-  return { probe, strikes, cost: amts.map((a) => (a && a.cost > 0n ? a.cost : null)) };
+
+  const scanWindow = async (lo: number, hi: number): Promise<ScanCurve> => {
+    const strikes = spread(DENSE_SAMPLES, lo, hi).map(strikeAt);
+    const amts = await preview(strikes.map((strike1e9) => ({ strike1e9, quantity: probe })));
+    return { probe, strikes, cost: amts.map((a) => (a && a.cost > 0n ? a.cost : null)) };
+  };
+
+  // With a live spot (the production path always supplies one) the grid is known to be far wider than
+  // the quotable band, so its extremes always saturate: go straight to the ATM window and skip the
+  // doomed full scan. Without a spot (a caller that hasn't measured one, and every unit test) scan the
+  // whole grid first and fall back to the window only if a strike actually saturates.
+  const hasSpot = atm1e9 != null && atm1e9 > 0n;
+  let lastErr: unknown;
+  if (!hasSpot) {
+    try {
+      return await scanWindow(0, lastIdx);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  const center = hasSpot ? atmIndex(grid, side, lastIdx, atm1e9 as bigint) : Math.floor(lastIdx / 2);
+  let half = Math.max(2, Math.floor(lastIdx * SCAN_HALF_FRAC));
+  for (let attempt = 0; attempt < 5 && half >= 2; attempt++) {
+    try {
+      return await scanWindow(Math.max(0, center - half), Math.min(lastIdx, center + half));
+    } catch (e) {
+      lastErr = e; // still hitting a saturating strike; pull the window in toward ATM and retry
+      half = Math.floor(half * SCAN_SHRINK);
+    }
+  }
+  throw lastErr ?? new Error('scanGrid: empty grid');
 }
 
 export async function solveStrike(args: {
@@ -98,6 +149,7 @@ export async function solveStrike(args: {
   preview: BatchPreviewFn;
   curve?: ScanCurve; // a cached scan for this (oracle, side); skips the scan round trip when fresh
   probe?: bigint;
+  atm1e9?: bigint; // live oracle spot, so the scan window centers on ATM (not the stale grid midpoint)
   analyticSize?: boolean; // size the quantity from the scan curve, skipping the sizing devInspect
 }): Promise<StrikeSolution> {
   const { grid, side, tierMultiplier, betRaw, preview } = args;
@@ -106,7 +158,7 @@ export async function solveStrike(args: {
   if (betRaw <= 0n) throw new Error('solveStrike: bet must be positive');
 
   // ---- Round 1: the dense scan (reuse a cached curve when the caller has a fresh one). ----
-  const curve = args.curve ?? (await scanGrid(grid, side, preview, probe));
+  const curve = args.curve ?? (await scanGrid(grid, side, preview, probe, args.atm1e9));
   const multAt = (c: bigint | null): number => (c && c > 0n ? multiplierOf(c, probe) : Infinity);
 
   // ---- Strike select (pure): the sampled strike whose multiple is closest to the tier among the
@@ -137,7 +189,7 @@ export async function solveStrike(args: {
   // overshoot aborts the mint and the caller re-resolves. This deletes a ~1.2s node round trip; the
   // reported multiple omits the position's own slippage (<0.1% at small stakes). ----
   if (args.analyticSize) {
-    const targetA = (betRaw * 95n) / 100n; // aim a hair under the bet
+    const targetA = (betRaw * 98n) / 100n; // aim just under the bet; the manager's funding buffer absorbs the rest
     let q = (probe * targetA) / bestPerUnit;
     if (q <= 0n) q = 1n;
     const entryCost = (bestPerUnit * q) / probe;
@@ -151,8 +203,8 @@ export async function solveStrike(args: {
   // pre-trade: the real mint, sized against the post-trade vault, costs a touch more, and the
   // manager is funded above the bet to absorb exactly that. The per-unit estimate may come from a
   // cached (slightly older) curve, but the sizing preview re-prices fresh, so entryCost is current. ----
-  const cap = (betRaw * 99n) / 100n; // selected pre-trade cost ceiling
-  const target = (betRaw * 95n) / 100n; // aim a little under so the largest candidate lands near the bet
+  const cap = (betRaw * 995n) / 1000n; // selected pre-trade cost ceiling (99.5%)
+  const target = (betRaw * 99n) / 100n; // aim just under so the largest candidate lands near the bet
   const q0 = (probe * target) / bestPerUnit;
   const factors = [0.9, 0.94, 0.97, 1.0, 1.03, 1.06].slice(0, SIZE_SAMPLES);
   const qs = factors.map((f) => {

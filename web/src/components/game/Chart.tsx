@@ -23,7 +23,8 @@ export type BandOverlay =
   | { lower: number; upper: number; locked: true }
 
 export interface ChartOverlays {
-  strike?: number
+  // Entry: a clean reference line at the price you got in, faded in when a round opens.
+  entry?: number
   band?: BandOverlay
   boxes?: ChartBox[]
 }
@@ -68,6 +69,12 @@ const PARTICLE_GRAV = 0.00018 // px/ms^2 gravity pulling sparks down
 const TAU = Math.PI * 2
 const TOP_PAD = 18
 const BOT_PAD = 18
+// Warm-up history: a synthetic walk drawn back across the window on the first tick, so a freshly
+// opened chart reads as a moving line instead of a flat bar. Cosmetic only (see seedHistory).
+const SEED_N = 32 // pre-roll points, matched to the ~1s tick cadence over the window
+const SEED_STEP_VOL = 0.0024 // per-step move size of the warm-up walk (fraction of price)
+const SEED_MOMENTUM = 0.62 // walk persistence, so it forms natural runs instead of pure jitter
+const SEED_MAX_DEV = 0.012 // clamp the warm-up's drift from the live price (never wanders far)
 
 type Point = { t: number; p: number }
 
@@ -75,6 +82,32 @@ function readColor(name: string): string {
   if (typeof window === 'undefined') return '#ffffff'
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
   return v || '#ffffff'
+}
+
+// Synthetic warm-up history anchored at the current price: an AR(1) walk (momentum + small noise)
+// read backward across the visible window, so a freshly opened chart shows a natural moving line
+// instead of a dead-flat baseline. Cosmetic only, the newest point is the live price and real ticks
+// replace the whole seed within WINDOW_MS. Returns points oldest-first (push order).
+function seedHistory(price: number, tNow: number): Point[] {
+  // prices[k] = synthetic price k steps back in time; prices[1] anchors at the live price so the
+  // warm-up joins the real leading edge seamlessly.
+  const prices = new Array<number>(SEED_N + 1)
+  prices[1] = price
+  let vel = (Math.random() - 0.5) * SEED_STEP_VOL
+  let cur = price
+  for (let k = 2; k <= SEED_N; k++) {
+    vel = vel * SEED_MOMENTUM + (Math.random() - 0.5) * SEED_STEP_VOL
+    cur = cur * (1 + vel)
+    const dev = (cur - price) / price
+    if (dev > SEED_MAX_DEV) cur = price * (1 + SEED_MAX_DEV)
+    else if (dev < -SEED_MAX_DEV) cur = price * (1 - SEED_MAX_DEV)
+    prices[k] = cur
+  }
+  const out: Point[] = []
+  for (let k = SEED_N; k >= 1; k--) {
+    out.push({ t: tNow - (k / SEED_N) * WINDOW_MS, p: prices[k] })
+  }
+  return out
 }
 
 export function Chart({ asset, overlays, height, className, onPrice, onError, onTap, degen = true }: ChartProps) {
@@ -91,6 +124,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
   // flat baseline is seeded exactly once (state in the effect closure would be stale and re-seed).
   const range = useRef<{ min: number; max: number }>({ min: 0, max: 1 })
   const bandFill = useRef(0) // 0 = right-zone (idle), 1 = full width (locked)
+  const entryReveal = useRef(0) // 0 -> 1 fade-in as the entry line appears on a new round
   const momDir = useRef<'up' | 'down' | 'flat'>('flat') // momentum-arrow state, hysteretic
   const lastTickP = useRef(0) // last raw tick, to detect momentum swings
   const shake = useRef(0) // 0..1 chart-shake intensity, decays each frame
@@ -135,6 +169,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
     points.current = []
     seeded.current = false
     bandFill.current = 0
+    entryReveal.current = 0
     lastTickP.current = 0
     shake.current = 0
     particles.current = []
@@ -202,7 +237,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       }
       consider(display.current)
       consider(target.current)
-      if (ov?.strike != null) consider(ov.strike)
+      if (ov?.entry != null) consider(ov.entry)
       if (band) {
         consider(band.lower)
         consider(band.upper)
@@ -260,6 +295,9 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       const fillTarget = ov?.band?.locked ? 1 : 0
       if (continuous) bandFill.current += (fillTarget - bandFill.current) * FILL_SMOOTH
       else bandFill.current = fillTarget
+      const entryTarget = ov?.entry != null ? 1 : 0
+      if (continuous) entryReveal.current += (entryTarget - entryReveal.current) * FILL_SMOOTH
+      else entryReveal.current = entryTarget
 
       ctx.clearRect(0, 0, w, h)
 
@@ -273,7 +311,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       }
 
       // Overlays sit under the line.
-      drawOverlays(ctx, ov, band, { w, nowX, fill: bandFill.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
+      drawOverlays(ctx, ov, band, { w, nowX, fill: bandFill.current, entryReveal: entryReveal.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
 
       // Build the visible line. Continuous: x by real time. Reduced: x by index step.
       const yDisp = y(display.current)
@@ -406,17 +444,24 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       const tNow = performance.now()
       if (!seeded.current) {
         seeded.current = true
-        // First price seeds the view so the line starts flat instead of sweeping in.
-        display.current = p
-        range.current = { min: p * 0.999, max: p * 1.001 }
-        // Backfill a flat baseline at the current price across the visible window so the chart
-        // reads as a line from the first tick, not a lone dot while ~1s ticks accrue. Honest:
-        // it is the live price held flat (no fabricated movement); real ticks scroll in over it
-        // and the seed is gone within WINDOW_MS.
-        const SEED_N = 32
-        for (let i = SEED_N; i >= 1; i--) {
-          points.current.push({ t: tNow - (i / SEED_N) * WINDOW_MS, p })
+        // Warm-up history: a synthetic walk anchored at the live price, drawn back across the
+        // window so a freshly opened chart shows a natural moving line instead of a flat bar.
+        // The leading edge is the real price, real ticks scroll in over it, and the whole seed
+        // clears within WINDOW_MS. No real or settlement data is fabricated.
+        const seedPts = seedHistory(p, tNow)
+        let lo = p
+        let hi = p
+        for (const sp of seedPts) {
+          if (sp.p < lo) lo = sp.p
+          if (sp.p > hi) hi = sp.p
+          points.current.push(sp)
         }
+        // Open already fitted to the seed's extent, so the frame doesn't zoom out over the first
+        // frames as the eased range catches up to the wiggle.
+        const center = (lo + hi) / 2
+        const half = Math.max(((hi - lo) / 2) * PAD, p * MIN_HALF_PCT)
+        display.current = p
+        range.current = { min: center - half, max: center + half }
         setHasData(true)
       }
       // Momentum swing -> degen shake + spark burst (color follows the move's direction).
@@ -467,9 +512,9 @@ function drawOverlays(
   ctx: CanvasRenderingContext2D,
   ov: ChartOverlays | undefined,
   band: { lower: number; upper: number } | null,
-  ctxv: { w: number; nowX: number; fill: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
+  ctxv: { w: number; nowX: number; fill: number; entryReveal: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
 ) {
-  const { w, nowX, fill, price, locked, y, C } = ctxv
+  const { w, nowX, fill, entryReveal, price, locked, y, C } = ctxv
 
   if (band) {
     const top = y(band.upper)
@@ -505,16 +550,24 @@ function drawOverlays(
     ctx.restore()
   }
 
-  if (ov?.strike != null) {
-    const ys = y(ov.strike)
-    ctx.strokeStyle = withAlpha(C.brand, 0.7)
+  if (ov?.entry != null && entryReveal > 0.01) {
+    const ys = y(ov.entry)
+    const a = entryReveal
+    // A clean solid reference at the price you got in. Neutral white (amber stays the live "now"
+    // dot), faded in on entry so it reads as "you entered here", not permanent chart furniture.
+    ctx.strokeStyle = withAlpha(C.text, 0.42 * a)
     ctx.lineWidth = 1
-    ctx.setLineDash([5, 5])
     ctx.beginPath()
     ctx.moveTo(0, ys)
     ctx.lineTo(w, ys)
     ctx.stroke()
-    ctx.setLineDash([])
+    ctx.save()
+    ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    ctx.fillStyle = withAlpha(C.text, 0.85 * a)
+    ctx.fillText(`ENTRY ${formatPrice(ov.entry)}`, 4, ys - 8)
+    ctx.restore()
   }
 
   if (ov?.boxes?.length) {
