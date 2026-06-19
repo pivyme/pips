@@ -41,6 +41,13 @@ interface ConsoleCanvasProps {
   // front/back, and `theme` repaints the materials live. Mutually exclusive with debug.
   customize?: boolean
   theme?: ConsoleTheme
+  // Asset export (dev only): builds on customize (transparent bg, screen off) but freezes the device
+  // dead front-on with no intro/float, and keeps the drawing buffer readable so the canvas can be
+  // grabbed as a PNG. Used by the /export route to dump one transparent png per skin.
+  exportMode?: boolean
+  // Export pose in radians: x = pitch (tilt up/down), y = yaw (spin left/right). Lets the export route
+  // angle the device off dead front-on. Live applied, no scene rebuild.
+  exportRot?: { x: number; y: number }
   // Done sequence: flip `outro` true and the device snaps front-on to the exact game position with
   // the screen black, then `onOutroComplete` fires (the studio commits + leaves, and the game fades
   // its own screen content in).
@@ -48,7 +55,7 @@ interface ConsoleCanvasProps {
   onOutroComplete?: () => void
 }
 
-export default function ConsoleCanvas({ view, handlers, onNav, children, debug = false, customize = false, theme, outro = false, onOutroComplete }: ConsoleCanvasProps) {
+export default function ConsoleCanvas({ view, handlers, onNav, children, debug = false, customize = false, theme, outro = false, onOutroComplete, exportMode = false, exportRot }: ConsoleCanvasProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hintRef = useRef<HTMLDivElement>(null)
@@ -65,6 +72,8 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
   const applyThemeRef = useRef<(t?: ConsoleTheme) => void>(() => { })
   // And for the Done outro: the [outro] effect arms the snap-to-screen + power-on sequence.
   const applyOutroRef = useRef<(on: boolean) => void>(() => { })
+  // Export sliders push the pose here without rebuilding the scene.
+  const applyExportRotRef = useRef<(x: number, y: number) => void>(() => { })
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -74,7 +83,9 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     const CREAM = 0xe9dbbf, RED = 0xd63a2e, BLUE = 0x3568c9, YELLOW = 0xefc03b
 
     /* renderer */
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
+    // preserveDrawingBuffer lets the export route read the canvas as a PNG after a render. It carries a
+    // small perf cost, so only the dev export path turns it on; live play renders on demand without it.
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: exportMode })
     renderer.setClearColor(0x000000, 0)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.shadowMap.enabled = true
@@ -880,9 +891,12 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     // tiltX/tiltZ = pitch/roll sway (radians). Set any to 0 to drop that axis.
     const FLOAT = { speed: 1.5, bob: 0.15, tiltX: 0.07, tiltZ: 0.05 }
     let floatPhase = 0 // drives the studio idle float
-    let introT = customize ? 0 : 1 // 0 → start, 1 → settled
+    let introT = customize && !exportMode ? 0 : 1 // 0 → start, 1 → settled (export skips the intro)
     let orbitYaw = 0 // persists, so you can park it facing back
     let orbitPitch = 0 // eases back to level on release
+    // Export pose, driven by the /export sliders (radians). Front-on at 0.
+    let exportPitch = exportRot?.x ?? 0
+    let exportYaw = exportRot?.y ?? 0
     let orbitDrag = false
     let orbitStartX = 0, orbitStartY = 0, orbitBaseYaw = 0, orbitBasePitch = 0
     // Done outro: 0 → product shot, 1 → snapped front-on with the screen lit.
@@ -904,6 +918,19 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
     }
 
     function placeCustomizeCamera() {
+      if (exportMode) {
+        // Front-on by default, device contained by height, no float. A hair of margin off the rim.
+        // exportPitch/Yaw spin the deck in place so the export route can angle the device.
+        const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
+        const cy = wy(1130)
+        const frontZ = (11.95 * 0.5) / tanHalf * 1.04 + DEVICE_Z
+        camera.position.set(0, cy, frontZ * custCam.zoom)
+        camera.lookAt(0, cy, 0)
+        deck.rotation.set(exportPitch, exportYaw, 0)
+        // The solid back shows once the device is angled enough that its rim would otherwise gap.
+        backPanel.visible = Math.abs(exportYaw) > 0.25 || Math.abs(exportPitch) > 0.25
+        return
+      }
       const e = easeOutExpo(introT)
       let lookY = lerp(CUST.lookY[0], CUST.lookY[1], e)
       let camZ = lerp(CUST.camZ[0], CUST.camZ[1], e) * custCam.zoom
@@ -931,6 +958,13 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       // Keep the solid back on through the whole spin and only drop it once we're basically front-on,
       // so it doesn't pop while the device is still angled. By then it's occluded anyway.
       backPanel.visible = !outroActive || easeInOutCubic(outroT) < 0.9
+    }
+
+    applyExportRotRef.current = (x: number, y: number) => {
+      exportPitch = x
+      exportYaw = y
+      placeCustomizeCamera()
+      dirty = true
     }
 
     applyOutroRef.current = (on: boolean) => {
@@ -1254,7 +1288,7 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
       const dt = Math.min(clock.getDelta(), 0.05)
       let animating = false
 
-      if (customize) {
+      if (customize && !exportMode) {
         // Idle float: a slow sine bob plus a gentle tilt sway so the hero shot feels alive. The axes
         // run at offset rates so it never looks mechanical. Eases out during the Done snap so it
         // doesn't fight the front framing. Keeps the loop painting while the studio is open.
@@ -1374,6 +1408,11 @@ export default function ConsoleCanvas({ view, handlers, onNav, children, debug =
   useEffect(() => {
     applyOutroRef.current(outro)
   }, [outro])
+
+  // Push the export pose into the scene when the sliders move.
+  useEffect(() => {
+    if (exportRot) applyExportRotRef.current(exportRot.x, exportRot.y)
+  }, [exportRot])
 
   return (
     <div
