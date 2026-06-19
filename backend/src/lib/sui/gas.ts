@@ -8,7 +8,8 @@ import { Transaction } from '@mysten/sui/transactions';
 import { suiClient } from './client.ts';
 import { executeAsOperator } from './execute.ts';
 import { operatorAddress } from './signer.ts';
-import { GAS_FUND_SUI, GAS_MIN_SUI } from '../../config/main-config.ts';
+import { SPONSOR_ENABLED, sponsorAddress } from './sponsor.ts';
+import { GAS_FUND_SUI, GAS_MIN_SUI, SPONSOR_MIN_SUI, SPONSOR_TOPUP_SUI } from '../../config/main-config.ts';
 
 const SUI_TYPE = '0x2::sui::SUI';
 const MIST_PER_SUI = 1_000_000_000n;
@@ -18,6 +19,9 @@ const toMist = (sui: number): bigint => BigInt(Math.round(sui * Number(MIST_PER_
 
 // The refill floor in MIST: top up whenever a user's SUI dips below this.
 export const GAS_MIN_RAW = toMist(GAS_MIN_SUI);
+
+// The sponsor's refill floor in MIST.
+const SPONSOR_MIN_RAW = toMist(SPONSOR_MIN_SUI);
 
 // Read an address's SUI balance in MIST.
 export async function getSuiBalanceRaw(owner: string): Promise<bigint> {
@@ -53,4 +57,25 @@ export async function ensureSuiGas(address: string, funded: boolean): Promise<bo
     await fundSui(address);
   }
   return false;
+}
+
+// Keep the gas sponsor able to pay for user plays. Idempotent, operator-driven: the operator
+// deposits SUI into the sponsor's ADDRESS BALANCE via 0x2::coin::send_funds, which is where the
+// empty-payment sponsored gas is drawn from (getBalance.totalBalance includes that balance). The
+// operator pays its own gas for the deposit, so the sponsor needs zero SUI to bootstrap, its key
+// only ever co-signs user plays. A no-op when sponsorship is off. Safe to call on every boot.
+export async function ensureSponsorFunded(): Promise<void> {
+  if (!SPONSOR_ENABLED) return;
+  if ((await getSuiBalanceRaw(sponsorAddress)) >= SPONSOR_MIN_RAW) return;
+
+  const tx = new Transaction();
+  const coin = tx.splitCoins(tx.gas, [tx.pure.u64(toMist(SPONSOR_TOPUP_SUI))]);
+  // send_funds credits the coin into the recipient's SUI address balance (the accumulator).
+  tx.moveCall({
+    target: '0x2::coin::send_funds',
+    typeArguments: [SUI_TYPE],
+    arguments: [coin, tx.pure.address(sponsorAddress)],
+  });
+  await executeAsOperator(tx, 'fundSponsor');
+  console.log(`[sponsor] deposited ${SPONSOR_TOPUP_SUI} SUI into ${sponsorAddress} address balance`);
 }

@@ -221,7 +221,7 @@ export type ResolvedBinary = {
   strikeDisplay: string;
   entryCost: bigint;
   maxPayout: bigint; // settled ITM payout = quantity ($1 per contract)
-  multiplier: number; // the REAL solved multiple from the live preview (what the UI shows)
+  multiplier: number; // payout / entry cost = 1/ask, the live on-chain odds the position pays (what the UI shows)
   seed: string;
 };
 
@@ -237,7 +237,7 @@ export type ResolvedRange = {
   duration: number;
   entryCost: bigint;
   maxPayout: bigint;
-  multiplier: number;
+  multiplier: number; // payout / entry cost = 1/ask, the live on-chain odds the band pays
 };
 
 export type Resolved = ResolvedBinary | ResolvedRange;
@@ -277,7 +277,7 @@ export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
       const cacheKey = `${market.oracleId}:${side}`;
       const t0 = now();
       const curve = getFreshCurve(cacheKey, t0);
-      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve });
+      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve, analyticSize: true });
       if (!curve) putCurve(cacheKey, solution.curve, t0);
       if (solution.clamped) {
         // Dealt tier was past the live ask bounds; we minted the closest achievable one and report it.

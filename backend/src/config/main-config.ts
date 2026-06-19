@@ -56,9 +56,31 @@ export const STARTING_BALANCE: number = Number(process.env.PIPS_STARTING_BALANCE
 
 // Free SUI for gas on localnet. The operator funds each user once at onboarding (so a privy
 // user can pay their own play gas) and tops up whenever the balance dips below the floor, so
-// nobody ever gets stuck. SUI is effectively infinite on localnet, so these are generous.
-export const GAS_FUND_SUI: number = Number(process.env.PIPS_GAS_FUND_SUI) || 1;
-export const GAS_MIN_SUI: number = Number(process.env.PIPS_GAS_MIN_SUI) || 0.2;
+// nobody ever gets stuck. SUI is effectively infinite on localnet, so these are generous. The
+// floor sits above PLAY_GAS_BUDGET so an unsponsored play (sponsorship off) is always affordable;
+// under sponsorship the sponsor pays and a user needs no SUI at all.
+export const GAS_FUND_SUI: number = Number(process.env.PIPS_GAS_FUND_SUI) || 2;
+export const GAS_MIN_SUI: number = Number(process.env.PIPS_GAS_MIN_SUI) || 0.6;
+
+// Pinned gas budget for a user play (MIST). Letting tx.build size the budget itself triggers a full
+// dryRunTransactionBlock, a ~0.5-1s node round trip; pinning a generous, always-affordable budget
+// skips it (measured: sponsored build 1.13s -> 0.64s). A real Predict mint's GROSS gas is ~0.21 SUI
+// (storage-heavy, almost all rebated same-tx), so 0.5 SUI covers mint+deposit with headroom while
+// staying under the funded floor above. Sponsored, it is drawn from the sponsor (~500 SUI). Free localnet.
+export const PLAY_GAS_BUDGET: bigint = BigInt(process.env.PIPS_PLAY_GAS_BUDGET || 500_000_000);
+
+// Gas sponsorship (privy mode). One dedicated wallet pays the gas for every user play, so a user
+// only ever holds DUSDC and never thinks about SUI. The play tx names this wallet as the gas OWNER
+// with an EMPTY gas payment, so gas is drawn from its SUI address balance (Sui's accumulator), not
+// an owned gas coin. With no owned gas coin in the tx, concurrent plays from different users share
+// zero owned objects and can never equivocate, which is what keeps it stable under load. Empty key
+// = sponsorship off (the app falls back to the per-user SUI funding above). The operator seeds and
+// tops up the sponsor balance from its own free localnet SUI.
+export const GAS_SPONSORSHIP_WALLET_PK: string = process.env.GAS_SPONSORSHIP_WALLET_PK || '';
+// When the sponsor's SUI dips below MIN, the operator deposits TOPUP more into its address balance.
+// Generous: localnet SUI is free and storage rebates flow back into the sponsor balance.
+export const SPONSOR_MIN_SUI: number = Number(process.env.PIPS_SPONSOR_MIN_SUI) || 50;
+export const SPONSOR_TOPUP_SUI: number = Number(process.env.PIPS_SPONSOR_TOPUP_SUI) || 500;
 
 // Demo override, OFF by default. When set to a valid leverage bucket (2/5/10/25/100), I Feel
 // Lucky forces that bucket instead of the fair RNG draw so a rehearsed demo reliably lands a
@@ -167,6 +189,10 @@ export default {
   STARTING_BALANCE,
   GAS_FUND_SUI,
   GAS_MIN_SUI,
+  PLAY_GAS_BUDGET,
+  GAS_SPONSORSHIP_WALLET_PK,
+  SPONSOR_MIN_SUI,
+  SPONSOR_TOPUP_SUI,
   OPERATOR_ENABLED,
   PRICE_PUSH_CRON,
   ORACLE_ROLL_CRON,

@@ -11,6 +11,7 @@ import { prismaQuery } from '../lib/prisma.ts';
 import { AUTH_MODE, JWT_SECRET, JWT_EXPIRES_IN, STARTING_BALANCE } from '../config/main-config.ts';
 import { mintDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { ensureSuiGas } from '../lib/sui/gas.ts';
+import { SPONSOR_ENABLED } from '../lib/sui/sponsor.ts';
 import { executeAsOperator, executeForUser } from '../lib/sui/execute.ts';
 import { buildCreateManager, getManagerBalanceRaw } from '../lib/sui/predict.ts';
 import { fromDusdcRaw } from '../lib/sui/config.ts';
@@ -74,9 +75,10 @@ export async function ensureUser(params: EnsureUserParams): Promise<User> {
     user = await prismaQuery.user.update({ where: { id: user.id }, data: { dusdcFunded: true } });
   }
 
-  // Free SUI for gas: fund once, then top up below the floor so a user can always pay their own
-  // play gas (privy plays are user-signed). A no-op in dev mode where the operator signs.
-  if (await ensureSuiGas(address, user.suiGasFunded)) {
+  // Free SUI for gas, ONLY when gas sponsorship is off. With a sponsor, every play is paid from the
+  // sponsor's address balance, so users never hold SUI. Without one, fund each user once then top up
+  // below the floor so they can pay their own play gas. Always a no-op in dev mode (operator signs).
+  if (!SPONSOR_ENABLED && (await ensureSuiGas(address, user.suiGasFunded))) {
     user = await prismaQuery.user.update({ where: { id: user.id }, data: { suiGasFunded: true } });
   }
 

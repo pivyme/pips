@@ -16,7 +16,7 @@ export function evaluateMetrics(stats: UserStats, plays: Play[]): Record<string,
   const distinctGames = new Set(settled.map((p) => p.game)).size;
   const cashouts = settled.filter((p) => p.status === 'cashed_out' && (p.pnl ?? 0n) > 0n).length;
 
-  // Best realized multiple on a winning play (payout / entry cost).
+  // Best realized multiple on a winning play (payout / entry cost = 1/ask), matching the displayed multiplier.
   const bigMultiplier = settled.reduce((mx, p) => {
     if ((p.pnl ?? 0n) <= 0n || p.entryCost <= 0n || p.payout == null) return mx;
     return Math.max(mx, Number(p.payout) / Number(p.entryCost));

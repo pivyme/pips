@@ -2,7 +2,7 @@ import './dotenv.ts';
 
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import FastifyCors from '@fastify/cors';
-import { APP_PORT, IS_PROD, ALLOWED_ORIGIN } from './src/config/main-config.ts';
+import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, OPERATOR_ENABLED } from './src/config/main-config.ts';
 
 // Routes
 import { exampletRoute } from './src/routes/exampleRoutes.ts';
@@ -16,6 +16,9 @@ import { startErrorLogCleanupWorker } from './src/workers/errorLogCleanup.ts';
 import { startPricePusher } from './src/workers/price-pusher.ts';
 import { startOracleRoll } from './src/workers/oracle-roll.ts';
 import { startSettleWorker } from './src/workers/settle.ts';
+
+// Gas sponsor funding (operator-driven, seeds the sponsor's SUI address balance)
+import { ensureSponsorFunded } from './src/lib/sui/gas.ts';
 
 console.log(
   '======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n'
@@ -54,6 +57,18 @@ const start = async (): Promise<void> => {
   try {
     // Start workers
     startErrorLogCleanupWorker();
+
+    // Gas sponsor: the operator seeds/tops up the sponsor's SUI address balance so every privy play
+    // is gasless for the user. Behind OPERATOR_ENABLED so only the leader funds it. Best-effort:
+    // warn and continue (a non-sponsored or already-funded backend just no-ops).
+    if (OPERATOR_ENABLED) {
+      try {
+        await ensureSponsorFunded();
+      } catch (e) {
+        console.warn('[sponsor] boot funding failed (plays may fail until funded):', e instanceof Error ? e.message : e);
+      }
+    }
+
     // Predict operator: roll the oracle ladder, keep prices fresh, settle expiries.
     // All three no-op unless PIPS_OPERATOR_ENABLED=true (they spend testnet gas).
     startOracleRoll();

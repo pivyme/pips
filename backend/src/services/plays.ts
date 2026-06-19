@@ -280,11 +280,14 @@ async function finalizeCashout(play: Play, payoutRaw: bigint, digest: string): P
 
 // === Expiry settlement (worker) ===
 
+// Mirror the on-chain settlement exactly (oracle::compute_price): UP pays iff settlement > strike,
+// so DOWN (its complement) pays iff settlement <= strike. The `<=` matters only at the exact tie,
+// but using `<` there records a loss while the chain pays, stranding the redeem.
 const isItm = (key: PlayKey, settlement1e9: bigint): boolean =>
   key.kind === 'binary'
     ? key.params.side === 'up'
       ? settlement1e9 > key.params.strike1e9
-      : settlement1e9 < key.params.strike1e9
+      : settlement1e9 <= key.params.strike1e9
     : settlement1e9 > key.params.lower1e9 && settlement1e9 <= key.params.higher1e9;
 
 // Settle every open play whose oracle has settled. Reads the oracle directly so it works

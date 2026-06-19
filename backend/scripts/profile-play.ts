@@ -16,7 +16,7 @@ import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { JWT_SECRET, APP_PORT, SUI_FULLNODE_URL } from '../src/config/main-config.ts';
 import { prismaQuery } from '../src/lib/prisma.ts';
 import { suiClient } from '../src/lib/sui/client.ts';
-import { NETWORK, PREDICT_ID, CLOCK, DUSDC_TYPE, target } from '../src/lib/sui/config.ts';
+import { NETWORK, PREDICT_ID, CLOCK, target } from '../src/lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../src/lib/sui/dusdc.ts';
 import { getManagerBalanceRaw, readOracle, previewBinaryBatch, buildMint, type Side } from '../src/lib/sui/predict.ts';
 import { signSuiTxWithPrivy } from '../src/lib/sui/privy.ts';
@@ -87,8 +87,8 @@ const managerId = user.predictManagerId!;
 const oracle = await readOracle(oracleId);
 console.log(`Live oracle ${oracleId.slice(0, 10)}…  asset=${oracle?.underlying}  side=${side}  expiry in ${((expiryMs - Date.now()) / 1000).toFixed(0)}s\n`);
 
-// 128 dense scan probes + 6 sizing probes (mirrors the solver's two devInspects).
-const tick = oracle ? 0n : 0n; // strikes near the play's strike; mintability is irrelevant to latency
+// 128 dense scan probes + 6 sizing probes (mirrors the solver's two devInspects). Strikes near the
+// play's strike; mintability is irrelevant to the latency we measure.
 const scanProbes = Array.from({ length: 128 }, (_, i) => ({ strike1e9: strike1e9 + BigInt(i - 64) * 200_000_000n, quantity: 1_000_000n }));
 const sizeProbes = Array.from({ length: 6 }, (_, i) => ({ strike1e9, quantity: BigInt(900 + i * 30) * 1000n }));
 

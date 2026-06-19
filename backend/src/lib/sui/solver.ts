@@ -98,6 +98,7 @@ export async function solveStrike(args: {
   preview: BatchPreviewFn;
   curve?: ScanCurve; // a cached scan for this (oracle, side); skips the scan round trip when fresh
   probe?: bigint;
+  analyticSize?: boolean; // size the quantity from the scan curve, skipping the sizing devInspect
 }): Promise<StrikeSolution> {
   const { grid, side, tierMultiplier, betRaw, preview } = args;
   const probe = args.curve?.probe ?? args.probe ?? DUSDC_DECIMALS; // 1.0 contract, the per-unit price probe
@@ -128,6 +129,21 @@ export async function solveStrike(args: {
   const bestPerUnit = curve.cost[best] as bigint;
   const bestMul = multAt(bestPerUnit);
   const clamped = Math.abs(bestMul - tierMultiplier) > tierMultiplier * CLAMP_TOLERANCE;
+
+  // ---- Round 2 (analytic): size from the chosen strike's per-unit cost, no sizing devInspect. Cost
+  // is near-linear in quantity for small size, so q = target/perUnit lands the entry near the bet,
+  // and entryCost/multiple come straight off the (fresh or <=3s cached) curve. The real mint prices
+  // post-trade (a touch higher); the manager is funded above the bet to absorb it, and a rare
+  // overshoot aborts the mint and the caller re-resolves. This deletes a ~1.2s node round trip; the
+  // reported multiple omits the position's own slippage (<0.1% at small stakes). ----
+  if (args.analyticSize) {
+    const targetA = (betRaw * 95n) / 100n; // aim a hair under the bet
+    let q = (probe * targetA) / bestPerUnit;
+    if (q <= 0n) q = 1n;
+    const entryCost = (bestPerUnit * q) / probe;
+    const mult = multiplierOf(entryCost, q);
+    return { strike1e9: strike, quantity: q, entryCost, multiplier: mult, requestedTier: tierMultiplier, achievedTier: nearestTier(mult), clamped, curve };
+  }
 
   // ---- Round 2: size the quantity. Cost is near-linear in quantity, so estimate from the chosen
   // strike's per-unit cost, then batch a spread of candidates around it and take the largest whose

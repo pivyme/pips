@@ -1,15 +1,16 @@
 // Transaction execution. Operator txs (price pushes, oracle ops, DUSDC/SUI funding) sign with
 // the operator key. User plays split by AUTH_MODE: dev mode signs + submits with the operator
 // key (the backend IS the user); privy mode signs with the user's embedded ed25519 wallet via
-// Privy rawSign under a session signer, then submits. Both modes finalize server-side, no client
-// round trip and no sponsor envelope.
+// Privy rawSign under a session signer, then submits. In privy mode a dedicated gas sponsor
+// co-signs so the user pays no gas (sponsor.ts). Both modes finalize server-side, no client round trip.
 
 import { Transaction, SerialTransactionExecutor } from '@mysten/sui/transactions';
 
-import { AUTH_MODE } from '../../config/main-config.ts';
+import { AUTH_MODE, PLAY_GAS_BUDGET } from '../../config/main-config.ts';
 import { suiClient } from './client.ts';
 import { operatorKeypair } from './signer.ts';
 import { signSuiTxWithPrivy } from './privy.ts';
+import { SPONSOR_ENABLED, applySponsorGas, signAsSponsor } from './sponsor.ts';
 
 export type ExecResult = {
   digest: string;
@@ -50,9 +51,9 @@ export async function executeAsOperator(tx: Transaction, label: string): Promise
 }
 
 // Cache the network's reference gas price (per-epoch, near-constant on localnet). Setting it on the
-// tx lets tx.build skip its own getReferenceGasPrice round trip. We deliberately do NOT pin the gas
-// budget: a Predict mint's GROSS storage cost (~0.21 SUI before rebate) sits close to the user's SUI
-// funding floor, so the build-time dry-run that sizes the budget to the real cost has to stay.
+// tx lets tx.build skip its own getReferenceGasPrice round trip. We also pin the gas budget
+// (PLAY_GAS_BUDGET) so build skips its gas-sizing dry-run round trip: a mint's gross gas is ~0.21 SUI,
+// well under the pinned 0.5, and under sponsorship the storage rebate just credits the sponsor.
 let gasPriceCache: { price: bigint; at: number } | null = null;
 async function refGasPrice(): Promise<bigint> {
   const now = Date.now();
@@ -89,11 +90,19 @@ export async function executeForUser(tx: Transaction, ctx: UserContext): Promise
   }
   tx.setSender(ctx.address);
   tx.setGasPrice(await refGasPrice()); // skip build's own reference-gas-price round trip
+  // Gas sponsorship: name the sponsor as gas owner with an empty payment, so gas is drawn from the
+  // sponsor's SUI address balance and the user needs zero SUI. The sponsor co-signs the same bytes
+  // below. Off (no sponsor key) leaves the user as their own gas payer (funded at onboarding).
+  if (SPONSOR_ENABLED) applySponsorGas(tx);
+  tx.setGasBudget(PLAY_GAS_BUDGET); // pin a generous budget so tx.build skips its gas-sizing dry-run (~0.5s)
   // Hard timeouts so a stalled node/Privy connection surfaces a clean error instead of leaving the
   // play pending forever. Build/sign make no chain change. Submit is given more room and its timeout
   // is deliberately not retried upstream (the tx could still land, so a retry could double-mint).
   const txBytes = await withTimeout(tx.build({ client: suiClient }), 15_000, 'tx build');
-  const signature = await withTimeout(signSuiTxWithPrivy({ walletId: ctx.walletId, publicKey: ctx.publicKey, txBytes }), 15_000, 'privy sign');
+  const userSig = await withTimeout(signSuiTxWithPrivy({ walletId: ctx.walletId, publicKey: ctx.publicKey, txBytes }), 15_000, 'privy sign');
+  // A sponsored tx carries both signatures (sender first, then gas owner); signAsSponsor is a local
+  // ed25519 sign with no network. Unsponsored submits the single user signature.
+  const signature = SPONSOR_ENABLED ? [userSig, await signAsSponsor(txBytes)] : userSig;
 
   const res = await withTimeout(
     suiClient.executeTransactionBlock({
