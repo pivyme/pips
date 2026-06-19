@@ -39,12 +39,16 @@ export const SUI_FULLNODE_URL: string = process.env.SUI_FULLNODE_URL || '';
 export const TESTING_WALLET_PK: string = process.env.TESTING_WALLET_PK || '';
 export const PYTH_HERMES_URL: string = process.env.PYTH_HERMES_URL || 'https://hermes.pyth.network';
 
-// Privy (privy mode only). App id + secret authenticate the server SDK; the authorization key
-// is the session-signer private key the user delegated to, used to sign their plays server-side.
-// The JWT verification key is optional, set it to skip Privy's per-verify network fetch.
+// Privy (privy mode only). App id + secret authenticate the server SDK. The authorization key is
+// the app's session-signer key the user delegates to at login: its private key (P-256 PKCS8, with
+// or without the `wallet-auth:` prefix) signs each wallet API request so the server can rawSign the
+// user's plays with no popup, and its key-quorum id provisions/owns server-managed wallets (the
+// same id the web client grants via VITE_PRIVY_SESSION_SIGNER_ID). The JWT verification key is
+// optional, set it to skip Privy's per-verify network fetch.
 export const PRIVY_APP_ID: string = process.env.PRIVY_APP_ID || '';
 export const PRIVY_APP_SECRET: string = process.env.PRIVY_APP_SECRET || '';
-export const PRIVY_AUTHORIZATION_KEY: string = process.env.PRIVY_AUTHORIZATION_KEY || '';
+export const PRIVY_AUTHORIZATION_KEY_ID: string = process.env.PRIVY_AUTHORIZATION_KEY_ID || '';
+export const PRIVY_AUTHORIZATION_PRIVATE_KEY: string = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY || '';
 export const PRIVY_JWT_VERIFICATION_KEY: string = process.env.PRIVY_JWT_VERIFICATION_KEY || '';
 
 // Free DUSDC starting balance per new user, in display units (6dp DUSDC).
@@ -138,7 +142,8 @@ export default {
   TESTING_WALLET_PK,
   PRIVY_APP_ID,
   PRIVY_APP_SECRET,
-  PRIVY_AUTHORIZATION_KEY,
+  PRIVY_AUTHORIZATION_KEY_ID,
+  PRIVY_AUTHORIZATION_PRIVATE_KEY,
   PRIVY_JWT_VERIFICATION_KEY,
   PYTH_HERMES_URL,
   STARTING_BALANCE,
