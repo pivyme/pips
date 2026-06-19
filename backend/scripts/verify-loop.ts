@@ -48,15 +48,16 @@ import {
 import { executeAsOperator } from '../src/lib/sui/execute.ts';
 import { allMarkets, removeMarket, upsertMarket, getMarket, liveByAsset } from '../src/lib/sui/markets.ts';
 import { solveStrike } from '../src/lib/sui/solver.ts';
+import { PlayError } from '../src/services/games.ts';
 import { ensureUser } from '../src/services/auth.ts';
 import { createPlay, cashoutPlay, getLiveMarkRaw, settleDuePlays, playableBalanceRaw } from '../src/services/plays.ts';
-import type { User } from '../prisma/generated/client.js';
+import type { User, Play } from '../prisma/generated/client.js';
 import { prismaQuery } from '../src/lib/prisma.ts';
 import { toDusdcRaw } from '../src/lib/sui/math.ts';
 
 const ASSETS = ['BTC', 'SUI', 'ETH'] as const;
 const LONG_MS = 600_000; // working-oracle life: roomy so a slow remote create->activate never races expiry
-const SHORT_MS = 45_000; // settle-test oracle: room for the solve+mint over a slow remote node, then settles in seconds
+const SHORT_MS = 60_000; // settle-test oracle: room for the solve+mint (and a freshness retry) over a slow remote node, then settles in seconds
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const dp = (asset: string): number => (asset === 'SUI' ? 4 : 2);
 
@@ -150,13 +151,20 @@ function startPusher(oracleId: string, asset: string): {
     if (stopped) return;
     try {
       await pushPrice(oracleId, target ?? (await fetchSpot(asset)));
-    } catch {
-      // a single missed tick is fine; the next one re-pushes
+    } catch (e) {
+      // A missed tick is usually fine (the next one re-pushes), but surface it: a run of
+      // failures here is the only way the oracle can go stale under the pusher.
+      console.log(`    [pusher ${oracleId.slice(0, 8)}] push failed: ${e instanceof Error ? e.message : e}`);
     }
   };
+  // Production cadence is a push every ~2s against a 30s on-chain freshness gate. Fire one
+  // immediately so the oracle never coasts on the stand-up push while the slow remote solver scans,
+  // then keep the chain saturated. A slow push tx just means the next link starts as soon as it lands,
+  // which is continuous pushing, the safest thing for freshness.
+  chain = chain.then(doPush);
   const timer = setInterval(() => {
     chain = chain.then(doPush);
-  }, 5_000);
+  }, 2_000);
   return {
     setPrice: (price) => {
       target = price;
@@ -168,6 +176,30 @@ function startPusher(oracleId: string, asset: string): {
       await chain;
     },
   };
+}
+
+// Place a Lucky play, retrying the clean "chips are safe" failure that the 30s on-chain freshness
+// gate (assert_live_oracle, oracle_config abort 6) throws when the slow remote solver scan outruns
+// the last price push. A real client retries the same way: re-arm the oracle with a fresh push, then
+// try again. The pusher already keeps it fresh; reArm is the extra synchronous push that guarantees
+// the next attempt starts well inside the gate.
+async function placeLuckyPlay(
+  user: User,
+  reArm: () => Promise<void>,
+  tries = 4,
+): Promise<Awaited<ReturnType<typeof createPlay>>> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await createPlay(user, { game: 'lucky', stake: 25 });
+    } catch (e) {
+      const code = e instanceof PlayError ? e.code : '';
+      const retriable = code === 'MINT_FAILED' || code === 'ORACLE_STALE' || code === 'MARKET_UNAVAILABLE';
+      if (!retriable || attempt >= tries) throw e;
+      console.log(`    [place] attempt ${attempt} hit ${code} (remote-node freshness race); re-arming oracle + retrying`);
+      await reArm();
+      await sleep(1200);
+    }
+  }
 }
 
 // Guard against a stale PredictManager id: if the DB row points at a manager that does not
@@ -197,6 +229,20 @@ async function vaultBalance(): Promise<number> {
 }
 
 const money = (raw: bigint): string => `$${(Number(raw) / 1_000_000).toFixed(2)}`;
+
+// Resilient live-mark read: the mark is a previewRedeem devInspect against the remote node, which
+// can transiently time out under load. The mark is deterministic, so retry the read a few times
+// rather than letting one flaky RPC call kill the proof.
+async function safeMark(row: Play): Promise<bigint> {
+  for (let i = 0; ; i++) {
+    try {
+      return await getLiveMarkRaw(row);
+    } catch (e) {
+      if (i >= 4) throw e;
+      await sleep(700);
+    }
+  }
+}
 
 // True spendable chips = wallet DUSDC + whatever sits in the PredictManager. Plays move money
 // between the two (the stake is deposited into the manager, mint debits it, redeem/settle
@@ -289,16 +335,21 @@ async function main(): Promise<void> {
   // the dealt oracle age out before the mint executes on a slow remote node).
   console.log('\n3a) Cash-out round trip (mint -> mark climbs -> redeem)');
   for (const m of allMarkets()) removeMarket(m.oracleId);
-  const btcOracle = await standUpOracle('BTC', await fetchSpot('BTC'), Date.now() + LONG_MS);
+  const btcSpot = await fetchSpot('BTC');
+  const btcOracle = await standUpOracle('BTC', btcSpot, Date.now() + LONG_MS);
   const before3a = await spendable(user);
-  // Run the price-pusher analog for the whole round trip: it keeps the oracle inside the 30s
-  // gate across the slow solve, mint, AND redeem. After the mint we retarget it to a favorable
-  // price so the live mark climbs while staying fresh, instead of a single push that ages out
-  // over the redeem's read round-trips on the remote node.
+  // Run the price-pusher analog for the whole round trip: it keeps the oracle inside the 30s gate
+  // across the slow solve, mint, AND redeem. Pin it to the spot we already fetched so each tick
+  // re-pushes a fixed fresh price with no Hermes round-trip (a slow Hermes call mid-solve is what
+  // lets the oracle age out under the rapid cadence). After the mint we retarget it to a favorable
+  // price so the live mark climbs while staying fresh.
   const pusher3a = startPusher(btcOracle, 'BTC');
+  pusher3a.setPrice(btcSpot);
   let created;
   try {
-    created = await createPlay(user, { game: 'lucky', stake: 25 });
+    created = await placeLuckyPlay(user, async () => {
+      await pushPrice(btcOracle, btcSpot);
+    });
   } catch (e) {
     await pusher3a.stop();
     throw e;
@@ -314,16 +365,23 @@ async function main(): Promise<void> {
   pass('mint tx on chain', Boolean(dto.txMint), dto.txMint ? explorerTxUrl(dto.txMint) : '');
 
   const playRow = await prismaQuery.play.findUniqueOrThrow({ where: { id: dto.id } });
-  const mark0 = await getLiveMarkRaw(playRow);
+  const mark0 = await safeMark(playRow);
   // Pin the price decisively into the money for the play's side (past both spot and the strike),
-  // like the price-pusher feeding a real move, so the live mark climbs before cash out. Favour
-  // is relative to spot, not the strike: a low-tier play can already be ITM, where nudging toward
-  // the strike would actually hurt the mark.
-  const spotNow = await fetchSpot(dto.market.asset);
-  const favorable = side === 'down' ? Math.min(spotNow, strike) * 0.97 : Math.max(spotNow, strike) * 1.03;
+  // like the price-pusher feeding a real move, so the live mark climbs before cash out. Favour is
+  // relative to the spot we already pinned the oracle to, not the strike: a low-tier play can already
+  // be ITM, where nudging toward the strike would actually hurt the mark. Reuse btcSpot so we do not
+  // add a flaky Hermes round-trip to the hot path.
+  const favorable = side === 'down' ? Math.min(btcSpot, strike) * 0.97 : Math.max(btcSpot, strike) * 1.03;
   pusher3a.setPrice(favorable);
-  await sleep(1500);
-  const mark1 = await getLiveMarkRaw(playRow);
+  // The favorable push is a real tx queued behind any in-flight pusher tick, and executeAsOperator
+  // skips waitForTransaction for throughput, so the new price lands on the read replica a few seconds
+  // later, not within a single fixed sleep. Poll the mark exactly as the live chart does: it climbs
+  // once the push propagates. The pusher keeps re-pinning the favorable target while we wait.
+  let mark1 = mark0;
+  for (let i = 0; i < 18 && mark1 <= mark0; i++) {
+    await sleep(800);
+    mark1 = await safeMark(playRow);
+  }
   pass('live mark climbed on a favorable move', mark1 > mark0, `${money(mark0)} -> ${money(mark1)}`);
 
   let cash;
@@ -351,7 +409,10 @@ async function main(): Promise<void> {
     const statsBefore = await prismaQuery.userStats.findUniqueOrThrow({ where: { userId: user.id } });
     const balBefore = await spendable(user);
     const pusher = startPusher(oracleId, asset); // keep it fresh through the solve + mint
-    const res = await createPlay(user, { game: 'lucky', stake: 25 }).finally(() => pusher.stop());
+    pusher.setPrice(spot); // pin to the fetched spot, no Hermes call per tick during the slow solve
+    const res = await placeLuckyPlay(user, async () => {
+      await pushPrice(oracleId, spot);
+    }).finally(() => pusher.stop());
     if (res.mode !== 'dev') throw new Error('expected dev-mode play');
     const p = await prismaQuery.play.findUniqueOrThrow({ where: { id: res.play.id } });
     const key = JSON.parse(p.marketKey) as { side: Side; strike1e9: string };
