@@ -42,6 +42,12 @@ export const PYTH_HERMES_URL: string = process.env.PYTH_HERMES_URL || 'https://h
 // Free DUSDC starting balance per new user, in display units (6dp DUSDC).
 export const STARTING_BALANCE: number = Number(process.env.PIPS_STARTING_BALANCE) || 1000;
 
+// Free SUI for gas on localnet. The operator funds each user once at onboarding (so a privy
+// user can pay their own play gas) and tops up whenever the balance dips below the floor, so
+// nobody ever gets stuck. SUI is effectively infinite on localnet, so these are generous.
+export const GAS_FUND_SUI: number = Number(process.env.PIPS_GAS_FUND_SUI) || 1;
+export const GAS_MIN_SUI: number = Number(process.env.PIPS_GAS_MIN_SUI) || 0.2;
+
 // Demo override, OFF by default. When set to a valid leverage bucket (2/5/10/25/100), I Feel
 // Lucky forces that bucket instead of the fair RNG draw so a rehearsed demo reliably lands a
 // mid-bucket green swing (08-DEMO-FLOW.md says never demo a 100x lotto live). Asset and side
@@ -125,6 +131,8 @@ export default {
   ENOKI_PRIVATE_API_KEY,
   PYTH_HERMES_URL,
   STARTING_BALANCE,
+  GAS_FUND_SUI,
+  GAS_MIN_SUI,
   OPERATOR_ENABLED,
   PRICE_PUSH_CRON,
   ORACLE_ROLL_CRON,
