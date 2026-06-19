@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyReque
 
 import { handleError } from '../utils/errorHandler.ts';
 import { userFromToken } from '../services/auth.ts';
-import { getSpot } from '../lib/price-cache.ts';
+import { gameSpot } from '../lib/game-price.ts';
 import { getLiveMarkRaw, toPlayDTO } from '../services/plays.ts';
 import { prismaQuery } from '../lib/prisma.ts';
 import { PYTH_FEED_IDS } from '../lib/pyth.ts';
@@ -42,7 +42,7 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
 
     const { send, onClose } = openStream(reply, request);
     const tick = async (): Promise<void> => {
-      const spot = await getSpot(asset);
+      const spot = await gameSpot(asset);
       if (spot) send({ price: String(spot.price), ts: spot.ts });
     };
     void tick();

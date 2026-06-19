@@ -5,10 +5,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
 import { Chart, type BandOverlay } from '@/components/game/Chart'
-import { CoinCRT } from '@/components/game/CoinCRT'
 import { Cell, GameReadout, GameScreen, GameStage, ScreenMessage } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
-import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { haptic } from '@/lib/haptics'
 import { sound } from '@/lib/sound'
@@ -25,29 +23,26 @@ import { formatStringToNumericDecimals } from '@/utils/format'
 // it, then hold to the buzzer: a real mint_range that settles IN THE ZONE (spread-free $1·qty) or OUT
 // OF RANGE (0) at the routed oracle's expiry, or CASH OUT early at the live mark. Every round is a real
 // Predict position; demo mode runs the same flow on the in-memory model. The screen is the L-aperture
-// (web/CLAUDE.md): a top bar + token selector over the chart, a notch-safe readout below. Teenage
-// Engineering language throughout (docs/SCREEN.md): flat black, mono labels, one amber accent, green/
-// red for facts.
+// (web/CLAUDE.md): a top bar over the chart, a notch-safe readout below. Teenage Engineering language
+// throughout (docs/SCREEN.md): flat black, mono labels, one amber accent, green/red for facts.
 export const Route = createFileRoute('/_app/games/range')({ component: RangeScreen })
 
 // Stake ladder, scrubbed on the number wheel and clamped to the live balance (within MIN/MAX_STAKE).
 const STAKE_LADDER = [1, 5, 10, 25, 50, 100] as const
 const FALLBACK_ASSETS = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
-// Token art. Only BTC has a real logo today; the rest fall back to a struck-ticker coin face.
-const COIN_LOGOS: Record<string, string> = {
+const TOKEN_LOGOS: Record<string, string> = {
   BTC: '/assets/images/coins/btc-logo.png',
+  ETH: '/assets/images/coins/eth-logo.png',
+  SUI: '/assets/images/coins/sui-logo.png',
 }
-const pad2 = (n: number): string => String(n).padStart(2, '0')
 const NOMINAL_ROUND_SEC = 30 // the idle multiplier preview's reference; the real round = oracle expiry
 const RESULT_MS = 4200
 const TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out', 'error'])
 
 type Phase = 'idle' | 'placing' | 'open' | 'cashing' | 'result'
 type Live = { markValue: string; pnl: string; multiplier: number; status: PlayStatus }
-type Overlay = 'none' | 'howto' | 'history'
+type Overlay = 'none' | 'howto'
 
-const money = (n: number): string =>
-  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 // Compact price for the band recap: 67,210 -> 67.2k, 3.94 -> 3.94.
 const compact = (n: number): string =>
   n >= 1000
@@ -65,12 +60,10 @@ function estimateMultiplier(halfPct: number, durationSec: number): number {
 export function RangeScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
-  const reduced = useReducedMotion()
-  const [crtOn, setCrtOn] = useLocalStorage('pips_range_crt', true)
 
   const [widthTenths, setWidthTenths] = useState(10) // knob: half-band in tenths of a percent
   const [stakeIdx, setStakeIdx] = useState(2)
-  const [assetIdx, setAssetIdx] = useState(0)
+  const [selectedAsset, setSelectedAsset] = useState<string | null>(null) // the player's pick, by symbol
   const [phase, setPhase] = useState<Phase>('idle')
   const [play, setPlay] = useState<PlayDTO | null>(null)
   const [live, setLive] = useState<Live | null>(null)
@@ -90,7 +83,11 @@ export function RangeScreen() {
   const streak = statsQ.data?.stats.currentStreak ?? 0
 
   const assets = liveAssets.length ? liveAssets : FALLBACK_ASSETS
-  const asset = play?.params.asset ?? assets[Math.min(assetIdx, assets.length - 1)]
+  // Hold the pick by symbol, not by index: the live market list reorders as oracles roll, so an
+  // index would silently point at a different token every few seconds. Falls back to the first
+  // asset until the player chooses, and if their pick ever drops offline.
+  const activeAsset = selectedAsset && assets.includes(selectedAsset) ? selectedAsset : assets[0]
+  const asset = play?.params.asset ?? activeAsset
 
   // BET clamps to what the balance affords, so the wheel never offers an unplayable bet.
   const balance = parseFloat(user?.balance ?? '0') || 0
@@ -245,15 +242,13 @@ export function RangeScreen() {
 
   const cycleAsset = useCallback(() => {
     haptic('selection')
-    if (assets.length) setAssetIdx((i) => (i + 1) % assets.length)
-  }, [assets.length])
+    if (!assets.length) return
+    const i = assets.indexOf(activeAsset)
+    setSelectedAsset(assets[(i + 1) % assets.length])
+  }, [assets, activeAsset])
   const toggleHowto = useCallback(() => {
     haptic('selection')
     setOverlay((o) => (o === 'howto' ? 'none' : 'howto'))
-  }, [])
-  const toggleHistory = useCallback(() => {
-    haptic('selection')
-    setOverlay((o) => (o === 'history' ? 'none' : 'history'))
   }, [])
 
   const isOpen = phase === 'open'
@@ -277,7 +272,16 @@ export function RangeScreen() {
       format: (v) => `$${STAKE_LADDER[Math.min(v, maxBetIdx)]}`,
     },
     action1: { label: 'HOW TO', color: 'neutral', onPress: toggleHowto },
-    action2: { label: 'HISTORY', color: 'neutral', onPress: toggleHistory },
+    action2: {
+      label: asset,
+      color: 'neutral',
+      onPress: cycleAsset,
+      display: {
+        mode: 'token',
+        ticker: asset,
+        logoSrc: TOKEN_LOGOS[asset],
+      },
+    },
     main: isOpen
       ? { label: 'CASH OUT', color: 'up', onPress: () => void doCashOut() }
       : phase === 'cashing'
@@ -418,61 +422,11 @@ export function RangeScreen() {
               </>
             )}
           </GameReadout>
-
-          {/* Token selector — idle only, so a live play keeps the chart + band clean. The token can't
-              change mid-play anyway (it's locked to the open position). The right tile is the token's
-              coin flipping behind the glass in low-res dithered amber, a little instrument vignette;
-              the left button cycles the asset, the CRT pill toggles the dither. */}
-          {phase === 'idle' && (
-            <div className="absolute z-[6] flex flex-col gap-2 left-[var(--screen-rim,24px)] top-[calc(var(--screen-rim,24px)_+_50px)]">
-              <div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-text-3">Token</div>
-              <div className="flex items-stretch gap-2">
-                <button
-                  type="button"
-                  onClick={cycleAsset}
-                  className="pointer-events-auto flex w-[84px] flex-col justify-between gap-1 border border-line-strong bg-black/70 px-2.5 py-2 text-left transition-colors hover:border-brand-500/60 active:scale-[0.99]"
-                >
-                  <span className="tnum font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-text-3">
-                    {pad2(Math.max(0, assets.indexOf(asset)) + 1)}/{pad2(assets.length)}
-                  </span>
-                  <span className="text-[26px] font-extrabold uppercase leading-none text-text">{asset}</span>
-                  <span className="font-mono text-[8px] font-bold uppercase tracking-[0.1em] text-brand-500">Tap to swap ▸</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={cycleAsset}
-                  aria-label={`Token ${asset}`}
-                  className="pointer-events-auto relative h-[84px] w-[84px] shrink-0 border border-brand-500/50 bg-black transition-colors hover:border-brand-500 active:scale-[0.99]"
-                >
-                  <CoinCRT
-                    ticker={asset ?? 'BTC'}
-                    logoSrc={asset ? COIN_LOGOS[asset] : undefined}
-                    crt={crtOn}
-                    spin={!reduced}
-                    lores={44}
-                    className="absolute inset-[3px]"
-                  />
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  haptic('selection')
-                  setCrtOn((v) => !v)
-                }}
-                className="pointer-events-auto inline-flex w-fit items-center gap-1.5 border border-line-strong px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.14em] transition-colors hover:border-brand-500/60"
-              >
-                <span className={cnm('h-1.5 w-1.5', crtOn ? 'bg-brand-500' : 'bg-text-3')} />
-                <span className={crtOn ? 'text-brand-500' : 'text-text-3'}>CRT {crtOn ? 'On' : 'Off'}</span>
-              </button>
-            </div>
-          )}
         </>
       )}
 
       {phase === 'result' && play && <RangeResult play={play} onDismiss={() => setPhase('idle')} />}
       {overlay === 'howto' && <HowTo onClose={() => setOverlay('none')} />}
-      {overlay === 'history' && <History onClose={() => setOverlay('none')} />}
     </GameScreen>
   )
 }
@@ -553,58 +507,5 @@ function HowTo({ onClose }: { onClose: () => void }) {
       </div>
       <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">Tap to close</span>
     </button>
-  )
-}
-
-// HISTORY: the player's recent Range rounds, newest first. Flat rows split by hairlines.
-function History({ onClose }: { onClose: () => void }) {
-  const q = useQuery({ queryKey: ['plays'], queryFn: () => api.plays({ limit: 30 }) })
-  const plays = (q.data?.plays ?? []).filter((p) => p.game === 'range' && p.status !== 'open' && p.status !== 'pending').slice(0, 6)
-  return (
-    <button
-      type="button"
-      onClick={onClose}
-      className="absolute inset-0 z-20 flex flex-col gap-3 bg-black/95 p-[var(--screen-rim,24px)] text-left"
-    >
-      <div className="flex items-center justify-between">
-        <div className="font-mono text-[13px] font-bold uppercase tracking-[0.2em] text-brand-500">History</div>
-        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">Tap to close</span>
-      </div>
-      {q.isLoading ? (
-        <div className="flex flex-col gap-3 pt-1">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="shimmer h-4 w-3/4" />
-          ))}
-        </div>
-      ) : plays.length === 0 ? (
-        <div className="text-[14px] text-text-2">No plays yet. Size a band and hit PLAY.</div>
-      ) : (
-        <div className="flex max-w-[88%] flex-col divide-y divide-line-strong">
-          {plays.map((p) => (
-            <HistoryRow key={p.id} play={p} />
-          ))}
-        </div>
-      )}
-    </button>
-  )
-}
-
-function HistoryRow({ play }: { play: PlayDTO }) {
-  const pnl = parseFloat(play.pnl ?? '0')
-  const won = play.status === 'won' || (play.status === 'cashed_out' && pnl >= 0)
-  const label = play.status === 'won' ? 'WON' : play.status === 'cashed_out' ? 'CASHED' : 'LOST'
-  return (
-    <div className="flex items-center justify-between py-2.5">
-      <div className="flex items-center gap-3">
-        <span className="font-mono text-[13px] font-bold uppercase tracking-[0.06em] text-text">{play.params.asset}</span>
-        <span className="font-mono text-[12px] font-bold uppercase tracking-[0.06em] text-brand-500">{play.multiplier.toFixed(2)}x</span>
-      </div>
-      <div className="text-right">
-        <div className={cnm('font-mono text-[11px] font-bold uppercase tracking-[0.08em]', won ? 'text-up' : 'text-down')}>{label}</div>
-        <div className={cnm('tnum text-[14px] font-bold', pnl >= 0 ? 'text-up' : 'text-down')}>
-          {pnl >= 0 ? '+' : '-'}${money(Math.abs(pnl))}
-        </div>
-      </div>
-    </div>
   )
 }

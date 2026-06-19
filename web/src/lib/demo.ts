@@ -59,6 +59,7 @@ const DEMO_HANDLE = 'demo-otter'
 const SEED_PRICES: Record<string, number> = { BTC: 104_000, ETH: 3_900, SUI: 4.2, SOL: 195, DEEP: 0.182 }
 const ASSETS = Object.keys(SEED_PRICES)
 const DURATIONS = [10, 30, 60]
+const RANGE_ROUND_SEC = 30 // Range is one real settled round; the client no longer picks a duration
 
 // === Lucky: the slot-weighted multiplier reel (LUCKY.md §4-5) ===
 // The reel deals one tier per spin, weighted for fun (NOT by win odds). Each tier then settles at its
@@ -517,7 +518,7 @@ function createRange(body: Record<string, unknown>): PlayDTO {
   const stake = Number(body.stake ?? 10)
   ensureBalance(stake)
   const asset = String(body.asset ?? ASSETS[0])
-  const duration = Number(body.duration ?? 30)
+  const duration = RANGE_ROUND_SEC // one real settled round; matches the backend's oracle-expiry round
   const widthPct = Number(body.widthPct ?? 2) // full band width %
   const halfPct = widthPct / 2
   const entry = currentPrice(asset)

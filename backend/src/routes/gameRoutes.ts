@@ -8,7 +8,7 @@ import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { EXPIRY_SAFETY_MS, GAME_DURATIONS } from '../config/main-config.ts';
 import { allMarkets, tradeableMarkets } from '../lib/sui/markets.ts';
-import { getSpot } from '../lib/price-cache.ts';
+import { gameSpot } from '../lib/game-price.ts';
 import { PlayError, httpStatusForPlayError } from '../services/games.ts';
 import {
   createPlay,
@@ -20,6 +20,15 @@ import {
 import type { Game, MarketDTO } from '../types/api.ts';
 
 const GAMES: Game[] = ['lucky', 'range', 'tap'];
+
+// Stable display order for the market list. The live oracle set reshuffles as the ladder rolls
+// (oracles added/retired every few seconds), so without a fixed order the client's asset picker
+// would keep jumping to a different token. Unknown assets sort after these, alphabetically.
+const ASSET_ORDER = ['BTC', 'ETH', 'SOL', 'SUI', 'DEEP'];
+const assetRank = (a: string): number => {
+  const i = ASSET_ORDER.indexOf(a);
+  return i < 0 ? ASSET_ORDER.length : i;
+};
 
 // Funnel any thrown value to the envelope: PlayError keeps its friendly code, anything else
 // is a 500 we do not leak details of.
@@ -35,11 +44,13 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     try {
       const now = Date.now();
       const live = new Set(tradeableMarkets(now, EXPIRY_SAFETY_MS).map((m) => m.underlying));
-      const assets = [...new Set(allMarkets().map((m) => m.underlying))];
+      const assets = [...new Set(allMarkets().map((m) => m.underlying))].sort(
+        (a, b) => assetRank(a) - assetRank(b) || a.localeCompare(b),
+      );
 
       const markets: MarketDTO[] = await Promise.all(
         assets.map(async (asset) => {
-          const spot = await getSpot(asset);
+          const spot = await gameSpot(asset);
           return { asset, spot: spot ? String(spot.price) : '0', durations: GAME_DURATIONS, live: live.has(asset) };
         }),
       );

@@ -5,6 +5,7 @@
 
 import {
   EXPIRY_SAFETY_MS,
+  LUCKY_ROUND_MS,
   MIN_STAKE,
   MAX_STAKE,
   GAME_DURATIONS,
@@ -17,7 +18,7 @@ import {
   usd1e9,
   multiplier as multiplierOf,
 } from '../lib/sui/config.ts';
-import { liveByAsset, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
+import { liveByAsset, nearestOracle, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
 import {
   previewBinaryBatch,
   previewRange,
@@ -27,8 +28,24 @@ import {
   type Side,
   type TradeAmounts,
 } from '../lib/sui/predict.ts';
-import { solveStrike, type BatchPreviewFn } from '../lib/sui/solver.ts';
+import { solveStrike, type BatchPreviewFn, type ScanCurve } from '../lib/sui/solver.ts';
 import { newSeed, seedFloat, pickTier } from './rng.ts';
+
+// Cache the dense strike-price curve per (oracle, side) for a short TTL. The curve only drifts as
+// spot moves (price-pusher every ~2s), so within the TTL a play reuses it and skips the scan round
+// trip, leaving just the sizing probe. The sizing preview re-prices fresh, so a warm curve never
+// makes the reported cost/multiplier stale. Bounded so a long-lived process never grows it without
+// limit; entries fall out as oracles roll.
+const SOLVE_CURVE_TTL_MS = 3000;
+const curveCache = new Map<string, { curve: ScanCurve; at: number }>();
+function getFreshCurve(key: string, now: number): ScanCurve | undefined {
+  const hit = curveCache.get(key);
+  return hit && now - hit.at < SOLVE_CURVE_TTL_MS ? hit.curve : undefined;
+}
+function putCurve(key: string, curve: ScanCurve, now: number): void {
+  if (curveCache.size > 64) for (const [k, v] of curveCache) if (now - v.at >= SOLVE_CURVE_TTL_MS) curveCache.delete(k);
+  curveCache.set(key, { curve, at: now });
+}
 
 // === Errors ===
 
@@ -84,12 +101,12 @@ function pickMarket(asset: string): Market {
   return m;
 }
 
-// The live oracle for an asset with the most life left. LUCKY routes here so the batched solve
-// plus the mint always finish with margin to spare, never against an oracle about to expire.
-function longestLivedOracle(asset: string): Market | undefined {
-  const live = liveByAsset(asset, now(), EXPIRY_SAFETY_MS);
-  if (live.length === 0) return undefined;
-  return live.reduce((best, m) => (m.expiryMs > best.expiryMs ? m : best));
+// The live oracle for an asset expiring nearest LUCKY_ROUND_MS out. Oracles outlive the round
+// (so create + activate never race expiry), and routing to the nearest-to-round one keeps Lucky
+// rounds ~30s while still settling at a real on-chain expiry. Falls back to whatever is live during
+// ladder warmup (a longer round) rather than failing the play.
+function roundOracle(asset: string): Market | undefined {
+  return nearestOracle(asset, now(), now() + LUCKY_ROUND_MS, EXPIRY_SAFETY_MS);
 }
 
 export function liveAssets(): string[] {
@@ -239,12 +256,12 @@ export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
   const tier = pickTier(seedFloat(seed, 2)); // slot-weighted reel deal (LUCKY.md §4)
 
-  // Route to the longest-lived oracle and solve in a few batched round trips. The asset/side/tier
-  // are fixed by the seed (fairness); only the oracle is re-picked if the first one expires
-  // mid-solve, which the batched preview surfaces as a thrown error.
+  // Route to the oracle expiring nearest the round target and solve in a few batched round trips.
+  // The asset/side/tier are fixed by the seed (fairness); only the oracle is re-picked if the first
+  // one expires mid-solve, which the batched preview surfaces as a thrown error.
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const market = longestLivedOracle(asset);
+    const market = roundOracle(asset);
     if (!market) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
     const g = gridOf(market);
 
@@ -255,7 +272,13 @@ export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
     };
 
     try {
-      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview });
+      // Reuse a fresh cached scan for this oracle/side when one exists, so a warm play skips the
+      // scan round trip and only pays for sizing. Cache whatever scan the solve ended up using.
+      const cacheKey = `${market.oracleId}:${side}`;
+      const t0 = now();
+      const curve = getFreshCurve(cacheKey, t0);
+      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve });
+      if (!curve) putCurve(cacheKey, solution.curve, t0);
       if (solution.clamped) {
         // Dealt tier was past the live ask bounds; we minted the closest achievable one and report it.
         console.log(

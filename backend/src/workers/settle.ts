@@ -8,26 +8,25 @@
 
 import cron from 'node-cron';
 
-import { OPERATOR_ENABLED, SETTLE_CRON } from '../config/main-config.ts';
+import { OPERATOR_ENABLED, ORACLE_COMPACT_SETTLED, SETTLE_CRON } from '../config/main-config.ts';
 import { FLOAT_SCALING } from '../lib/sui/config.ts';
 import { executeAsOperator } from '../lib/sui/execute.ts';
 import { buildCompactSettled, appendPriceUpdate, readOracle } from '../lib/sui/predict.ts';
 import { allMarkets, removeMarket } from '../lib/sui/markets.ts';
 import { settleDuePlays } from '../services/plays.ts';
-import { fetchSpot } from '../lib/pyth.ts';
+import { gameSpot } from '../lib/game-price.ts';
 import { Transaction } from '@mysten/sui/transactions';
 
 let isRunning = false;
 
-// Settle price: honest current Pyth spot, falling back to the oracle's last known spot if
-// Hermes is briefly unreachable so settlement never stalls.
+// Settle price: the live game price (the same synthetic-vol feed the chart streamed and the pusher
+// pushed), so a round settles exactly where the player watched it land. Falls back to the oracle's
+// last known spot if Pyth is briefly unreachable, so settlement never stalls.
 const settlePrice = async (asset: string, lastSpot1e9?: string): Promise<number> => {
-  try {
-    return await fetchSpot(asset);
-  } catch {
-    if (lastSpot1e9) return Number(BigInt(lastSpot1e9)) / Number(FLOAT_SCALING);
-    throw new Error(`no settle price for ${asset} (Pyth down, no cached spot)`);
-  }
+  const s = await gameSpot(asset);
+  if (s) return s.price;
+  if (lastSpot1e9) return Number(BigInt(lastSpot1e9)) / Number(FLOAT_SCALING);
+  throw new Error(`no settle price for ${asset} (Pyth down, no cached spot)`);
 };
 
 const settleTick = async (): Promise<void> => {
@@ -68,13 +67,15 @@ const driveOraclesToSettlement = async (): Promise<void> => {
         console.log(`[Settle] settled ${m.underlying} oracle ${m.oracleId}`);
       }
 
-      // Best-effort storage reclaim; a failure here costs only the rebate, not correctness.
-      try {
-        const compactTx = new Transaction();
-        buildCompactSettled(compactTx, m.oracleId, m.capId);
-        await executeAsOperator(compactTx, `compact ${m.oracleId}`);
-      } catch (err) {
-        console.error(`[Settle] compact failed for ${m.oracleId}:`, err instanceof Error ? err.message : err);
+      // Best-effort storage reclaim; only worth a tx on a gas-scarce chain (off on free localnet).
+      if (ORACLE_COMPACT_SETTLED) {
+        try {
+          const compactTx = new Transaction();
+          buildCompactSettled(compactTx, m.oracleId, m.capId);
+          await executeAsOperator(compactTx, `compact ${m.oracleId}`);
+        } catch (err) {
+          console.error(`[Settle] compact failed for ${m.oracleId}:`, err instanceof Error ? err.message : err);
+        }
       }
 
       removeMarket(m.oracleId);

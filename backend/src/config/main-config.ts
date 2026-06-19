@@ -93,23 +93,41 @@ export const SETTLE_CRON: string = process.env.PIPS_SETTLE_CRON || '*/3 * * * * 
 // cannot race settlement (gotcha #3 in 05-SUI-PREDICT.md).
 export const EXPIRY_SAFETY_MS: number = Number(process.env.PIPS_EXPIRY_SAFETY_MS) || 5000;
 
-// Oracle ladder, the LUCKY 30s tier. A play settles at its oracle's expiry (key.expiry ==
-// oracle.expiry), so for a ~30s round each play routes to an oracle expiring ~30s out. On
-// localnet gas is free, so we keep a short laddered set of ~30s-expiry oracles per asset and
-// continuously roll fresh ones in; a play picks the nearest live one (never one oracle per
-// play, gotcha #11). Each asset is its own price-push lane: oracle-roll assigns a distinct
-// oracle cap per asset so unrelated pushes never share a cap (gotcha #5).
+// Game volatility. Real spot is too quiet over a 30-60s round, so we run a synthetic, Pyth-anchored
+// vol layer (lib/game-price.ts) that makes the chart feel alive and a tight range band a real
+// gamble. It is the SINGLE source for the chart stream, the oracle push, and the settle price, so
+// what the player sees is exactly what settles. 1 = the tuned default, 0 = off (pure Pyth, the kill
+// switch), >1 = wilder. The one sanctioned synthetic layer on the real path.
+export const GAME_VOL: number =
+  process.env.PIPS_GAME_VOL != null && process.env.PIPS_GAME_VOL !== '' ? Number(process.env.PIPS_GAME_VOL) : 1;
+
+// Oracle ladder, the LUCKY tier. A play settles at its oracle's expiry (key.expiry ==
+// oracle.expiry). Crucially the oracle's on-chain LIFETIME is decoupled from the ROUND length:
+// a fresh oracle must first survive a storage-heavy create plus a separate activate (every
+// operator tx funnels through one serial executor), and a 30s-lived oracle could expire mid-setup
+// on the remote node, so oracle::activate aborts EOracleExpired and the ladder starves. So oracles
+// live well past the round (ORACLE_LIFETIME_MS) for ample setup headroom, the ladder keeps a
+// staggered spread of them per asset, and each play routes to the live oracle expiring nearest
+// LUCKY_ROUND_MS out (never one oracle per play, gotcha #11). The oracles age down through the
+// round point, so a real ~30s one is always available. Localnet gas is free, so the longer life
+// and deeper ladder cost nothing. Each asset is its own price-push lane (a distinct cap, gotcha #5).
 export const ORACLE_ASSETS: string[] = (process.env.PIPS_ORACLE_ASSETS || 'BTC,SUI,ETH')
   .split(',')
   .map((s) => s.trim().toUpperCase())
   .filter(Boolean);
-// New oracles expire this far out: the 30s round length.
-export const ORACLE_LIFETIME_MS: number = Number(process.env.PIPS_ORACLE_LIFETIME_MS) || 30_000;
-// Keep this many staggered oracles live per asset so a fresh ~30s one is always available.
-export const ORACLE_LADDER_DEPTH: number = Number(process.env.PIPS_ORACLE_LADDER_DEPTH) || 2;
-// An oracle counts toward the ladder only while it has at least this much life left; once it
-// drops below, oracle-roll rolls a fresh one in ahead of need so plays keep landing near 30s.
-export const ORACLE_MIN_REMAINING_MS: number = Number(process.env.PIPS_ORACLE_MIN_REMAINING_MS) || 18_000;
+// How long a freshly created oracle lives. Must comfortably exceed LUCKY_ROUND_MS so create+activate
+// never races expiry; the ladder ages these down to fill the near-round bucket.
+export const ORACLE_LIFETIME_MS: number = Number(process.env.PIPS_ORACLE_LIFETIME_MS) || 60_000;
+// The LUCKY round target: each play routes to the live oracle expiring nearest this far out and
+// settles there, so rounds stay ~30s regardless of how long the oracles themselves live.
+export const LUCKY_ROUND_MS: number = Number(process.env.PIPS_LUCKY_ROUND_MS) || 30_000;
+// Oracles kept live per asset, spread evenly across the lifetime (~ORACLE_LIFETIME_MS / depth apart)
+// so a near-round one always exists. Higher = tighter round consistency but more operator txs;
+// with a single shared oracle cap every push serializes, so this is the throughput knob, not gas.
+export const ORACLE_LADDER_DEPTH: number = Number(process.env.PIPS_ORACLE_LADDER_DEPTH) || 4;
+// Reclaim a settled oracle's strike matrix to recover its storage rebate. Only worth it on a
+// gas-scarce chain; on free localnet it is pure extra load on the serial operator queue, so off.
+export const ORACLE_COMPACT_SETTLED: boolean = process.env.PIPS_ORACLE_COMPACT_SETTLED === 'true';
 
 // Predict instance ids. Written by the bootstrap, never hardcoded. Unstable pre-mainnet.
 export const PREDICT_PACKAGE_ID: string = process.env.PREDICT_PACKAGE_ID || '';
@@ -154,10 +172,12 @@ export default {
   ORACLE_ROLL_CRON,
   SETTLE_CRON,
   EXPIRY_SAFETY_MS,
+  GAME_VOL,
   ORACLE_ASSETS,
   ORACLE_LIFETIME_MS,
+  LUCKY_ROUND_MS,
   ORACLE_LADDER_DEPTH,
-  ORACLE_MIN_REMAINING_MS,
+  ORACLE_COMPACT_SETTLED,
   PREDICT_PACKAGE_ID,
   PREDICT_REGISTRY_ID,
   PREDICT_OBJECT_ID,

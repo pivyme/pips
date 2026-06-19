@@ -291,7 +291,7 @@ async function main(): Promise<void> {
     pass(`${asset} oracle live + fresh (< 30s)`, fresh, st ? `spot $${(Number(st.spot1e9) / 1e9).toFixed(dp(asset))}, age ${(ageMs / 1000).toFixed(1)}s, ${oracleId.slice(0, 10)}` : 'no oracle');
   }
   pass('all three assets tradeable', ASSETS.every((a) => liveByAsset(a, Date.now(), EXPIRY_SAFETY_MS).length > 0));
-  info('note', 'production cadence is a 30s ladder refreshed every ~2s (ORACLE_LIFETIME_MS); proven live with the real workers separately. These working oracles are longer lived so the one-shot setup does not race expiry.');
+  info('note', 'production cadence: oracles live ORACLE_LIFETIME_MS and a play routes to the one expiring nearest LUCKY_ROUND_MS out (~30s rounds), refreshed every ~2s; proven live with the real workers separately. Lifetime outlives the round so create+activate never races expiry.');
 
   // === 2. Tier -> strike solver against the LIVE Predict preview ===
   console.log('\n2) Tier -> strike solver vs live preview (a couple tiers per asset)');

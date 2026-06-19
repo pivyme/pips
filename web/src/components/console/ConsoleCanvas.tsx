@@ -19,7 +19,7 @@ import {
   createActionScreens,
 } from './consoleElements'
 import { createAudio } from './consoleAudio'
-import type { ConsoleView, ButtonColor } from './controls'
+import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
 import { themeBackdrop, type ConsoleTheme } from './themes'
 
 // The 3D handheld, driven by the console controls registry. A game registers its bindings via
@@ -182,6 +182,7 @@ export default function ConsoleCanvas({
       // (createActionScreens), so they sit low and read as little LCDs behind the frame, not pillows.
       // Wide cap + small pad so the screen fills the aperture and the bezel stays a slim rim; the hole
       // (w + pad*2) is unchanged from the old 1.6/0.15, so the two pockets still clear each other.
+      // Both caps press to the same deep travel so the click reads on either one.
       {
         w: 1.72,
         h: 1.62,
@@ -190,10 +191,12 @@ export default function ConsoleCanvas({
         dx: 0,
         dy: 0,
         baseZ: 0.16,
-        pressedZ: 0.09,
+        pressedZ: -0.03,
         pad: 0.09,
       },
       {
+        // The right cap is the coin screen. Its emissive press flash is hidden under the opaque coin,
+        // so the coin itself dims on press instead (see the loop); same deep travel as the left cap.
         w: 1.72,
         h: 1.62,
         r: 0.15,
@@ -201,7 +204,7 @@ export default function ConsoleCanvas({
         dx: 0,
         dy: 0,
         baseZ: 0.16,
-        pressedZ: 0.09,
+        pressedZ: -0.03,
         pad: 0.09,
       },
       {
@@ -651,12 +654,18 @@ export default function ConsoleCanvas({
         i: number,
         color: ButtonColor | undefined,
         available: boolean,
+        display: ActionDisplay | undefined,
       ) => {
+        if (display?.mode === 'token') {
+          lightActionScreen(i, '#000000', 0)
+          actionGlow[i].opacity = 0
+          return
+        }
         const hex = (color && SCREEN_COLORS[color]) || actionThemeColor
         lightActionScreen(i, hex, available ? 0.62 : 0.14)
       }
-      one(1, state.a1Color, state.a1Available)
-      one(2, state.a2Color, state.a2Available)
+      one(1, state.a1Color, state.a1Available, state.a1Display)
+      one(2, state.a2Color, state.a2Available, state.a2Display)
       dirty = true
     }
     // Ambient light-show clock + a scratch color, used by the loop while state.lightShow is on.
@@ -899,34 +908,180 @@ export default function ConsoleCanvas({
     a2Lbl.plane.position.set(0, 0, 0.02)
     bm[2].add(a2Lbl.plane)
 
-    // The right action cap is the token button: wear the coin on its face, the symbol label still
-    // struck white over the center. The coin sits just proud of the cap and under the text label
-    // (renderOrder 9 < 10), depth-test-free so it always reads through the acrylic window. For now
-    // it's hardcoded to BTC; later this swaps per selected token.
-    const a2CoinGeo = new THREE.PlaneGeometry(1, 1)
-    const a2CoinMat = new THREE.MeshBasicMaterial({
-      transparent: true,
-      depthWrite: false,
-      depthTest: false,
-      opacity: 0,
-    })
-    const a2Coin = new THREE.Mesh(a2CoinGeo, a2CoinMat)
-    a2Coin.renderOrder = 9
-    const a2CoinFit = Math.min(buttons[2].w, buttons[2].h) * 0.64
-    a2Coin.scale.set(a2CoinFit, a2CoinFit, 1)
-    a2Coin.position.set(0, 0, 0.012)
-    bm[2].add(a2Coin)
-    new THREE.TextureLoader().load(
-      '/assets/images/coins/btc-logo.png',
-      (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace
-        tex.anisotropy = MAXANISO
-        a2CoinMat.map = tex
-        a2CoinMat.opacity = 1
-        a2CoinMat.needsUpdate = true
-        dirty = true
-      },
+    // Token mode is opt-in per action button. A token-mode screen runs a live low-res coin flip on
+    // true black; normal buttons keep the standard colored CRT label treatment.
+    const COIN_LORES = 72
+    // 4x4 Bayer bias for the dither, normalized to ~[-0.5, 0.5).
+    const COIN_BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(
+      (v) => (v + 0.5) / 16 - 0.5,
     )
+
+    function createTokenScreen(buttonIndex: 1 | 2) {
+      const coinCanvas = document.createElement('canvas')
+      coinCanvas.width = coinCanvas.height = COIN_LORES
+      const coinCtx = coinCanvas.getContext('2d', {
+        willReadFrequently: true,
+      })!
+      const coinTex = new THREE.CanvasTexture(coinCanvas)
+      coinTex.colorSpace = THREE.SRGBColorSpace
+      coinTex.magFilter = THREE.NearestFilter
+      coinTex.minFilter = THREE.NearestFilter
+      coinTex.generateMipmaps = false
+
+      const geo = new THREE.PlaneGeometry(1, 1)
+      const mat = new THREE.MeshBasicMaterial({
+        map: coinTex,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+      })
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.renderOrder = 8
+      const fit =
+        Math.max(buttons[buttonIndex].w, buttons[buttonIndex].h) +
+        buttons[buttonIndex].pad * 2 -
+        0.2
+      mesh.scale.set(fit, fit, 1)
+      mesh.position.set(0, 0, 0.012)
+      mesh.visible = false
+      bm[buttonIndex].add(mesh)
+
+      let display: Extract<ActionDisplay, { mode: 'token' }> | null = null
+      let coinAngle = 0
+      let image: HTMLImageElement | null = null
+      let loadedLogoSrc: string | undefined
+
+      function setDisplay(next: ActionDisplay | undefined) {
+        display = next?.mode === 'token' ? next : null
+        mesh.visible = !!display
+        if (!display) return
+
+        if (display.logoSrc !== loadedLogoSrc) {
+          loadedLogoSrc = display.logoSrc
+          image = null
+          if (display.logoSrc) {
+            const requestedSrc = display.logoSrc
+            const nextImage = new Image()
+            nextImage.onload = () => {
+              if (loadedLogoSrc !== requestedSrc) return
+              image = nextImage
+              draw(0)
+              dirty = true
+            }
+            nextImage.src = requestedSrc
+          }
+        }
+        draw(0)
+      }
+
+      function draw(dtSec: number) {
+        if (!display) return
+        coinAngle += (dtSec / 4.6) * Math.PI * 2
+        const W = COIN_LORES
+        const H = COIN_LORES
+        const cx = W / 2
+        const cy = H / 2
+        const diameter = Math.min(W, H) * 0.7
+        const radius = diameter / 2
+
+        coinCtx.fillStyle = '#000'
+        coinCtx.fillRect(0, 0, W, H)
+        const sx = Math.max(Math.abs(Math.cos(coinAngle)), 0.001)
+        coinCtx.save()
+        coinCtx.translate(cx, cy)
+        coinCtx.scale(sx, 1)
+        if (image) {
+          coinCtx.drawImage(
+            image,
+            -diameter / 2,
+            -diameter / 2,
+            diameter,
+            diameter,
+          )
+        } else {
+          const gradient = coinCtx.createRadialGradient(
+            -radius * 0.3,
+            -radius * 0.35,
+            radius * 0.08,
+            0,
+            0,
+            radius,
+          )
+          gradient.addColorStop(0, '#ffd66b')
+          gradient.addColorStop(0.55, '#d68a12')
+          gradient.addColorStop(1, '#5c3500')
+          coinCtx.fillStyle = gradient
+          coinCtx.beginPath()
+          coinCtx.arc(0, 0, radius, 0, Math.PI * 2)
+          coinCtx.fill()
+          coinCtx.fillStyle = '#2a1800'
+          coinCtx.font = `900 ${Math.round(radius * (display.ticker.length > 3 ? 0.52 : 0.72))}px ui-sans-serif, system-ui, sans-serif`
+          coinCtx.textAlign = 'center'
+          coinCtx.textBaseline = 'middle'
+          coinCtx.fillText(display.ticker, 0, radius * 0.04)
+        }
+        coinCtx.restore()
+
+        const edge = Math.pow(1 - sx, 2.2)
+        if (edge > 0.02) {
+          coinCtx.save()
+          coinCtx.globalAlpha = Math.min(edge, 1) * 0.9
+          coinCtx.fillStyle = '#ffd98a'
+          const edgeWidth = Math.max(W * 0.018, 1)
+          coinCtx.fillRect(
+            cx - edgeWidth / 2,
+            cy - diameter / 2,
+            edgeWidth,
+            diameter,
+          )
+          coinCtx.restore()
+        }
+
+        const buffer = coinCtx.getImageData(0, 0, W, H)
+        const pixels = buffer.data
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            const pixelIndex = (y * W + x) * 4
+            let brightness =
+              1 + COIN_BAYER[(y & 3) * 4 + (x & 3)] * 0.3
+            if (y % 2 === 1) brightness *= 0.62
+            pixels[pixelIndex] = Math.min(
+              255,
+              pixels[pixelIndex] * brightness,
+            )
+            pixels[pixelIndex + 1] = Math.min(
+              255,
+              pixels[pixelIndex + 1] * brightness,
+            )
+            pixels[pixelIndex + 2] = Math.min(
+              255,
+              pixels[pixelIndex + 2] * brightness,
+            )
+          }
+        }
+        coinCtx.putImageData(buffer, 0, 0)
+        coinTex.needsUpdate = true
+      }
+
+      return {
+        buttonIndex,
+        mat,
+        mesh,
+        setDisplay,
+        draw,
+        isActive: () => !!display,
+        dispose: () => {
+          coinTex.dispose()
+          mat.dispose()
+          geo.dispose()
+        },
+      }
+    }
+
+    const tokenScreens = [
+      createTokenScreen(1),
+      createTokenScreen(2),
+    ] as const
 
     const NUMBER_LABEL_ANGLE = 1.02
     const NUMBER_LABEL_RADIUS = 0.4
@@ -984,6 +1139,8 @@ export default function ConsoleCanvas({
       numberWheelBound: false,
       a1Color: undefined as ButtonColor | undefined,
       a2Color: undefined as ButtonColor | undefined,
+      a1Display: undefined as ActionDisplay | undefined,
+      a2Display: undefined as ActionDisplay | undefined,
       knob: null as null | NonNullable<ConsoleView['knob']>,
       numberWheel: null as null | NonNullable<ConsoleView['numberWheel']>,
       lightShow: false,
@@ -1054,10 +1211,14 @@ export default function ConsoleCanvas({
         (debug ? { label: 'SHORT', color: 'down' as const } : null)
       state.a1Available = !!a1
       state.a1Color = a1?.color
+      state.a1Display = a1?.display
       a1Lbl.set(a1?.label ?? '', state.a1Available ? 1 : 0.34)
       state.a2Available = !!a2
       state.a2Color = a2?.color
+      state.a2Display = a2?.display
       a2Lbl.set(a2?.label ?? '', state.a2Available ? 1 : 0.34)
+      tokenScreens[0].setDisplay(state.a1Display)
+      tokenScreens[1].setDisplay(state.a2Display)
       state.lightShow = !!v?.lightShow
       // When the show ends, relight settles the screens back to their idle / bound color; while it runs
       // the loop owns their color, so this is just the baseline it animates away from.
@@ -1770,6 +1931,8 @@ export default function ConsoleCanvas({
     /* render loop */
     const clock = new THREE.Clock()
     let rafId: number
+    let coinAccum = 0
+    const COIN_FRAME = 1 / 30 // chunky pixels don't need 60fps; keeps the idle device cheap
 
     function loop() {
       rafId = requestAnimationFrame(loop)
@@ -1843,6 +2006,14 @@ export default function ConsoleCanvas({
           (d.baseEmissive ?? 0) + d.glow * 0.95
       })
 
+      // Token overlays hide the cap's emissive flash, so dim the coin itself while its button sinks.
+      for (const tokenScreen of tokenScreens) {
+        if (!tokenScreen.isActive()) continue
+        tokenScreen.mat.color.setScalar(
+          1 - bm[tokenScreen.buttonIndex].userData.glow * 0.55,
+        )
+      }
+
       if (knobDrag) {
         knobTarget = knobOffset
         animating = true
@@ -1882,12 +2053,30 @@ export default function ConsoleCanvas({
           // gentle breathing, offset between the two so they don't pulse in lockstep
           bm[i].userData.baseEmissive =
             0.42 + 0.1 * Math.sin(lightT * 1.5 + k * Math.PI)
+          const tokenMode =
+            i === 1
+              ? state.a1Display?.mode === 'token'
+              : state.a2Display?.mode === 'token'
+          if (tokenMode) {
+            lightActionScreen(i, '#000000', 0)
+            return
+          }
           const halo = actionGlow[i]
           if (halo) {
             halo.color.copy(lightColor)
             halo.opacity = 0.34
           }
         })
+        animating = true
+      }
+
+      // Token-mode screens animate only while a game opts in. Normal HOME/Lucky buttons stay idle.
+      const tokenScreenActive = tokenScreens.some((screen) => screen.isActive())
+      if (tokenScreenActive) coinAccum += dt
+      if (tokenScreenActive && coinAccum >= COIN_FRAME) {
+        if (!animating && !dirty) lightOnly = true
+        for (const tokenScreen of tokenScreens) tokenScreen.draw(coinAccum)
+        coinAccum = 0
         animating = true
       }
 
@@ -1917,9 +2106,7 @@ export default function ConsoleCanvas({
       applyActiveRef.current = () => {}
       gui?.destroy()
       disposeActionScreens()
-      a2CoinMat.map?.dispose()
-      a2CoinMat.dispose()
-      a2CoinGeo.dispose()
+      for (const tokenScreen of tokenScreens) tokenScreen.dispose()
       logoGeo.forEach((g) => g.dispose())
       skinCache.forEach((t) => t.dispose())
       matLogoDark.dispose()

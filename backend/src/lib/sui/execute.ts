@@ -49,6 +49,28 @@ export async function executeAsOperator(tx: Transaction, label: string): Promise
   return { digest: t.digest ?? t.effects.transactionDigest ?? '', objectChanges };
 }
 
+// Cache the network's reference gas price (per-epoch, near-constant on localnet). Setting it on the
+// tx lets tx.build skip its own getReferenceGasPrice round trip. We deliberately do NOT pin the gas
+// budget: a Predict mint's GROSS storage cost (~0.21 SUI before rebate) sits close to the user's SUI
+// funding floor, so the build-time dry-run that sizes the budget to the real cost has to stay.
+let gasPriceCache: { price: bigint; at: number } | null = null;
+async function refGasPrice(): Promise<bigint> {
+  const now = Date.now();
+  if (gasPriceCache && now - gasPriceCache.at < 60_000) return gasPriceCache.price;
+  const price = await suiClient.getReferenceGasPrice();
+  gasPriceCache = { price, at: now };
+  return price;
+}
+
+// Reject if a promise outruns its budget, so a stuck network call can never hang a request. The
+// underlying call is not aborted (it may still complete on the node), the caller just stops waiting.
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]);
+}
+
 // What a privy play needs to sign on the user's behalf.
 export type UserContext = { address: string; walletId?: string | null; publicKey?: string | null };
 
@@ -65,20 +87,23 @@ export async function executeForUser(tx: Transaction, ctx: UserContext): Promise
   if (!ctx.walletId || !ctx.publicKey) {
     throw new Error('privy play: user wallet not provisioned (missing walletId / publicKey)');
   }
-  const _t = performance.now();
-  const _l = (s: string) => { try { require('fs').appendFileSync('/tmp/pips-bench.log', `  [exec] ${s}: +${(performance.now() - _t).toFixed(0)}ms\n`); } catch {} };
   tx.setSender(ctx.address);
-  const txBytes = await tx.build({ client: suiClient });
-  _l('build');
-  const signature = await signSuiTxWithPrivy({ walletId: ctx.walletId, publicKey: ctx.publicKey, txBytes });
-  _l('privy-sign');
+  tx.setGasPrice(await refGasPrice()); // skip build's own reference-gas-price round trip
+  // Hard timeouts so a stalled node/Privy connection surfaces a clean error instead of leaving the
+  // play pending forever. Build/sign make no chain change. Submit is given more room and its timeout
+  // is deliberately not retried upstream (the tx could still land, so a retry could double-mint).
+  const txBytes = await withTimeout(tx.build({ client: suiClient }), 15_000, 'tx build');
+  const signature = await withTimeout(signSuiTxWithPrivy({ walletId: ctx.walletId, publicKey: ctx.publicKey, txBytes }), 15_000, 'privy sign');
 
-  const res = await suiClient.executeTransactionBlock({
-    transactionBlock: txBytes,
-    signature,
-    options: { showEffects: true, showObjectChanges: true },
-  });
-  _l('submit');
+  const res = await withTimeout(
+    suiClient.executeTransactionBlock({
+      transactionBlock: txBytes,
+      signature,
+      options: { showEffects: true, showObjectChanges: true },
+    }),
+    25_000,
+    'submit',
+  );
   if (res.effects?.status?.status !== 'success') {
     throw new Error(`privy play failed: ${JSON.stringify(res.effects?.status ?? res)}`);
   }

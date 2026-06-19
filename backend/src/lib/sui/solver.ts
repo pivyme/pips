@@ -3,11 +3,12 @@
 // sizes the quantity so the mint cost lands at the bet. The multiple is read straight from
 // the chain preview (1 / ask), so the number the UI shows is always one we can actually mint.
 //
-// Every chain read is a BATCH: one devInspect carries many strike/quantity probes at once. Over
-// the remote node a devInspect is ~1s regardless of how many probes it bundles (the cost is the
-// round trip, not the per-strike compute), so the whole solve is ~2-3 round trips instead of the
-// ~12 serial probes a bisection would cost. That is what keeps a solve well inside the oracle's
-// ~30s life, so the play does not expire mid-solve.
+// Latency: over the remote node a devInspect is ~1-2s regardless of how many probes it bundles,
+// and a single batch stays flat to ~160 probes (the cost is the round trip, not the per-strike
+// compute). So we price the WHOLE grid densely in ONE devInspect (no separate coarse+refine
+// passes), then size in ONE more. That is a 2-round-trip solve. The dense scan curve is also
+// returned so the caller can cache it per (oracle, side): a warm curve drops the solve to a single
+// sizing round trip, which is what keeps a play snappy under concurrent load.
 //
 // solveStrike is pure: it takes a batch-preview function, never a chain handle, so it unit-tests
 // in isolation. The caller (games.ts) supplies a closure bound to the live oracle + side and a
@@ -31,6 +32,11 @@ export type Grid = { tick: bigint; min: bigint; max: bigint };
 export type Probe = { strike1e9: bigint; quantity: bigint };
 export type BatchPreviewFn = (probes: Probe[]) => Promise<Array<TradeAmounts | null>>;
 
+// The per-unit price curve for one (oracle, side): the cost to mint `probe` contracts at each
+// sampled grid strike (null = unmintable). Cacheable, since it only drifts as spot moves; the
+// caller keys it by (oracleId, side) under a short TTL so back-to-back plays skip the scan.
+export type ScanCurve = { probe: bigint; strikes: bigint[]; cost: Array<bigint | null> };
+
 export type StrikeSolution = {
   strike1e9: bigint;
   quantity: bigint; // 6dp contracts; a settled win pays `quantity`
@@ -39,12 +45,13 @@ export type StrikeSolution = {
   requestedTier: number;
   achievedTier: number; // nearest nominal tier to the solved multiple
   clamped: boolean; // true when the requested tier was not reachable within ask bounds
+  curve: ScanCurve; // the scan this solve used; cache it to skip the next play's scan round trip
 };
 
 // How far the solved multiple may sit from the requested tier before we call it a clamp.
 const CLAMP_TOLERANCE = 0.2; // 20%
 
-const COARSE_SAMPLES = 48; // batch cost is flat to ~48 probes, so scan the whole grid in one shot
+const DENSE_SAMPLES = 128; // one devInspect prices the whole grid this densely at flat cost (<160 knee)
 const SIZE_SAMPLES = 6; // quantity candidates bracketing the analytic estimate, sized in one shot
 
 // n evenly spaced unique indices across [lo, hi], inclusive of both ends.
@@ -61,91 +68,76 @@ function spread(n: number, lo: number, hi: number): number[] {
   return out;
 }
 
+// Candidate strikes one tick inside each grid edge, indexed so the per-unit multiple is monotonic
+// INCREASING in the index for either side (up: ascending strike, more OTM = bigger multiple; down:
+// descending strike). Monotonicity is what lets the dense scan bracket the tier cleanly.
+const strikeIndexer = (grid: Grid, side: 'up' | 'down') => {
+  const count = Number((grid.max - grid.min) / grid.tick) - 1;
+  if (count <= 0) throw new Error('solveStrike: grid too small');
+  const lastIdx = count - 1;
+  const strikeAt = (i: number): bigint =>
+    side === 'up' ? grid.min + grid.tick * BigInt(i + 1) : grid.max - grid.tick * BigInt(i + 1);
+  return { lastIdx, strikeAt };
+};
+
+// Price the whole grid densely in ONE devInspect. The result is cacheable per (oracle, side).
+export async function scanGrid(grid: Grid, side: 'up' | 'down', preview: BatchPreviewFn, probeArg?: bigint): Promise<ScanCurve> {
+  const probe = probeArg ?? DUSDC_DECIMALS;
+  const { lastIdx, strikeAt } = strikeIndexer(grid, side);
+  const idx = spread(DENSE_SAMPLES, 0, lastIdx);
+  const strikes = idx.map(strikeAt);
+  const amts = await preview(strikes.map((strike1e9) => ({ strike1e9, quantity: probe })));
+  return { probe, strikes, cost: amts.map((a) => (a && a.cost > 0n ? a.cost : null)) };
+}
+
 export async function solveStrike(args: {
   grid: Grid;
   side: 'up' | 'down';
   tierMultiplier: number;
   betRaw: bigint;
   preview: BatchPreviewFn;
+  curve?: ScanCurve; // a cached scan for this (oracle, side); skips the scan round trip when fresh
   probe?: bigint;
 }): Promise<StrikeSolution> {
   const { grid, side, tierMultiplier, betRaw, preview } = args;
-  const probe = args.probe ?? DUSDC_DECIMALS; // 1.0 contract, the per-unit price probe
+  const probe = args.curve?.probe ?? args.probe ?? DUSDC_DECIMALS; // 1.0 contract, the per-unit price probe
   if (tierMultiplier <= 1) throw new Error('solveStrike: tier must be > 1');
   if (betRaw <= 0n) throw new Error('solveStrike: bet must be positive');
 
-  // Candidate strikes one tick inside each grid edge, indexed so the per-unit multiple is
-  // monotonic INCREASING in the index for either side (up: ascending strike, more OTM = bigger
-  // multiple; down: descending strike). Monotonicity lets a coarse scan bracket the tier.
-  const count = Number((grid.max - grid.min) / grid.tick) - 1;
-  if (count <= 0) throw new Error('solveStrike: grid too small');
-  const lastIdx = count - 1;
-  const strikeAt = (i: number): bigint =>
-    side === 'up' ? grid.min + grid.tick * BigInt(i + 1) : grid.max - grid.tick * BigInt(i + 1);
-  const multOf = (a: TradeAmounts | null): number => (a && a.cost > 0n ? multiplierOf(a.cost, probe) : Infinity);
+  // ---- Round 1: the dense scan (reuse a cached curve when the caller has a fresh one). ----
+  const curve = args.curve ?? (await scanGrid(grid, side, preview, probe));
+  const multAt = (c: bigint | null): number => (c && c > 0n ? multiplierOf(c, probe) : Infinity);
 
-  // ---- Round 1: coarse scan across the whole grid at the probe quantity. ----
-  const coarseIdx = spread(COARSE_SAMPLES, 0, lastIdx);
-  const coarseAmts = await preview(coarseIdx.map((i) => ({ strike1e9: strikeAt(i), quantity: probe })));
-  const coarseMul = coarseAmts.map(multOf);
-
-  // Closest coarse sample to the tier among mintable ones, plus the mintable ceiling (the last
-  // finite sample, since the multiple is monotonic in the index).
-  let kBest = -1;
-  let kBestErr = Infinity;
-  let kMaxMintable = -1;
-  for (let k = 0; k < coarseIdx.length; k++) {
-    if (!Number.isFinite(coarseMul[k])) continue;
-    kMaxMintable = k;
-    const err = Math.abs(coarseMul[k] - tierMultiplier);
-    if (err < kBestErr) {
-      kBestErr = err;
-      kBest = k;
+  // ---- Strike select (pure): the sampled strike whose multiple is closest to the tier among the
+  // mintable ones. The multiple is monotonic in the index, so when the tier sits past the ask
+  // bounds this naturally lands on the mintable ceiling, which is where a too-high tier clamps. ----
+  let best = -1;
+  let bestErr = Infinity;
+  for (let k = 0; k < curve.cost.length; k++) {
+    const m = multAt(curve.cost[k]);
+    if (!Number.isFinite(m)) continue;
+    const err = Math.abs(m - tierMultiplier);
+    if (err < bestErr) {
+      bestErr = err;
+      best = k;
     }
   }
-  if (kBest < 0) throw new Error('solveStrike: no mintable strike on this grid');
+  if (best < 0) throw new Error('solveStrike: no mintable strike on this grid');
 
-  // ---- Round 2: refine within the bracket around the best coarse sample (down to one tick). ----
-  // The true best global index lies between the coarse neighbours of kBest; scanning toward the
-  // unmintable region too lets us land the exact mintable ceiling when the tier is unreachable.
-  const loK = Math.max(kBest - 1, 0);
-  const hiK = Math.min(kBest + 1, coarseIdx.length - 1);
-  const loIdx = coarseIdx[loK];
-  const hiIdx = coarseIdx[hiK];
-
-  let bestIdx = coarseIdx[kBest];
-  let bestProbeAmt = coarseAmts[kBest]; // probe amounts at the best coarse strike
-  let bestMul = coarseMul[kBest];
-
-  if (hiIdx - loIdx > 1) {
-    const refineIdx = spread(Math.min(hiIdx - loIdx + 1, COARSE_SAMPLES), loIdx, hiIdx);
-    const refineAmts = await preview(refineIdx.map((i) => ({ strike1e9: strikeAt(i), quantity: probe })));
-    let rErr = Infinity;
-    for (let r = 0; r < refineIdx.length; r++) {
-      const m = multOf(refineAmts[r]);
-      if (!Number.isFinite(m)) continue;
-      const err = Math.abs(m - tierMultiplier);
-      if (err < rErr) {
-        rErr = err;
-        bestIdx = refineIdx[r];
-        bestProbeAmt = refineAmts[r];
-        bestMul = m;
-      }
-    }
-  }
-  if (!bestProbeAmt || bestProbeAmt.cost <= 0n) throw new Error('solveStrike: chosen strike is not mintable');
-
+  const strike = curve.strikes[best];
+  const bestPerUnit = curve.cost[best] as bigint;
+  const bestMul = multAt(bestPerUnit);
   const clamped = Math.abs(bestMul - tierMultiplier) > tierMultiplier * CLAMP_TOLERANCE;
-  const strike = strikeAt(bestIdx);
 
-  // ---- Round 3: size the quantity. Cost is near-linear in quantity, so estimate from the
-  // probe's per-unit cost, then batch a spread of candidates around it and take the largest whose
+  // ---- Round 2: size the quantity. Cost is near-linear in quantity, so estimate from the chosen
+  // strike's per-unit cost, then batch a spread of candidates around it and take the largest whose
   // real cost stays under the cap. The cap sits a hair below the bet because the preview prices
   // pre-trade: the real mint, sized against the post-trade vault, costs a touch more, and the
-  // manager is funded above the bet to absorb exactly that. ----
+  // manager is funded above the bet to absorb exactly that. The per-unit estimate may come from a
+  // cached (slightly older) curve, but the sizing preview re-prices fresh, so entryCost is current. ----
   const cap = (betRaw * 99n) / 100n; // selected pre-trade cost ceiling
   const target = (betRaw * 95n) / 100n; // aim a little under so the largest candidate lands near the bet
-  const q0 = (probe * target) / bestProbeAmt.cost;
+  const q0 = (probe * target) / bestPerUnit;
   const factors = [0.9, 0.94, 0.97, 1.0, 1.03, 1.06].slice(0, SIZE_SAMPLES);
   const qs = factors.map((f) => {
     const q = (q0 * BigInt(Math.round(f * 1000))) / 1000n;
@@ -164,8 +156,8 @@ export async function solveStrike(args: {
     }
   }
 
-  // Fallback: every candidate overshot the cap (steep slippage). Scale down from the smallest
-  // priced candidate in one more probe.
+  // Fallback: every candidate overshot the cap (steep slippage / a stale-curve estimate). Scale
+  // down from the smallest priced candidate in one more probe.
   if (chosenQ === 0n) {
     const smallest = sizeAmts.find((a) => a && a.cost > 0n) ?? null;
     if (!smallest) throw new Error('solveStrike: could not price the chosen strike');
@@ -186,5 +178,6 @@ export async function solveStrike(args: {
     requestedTier: tierMultiplier,
     achievedTier: nearestTier(multiplier),
     clamped,
+    curve,
   };
 }

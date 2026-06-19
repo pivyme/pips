@@ -52,12 +52,14 @@ const CENTER_SMOOTH = 0.06 // vertical recenter ease, slow so the frame stops br
 const HALF_GROW = 0.12 // zoom-out ease when content needs more room
 const HALF_SHRINK = 0.03 // zoom-in ease when there is slack, slow so the frame stays calm
 const FILL_SMOOTH = 0.08 // band right-zone -> full-width ease on lock
-const PAD = 1.35 // headroom around the fitted content
+const PAD = 1.22 // headroom around the fitted content (tighter = the move fills more of the frame)
 const MIN_HALF_PCT = 0.0025 // floor so a flat line never zooms to infinity
 const DOT_R = 7 // leading-edge dot radius (steady, no pulsing)
 const MOM_LOOKBACK = 4000 // ms window for the momentum arrow's trend read
 // Degen: burst particles + chart shake on a momentum swing. For when subtlety is not the goal.
-const SWING_PCT = 0.0025 // move size that counts as a swing and fires the effect
+// Tuned to the game feed: a per-tick move this big fires on the sharp wicks and fast trend stretches
+// (a few percent of ticks), so the chart pops without buzzing constantly.
+const SWING_PCT = 0.0014 // move size that counts as a swing and fires the effect
 const SHAKE_AMP = 5 // px max chart shake on a swing
 const SHAKE_DECAY = 0.82 // per-frame shake falloff
 const PARTICLE_N = 12 // sparks per burst
@@ -271,7 +273,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       }
 
       // Overlays sit under the line.
-      drawOverlays(ctx, ov, band, { w, nowX, fill: bandFill.current, y, C })
+      drawOverlays(ctx, ov, band, { w, nowX, fill: bandFill.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
 
       // Build the visible line. Continuous: x by real time. Reduced: x by index step.
       const yDisp = y(display.current)
@@ -465,26 +467,42 @@ function drawOverlays(
   ctx: CanvasRenderingContext2D,
   ov: ChartOverlays | undefined,
   band: { lower: number; upper: number } | null,
-  ctxv: { w: number; nowX: number; fill: number; y: (p: number) => number; C: Record<string, string> },
+  ctxv: { w: number; nowX: number; fill: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
 ) {
-  const { w, nowX, fill, y, C } = ctxv
+  const { w, nowX, fill, price, locked, y, C } = ctxv
 
   if (band) {
     const top = y(band.upper)
     const bot = y(band.lower)
     const left = nowX * (1 - fill) // idle: a zone ahead on the right. locked: spans full width.
-    ctx.fillStyle = withAlpha(C.brand, 0.1)
+    // Once locked, the band reads its own win/lose: the live price inside lifts the amber fill and
+    // brightens the edges (you're in the zone); outside dims the fill and tints the crossed edge red.
+    // The idle preview stays a neutral amber zone.
+    const inside = price > band.lower && price <= band.upper
+    const lit = locked && inside
+    ctx.fillStyle = withAlpha(C.brand, lit ? 0.16 : locked ? 0.06 : 0.1)
     ctx.fillRect(left, top, w - left, bot - top)
-    ctx.strokeStyle = withAlpha(C.brand, 0.5)
     ctx.lineWidth = 1
     ctx.setLineDash([4, 4])
-    ctx.beginPath()
-    ctx.moveTo(left, top)
-    ctx.lineTo(w, top)
-    ctx.moveTo(left, bot)
-    ctx.lineTo(w, bot)
-    ctx.stroke()
+    const edge = (yy: number, hot: boolean) => {
+      ctx.strokeStyle = withAlpha(hot ? C.down : C.brand, hot ? 0.85 : lit ? 0.7 : 0.5)
+      ctx.beginPath()
+      ctx.moveTo(left, yy)
+      ctx.lineTo(w, yy)
+      ctx.stroke()
+    }
+    edge(top, locked && !inside && price > band.upper)
+    edge(bot, locked && !inside && price <= band.lower)
     ctx.setLineDash([])
+    // Edge price labels, so the exact band is always readable (the etched field-guide detail).
+    ctx.save()
+    ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    ctx.fillStyle = withAlpha(C.text, 0.7)
+    ctx.fillText(formatPrice(band.upper), left + 4, top - 7)
+    ctx.fillText(formatPrice(band.lower), left + 4, bot + 7)
+    ctx.restore()
   }
 
   if (ov?.strike != null) {

@@ -89,13 +89,17 @@ export async function playableBalanceRaw(user: User): Promise<bigint> {
   return (await loadBalances(user)).total;
 }
 
-// Top the manager up to `targetRaw` from the wallet, reusing the already-read manager balance
-// (no extra RPC). We fund a little ABOVE the bet so the mint, which prices against the
-// post-trade vault (its own size moves the ask up a touch), can never withdraw more than the
-// manager holds. The surplus is not spent: it stays in the manager and funds the next play.
-function fundManager(tx: Transaction, managerId: string, targetRaw: bigint, haveRaw: bigint): void {
-  if (haveRaw >= targetRaw) return;
-  const coin = coinWithBalance({ type: DUSDC_TYPE, balance: targetRaw - haveRaw })(tx);
+// Fund the manager from the wallet only when it can't cover this play, reusing the already-read
+// manager balance (no extra RPC). `needRaw` is what this single play requires (bet + impact buffer);
+// when the manager is short we top it up to `refillToRaw`, a BULK target covering several spins, so
+// the following plays skip the deposit entirely. We fund a little ABOVE each bet so the mint, which
+// prices against the post-trade vault (its own size nudges the ask up), can never overdraw the
+// manager. Surplus is not spent: it stays in the manager as the user's chips and funds later plays.
+function fundManager(tx: Transaction, managerId: string, needRaw: bigint, refillToRaw: bigint, haveRaw: bigint): void {
+  if (haveRaw >= needRaw) return;
+  const top = refillToRaw - haveRaw;
+  if (top <= 0n) return;
+  const coin = coinWithBalance({ type: DUSDC_TYPE, balance: top })(tx);
   buildDeposit(tx, managerId, coin);
 }
 
@@ -121,58 +125,90 @@ async function resolveByGame(input: CreatePlayInput, stakeRaw: bigint): Promise<
 // market impact) never overdraws it. Surplus stays in the manager and funds the next play.
 const FUND_BUFFER_PCT = 12n;
 
-// A mint can still abort at execution for transient, position-shaped reasons: the routed oracle
-// ticking past expiry between solve and submit, or a deep/large position whose post-trade price
-// edges past the funded amount. These are safe to retry: a fresh resolve re-routes to a live
-// oracle and re-sizes. Auth/balance/param errors are not, so we only retry mint aborts.
+// Bulk-refill horizon. A deposit is the slow part of a repeat spin: it forces a DUSDC coin read in
+// tx.build and a bigger mint tx. So when the manager runs short we don't just top it to one bet, we
+// fund this many bets' worth (capped at the player's chips), and the next several spins mint with no
+// deposit at all (faster build, smaller tx). Tuned modest so we don't park a big idle balance for a
+// one-off player; a session of spins still amortizes a single deposit across ~this many plays.
+const BULK_FUND_PLAYS = 5n;
+
+// Serialize each user's own transactions. A play/cashout consumes that user's owned gas + DUSDC
+// coins, so two in flight at once pick the same coin versions and equivocate ("object unavailable
+// for consumption / already locked by a different transaction"), which on a single-validator node
+// cascades into slow devInspects and stuck submits. One promise chain per user makes their txs
+// strictly sequential; different users still run fully in parallel.
+const userChains = new Map<string, Promise<unknown>>();
+function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const run = (userChains.get(userId) ?? Promise.resolve()).then(fn, fn);
+  userChains.set(
+    userId,
+    run.then(
+      () => {},
+      () => {},
+    ),
+  );
+  return run;
+}
+
+// A mint can abort or be rejected at execution for transient, recoverable reasons: the routed
+// oracle ticking past expiry, a tight post-trade price, or an owned-coin version race (the
+// fullnode still serving a pre-previous-tx coin version). All are safe to retry, because a fresh
+// resolve re-routes to a live oracle and tx.build re-selects current coin versions. Auth/balance/
+// param errors are not, so only these retry.
 const isRetriableMint = (e: unknown): boolean => {
   const m = e instanceof Error ? e.message : String(e);
-  return /assert_live_oracle|EOracleExpired|withdraw|interpolate_price|trade_prices|MoveAbort|MovePrimitiveRuntimeError|object .*not available|equivocat/i.test(m);
+  return /assert_live_oracle|EOracleExpired|withdraw|interpolate_price|trade_prices|MoveAbort|MovePrimitiveRuntimeError|unavailable for consumption|not available|needs to be rebuilt|already locked|rejected as invalid|equivocat|reserved for another/i.test(
+    m,
+  );
 };
 
-export async function createPlay(user: User, input: CreatePlayInput): Promise<CreateResult> {
+export function createPlay(user: User, input: CreatePlayInput): Promise<CreateResult> {
+  return withUserLock(user.id, () => createPlayLocked(user, input));
+}
+
+async function createPlayLocked(user: User, input: CreatePlayInput): Promise<CreateResult> {
   const stakeRaw = parseStake(input.stake);
   const managerId = user.predictManagerId;
   if (!managerId) throw new PlayError('MANAGER_NOT_READY', 'Your account is still getting ready');
 
-  const _t0 = performance.now();
-  const _lap = (l: string) => { try { require('fs').appendFileSync('/tmp/pips-bench.log', `${l}: +${(performance.now() - _t0).toFixed(0)}ms\n`); } catch {} };
-  // Two attempts: a mint that aborts on a stale oracle or a tight post-trade price is re-resolved
-  // against a fresh oracle. The balance read runs concurrently with the (chain-bound) resolve.
+  // Up to 3 attempts. A mint that aborts on a stale oracle, a tight post-trade price, the matrix
+  // pricing edge, or an owned-coin version race is re-resolved: each retry re-draws a fresh
+  // asset/side/tier (so a different strike + quantity) and re-selects current coins, so independent
+  // attempts converge fast. The balance read runs concurrently with the (chain-bound) resolve.
+  const MAX_ATTEMPTS = 3;
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    _lap(`attempt ${attempt} start`);
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const [balances, resolved] = await Promise.all([loadBalances(user), resolveByGame(input, stakeRaw)]);
-    _lap('balances+resolve done');
     if (balances.total < stakeRaw) throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that bet');
 
-    // Fund the manager to the bet plus the impact buffer, capped at what the player actually has.
-    const fundTarget = stakeRaw + (stakeRaw * FUND_BUFFER_PCT) / 100n;
-    const target = fundTarget > balances.total ? balances.total : fundTarget;
+    // What this one play needs in the manager (bet + impact buffer), capped at the player's chips.
+    const need = stakeRaw + (stakeRaw * FUND_BUFFER_PCT) / 100n;
+    const cappedNeed = need > balances.total ? balances.total : need;
+    // When the manager is short, refill in bulk (several bets' worth) so the next spins skip funding.
+    // Never below this play's need, never above what the player holds.
+    const bulkRefill = stakeRaw * BULK_FUND_PLAYS;
+    const refillTo = bulkRefill > balances.total ? balances.total : bulkRefill;
+    const refillToFinal = refillTo < cappedNeed ? cappedNeed : refillTo;
 
     const tx = new Transaction();
-    fundManager(tx, managerId, target, balances.manager);
+    fundManager(tx, managerId, cappedNeed, refillToFinal, balances.manager);
     if (resolved.kind === 'binary') buildMint(tx, managerId, resolved.params);
     else buildMintRange(tx, managerId, resolved.params);
-    _lap('ptb built');
 
     // Persist pending first so we hold an id even if signing/submit throws.
     const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw) });
-    _lap('db created');
 
     try {
       const exec = await executeForUser(tx, userCtx(user));
-      _lap('executeForUser done');
       const opened = await prismaQuery.play.update({
         where: { id: play.id },
         data: { status: 'open', txMint: exec.digest, openedAt: new Date() },
       });
       return { play: await toPlayDTO(opened) };
     } catch (e) {
-      try { require('fs').appendFileSync('/tmp/pips-bench.log', `EXEC-FAIL +${(performance.now() - _t0).toFixed(0)}ms: ${e instanceof Error ? e.message : e}\n`); } catch {}
       await prismaQuery.play.update({ where: { id: play.id }, data: { status: 'error' } });
       lastErr = e;
-      if (attempt === 0 && isRetriableMint(e)) continue;
+      if (attempt < MAX_ATTEMPTS - 1 && isRetriableMint(e)) continue;
       throw asPlayError(e, 'MINT_FAILED', 'Could not place that play. Your chips are safe.');
     }
   }
@@ -205,7 +241,11 @@ function mapResolvedToPlay(userId: string, r: Resolved, stakeRaw: bigint) {
 
 export type CashoutResult = { play: PlayDTO; unlocked: string[] };
 
-export async function cashoutPlay(user: User, playId: string): Promise<CashoutResult> {
+export function cashoutPlay(user: User, playId: string): Promise<CashoutResult> {
+  return withUserLock(user.id, () => cashoutPlayLocked(user, playId));
+}
+
+async function cashoutPlayLocked(user: User, playId: string): Promise<CashoutResult> {
   const play = await prismaQuery.play.findFirst({ where: { id: playId, userId: user.id } });
   if (!play) throw new PlayError('PLAY_NOT_OPEN', 'Play not found');
   if (play.status !== 'open') throw new PlayError('PLAY_NOT_OPEN', 'This play is not open');
