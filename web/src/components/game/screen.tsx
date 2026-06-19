@@ -84,6 +84,9 @@ export function Cell({ label, value }: { label: string; value: string }) {
   )
 }
 
+// The in-device empty/error/stale message. Teenage Engineering instrument language (docs/SCREEN.md):
+// flat black, a red status dot, mono uppercase copy, and a sharp-cornered hairline RETRY, no rounded
+// App-Surface card. Copy is passed in per game.
 export function ScreenMessage({
   title,
   action,
@@ -94,13 +97,13 @@ export function ScreenMessage({
   onAction: () => void
 }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
       <span className="h-1.5 w-1.5 rounded-full bg-down" />
-      <p className="text-sm text-text-2">{title}</p>
+      <p className="font-mono text-[13px] font-bold uppercase tracking-[0.16em] text-text-2">{title}</p>
       <button
         type="button"
         onClick={onAction}
-        className="card-neo rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide text-text-2"
+        className="border border-line-strong px-4 py-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-brand-500 transition-colors hover:bg-brand-500 hover:text-black"
       >
         {action}
       </button>

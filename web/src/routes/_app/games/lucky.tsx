@@ -247,9 +247,9 @@ function LuckyScreen() {
           <div className="shimmer h-24 w-2/3" />
         </div>
       ) : marketsQ.isError ? (
-        <ScreenMessage title="Something slipped." action="Retry" onAction={() => void marketsQ.refetch()} />
+        <ScreenMessage title="Something slipped" action="Retry" onAction={() => void marketsQ.refetch()} />
       ) : noLiveMarket ? (
-        <ScreenMessage title="Market catching up." action="Retry" onAction={() => void marketsQ.refetch()} />
+        <ScreenMessage title="Market catching up" action="Retry" onAction={() => void marketsQ.refetch()} />
       ) : (
         <>
           <GameStage
