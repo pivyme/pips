@@ -37,7 +37,12 @@ const MULT_POOL = ['1.5x', '2x', '3x', '5x', '10x', '25x']
 const SPIN_STOPS = [720, 980, 1240] // staggered reel stops (ms)
 const SPIN_TOTAL = 1320
 const RESULT_MS = 4200
-const ROUND_SEC = 30 // fixed fast round; the play carries the authoritative duration
+const ROUND_SEC = 15 // fallback only; the play's real on-chain expiry drives the countdown
+// Safety-net poll of the play, independent of the live SSE. The SSE carries the smooth PnL but its
+// socket can silently drop (expired stream token, proxy timeout), which is what stranded the screen
+// on OPENING / SETTLING forever. This guarantees the terminal frame always lands.
+const WATCHDOG_MS = 3000
+const SETTLE_EXPECT_MS = 12000 // the settle progress bar eases toward (never to) full over this window
 const TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out', 'error'])
 // Terminal states that resolve to a win/loss RESULT screen. 'error' is excluded: an errored play is
 // a background mint that could not open (chips safe), handled as a clean re-rack, not a result.
@@ -65,6 +70,7 @@ export function LuckyScreen() {
   const [spot, setSpot] = useState<number | null>(null)
   const [entryPrice, setEntryPrice] = useState<number | null>(null)
   const [secsLeft, setSecsLeft] = useState<number | null>(null)
+  const [settleMs, setSettleMs] = useState(0)
   const [overlay, setOverlay] = useState<Overlay>('none')
 
   const finalized = useRef(false)
@@ -104,8 +110,16 @@ export function LuckyScreen() {
   const value = live ? parseFloat(live.markValue) : bet
   const pnlNum = live ? parseFloat(live.pnl) : 0
   const playBet = play ? parseFloat(play.stake) : bet
-  // The round ended and we are waiting on the settle frame (the buzzer freeze).
-  const settling = phase === 'open' && secsLeft != null && secsLeft <= 0
+  const entryCost = play ? parseFloat(play.entryValue) : bet
+  // What a win nets: the full settled payout (entryCost × multiplier) minus what went in. The reward.
+  const winProfit = Math.max(0, entryCost * ((play?.multiplier ?? multiplier) - 1))
+  // The mint is still landing: reels snapped on the dealt deal, the position is not open on-chain yet.
+  const opening = phase === 'open' && live?.status === 'pending'
+  // The round hit the buzzer and we are waiting on the on-chain settle (won/lost) frame.
+  const settling = phase === 'open' && live?.status === 'open' && secsLeft != null && secsLeft <= 0
+  const settleSecs = Math.floor(settleMs / 1000)
+  // The dealt pick, shown under OPENING / SETTLING so the round always reads back what's in flight.
+  const dealLine = lp ? `${lp.asset} ${sideLabel(lp.side)} · ${fmtMult(multiplier)} · Bet $${money(playBet)}` : '—'
   // First-run welcome: no plays on record yet.
   const firstRun = !statsQ.isLoading && (statsQ.data?.stats.gamesPlayed ?? 0) === 0
 
@@ -132,41 +146,77 @@ export function LuckyScreen() {
     [refresh, qc],
   )
 
-  // Live value while a play is open. The play comes back 'pending' the instant it's dealt (the reels
-  // snap right away); the real Predict mint lands a moment later and the stream flips it to 'open'.
-  // The stream closes on a terminal frame (the buzzer settle); we then refetch the finalized play to
-  // grab the payout + redeem digest for the result + explorer link. A 'pending' that flips to 'error'
-  // means the background mint could not open it (rare): chips are safe (a failed mint debits nothing),
-  // so we re-rack cleanly instead of showing a loss.
+  // Resolve a round from a status, idempotent via `finalized` so the SSE and the watchdog below can
+  // both feed it and only the first one acts. 'error' = the background mint never opened (chips safe,
+  // a failed mint debits nothing), so we re-rack cleanly. A win/loss/cashout refetches the finalized
+  // play for the payout + redeem digest (the result screen + explorer link).
+  const resolveTerminal = useCallback(
+    (status: PlayStatus, playId: string) => {
+      if (finalized.current) return
+      if (status === 'error') {
+        finalized.current = true
+        toast.error('Could not open that play. Your chips are safe, spin again.')
+        clearResetTimer()
+        setPlay(null)
+        setLive(null)
+        setPhase('idle')
+        return
+      }
+      if (RESULT_TERMINAL.has(status)) {
+        finalized.current = true
+        void api
+          .getPlay(playId)
+          .then(({ play: final }) => finishResult(final, []))
+          .catch(() => setPhase('idle'))
+      }
+    },
+    [finishResult],
+  )
+
+  // Live PnL while a play is open. The play comes back 'pending' the instant it's dealt (the reels
+  // snap right away); the real Predict mint lands a moment later and the stream flips it to 'open',
+  // then to a terminal frame at the buzzer settle.
   useEffect(() => {
     if (!play || phase !== 'open') return
-    const unsub = streamPlay(
-      play.id,
+    const id = play.id
+    return streamPlay(
+      id,
       (tick) => {
         setLive({ markValue: tick.markValue, pnl: tick.pnl, multiplier: tick.multiplier, status: tick.status })
-        if (tick.status === 'error' && !finalized.current) {
-          finalized.current = true
-          toast.error('Could not open that play. Your chips are safe, spin again.')
-          clearResetTimer()
-          setPlay(null)
-          setLive(null)
-          setPhase('idle')
-          return
-        }
-        if (RESULT_TERMINAL.has(tick.status) && !finalized.current) {
-          finalized.current = true
-          void api
-            .getPlay(play.id)
-            .then(({ play: final }) => finishResult(final, []))
-            .catch(() => setPhase('idle'))
-        }
+        resolveTerminal(tick.status, id)
       },
       () => {
-        // SSE dropped: keep the last good readout, EventSource retries on its own.
+        // SSE dropped: keep the last readout. EventSource retries, and the watchdog below still resolves.
       },
     )
-    return unsub
-  }, [play, phase, finishResult])
+  }, [play, phase, resolveTerminal])
+
+  // Watchdog: poll the play directly on a steady cadence, independent of the SSE socket. This is what
+  // makes OPENING / SETTLING deterministic, the result lands even if the stream silently died. Reads
+  // are cheap (the backend caches the live mark and skips it entirely once past the buzzer).
+  useEffect(() => {
+    if (!play || phase !== 'open') return
+    const id = play.id
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout>
+    const poll = async (): Promise<void> => {
+      if (stopped || finalized.current) return
+      try {
+        const { play: cur } = await api.getPlay(id)
+        if (stopped || finalized.current) return
+        setLive({ markValue: cur.markValue, pnl: cur.pnl, multiplier: cur.multiplier, status: cur.status })
+        resolveTerminal(cur.status, id)
+      } catch {
+        // transient; the next tick retries
+      }
+      if (!stopped && !finalized.current) timer = setTimeout(() => void poll(), WATCHDOG_MS)
+    }
+    timer = setTimeout(() => void poll(), WATCHDOG_MS)
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+    }
+  }, [play, phase, resolveTerminal])
 
   useEffect(() => () => clearResetTimer(), [])
 
@@ -241,11 +291,19 @@ export function LuckyScreen() {
   useEffect(() => {
     if (phase !== 'open' || !play) {
       setSecsLeft(null)
+      setSettleMs(0)
       return
     }
-    const lenMs = ((play.params as LuckyParams).duration || ROUND_SEC) * 1000
-    const endAt = (play.openedAt ? Date.parse(play.openedAt) : Date.now()) + lenMs
-    const tick = () => setSecsLeft(Math.max(0, Math.ceil((endAt - Date.now()) / 1000)))
+    // Count down to the real on-chain buzzer (the oracle expiry the round settles at), not
+    // openedAt+duration: the mint lands a beat after the reels snap, so openedAt+duration runs PAST
+    // the real expiry and left the timer showing seconds that no longer existed. At 0 it flips to SETTLING.
+    const endAt = play.market.expiry || Date.now() + ROUND_SEC * 1000
+    const tick = () => {
+      const remaining = endAt - Date.now()
+      setSecsLeft(Math.max(0, Math.ceil(remaining / 1000)))
+      // Time spent past the buzzer drives the deterministic settle progress (so it never looks frozen).
+      setSettleMs(remaining < 0 ? -remaining : 0)
+    }
     tick()
     const iv = setInterval(tick, 250)
     return () => clearInterval(iv)
@@ -277,18 +335,20 @@ export function LuckyScreen() {
     },
     action1: { label: 'HOW TO', color: 'neutral', onPress: toggleHowto },
     action2: { label: 'HISTORY', color: 'neutral', onPress: toggleHistory },
-    main: isOpen
-      ? { label: 'CASH OUT', color: 'up', onPress: () => void doCashOut() }
-      : isOpening
-        ? { label: 'OPENING', color: 'up', onPress: () => {}, loading: true }
-        : phase === 'cashing'
-          ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true }
-          : {
-              label: 'SPIN',
-              color: 'amber',
-              onPress: () => void doPlay(),
-              loading: phase === 'placing' || phase === 'spinning',
-            },
+    main: settling
+      ? { label: 'SETTLING', color: 'amber', onPress: () => {}, loading: true }
+      : isOpen
+        ? { label: 'CASH OUT', color: 'up', onPress: () => void doCashOut() }
+        : isOpening
+          ? { label: 'OPENING', color: 'up', onPress: () => {}, loading: true }
+          : phase === 'cashing'
+            ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true }
+            : {
+                label: 'SPIN',
+                color: 'amber',
+                onPress: () => void doPlay(),
+                loading: phase === 'placing' || phase === 'spinning',
+              },
   })
 
   // Layout: a solid header (price/balance over the reel cluster) divides off the chart with a foot
@@ -382,22 +442,37 @@ export function LuckyScreen() {
             {/* Fixed height: the readout swaps between bet / dealing / value, but the card must not
                 jump size as the copy changes, so the tallest state sets the floor for all of them. */}
             <div className="max-w-[60%] min-h-[120px]">
-              {settling ? (
+              {opening ? (
                 <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Status</div>
-                  <div className="text-[30px] font-extrabold leading-none text-brand-500">
-                    SETTLING<span className="animate-pulse">...</span>
+                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Opening</div>
+                  <div className="text-[30px] font-extrabold leading-none text-brand-500">OPENING</div>
+                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">{dealLine}</div>
+                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
+                    <div className="bar-sweep h-full w-1/3 bg-brand-500" />
                   </div>
-                  <div className="mt-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-text-2">Locking in your round</div>
+                </>
+              ) : settling ? (
+                <>
+                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Settling · {settleSecs}s</div>
+                  <div className="text-[30px] font-extrabold leading-none text-brand-500">SETTLING</div>
+                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">{dealLine}</div>
+                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
+                    <div
+                      className="h-full bg-brand-500 transition-[width] duration-300 ease-out"
+                      style={{ width: `${Math.min(94, (settleMs / SETTLE_EXPECT_MS) * 100)}%` }}
+                    />
+                  </div>
                 </>
               ) : showReadouts ? (
                 <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Value</div>
-                  <div className={cnm('text-[34px] font-extrabold leading-none', pnlNum >= 0 ? 'text-up' : 'text-down')}>
-                    $<Stat value={value} />
+                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Profit / Loss</div>
+                  <div className={cnm('text-[40px] font-extrabold leading-none', pnlNum >= 0 ? 'text-up' : 'text-down')}>
+                    {pnlNum >= 0 ? '+' : '-'}$<Stat value={Math.abs(pnlNum)} />
                   </div>
-                  <div className={cnm('mt-0.5 font-mono text-[12px] font-bold uppercase tracking-[0.08em]', pnlNum >= 0 ? 'text-up' : 'text-down')}>
-                    {pnlNum >= 0 ? '+' : '-'}${money(Math.abs(pnlNum))}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em]">
+                    <span className="text-text-2">Cash out <span className="tnum text-text">${money(value)}</span></span>
+                    <span className="text-text-3">·</span>
+                    <span className="text-text-2">Win <span className="tnum text-up">+${money(winProfit)}</span></span>
                   </div>
                   <div className="mt-2.5 grid grid-cols-3 gap-x-3">
                     <Cell label="Multiplier" value={fmtMult(multiplier)} />

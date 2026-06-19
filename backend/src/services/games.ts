@@ -225,6 +225,7 @@ export type ResolvedBinary = {
   tier: number; // the nominal tier the reel dealt (legacy Play.leverage column)
   duration: number;
   strikeDisplay: string;
+  entrySpot: string; // spot at entry (display), for debug/audit
   entryCost: bigint;
   maxPayout: bigint; // settled ITM payout = quantity ($1 per contract)
   multiplier: number; // payout / entry cost = 1/ask, the live on-chain odds the position pays (what the UI shows)
@@ -241,6 +242,7 @@ export type ResolvedRange = {
   upperDisplay: string;
   widthPct?: number;
   duration: number;
+  entrySpot: string; // spot at entry (display), for debug/audit
   entryCost: bigint;
   maxPayout: bigint;
   multiplier: number; // payout / entry cost = 1/ask, the live on-chain odds the band pays
@@ -253,11 +255,13 @@ export type Resolved = ResolvedBinary | ResolvedRange;
 // finds the grid strike whose real multiple matches it and sizes the quantity so cost ~= bet, so
 // the multiplier we surface is always one we can actually mint. The round settles at the routed
 // oracle's expiry (~30s), never one oracle per play.
-export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
+export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Promise<ResolvedBinary> {
   const assets = liveAssets();
   if (assets.length === 0) throw new PlayError('MARKET_UNAVAILABLE', 'No markets are live right now');
 
-  const seed = newSeed();
+  // Reuse the original seed on a re-route so the dealt asset/side/tier stay identical (fairness, and
+  // the reels already snapped to them); only the oracle is re-picked + re-priced. Fresh seed otherwise.
+  const seed = existingSeed ?? newSeed();
   const asset = assets[Math.floor(seedFloat(seed, 0) * assets.length)];
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
   const tier = pickTier(seedFloat(seed, 2)); // slot-weighted reel deal (LUCKY.md §4)
@@ -305,6 +309,7 @@ export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
         tier: solution.achievedTier,
         duration,
         strikeDisplay: fmt1e9(solution.strike1e9),
+        entrySpot: market.spot1e9 ? fmt1e9(BigInt(market.spot1e9)) : '',
         entryCost: solution.entryCost,
         maxPayout: solution.quantity,
         multiplier: solution.multiplier,
@@ -347,6 +352,7 @@ export async function resolveRange(stakeRaw: bigint, asset: string, widthPct: nu
     upperDisplay: fmt1e9(higher),
     widthPct,
     duration,
+    entrySpot: fmt1e9(spot),
     entryCost: amounts.cost,
     maxPayout: quantity,
     multiplier: multiplierOf(amounts.cost, quantity),

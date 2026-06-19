@@ -623,6 +623,16 @@ export const demoApi = {
     return { play, unlocked }
   },
 
+  withdraw: async (input: { recipient: string; amount: string }): Promise<{ user: UserDTO; digest: string }> => {
+    await delay(160)
+    const amount = parseFloat(String(input.amount).replace(/,/g, ''))
+    if (!Number.isFinite(amount) || amount <= 0) throw new ApiError('INVALID_AMOUNT', 'Enter an amount to withdraw', 400)
+    if (amount > state.balance + 0.005) throw new ApiError('INSUFFICIENT_DUSDC', 'Not enough balance to withdraw that much', 400)
+    state.balance = Math.max(0, state.balance - amount)
+    save()
+    return { user: userDTO(), digest: `demo-wd-${newId()}` }
+  },
+
   plays: async (q: { status?: string; limit?: number } = {}) => {
     await delay(120)
     const all = [...openList, ...state.history]

@@ -700,6 +700,26 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
+/* Indeterminate progress sweep (the Lucky OPENING bar): a short fill slides across its track so the
+   wait reads as actively working, never frozen. Reduced motion parks it as a static partial fill. */
+.bar-sweep {
+  animation: bar-sweep 1.1s ease-in-out infinite;
+}
+@keyframes bar-sweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(310%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bar-sweep {
+    animation: none;
+    transform: translateX(60%);
+  }
+}
+
 /* ── Game-screen instrument viz (teenage-engineering line graphics) ──────
    Crisp vivid SVG line instruments rendered inside the console screen. The
    motion lives here as cheap GPU transforms so the components stay pure. Each

@@ -16,8 +16,11 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ToolsWalletRouteImport } from './routes/tools/wallet'
 import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
 import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
+import { Route as AppMenuWithdrawRouteImport } from './routes/_app/menu/withdraw'
 import { Route as AppMenuStatsRouteImport } from './routes/_app/menu/stats'
 import { Route as AppMenuSettingsRouteImport } from './routes/_app/menu/settings'
+import { Route as AppMenuHistoryRouteImport } from './routes/_app/menu/history'
+import { Route as AppMenuDepositRouteImport } from './routes/_app/menu/deposit'
 import { Route as AppMenuCustomizeRouteImport } from './routes/_app/menu/customize'
 import { Route as AppMenuAchievementsRouteImport } from './routes/_app/menu/achievements'
 import { Route as AppGamesRangeRouteImport } from './routes/_app/games/range'
@@ -59,6 +62,11 @@ const AppGamesIndexRoute = AppGamesIndexRouteImport.update({
   path: '/games/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMenuWithdrawRoute = AppMenuWithdrawRouteImport.update({
+  id: '/menu/withdraw',
+  path: '/menu/withdraw',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppMenuStatsRoute = AppMenuStatsRouteImport.update({
   id: '/menu/stats',
   path: '/menu/stats',
@@ -67,6 +75,16 @@ const AppMenuStatsRoute = AppMenuStatsRouteImport.update({
 const AppMenuSettingsRoute = AppMenuSettingsRouteImport.update({
   id: '/menu/settings',
   path: '/menu/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMenuHistoryRoute = AppMenuHistoryRouteImport.update({
+  id: '/menu/history',
+  path: '/menu/history',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMenuDepositRoute = AppMenuDepositRouteImport.update({
+  id: '/menu/deposit',
+  path: '/menu/deposit',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMenuCustomizeRoute = AppMenuCustomizeRouteImport.update({
@@ -111,8 +129,11 @@ export interface FileRoutesByFullPath {
   '/games/range': typeof AppGamesRangeRoute
   '/menu/achievements': typeof AppMenuAchievementsRoute
   '/menu/customize': typeof AppMenuCustomizeRoute
+  '/menu/deposit': typeof AppMenuDepositRoute
+  '/menu/history': typeof AppMenuHistoryRoute
   '/menu/settings': typeof AppMenuSettingsRoute
   '/menu/stats': typeof AppMenuStatsRoute
+  '/menu/withdraw': typeof AppMenuWithdrawRoute
   '/games/': typeof AppGamesIndexRoute
   '/menu/': typeof AppMenuIndexRoute
 }
@@ -127,8 +148,11 @@ export interface FileRoutesByTo {
   '/games/range': typeof AppGamesRangeRoute
   '/menu/achievements': typeof AppMenuAchievementsRoute
   '/menu/customize': typeof AppMenuCustomizeRoute
+  '/menu/deposit': typeof AppMenuDepositRoute
+  '/menu/history': typeof AppMenuHistoryRoute
   '/menu/settings': typeof AppMenuSettingsRoute
   '/menu/stats': typeof AppMenuStatsRoute
+  '/menu/withdraw': typeof AppMenuWithdrawRoute
   '/games': typeof AppGamesIndexRoute
   '/menu': typeof AppMenuIndexRoute
 }
@@ -145,8 +169,11 @@ export interface FileRoutesById {
   '/_app/games/range': typeof AppGamesRangeRoute
   '/_app/menu/achievements': typeof AppMenuAchievementsRoute
   '/_app/menu/customize': typeof AppMenuCustomizeRoute
+  '/_app/menu/deposit': typeof AppMenuDepositRoute
+  '/_app/menu/history': typeof AppMenuHistoryRoute
   '/_app/menu/settings': typeof AppMenuSettingsRoute
   '/_app/menu/stats': typeof AppMenuStatsRoute
+  '/_app/menu/withdraw': typeof AppMenuWithdrawRoute
   '/_app/games/': typeof AppGamesIndexRoute
   '/_app/menu/': typeof AppMenuIndexRoute
 }
@@ -163,8 +190,11 @@ export interface FileRouteTypes {
     | '/games/range'
     | '/menu/achievements'
     | '/menu/customize'
+    | '/menu/deposit'
+    | '/menu/history'
     | '/menu/settings'
     | '/menu/stats'
+    | '/menu/withdraw'
     | '/games/'
     | '/menu/'
   fileRoutesByTo: FileRoutesByTo
@@ -179,8 +209,11 @@ export interface FileRouteTypes {
     | '/games/range'
     | '/menu/achievements'
     | '/menu/customize'
+    | '/menu/deposit'
+    | '/menu/history'
     | '/menu/settings'
     | '/menu/stats'
+    | '/menu/withdraw'
     | '/games'
     | '/menu'
   id:
@@ -196,8 +229,11 @@ export interface FileRouteTypes {
     | '/_app/games/range'
     | '/_app/menu/achievements'
     | '/_app/menu/customize'
+    | '/_app/menu/deposit'
+    | '/_app/menu/history'
     | '/_app/menu/settings'
     | '/_app/menu/stats'
+    | '/_app/menu/withdraw'
     | '/_app/games/'
     | '/_app/menu/'
   fileRoutesById: FileRoutesById
@@ -261,6 +297,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppGamesIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/menu/withdraw': {
+      id: '/_app/menu/withdraw'
+      path: '/menu/withdraw'
+      fullPath: '/menu/withdraw'
+      preLoaderRoute: typeof AppMenuWithdrawRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/menu/stats': {
       id: '/_app/menu/stats'
       path: '/menu/stats'
@@ -273,6 +316,20 @@ declare module '@tanstack/react-router' {
       path: '/menu/settings'
       fullPath: '/menu/settings'
       preLoaderRoute: typeof AppMenuSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/menu/history': {
+      id: '/_app/menu/history'
+      path: '/menu/history'
+      fullPath: '/menu/history'
+      preLoaderRoute: typeof AppMenuHistoryRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/menu/deposit': {
+      id: '/_app/menu/deposit'
+      path: '/menu/deposit'
+      fullPath: '/menu/deposit'
+      preLoaderRoute: typeof AppMenuDepositRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/menu/customize': {
@@ -327,8 +384,11 @@ interface AppRouteChildren {
   AppGamesRangeRoute: typeof AppGamesRangeRoute
   AppMenuAchievementsRoute: typeof AppMenuAchievementsRoute
   AppMenuCustomizeRoute: typeof AppMenuCustomizeRoute
+  AppMenuDepositRoute: typeof AppMenuDepositRoute
+  AppMenuHistoryRoute: typeof AppMenuHistoryRoute
   AppMenuSettingsRoute: typeof AppMenuSettingsRoute
   AppMenuStatsRoute: typeof AppMenuStatsRoute
+  AppMenuWithdrawRoute: typeof AppMenuWithdrawRoute
   AppGamesIndexRoute: typeof AppGamesIndexRoute
   AppMenuIndexRoute: typeof AppMenuIndexRoute
 }
@@ -340,8 +400,11 @@ const AppRouteChildren: AppRouteChildren = {
   AppGamesRangeRoute: AppGamesRangeRoute,
   AppMenuAchievementsRoute: AppMenuAchievementsRoute,
   AppMenuCustomizeRoute: AppMenuCustomizeRoute,
+  AppMenuDepositRoute: AppMenuDepositRoute,
+  AppMenuHistoryRoute: AppMenuHistoryRoute,
   AppMenuSettingsRoute: AppMenuSettingsRoute,
   AppMenuStatsRoute: AppMenuStatsRoute,
+  AppMenuWithdrawRoute: AppMenuWithdrawRoute,
   AppGamesIndexRoute: AppGamesIndexRoute,
   AppMenuIndexRoute: AppMenuIndexRoute,
 }

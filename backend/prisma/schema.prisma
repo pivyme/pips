@@ -66,6 +66,9 @@ model Play {
   pnl          BigInt?                         // signed: payout - stake
   multiplier   Float?                          // potential payout multiple at mint
 
+  entrySpot    String?                         // spot at entry (display units), debug/audit
+  settlePrice  String?                         // frozen settlement price at expiry (display units), debug/audit
+
   txMint       String?
   txRedeem     String?
   rngSeed      String?                         // lucky: server RNG seed, for fairness audit

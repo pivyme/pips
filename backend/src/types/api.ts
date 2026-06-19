@@ -48,6 +48,8 @@ export interface PlayDTO {
   pnl: string; // signed, markValue - entryValue
   multiplier: number; // potential payout multiple at mint
   payout?: string; // set on settle/cashout
+  entrySpot?: string; // spot at entry (display), debug/audit
+  settlePrice?: string; // frozen settlement price at expiry (display), debug/audit
   openedAt?: string;
   settledAt?: string;
   txMint?: string;
@@ -75,4 +77,10 @@ export interface AchievementDTO {
   unlocked: boolean;
   unlockedAt?: string;
   progress?: { current: number; target: number };
+}
+
+// POST /wallet/withdraw -> the refreshed user (with the new balance) + the on-chain tx digest.
+export interface WithdrawResult {
+  user: UserDTO;
+  digest: string;
 }

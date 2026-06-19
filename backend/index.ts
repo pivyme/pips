@@ -10,6 +10,7 @@ import { authRoutes } from './src/routes/authRoutes.ts';
 import { gameRoutes } from './src/routes/gameRoutes.ts';
 import { streamRoutes } from './src/routes/streamRoutes.ts';
 import { menuRoutes } from './src/routes/menuRoutes.ts';
+import { walletRoutes } from './src/routes/walletRoutes.ts';
 
 // Workers
 import { startErrorLogCleanupWorker } from './src/workers/errorLogCleanup.ts';
@@ -51,6 +52,7 @@ fastify.register(exampletRoute, { prefix: '/example' });
 fastify.register(authRoutes, { prefix: '/auth' });
 fastify.register(gameRoutes);
 fastify.register(menuRoutes);
+fastify.register(walletRoutes, { prefix: '/wallet' });
 fastify.register(streamRoutes, { prefix: '/stream' });
 
 const start = async (): Promise<void> => {

@@ -12,6 +12,7 @@ import {
   ORACLE_ASSETS,
   ORACLE_LADDER_DEPTH,
   ORACLE_LIFETIME_MS,
+  ORACLE_ROLL_MAX_PER_TICK,
   EXPIRY_SAFETY_MS,
   ORACLE_ROLL_CRON,
   OPERATOR_ENABLED,
@@ -27,6 +28,28 @@ import { Transaction } from '@mysten/sui/transactions';
 
 // How far apart, in expiry, to space fresh oracles so the ladder covers the whole lifetime evenly.
 const ORACLE_STEP_MS = Math.max(1000, Math.floor(ORACLE_LIFETIME_MS / ORACLE_LADDER_DEPTH));
+
+// Below this many live oracles an asset's ladder is "starving": the gentle 1-per-tick refill can't
+// keep up (a reload empties the cache, a dry spell throws "No markets are live"), so the roller
+// bursts multiple fresh oracles in one tick to recover in seconds. Above it, steady-state spacing.
+const LADDER_LOW_WATER = Math.max(2, Math.ceil(ORACLE_LADDER_DEPTH / 2));
+
+// Floor on the life of a freshly created oracle. create+activate is two serial operator txs; if the
+// oracle expired mid-setup, activate aborts EOracleExpired and the create is wasted. So we never seed
+// a near-buzzer slot directly (the near buckets fill by aging instead) — this is the minimum life any
+// created oracle gets, with comfortable headroom over the setup time even on a slow node.
+const SAFE_CREATE_MIN_LIFE_MS = 28_000;
+
+// The expiry slots a starving ladder should fill, NEAREST first, at ladder spacing across the safe
+// horizon, skipping any slot a live oracle already covers. Nearest-first so recovery first lands a
+// short-round oracle (a playable market now) and fills the far buckets after.
+const nearestUncoveredExpiries = (now: number, live: Array<{ expiryMs: number }>): number[] => {
+  const out: number[] = [];
+  for (let e = now + SAFE_CREATE_MIN_LIFE_MS; e <= now + ORACLE_LIFETIME_MS; e += ORACLE_STEP_MS) {
+    if (!live.some((m) => Math.abs(m.expiryMs - e) < ORACLE_STEP_MS / 2)) out.push(e);
+  }
+  return out;
+};
 
 let isRunning = false;
 
@@ -83,14 +106,18 @@ const rollLadder = async (): Promise<void> => {
       const live = liveByAsset(asset, now, EXPIRY_SAFETY_MS);
       if (live.length >= ORACLE_LADDER_DEPTH) continue; // ladder full
 
-      // Add at most one per tick, and only once the newest live oracle is at least a step old, so
-      // fresh oracles land ~ORACLE_STEP_MS apart in expiry and the ladder spreads across the whole
-      // lifetime instead of bunching. Fresh oracles always get a full lifetime of headroom.
-      const newestExpiry = live.reduce((mx, m) => Math.max(mx, m.expiryMs), 0);
-      if (live.length > 0 && newestExpiry > now + ORACLE_LIFETIME_MS - ORACLE_STEP_MS) continue;
+      // In steady state add at most one per tick, and only once the newest live oracle is at least a
+      // step old, so fresh oracles land ~ORACLE_STEP_MS apart and the ladder spreads evenly. When the
+      // ladder is STARVING (post-reload / dry spell) skip that gate and burst several near-first slots
+      // so a playable market is back within a tick or two instead of ~30s of "No markets are live".
+      const starving = live.length < LADDER_LOW_WATER;
+      if (!starving) {
+        const newestExpiry = live.reduce((mx, m) => Math.max(mx, m.expiryMs), 0);
+        if (newestExpiry > now + ORACLE_LIFETIME_MS - ORACLE_STEP_MS) continue;
+      }
 
-      // Stand the oracle up at the live game price (real Pyth anchor + vol) so its first on-chain
-      // spot already matches the feed; fall back to raw Pyth on a cold start.
+      // Stand oracles up at the live game price (real Pyth anchor + vol) so the first on-chain spot
+      // already matches the feed; fall back to raw Pyth on a cold start. One read serves this tick.
       let spot: number;
       try {
         spot = (await gameSpot(asset))?.price ?? (await fetchSpot(asset));
@@ -99,10 +126,18 @@ const rollLadder = async (): Promise<void> => {
         continue;
       }
 
-      try {
-        await createOracle(asset, capId, spot, now + ORACLE_LIFETIME_MS);
-      } catch (err) {
-        console.error(`[OracleRoll] failed to create ${asset} oracle:`, err instanceof Error ? err.message : err);
+      // Steady state: one fresh oracle at full life (ages down to fill the near buckets). Starving:
+      // up to ORACLE_ROLL_MAX_PER_TICK at the nearest uncovered slots, so the recovery is fast AND
+      // staggered (no synchronized far-end bunching that would just re-drain together).
+      const expiries = starving
+        ? nearestUncoveredExpiries(now, live).slice(0, Math.min(ORACLE_LADDER_DEPTH - live.length, ORACLE_ROLL_MAX_PER_TICK))
+        : [now + ORACLE_LIFETIME_MS];
+      for (const expiry of expiries) {
+        try {
+          await createOracle(asset, capId, spot, expiry);
+        } catch (err) {
+          console.error(`[OracleRoll] failed to create ${asset} oracle:`, err instanceof Error ? err.message : err);
+        }
       }
     }
   } catch (err) {

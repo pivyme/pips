@@ -88,6 +88,12 @@ export interface AchievementDTO {
 // Both auth modes finalize server-side, so play + cashout always come back resolved.
 export type PlayResult = { play: PlayDTO }
 export type CashoutResult = { play: PlayDTO; unlocked: string[] }
+// POST /wallet/withdraw -> the refreshed user (new balance) + the on-chain tx digest.
+export type WithdrawResult = { user: UserDTO; digest: string }
+export interface WithdrawInput {
+  recipient: string
+  amount: string
+}
 export interface PrivyVerifyInput {
   token: string
   email?: string
@@ -166,6 +172,9 @@ const realApi = {
     return request<{ plays: PlayDTO[] }>('GET', `/plays${qs ? `?${qs}` : ''}`)
   },
   getPlay: (playId: string) => request<{ play: PlayDTO }>('GET', `/plays/${playId}`),
+
+  // wallet
+  withdraw: (input: WithdrawInput) => request<WithdrawResult>('POST', '/wallet/withdraw', input),
 
   // menu
   stats: () => request<{ stats: UserStatsDTO }>('GET', '/stats'),

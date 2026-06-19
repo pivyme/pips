@@ -286,6 +286,17 @@ export const buildDeposit = (tx: Transaction, managerId: string, coin: Transacti
   tx.moveCall({ target: target('predict_manager', 'deposit'), typeArguments: [DUSDC_TYPE], arguments: [tx.object(managerId), coin] });
 };
 
+// Withdraw `amountRaw` (6dp) of DUSDC out of the manager's BalanceManager, back into the sender's
+// wallet as a fresh Coin. Owner-gated on-chain (sender must be the manager owner), so it runs under
+// executeForUser (dev = operator, privy = the user). Returns the coin to transfer or merge. Used by
+// the wallet withdraw flow to reach chips that have migrated into the manager from prior plays.
+export const buildManagerWithdraw = (tx: Transaction, managerId: string, amountRaw: bigint): TransactionObjectArgument =>
+  tx.moveCall({
+    target: target('predict_manager', 'withdraw'),
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(managerId), tx.pure.u64(amountRaw)],
+  });
+
 export const buildMint = (tx: Transaction, managerId: string, p: BinaryParams): void => {
   tx.moveCall({
     target: target('predict', 'mint'),

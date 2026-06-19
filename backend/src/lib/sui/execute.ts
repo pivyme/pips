@@ -34,11 +34,19 @@ const operatorExecutor = new SerialTransactionExecutor({
   defaultGasBudget: 1_000_000_000n,
 });
 
-// Sign + submit as the operator through the serial executor. Throws on a reverted/failed tx.
-// objectChanges is reduced to the created objects (with their Move type), which is all any
+// A hard ceiling on any single operator tx. Operator txs normally finalize in ~1-3s through the
+// serial executor, but on the remote single-validator node a submit can occasionally stall. Without
+// a bound, one stalled tx hangs whatever worker awaited it: the settle worker's isRunning flag would
+// stay set and NO further settle tick could run, stranding every expired play on SETTLING forever.
+// On timeout we stop waiting (the tx may still land, which is fine: a nudge/push is idempotent and a
+// settle redeem is retried next tick) so the worker frees up and recovers on its own.
+const OPERATOR_TX_TIMEOUT_MS = 25_000;
+
+// Sign + submit as the operator through the serial executor. Throws on a reverted/failed tx (or a
+// timeout). objectChanges is reduced to the created objects (with their Move type), which is all any
 // caller reads (the new oracle / manager id).
 export async function executeAsOperator(tx: Transaction, label: string): Promise<ExecResult> {
-  const out = await operatorExecutor.executeTransaction(tx, { objectTypes: true });
+  const out = await withTimeout(operatorExecutor.executeTransaction(tx, { objectTypes: true }), OPERATOR_TX_TIMEOUT_MS, `operator ${label}`);
   const t = out.$kind === 'Transaction' ? out.Transaction : null;
   if (!t || t.effects?.status?.success !== true) {
     const status = t?.effects?.status ?? (out.$kind === 'FailedTransaction' ? out.FailedTransaction.status : out);
