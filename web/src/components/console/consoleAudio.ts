@@ -6,6 +6,7 @@ type SfxKey =
   | 'pillPress'
   | 'pillRelease'
   | 'knob'
+  | 'roller'
 
 type ControlId =
   | 'main'
@@ -79,7 +80,7 @@ export function createAudio() {
       const ab = await fetch(path).then(r => r.arrayBuffer())
       return actx!.decodeAudioData(ab)
     }
-    const [mp, mr, ap, ar, pp, pr, kn] = await Promise.all([
+    const [mp, mr, ap, ar, pp, pr, kn, sr] = await Promise.all([
       load('/sounds/MAIN_PRESS.MP3'),
       load('/sounds/MAIN_RELEASE.MP3'),
       load('/sounds/ACTION_PRESS.MP3'),
@@ -87,11 +88,12 @@ export function createAudio() {
       load('/sounds/PILL_PRESS.MP3'),
       load('/sounds/PILL_RELEASE.MP3'),
       load('/sounds/KNOB_RUBBER.MP3'),
+      load('/sounds/SMALL_ROLLER.MP3'),
     ])
     sfx.mainPress = mp; sfx.mainRelease = mr
     sfx.actionPress = ap; sfx.actionRelease = ar
     sfx.pillPress = pp; sfx.pillRelease = pr
-    sfx.knob = kn
+    sfx.knob = kn; sfx.roller = sr
   }
 
   function nextCents(profile: ControlProfile, previous?: Variation) {

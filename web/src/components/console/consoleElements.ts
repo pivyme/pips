@@ -262,6 +262,10 @@ export function createNumberWheel(
 export function createActionScreens(
   device: THREE.Group, bm: THREE.Mesh[], indices: number[],
   buttons: ButtonCfg[], BTN_PX: { x: number; y: number }[], wx: Px, wy: Px,
+  // The screen overlays (scanlines, sheen, bloom) draw depth-test-free so the label stays crisp over
+  // the glossy acrylic. That makes them bleed through the body/knob when the device is spun. The export
+  // tool spins it, so it opts into real occlusion to keep the side views clean.
+  occlude = false,
 ): { dispose(): void; glow: Record<number, THREE.MeshBasicMaterial> } {
   const trash: { dispose(): void }[] = []
   // Shared so both screens read as the same part. No envMap in the scene, so metalness stays moderate
@@ -288,7 +292,7 @@ export function createActionScreens(
   const sheenTex = new THREE.CanvasTexture(sheenCanvas)
   sheenTex.colorSpace = THREE.SRGBColorSpace
   const sheenMat = new THREE.MeshBasicMaterial({
-    map: sheenTex, transparent: true, opacity: 0.16, depthWrite: false, depthTest: false,
+    map: sheenTex, transparent: true, opacity: 0.16, depthWrite: false, depthTest: occlude,
     blending: THREE.AdditiveBlending,
   })
   const sheenGeo = new THREE.PlaneGeometry(1, 1)
@@ -309,7 +313,7 @@ export function createActionScreens(
   cg.fillRect(0, 0, 256, 256)
   const crtTex = new THREE.CanvasTexture(crtCanvas)
   crtTex.colorSpace = THREE.SRGBColorSpace
-  const crtMat = new THREE.MeshBasicMaterial({ map: crtTex, transparent: true, opacity: 0.6, depthWrite: false, depthTest: false })
+  const crtMat = new THREE.MeshBasicMaterial({ map: crtTex, transparent: true, opacity: 0.6, depthWrite: false, depthTest: occlude })
   const crtGeo = new THREE.PlaneGeometry(1, 1)
   trash.push(crtTex, crtMat, crtGeo)
 
@@ -382,7 +386,7 @@ export function createActionScreens(
 
     // Bloom halo, wider than the window so the glow spills onto the frame and a touch of the body.
     const haloMat = new THREE.MeshBasicMaterial({
-      map: haloTex, transparent: true, opacity: 0.36, depthWrite: false, depthTest: false,
+      map: haloTex, transparent: true, opacity: 0.36, depthWrite: false, depthTest: occlude,
       blending: THREE.AdditiveBlending,
     })
     const halo = new THREE.Mesh(haloGeo, haloMat)

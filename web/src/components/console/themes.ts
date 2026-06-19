@@ -52,8 +52,6 @@ export const THEMES: ConsoleTheme[] = [
     cardSub: 'rgba(58,42,22,0.62)',
   },
   {
-    // Sui Overflow 2026: the cream hackathon canvas wrapped onto the body, blue grid + scattered
-    // keycaps and all. Navy PLAY (the site's Register CTA), Sui-blue actions, a warm keycap-yellow knob.
     id: 'overflow-2026',
     code: '2026',
     name: 'Overflow',
@@ -73,19 +71,16 @@ export const THEMES: ConsoleTheme[] = [
     cardImage: '/assets/overflow-skin.svg',
   },
   {
-    // Sui: the white droplet wrapped across a Sui-blue body. White PLAY + knob pop on the blue,
-    // the two little action caps drop to a deep ocean navy, and the flipped-back shell is that same
-    // deep ocean with a white embossed logo. id stays `overflow` so saved picks keep resolving.
-    id: 'overflow',
+    id: 'suiblue',
     code: '009',
     name: 'Sui',
     badge: 'SUI',
-    body: '#4da2ff', // Sui blue, matches the skin's base fill (and the floor if the SVG fails)
+    body: '#4da2ff',
     back: '#4da2ff',
     skin: '/assets/sui-skin.svg',
     knob: '#f4f7ff',
     main: '#f4f7ff',
-    action: '#0a2c5e', // the two little bottom-left caps: deep Sui navy
+    action: '#4da2ff',
     pills: '#0a2c5e',
     label: '#0a2540',
     logo: '#f4f7ff',
@@ -94,7 +89,7 @@ export const THEMES: ConsoleTheme[] = [
     cardSub: 'rgba(255,255,255,0.9)',
   },
   {
-    id: 'sui',
+    id: 'deepbook',
     code: '042',
     name: 'DeepBlue',
     badge: 'SUI!',
@@ -102,7 +97,7 @@ export const THEMES: ConsoleTheme[] = [
     back: '#175ad6',
     knob: '#298DFF',
     main: '#f4f7ff',
-    action: '#1b3367',
+    action: '#0838a0',
     pills: '#f4f7ff',
     label: '#e3edfd',
     logo: '#ced2dd',
@@ -112,7 +107,7 @@ export const THEMES: ConsoleTheme[] = [
   },
   {
     id: 'pivy',
-    code: '2025',
+    code: '110',
     name: 'PIVY IT UP!',
     badge: 'EXCLUSIVE',
     body: '#7EFE9F',

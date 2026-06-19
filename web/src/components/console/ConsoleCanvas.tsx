@@ -55,6 +55,10 @@ interface ConsoleCanvasProps {
   // front/back, and `theme` repaints the materials live. Mutually exclusive with debug.
   customize?: boolean
   theme?: ConsoleTheme
+  // PNG export tool (/export): a still product shot, no idle float, the device pose driven entirely by
+  // the x/y sliders (exportRot, radians). Forces preserveDrawingBuffer so the canvas reads out to PNG.
+  exportMode?: boolean
+  exportRot?: { x: number; y: number }
   // Done sequence: flip `outro` true and the device snaps front-on to the exact game position with
   // the screen black, then `onOutroComplete` fires (the studio commits + leaves, and the game fades
   // its own screen content in).
@@ -74,6 +78,8 @@ export default function ConsoleCanvas({
   debug = false,
   customize = false,
   theme,
+  exportMode = false,
+  exportRot,
   outro = false,
   onOutroComplete,
   screenContentVisible = true,
@@ -89,6 +95,8 @@ export default function ConsoleCanvas({
   propsRef.current = { handlers, onNav, onOutroComplete }
   const viewRef = useRef(view)
   viewRef.current = view
+  const exportRotRef = useRef(exportRot)
+  exportRotRef.current = exportRot
   const activeRef = useRef(active)
   activeRef.current = active
   // The scene exposes its label/state updater here; the [view] effect calls it.
@@ -114,6 +122,9 @@ export default function ConsoleCanvas({
       canvas,
       antialias: true,
       alpha: true,
+      // The export tool reads the canvas back with toDataURL; without this the buffer is cleared after
+      // each present and the PNG comes out blank.
+      preserveDrawingBuffer: exportMode,
     })
     renderer.setClearColor(0x000000, 0)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -490,6 +501,9 @@ export default function ConsoleCanvas({
     const logoLetters: THREE.Shape[] = []
     const logoEyes: THREE.Shape[] = []
 
+    // Maker's mark below the back logo, seated once the rear face z is known (see makeLabel section).
+    let backMarkPlane: THREE.Mesh | null = null
+
     // z = letter recess below the rear face, eyeZ = the eyes' depth (negative pops them out in front).
     const pieceZ = (kind: string) =>
       kind === 'eye' ? logoCarve.eyeZ : logoCarve.z
@@ -502,6 +516,8 @@ export default function ConsoleCanvas({
       // floor sits behind the deepest piece so counters always bottom out on cream
       cavityFloor.position.z =
         backFaceLocalZ + Math.max(logoCarve.z, logoCarve.eyeZ) + 0.012
+      // Maker's mark rides just proud of the rear face (faced toward -z, so this sits behind it).
+      if (backMarkPlane) backMarkPlane.position.z = backFaceLocalZ - 0.01
       dirty = true
     }
 
@@ -620,8 +636,11 @@ export default function ConsoleCanvas({
     // Frame the two action caps as mini LCD screens: a machined metal bezel + a glossy acrylic window
     // over each. The cap stays bm[i] (the raycast + press target); we just drive its color like a panel.
     const ACTION_IDX = [1, 2]
+    // Customize + export both spin the device, so the overlays occlude properly instead of bleeding
+    // through the body/knob from the side. Play view keeps them depth-test-free (front-on, no spin).
+    const spinView = customize || exportMode
     const { dispose: disposeActionScreens, glow: actionGlow } =
-      createActionScreens(device, bm, ACTION_IDX, buttons, BTN_PX, wx, wy)
+      createActionScreens(device, bm, ACTION_IDX, buttons, BTN_PX, wx, wy, spinView)
 
     // The binding's color lights the screen (LONG → green, SHORT → red, …); off-binding the cap idles
     // dim at the theme's action tone, so it still reads as a powered screen. The loop adds the press
@@ -897,14 +916,45 @@ export default function ConsoleCanvas({
       '#7c7870',
     )
 
+    // Maker's mark on the back panel, centered below the embossed logo. Parented to the panel so it
+    // tracks the screen stretch, faced toward -z so it reads when the device is flipped. Tinted to the
+    // theme's label color (recolored by applyTheme). placeLogoCarve seats its z on the rear face.
+    const backMark = (() => {
+      const c = document.createElement('canvas'),
+        g = c.getContext('2d')!
+      const text = 'By PIVY Inc.'
+      drawLabel(c, g, text, '#7c7870')
+      const tex = new THREE.CanvasTexture(c)
+      tex.colorSpace = THREE.SRGBColorSpace
+      tex.anisotropy = MAXANISO
+      const worldH = 0.34
+      const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(worldH * (c.width / c.height), worldH),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
+      )
+      plane.rotation.y = Math.PI // face the rear so it reads when flipped
+      plane.position.set(0, -(logoH / 2 + 0.42), backFaceLocalZ - 0.01)
+      backPanel.add(plane)
+      backMarkPlane = plane
+      return {
+        recolor: (col: string) => {
+          drawLabel(c, g, text, col)
+          tex.needsUpdate = true
+          dirty = true
+        },
+      }
+    })()
+
     // Live labels: action1 / action2 on their faces. The main button wears the embossed Pips glyph
     // instead of a text label (carved once the logo SVG loads, see buildMainGlyph).
     // Sits on the screen face under the acrylic. Kept small so even a 6-char label clears the bezel
     // window (the label draws depth-test-free, so it must not overrun the metal frame).
-    const a1Lbl = makeDynLabel(0.36, '#ffffff')
+    // In the spin views the labels occlude properly (depthTest on) instead of bleeding through the
+    // body/knob from the side.
+    const a1Lbl = makeDynLabel(0.36, '#ffffff', false, spinView)
     a1Lbl.plane.position.set(0, 0, 0.02)
     bm[1].add(a1Lbl.plane)
-    const a2Lbl = makeDynLabel(0.36, '#ffffff')
+    const a2Lbl = makeDynLabel(0.36, '#ffffff', false, spinView)
     a2Lbl.plane.position.set(0, 0, 0.02)
     bm[2].add(a2Lbl.plane)
 
@@ -1402,6 +1452,7 @@ export default function ConsoleCanvas({
       const labelColor = t.label ?? '#7c7870'
       menuLbl.recolor(labelColor)
       gamesLbl.recolor(labelColor)
+      backMark.recolor(labelColor)
       dirty = true
     }
     applyThemeRef.current = applyTheme
@@ -1524,6 +1575,29 @@ export default function ConsoleCanvas({
       // Keep the solid back on through the whole spin and only drop it once we're basically front-on,
       // so it doesn't pop while the device is still angled. By then it's occluded anyway.
       backPanel.visible = !outroActive || easeInOutCubic(outroT) < 0.9
+    }
+
+    // Export tool: a dead front-on frame at slider zero, with the device pose driven purely by the
+    // x/y sliders. No float, no orbit, no intro. x = pitch, y = yaw, applied to the deck pivot so the
+    // back panel reads when spun. Camera frames the device full-height like the games view does.
+    function placeExportCamera() {
+      const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
+      const aspect = Math.max(camera.aspect, 0.0001)
+      const ext = responsiveScreenExt()
+      const cy = wy(1130) + ext / 2
+      // 1.25 pulls the camera back so the device sits smaller in frame with breathing room around it.
+      const frontZ =
+        (ext > 0
+          ? (6.2 * 0.5) / (tanHalf * aspect)
+          : (11.95 * 0.5) / tanHalf) * 1.25 + DEVICE_Z
+      camera.position.set(0, cy, frontZ)
+      camera.lookAt(0, cy, 0)
+      device.position.y = 0
+      device.rotation.set(0, 0, 0)
+      const er = exportRotRef.current
+      deck.rotation.set(er?.x ?? 0, er?.y ?? 0, 0)
+      // Keep the solid back on so the embossed back panel reads once the device is spun around.
+      backPanel.visible = true
     }
 
     applyOutroRef.current = (on: boolean) => {
@@ -1720,7 +1794,7 @@ export default function ConsoleCanvas({
             detent !== steps + direction;
             detent += direction
           ) {
-            audio.playSfx('knob', 'thumbwheel')
+            audio.playSfx('roller', 'thumbwheel')
             const raw = numberWheelStartValue + detent * wheel.step
             const next = Math.min(
               wheel.max,
@@ -1940,6 +2014,14 @@ export default function ConsoleCanvas({
       let animating = false
 
       if (customize) {
+        if (exportMode) {
+          // No float, no orbit. The pose is whatever the sliders say; render every frame so a slider
+          // drag updates live and the preserved buffer is always current for capture.
+          placeExportCamera()
+          renderer.shadowMap.needsUpdate = true
+          renderer.render(scene, camera)
+          return
+        }
         if (!activeRef.current && !outroActive) {
           if (dirty) {
             renderer.shadowMap.needsUpdate = true
@@ -2116,7 +2198,7 @@ export default function ConsoleCanvas({
     }
     // Scene is built once per mode; live bindings flow through refs + the effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debug, customize])
+  }, [debug, customize, exportMode])
 
   // Push label/state updates into the scene whenever the registered view changes.
   useEffect(() => {

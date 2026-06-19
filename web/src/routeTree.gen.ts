@@ -9,6 +9,8 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as PitchRouteImport } from './routes/pitch'
+import { Route as ExportRouteImport } from './routes/export'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppRouteImport } from './routes/_app'
@@ -26,6 +28,16 @@ import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
 import { Route as AppGamesLineRiderRouteImport } from './routes/_app/games/line-rider'
 import { Route as AppGamesCandleHopRouteImport } from './routes/_app/games/candle-hop'
 
+const PitchRoute = PitchRouteImport.update({
+  id: '/pitch',
+  path: '/pitch',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ExportRoute = ExportRouteImport.update({
+  id: '/export',
+  path: '/export',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DesignSystemRoute = DesignSystemRouteImport.update({
   id: '/design-system',
   path: '/design-system',
@@ -110,6 +122,8 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
+  '/export': typeof ExportRoute
+  '/pitch': typeof PitchRoute
   '/tools/wallet': typeof ToolsWalletRoute
   '/games/candle-hop': typeof AppGamesCandleHopRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
@@ -127,6 +141,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
+  '/export': typeof ExportRoute
+  '/pitch': typeof PitchRoute
   '/tools/wallet': typeof ToolsWalletRoute
   '/games/candle-hop': typeof AppGamesCandleHopRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
@@ -146,6 +162,8 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/console': typeof ConsoleRoute
   '/design-system': typeof DesignSystemRoute
+  '/export': typeof ExportRoute
+  '/pitch': typeof PitchRoute
   '/tools/wallet': typeof ToolsWalletRoute
   '/_app/games/candle-hop': typeof AppGamesCandleHopRoute
   '/_app/games/line-rider': typeof AppGamesLineRiderRoute
@@ -165,6 +183,8 @@ export interface FileRouteTypes {
     | '/'
     | '/console'
     | '/design-system'
+    | '/export'
+    | '/pitch'
     | '/tools/wallet'
     | '/games/candle-hop'
     | '/games/line-rider'
@@ -182,6 +202,8 @@ export interface FileRouteTypes {
     | '/'
     | '/console'
     | '/design-system'
+    | '/export'
+    | '/pitch'
     | '/tools/wallet'
     | '/games/candle-hop'
     | '/games/line-rider'
@@ -200,6 +222,8 @@ export interface FileRouteTypes {
     | '/_app'
     | '/console'
     | '/design-system'
+    | '/export'
+    | '/pitch'
     | '/tools/wallet'
     | '/_app/games/candle-hop'
     | '/_app/games/line-rider'
@@ -219,11 +243,27 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   ConsoleRoute: typeof ConsoleRoute
   DesignSystemRoute: typeof DesignSystemRoute
+  ExportRoute: typeof ExportRoute
+  PitchRoute: typeof PitchRoute
   ToolsWalletRoute: typeof ToolsWalletRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/pitch': {
+      id: '/pitch'
+      path: '/pitch'
+      fullPath: '/pitch'
+      preLoaderRoute: typeof PitchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/export': {
+      id: '/export'
+      path: '/export'
+      fullPath: '/export'
+      preLoaderRoute: typeof ExportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/design-system': {
       id: '/design-system'
       path: '/design-system'
@@ -374,6 +414,8 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   ConsoleRoute: ConsoleRoute,
   DesignSystemRoute: DesignSystemRoute,
+  ExportRoute: ExportRoute,
+  PitchRoute: PitchRoute,
   ToolsWalletRoute: ToolsWalletRoute,
 }
 export const routeTree = rootRouteImport
