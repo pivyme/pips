@@ -64,18 +64,18 @@ const RANGE_ROUND_SEC = 30 // Range is one real settled round; the client no lon
 // === Lucky: the slot-weighted multiplier reel (LUCKY.md §4-5) ===
 // The reel deals one tier per spin, weighted for fun (NOT by win odds). Each tier then settles at its
 // own honest odds = 1/mult, so a 2x is a real coinflip and a 25x is a rare-but-real jackpot. The strike
-// (the TARGET line) sits at the distance that yields those odds, so the multiplier we show is always one
-// we could actually pay. z is the precomputed standard-normal quantile invNorm(1 - 1/mult) for the strike.
+// (the TARGET line) always sits in the BET DIRECTION (z >= 0): up targets above entry, down below, so
+// "down" always needs the price to fall. The ladder starts at 2x (~at entry); a sub-2x tier would force
+// the target onto the wrong side of entry. z is the standard-normal quantile invNorm(1 - 1/mult).
 const LUCKY_ASSETS = ['BTC', 'SUI', 'ETH']
 const LUCKY_ROUND_SEC = 30 // fixed fast round
 const ROUND_VOL = 0.022 // fractional std of price over a 30s round; sets how far the TARGET sits per tier
 const LUCKY_TIERS = [
-  { mult: 1.5, weight: 0.28, z: -0.4307 },
-  { mult: 2, weight: 0.34, z: 0 },
-  { mult: 3, weight: 0.22, z: 0.4307 },
-  { mult: 5, weight: 0.11, z: 0.8416 },
-  { mult: 10, weight: 0.04, z: 1.2816 },
-  { mult: 25, weight: 0.01, z: 1.7507 },
+  { mult: 2, weight: 0.5, z: 0 },
+  { mult: 3, weight: 0.3, z: 0.4307 },
+  { mult: 5, weight: 0.13, z: 0.8416 },
+  { mult: 10, weight: 0.05, z: 1.2816 },
+  { mult: 25, weight: 0.02, z: 1.7507 },
 ] as const
 const TICK_MS = 300 // denser ticks read as continuous motion
 const VOL = 0.0004 // per-tick impulse on velocity (not price), small so trends stay smooth
@@ -491,8 +491,8 @@ function createLucky(body: Record<string, unknown>): PlayDTO {
   const entry = currentPrice(asset)
   const roundVol = ROUND_VOL * Math.sqrt(duration / LUCKY_ROUND_SEC)
   const dir = side === 'up' ? 1 : -1
-  // The strike sits where the chosen tier's honest odds land it: in the money for the safe tiers,
-  // a real reach for the jackpots. The TARGET line on the chart draws here.
+  // The strike (TARGET) sits in the bet direction at the distance the tier's odds imply: ~at entry for
+  // a 2x coinflip, a real reach away for the jackpots. So "down" always needs the price to fall.
   const target = entry * (1 + dir * roundVol * tier.z)
   const openedMs = nowMs()
   const expiryMs = openedMs + duration * 1000
@@ -508,6 +508,7 @@ function createLucky(body: Record<string, unknown>): PlayDTO {
     markValue: str(stake),
     pnl: '0.00',
     multiplier: tier.mult,
+    entrySpot: String(entry),
     openedAt: new Date(openedMs).toISOString(),
   }
   registerOpen(p, { game: 'lucky', asset, stake, entry, side, lockedMult: tier.mult, target, roundVol, openedMs, expiryMs })

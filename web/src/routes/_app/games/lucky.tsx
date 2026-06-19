@@ -33,7 +33,7 @@ const BET_LADDER = [1, 5, 10, 25, 50, 100] as const
 // Reel cycle pools (cosmetic blur before the snap). The real targets come from the dealt play.
 const REEL_ASSETS = ['BTC', 'SUI', 'ETH']
 const DIR_POOL = ['UP', 'DOWN']
-const MULT_POOL = ['1.5x', '2x', '3x', '5x', '10x', '25x']
+const MULT_POOL = ['2x', '3x', '5x', '10x', '25x']
 const SPIN_STOPS = [720, 980, 1240] // staggered reel stops (ms)
 const SPIN_TOTAL = 1320
 const RESULT_MS = 4200
@@ -59,6 +59,45 @@ const sideLabel = (s: Side): string => (s === 'up' ? 'UP' : 'DOWN')
 const priceLabel = (p: number): string =>
   `$${p.toLocaleString('en-US', { maximumFractionDigits: p >= 1000 ? 0 : p >= 1 ? 2 : 4 })}`
 
+// Live cash-out estimate model. A binary's fair value = max payout x P(finish on the winning side of
+// TARGET). Standard normal CDF (Zelen & Severo); the same shape the backend prices against, so the
+// smooth client number tracks the eventual settle and converges to the full win / zero at the buzzer.
+function normCdf(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x))
+  const poly = t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
+  const u = 0.39894228 * Math.exp((-x * x) / 2) * poly
+  return x >= 0 ? 1 - u : u
+}
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
+// Fallback round vol for the estimate when the target sits at the money (a ~2x coinflip), where the
+// vol can't be backed out of the strike distance. Display only: the real cash-out is the on-chain
+// redeem, and the win/loss is decided purely by price vs TARGET (vol-independent).
+const LIVE_VOL = 0.03
+
+// Inverse standard normal CDF (Acklam). Used to back the implied round vol out of a strike's distance
+// and odds, so the live estimate reads ~0 P/L at entry and converges to the full win / zero at the
+// buzzer no matter how the target was placed (real path prices at IMPLIED_VOL, demo a touch tighter).
+function invNorm(p: number): number {
+  if (p <= 0) return -Infinity
+  if (p >= 1) return Infinity
+  const a = [-3.969683028665376e1, 2.209460984245205e2, -2.75928510446969e2, 1.38357751867269e2, -3.066479806614716e1, 2.506628277459239]
+  const b = [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1]
+  const c = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783]
+  const d = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416]
+  const plow = 0.02425
+  if (p < plow) {
+    const q = Math.sqrt(-2 * Math.log(p))
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+  }
+  if (p <= 1 - plow) {
+    const q = p - 0.5
+    const r = q * q
+    return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+  }
+  const q = Math.sqrt(-2 * Math.log(1 - p))
+  return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+}
+
 export function LuckyScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
@@ -80,6 +119,9 @@ export function LuckyScreen() {
   const spotRef = useRef<number | null>(null)
   const spotAssetRef = useRef<string | null>(null)
   const chartAssetRef = useRef<string>('')
+  // The chart's eased leading price, written every frame by the Chart. The live P/L reads it to
+  // track the line at 60fps instead of the laggy ~2.5s backend mark.
+  const livePriceRef = useRef(0)
 
   const marketsQ = useQuery({ queryKey: ['markets'], queryFn: () => api.markets(), refetchInterval: 10_000 })
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
@@ -107,12 +149,20 @@ export function LuckyScreen() {
   const reelsCycling = phase === 'placing' || phase === 'spinning'
   const showReadouts = play != null && (phase === 'open' || phase === 'cashing' || phase === 'result')
   const multiplier = live?.multiplier ?? play?.multiplier ?? 0
-  const value = live ? parseFloat(live.markValue) : bet
-  const pnlNum = live ? parseFloat(live.pnl) : 0
   const playBet = play ? parseFloat(play.stake) : bet
   const entryCost = play ? parseFloat(play.entryValue) : bet
-  // What a win nets: the full settled payout (entryCost × multiplier) minus what went in. The reward.
-  const winProfit = Math.max(0, entryCost * ((play?.multiplier ?? multiplier) - 1))
+  // Entry reference: the spot the strike was solved against, so the ENTRY line, the TARGET line, and
+  // the settlement all agree. Falls back to the chart's first captured price if entrySpot is absent.
+  const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
+  const entryVal = Number.isFinite(entrySpotNum) && entrySpotNum > 0 ? entrySpotNum : entryPrice
+  // The round window (open -> buzzer), for the time-decay in the live cash-out estimate.
+  const expiryMs = play ? play.market.expiry : 0
+  const openedAtMs = play?.openedAt ? Date.parse(play.openedAt) : lp ? expiryMs - lp.duration * 1000 : 0
+  // Chart overlays: the ENTRY line plus the directional TARGET line + winning-zone shading.
+  const overlays =
+    showEntry && entryVal != null
+      ? { entry: entryVal, ...(strike != null && lp ? { target: { price: strike, side: lp.side } } : {}) }
+      : undefined
   // The mint is still landing: reels snapped on the dealt deal, the position is not open on-chain yet.
   const opening = phase === 'open' && live?.status === 'pending'
   // The round hit the buzzer and we are waiting on the on-chain settle (won/lost) frame.
@@ -424,7 +474,8 @@ export function LuckyScreen() {
             {chartAsset ? (
               <Chart
                 asset={chartAsset}
-                overlays={showEntry && entryPrice != null ? { entry: entryPrice } : undefined}
+                overlays={overlays}
+                livePriceRef={livePriceRef}
                 onPrice={(p) => {
                   spotRef.current = p
                   spotAssetRef.current = chartAssetRef.current
@@ -465,15 +516,19 @@ export function LuckyScreen() {
                 </>
               ) : showReadouts ? (
                 <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Profit / Loss</div>
-                  <div className={cnm('text-[40px] font-extrabold leading-none', pnlNum >= 0 ? 'text-up' : 'text-down')}>
-                    {pnlNum >= 0 ? '+' : '-'}$<Stat value={Math.abs(pnlNum)} />
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em]">
-                    <span className="text-text-2">Cash out <span className="tnum text-text">${money(value)}</span></span>
-                    <span className="text-text-3">·</span>
-                    <span className="text-text-2">Win <span className="tnum text-up">+${money(winProfit)}</span></span>
-                  </div>
+                  <LivePnl
+                    key={play?.id}
+                    livePriceRef={livePriceRef}
+                    side={lp?.side ?? 'up'}
+                    target={strike ?? 0}
+                    entry={entryVal ?? 0}
+                    entryCost={entryCost}
+                    mult={play?.multiplier ?? multiplier}
+                    status={live?.status ?? 'open'}
+                    finalPnl={live ? parseFloat(live.pnl) : 0}
+                    openedAtMs={openedAtMs}
+                    expiryMs={expiryMs}
+                  />
                   <div className="mt-2.5 grid grid-cols-3 gap-x-3">
                     <Cell label="Multiplier" value={fmtMult(multiplier)} />
                     <Cell label="Target" value={strike != null ? priceLabel(strike) : '—'} />
@@ -651,12 +706,115 @@ function LuckyResult({ play, streak, onDismiss }: { play: PlayDTO; streak: numbe
   )
 }
 
+// The live readout while a round is open: a smooth, chart-synced P/L. With directional targets the
+// sign now matches the move (price going your way reads green, against you red), and it converges to
+// the real win/loss at the buzzer. The number rides the chart's eased price (livePriceRef) at 60fps,
+// written imperatively so the screen never re-renders on a tick. On a terminal status it shows the
+// settled result. CASH OUT is the live early-exit estimate; WIN is the full upside if you hold and land.
+function LivePnl({
+  livePriceRef,
+  side,
+  target,
+  entry,
+  entryCost,
+  mult,
+  status,
+  finalPnl,
+  openedAtMs,
+  expiryMs,
+}: {
+  livePriceRef: { current: number }
+  side: Side
+  target: number
+  entry: number
+  entryCost: number
+  mult: number
+  status: PlayStatus
+  finalPnl: number
+  openedAtMs: number
+  expiryMs: number
+}) {
+  const terminal = RESULT_TERMINAL.has(status)
+  const valid = entry > 0 && target > 0 && entryCost > 0
+  const winAmt = Math.max(0, entryCost * (mult - 1))
+  const [pos, setPos] = useState(true) // P/L sign, drives the hero color (flips only at the target)
+  const posRef = useRef(true)
+  const pnlSpan = useRef<HTMLSpanElement>(null)
+  const cashSpan = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (terminal || !valid) return
+    const dir = side === 'up' ? 1 : -1
+    // Back the round vol out of where the target actually sits, so the estimate reads ~0 P/L at entry
+    // and converges to the full win / zero at the buzzer. z = the tier's normal quantile; at-the-money
+    // (~2x) the distance is ~0 and the vol can't be inferred, so fall back to LIVE_VOL.
+    const distFrac = Math.abs(target - entry) / entry
+    const z = -invNorm(Math.min(0.5, Math.max(1e-4, 1 / mult)))
+    const sigmaFull = distFrac > 1e-6 && z > 1e-3 ? distFrac / z : LIVE_VOL
+    let raf = 0
+    const loop = () => {
+      const price = livePriceRef.current
+      if (price > 0) {
+        const gap = (dir * (price - target)) / entry // > 0 = on the winning side of TARGET
+        const remaining = clamp01((expiryMs - Date.now()) / Math.max(1, expiryMs - openedAtMs))
+        const sigma = sigmaFull * Math.sqrt(Math.max(remaining, 0.0015))
+        const value = entryCost * mult * clamp01(normCdf(gap / sigma)) // live fair / cash-out value
+        const pnl = value - entryCost
+        const nowPos = pnl >= -1e-9
+        if (nowPos !== posRef.current) {
+          posRef.current = nowPos
+          setPos(nowPos)
+        }
+        if (pnlSpan.current) pnlSpan.current.textContent = `${nowPos ? '+' : '-'}$${money(Math.abs(pnl))}`
+        if (cashSpan.current) cashSpan.current.textContent = money(Math.max(0, value))
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [terminal, valid, side, target, entry, entryCost, mult, openedAtMs, expiryMs, livePriceRef])
+
+  if (terminal) {
+    const won = status === 'won' || (status === 'cashed_out' && finalPnl >= 0)
+    const label = status === 'won' ? 'Won' : status === 'cashed_out' ? 'Cashed out' : 'Missed'
+    return (
+      <>
+        <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">{label}</div>
+        <div className={cnm('text-[40px] font-extrabold leading-none', won ? 'text-up' : 'text-down')}>
+          {finalPnl >= 0 ? '+' : '-'}$<Stat value={Math.abs(finalPnl)} />
+        </div>
+        <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-text-2">
+          {side === 'up' ? 'UP' : 'DOWN'} · {fmtMult(mult)}
+        </div>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Profit / Loss</div>
+      <div className={cnm('tnum text-[40px] font-extrabold leading-none', pos ? 'text-up' : 'text-down')}>
+        <span ref={pnlSpan}>{valid ? '+$0.00' : '—'}</span>
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em]">
+        <span className="text-text-2">
+          Cash out <span className="tnum text-text">$<span ref={cashSpan}>{money(valid ? entryCost : 0)}</span></span>
+        </span>
+        <span className="text-text-3">·</span>
+        <span className="text-text-2">
+          Win <span className="tnum text-up">+${money(winAmt)}</span>
+        </span>
+      </div>
+    </>
+  )
+}
+
 // HOW TO: a flat in-screen card of the rules. Plain terminology only, no banned words.
 function HowTo({ onClose }: { onClose: () => void }) {
   const lines: Array<[string, string]> = [
-    ['SPIN', 'Deals an asset, a direction, and a multiplier.'],
-    ['TARGET', 'The price your pick must cross by the buzzer.'],
-    ['WIN', 'Land past TARGET and you win bet × multiplier.'],
+    ['SPIN', 'Deals an asset, a direction (up or down), and a multiplier.'],
+    ['TARGET', 'A price set in your direction: up sits above, down sits below.'],
+    ['WIN', 'Price reaches the target by the buzzer to win bet × multiplier.'],
     ['CASH OUT', 'Take the live value any time before the buzzer.'],
   ]
   return (

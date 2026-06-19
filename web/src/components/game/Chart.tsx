@@ -25,6 +25,9 @@ export type BandOverlay =
 export interface ChartOverlays {
   // Entry: a clean reference line at the price you got in, faded in when a round opens.
   entry?: number
+  // Target (Lucky): the strike the price must cross to win, with the side that wins. Drawn as a
+  // bold amber line with the winning half shaded green (brighter when the live price is in it).
+  target?: { price: number; side: 'up' | 'down' }
   band?: BandOverlay
   boxes?: ChartBox[]
 }
@@ -36,6 +39,9 @@ interface ChartProps {
   height?: number
   className?: string
   onPrice?: (price: number) => void
+  // The chart's eased leading price, mirrored here every frame. Lets a readout track the line at
+  // 60fps (the smooth value the player watches), instead of the ~1s raw onPrice ticks.
+  livePriceRef?: { current: number }
   onError?: () => void
   // Tap hit-test: maps a pointer-down to the price at that height. The canvas owns the
   // price<->y mapping (live, eased), so it is the only place this can be resolved correctly.
@@ -110,7 +116,7 @@ function seedHistory(price: number, tNow: number): Point[] {
   return out
 }
 
-export function Chart({ asset, overlays, height, className, onPrice, onError, onTap, degen = true }: ChartProps) {
+export function Chart({ asset, overlays, height, className, onPrice, livePriceRef, onError, onTap, degen = true }: ChartProps) {
   const reduced = useReducedMotion()
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -125,6 +131,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
   const range = useRef<{ min: number; max: number }>({ min: 0, max: 1 })
   const bandFill = useRef(0) // 0 = right-zone (idle), 1 = full width (locked)
   const entryReveal = useRef(0) // 0 -> 1 fade-in as the entry line appears on a new round
+  const targetReveal = useRef(0) // 0 -> 1 fade-in as the target line appears on a new round
   const momDir = useRef<'up' | 'down' | 'flat'>('flat') // momentum-arrow state, hysteretic
   const lastTickP = useRef(0) // last raw tick, to detect momentum swings
   const shake = useRef(0) // 0..1 chart-shake intensity, decays each frame
@@ -137,12 +144,14 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
   const rimRef = useRef(12) // rim-safe inset (px) for edge text, read from --screen-rim per resize
   const onPriceRef = useRef(onPrice)
   const onTapRef = useRef(onTap)
+  const liveOutRef = useRef(livePriceRef)
 
   overlaysRef.current = overlays
   reducedRef.current = reduced
   degenRef.current = degen
   onPriceRef.current = onPrice
   onTapRef.current = onTap
+  liveOutRef.current = livePriceRef
 
   // Pointer-down -> price at that height, using the live eased range. Only y matters: a tap
   // selects a price band, time (x) is irrelevant to which box is hit.
@@ -171,6 +180,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
     seeded.current = false
     bandFill.current = 0
     entryReveal.current = 0
+    targetReveal.current = 0
     lastTickP.current = 0
     shake.current = 0
     particles.current = []
@@ -242,6 +252,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       consider(display.current)
       consider(target.current)
       if (ov?.entry != null) consider(ov.entry)
+      if (ov?.target != null) consider(ov.target.price)
       if (band) {
         consider(band.lower)
         consider(band.upper)
@@ -302,6 +313,11 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       const entryTarget = ov?.entry != null ? 1 : 0
       if (continuous) entryReveal.current += (entryTarget - entryReveal.current) * FILL_SMOOTH
       else entryReveal.current = entryTarget
+      const targetTarget = ov?.target != null ? 1 : 0
+      if (continuous) targetReveal.current += (targetTarget - targetReveal.current) * FILL_SMOOTH
+      else targetReveal.current = targetTarget
+      // Mirror the eased leading price out so a readout can track the line at 60fps.
+      if (liveOutRef.current) liveOutRef.current.current = display.current
 
       ctx.clearRect(0, 0, w, h)
 
@@ -315,7 +331,7 @@ export function Chart({ asset, overlays, height, className, onPrice, onError, on
       }
 
       // Overlays sit under the line.
-      drawOverlays(ctx, ov, band, { w, nowX, fill: bandFill.current, entryReveal: entryReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
+      drawOverlays(ctx, ov, band, { w, h, nowX, fill: bandFill.current, entryReveal: entryReveal.current, targetReveal: targetReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
 
       // Build the visible line. Continuous: x by real time. Reduced: x by index step.
       const yDisp = y(display.current)
@@ -516,9 +532,9 @@ function drawOverlays(
   ctx: CanvasRenderingContext2D,
   ov: ChartOverlays | undefined,
   band: { lower: number; upper: number } | null,
-  ctxv: { w: number; nowX: number; fill: number; entryReveal: number; rim: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
+  ctxv: { w: number; h: number; nowX: number; fill: number; entryReveal: number; targetReveal: number; rim: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
 ) {
-  const { w, nowX, fill, entryReveal, rim, price, locked, y, C } = ctxv
+  const { w, h, nowX, fill, entryReveal, targetReveal, rim, price, locked, y, C } = ctxv
 
   if (band) {
     const top = y(band.upper)
@@ -573,6 +589,40 @@ function drawOverlays(
     // Inset off the rim, and flip below the line when it sits too near the top to label above it.
     const ly = ys - 16 < 4 ? ys + 14 : ys - 9
     ctx.fillText(`ENTRY ${formatPrice(ov.entry)}`, rim + 2, ly)
+    ctx.restore()
+  }
+
+  // Target (Lucky): the line the price must cross to win. The winning half is shaded green and
+  // brightens when the live price is inside it, so "am I winning" is readable straight off the
+  // chart. The line itself is the one amber accent (SCREEN.md). Faded in on a new round.
+  if (ov?.target != null && targetReveal > 0.01) {
+    const { price: tp, side } = ov.target
+    const a = targetReveal
+    const ys = y(tp)
+    const winUp = side === 'up'
+    const inWin = winUp ? price > tp : price < tp
+    const grad = ctx.createLinearGradient(0, ys, 0, winUp ? 0 : h)
+    grad.addColorStop(0, withAlpha(C.up, (inWin ? 0.2 : 0.08) * a))
+    grad.addColorStop(1, withAlpha(C.up, 0))
+    ctx.fillStyle = grad
+    ctx.fillRect(0, winUp ? 0 : ys, w, winUp ? ys : h - ys)
+
+    ctx.strokeStyle = withAlpha(C.brand, (inWin ? 1 : 0.78) * a)
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([5, 4])
+    ctx.beginPath()
+    ctx.moveTo(0, ys)
+    ctx.lineTo(w, ys)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    ctx.save()
+    ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    ctx.fillStyle = withAlpha(C.brand, 0.95 * a)
+    const ly = Math.max(12, Math.min(h - 8, winUp ? ys - 10 : ys + 12))
+    ctx.fillText(`TARGET ${formatPrice(tp)}`, rim + 2, ly)
     ctx.restore()
   }
 
