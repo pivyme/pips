@@ -14,6 +14,11 @@ import { PYTH_FEED_IDS } from '../lib/pyth.ts';
 
 const TERMINAL = new Set(['won', 'lost', 'cashed_out', 'error']);
 
+// Once a round is past its buzzer the play is 'settling' on the client and the live mark is moot
+// (about to become the final payout). Poll the status this fast then, so the won/lost frame lands
+// within ~1s of the worker resolving it instead of waiting out a full live-mark interval.
+const SETTLING_POLL_MS = 1000;
+
 // Hijack the reply and open the event-stream. Returns a writer + a close registration.
 function openStream(reply: FastifyReply, request: FastifyRequest): { send: (data: unknown) => void; onClose: (fn: () => void) => void } {
   reply.hijack();
@@ -63,27 +68,33 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
 
     const { send, onClose } = openStream(reply, request);
     let closed = false;
-    let timer: ReturnType<typeof setInterval>;
+    let timer: ReturnType<typeof setTimeout>;
 
     const tick = async (): Promise<void> => {
       if (closed) return;
       const current = await prismaQuery.play.findUnique({ where: { id } });
-      if (!current) return;
-      const mark = current.status === 'open' ? await getLiveMarkCached(current).catch(() => undefined) : undefined;
+      if (!current) {
+        timer = setTimeout(() => void tick(), PLAY_STREAM_INTERVAL_MS);
+        return;
+      }
+      // Past the buzzer the round is settling: skip the ~1.5s live-mark devInspect (the mark is about
+      // to be the payout) and just poll the status fast so the result frame is near-instant.
+      const settling = current.status === 'open' && Date.now() >= Number(current.expiry);
+      const mark = current.status === 'open' && !settling ? await getLiveMarkCached(current).catch(() => undefined) : undefined;
       const dto = await toPlayDTO(current, mark);
       send({ markValue: dto.markValue, pnl: dto.pnl, multiplier: dto.multiplier, status: dto.status, ts: Date.now() });
       if (TERMINAL.has(current.status)) {
         closed = true;
-        clearInterval(timer);
         reply.raw.end();
+        return;
       }
+      timer = setTimeout(() => void tick(), settling ? SETTLING_POLL_MS : PLAY_STREAM_INTERVAL_MS);
     };
 
     void tick();
-    timer = setInterval(() => void tick(), PLAY_STREAM_INTERVAL_MS);
     onClose(() => {
       closed = true;
-      clearInterval(timer);
+      clearTimeout(timer);
     });
   });
 

@@ -1,6 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { LogOut } from 'lucide-react'
+import { ArrowDownToLine, ArrowUpFromLine, LogOut } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
@@ -12,6 +12,7 @@ import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
+import { formatStringToNumericDecimals } from '@/utils/format'
 
 // The menu home, rendered inside the bottom drawer. The trader card sits right at the top (tap to
 // share), then the achievements rail in the !Camera layout: the closest in-progress badge leads,
@@ -27,7 +28,14 @@ function MenuHome() {
       <MenuHeader title="Menu" showBack={false} />
       <div className="relative z-0 -mt-1 flex flex-col gap-6 pt-5">
         <StatsSection />
+        <BalanceHero />
         <div className="flex flex-col gap-3">
+          <MenuRow
+            to="/menu/history"
+            icon="/assets/icons/icon-history.png"
+            title="History"
+            sub="Every play, with tx links"
+          />
           <MenuRow
             to="/menu/customize"
             icon="/assets/icons/icon-customize.png"
@@ -54,6 +62,54 @@ function MenuHome() {
           <LogOut className="h-5 w-5" strokeWidth={2.4} />
           Log out
         </Button>
+      </div>
+    </div>
+  )
+}
+
+// The money card: balance front and center with the two things you do with it. Deposit and Withdraw
+// push to their own screens with the native menu transition.
+function BalanceHero() {
+  const { user } = useAuth()
+  const balance = formatStringToNumericDecimals(user?.balance ?? '0', 2)
+
+  return (
+    <div className="card-neo rounded-card p-5">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">Balance</span>
+        <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-text-2">
+          USDC
+        </span>
+      </div>
+      <div className="mt-2 flex items-baseline gap-1">
+        <span className="text-2xl font-black text-text-3">$</span>
+        <span className="tnum text-[42px] font-black leading-none text-text">{balance}</span>
+      </div>
+      <div className="mt-5 grid grid-cols-2 gap-3">
+        <Link
+          to="/menu/deposit"
+          viewTransition
+          onClick={() => {
+            prepareMenuTransition('forward')
+            haptic('selection')
+          }}
+          className="btn-primary flex h-12 items-center justify-center gap-2 rounded-md text-sm font-extrabold uppercase tracking-wide"
+        >
+          <ArrowDownToLine className="h-4 w-4" strokeWidth={2.6} />
+          Deposit
+        </Link>
+        <Link
+          to="/menu/withdraw"
+          viewTransition
+          onClick={() => {
+            prepareMenuTransition('forward')
+            haptic('selection')
+          }}
+          className="flex h-12 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/[0.05] text-sm font-extrabold uppercase tracking-wide text-text transition-transform active:scale-[0.98]"
+        >
+          <ArrowUpFromLine className="h-4 w-4" strokeWidth={2.6} />
+          Withdraw
+        </Link>
       </div>
     </div>
   )

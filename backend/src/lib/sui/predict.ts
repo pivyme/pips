@@ -113,6 +113,7 @@ export type OracleState = {
   spot1e9: bigint;
   settlementPrice1e9: bigint | null;
   timestampMs: number;
+  authorizedCapIds: string[]; // the OracleSVICap ids allowed to push/settle this oracle
 };
 
 type OracleFields = {
@@ -122,11 +123,14 @@ type OracleFields = {
   prices: { fields: { spot: string; forward: string } };
   settlement_price: string | null;
   timestamp: string;
+  authorized_caps?: { fields?: { contents?: string[] } };
 };
 
 // Read the current on-chain oracle state. Returns null if the object is gone or not an
 // oracle. `active` is the stored flag; lifecycle status is derived against the clock by
-// callers (expired = now >= expiry; settled = settlement_price set).
+// callers (expired = now >= expiry; settled = settlement_price set). `authorizedCapIds` is the
+// on-chain set of caps allowed to push/settle it, so the settle path can find the right cap to
+// nudge an oracle with even when it has fallen out of the in-memory ladder cache (a restart).
 export async function readOracle(oracleId: string): Promise<OracleState | null> {
   const obj = await suiClient.getObject({ id: oracleId, options: { showContent: true } });
   const content = obj.data?.content;
@@ -141,6 +145,7 @@ export async function readOracle(oracleId: string): Promise<OracleState | null> 
     spot1e9: BigInt(f.prices.fields.spot),
     settlementPrice1e9: f.settlement_price != null ? BigInt(f.settlement_price) : null,
     timestampMs: Number(f.timestamp),
+    authorizedCapIds: f.authorized_caps?.fields?.contents ?? [],
   };
 }
 
@@ -280,6 +285,17 @@ export const buildCreateManager = (tx: Transaction): void => {
 export const buildDeposit = (tx: Transaction, managerId: string, coin: TransactionObjectArgument): void => {
   tx.moveCall({ target: target('predict_manager', 'deposit'), typeArguments: [DUSDC_TYPE], arguments: [tx.object(managerId), coin] });
 };
+
+// Withdraw `amountRaw` (6dp) of DUSDC out of the manager's BalanceManager, back into the sender's
+// wallet as a fresh Coin. Owner-gated on-chain (sender must be the manager owner), so it runs under
+// executeForUser (dev = operator, privy = the user). Returns the coin to transfer or merge. Used by
+// the wallet withdraw flow to reach chips that have migrated into the manager from prior plays.
+export const buildManagerWithdraw = (tx: Transaction, managerId: string, amountRaw: bigint): TransactionObjectArgument =>
+  tx.moveCall({
+    target: target('predict_manager', 'withdraw'),
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(managerId), tx.pure.u64(amountRaw)],
+  });
 
 export const buildMint = (tx: Transaction, managerId: string, p: BinaryParams): void => {
   tx.moveCall({

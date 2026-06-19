@@ -9,14 +9,12 @@ import {
   LUCKY_MIN_ORACLE_LIFE_MS,
   MIN_STAKE,
   MAX_STAKE,
-  GAME_DURATIONS,
 } from '../config/main-config.ts';
 import {
   DUSDC_DECIMALS,
   FLOAT_SCALING,
   ORACLE_STRIKE_GRID_TICKS,
   toDusdcRaw,
-  usd1e9,
   multiplier as multiplierOf,
 } from '../lib/sui/config.ts';
 import { liveByAsset, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
@@ -227,6 +225,7 @@ export type ResolvedBinary = {
   tier: number; // the nominal tier the reel dealt (legacy Play.leverage column)
   duration: number;
   strikeDisplay: string;
+  entrySpot: string; // spot at entry (display), for debug/audit
   entryCost: bigint;
   maxPayout: bigint; // settled ITM payout = quantity ($1 per contract)
   multiplier: number; // payout / entry cost = 1/ask, the live on-chain odds the position pays (what the UI shows)
@@ -235,7 +234,7 @@ export type ResolvedBinary = {
 
 export type ResolvedRange = {
   kind: 'range';
-  game: 'range' | 'tap';
+  game: 'range';
   market: Market;
   params: RangeParams;
   asset: string;
@@ -243,6 +242,7 @@ export type ResolvedRange = {
   upperDisplay: string;
   widthPct?: number;
   duration: number;
+  entrySpot: string; // spot at entry (display), for debug/audit
   entryCost: bigint;
   maxPayout: bigint;
   multiplier: number; // payout / entry cost = 1/ask, the live on-chain odds the band pays
@@ -255,11 +255,13 @@ export type Resolved = ResolvedBinary | ResolvedRange;
 // finds the grid strike whose real multiple matches it and sizes the quantity so cost ~= bet, so
 // the multiplier we surface is always one we can actually mint. The round settles at the routed
 // oracle's expiry (~30s), never one oracle per play.
-export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
+export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Promise<ResolvedBinary> {
   const assets = liveAssets();
   if (assets.length === 0) throw new PlayError('MARKET_UNAVAILABLE', 'No markets are live right now');
 
-  const seed = newSeed();
+  // Reuse the original seed on a re-route so the dealt asset/side/tier stay identical (fairness, and
+  // the reels already snapped to them); only the oracle is re-picked + re-priced. Fresh seed otherwise.
+  const seed = existingSeed ?? newSeed();
   const asset = assets[Math.floor(seedFloat(seed, 0) * assets.length)];
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
   const tier = pickTier(seedFloat(seed, 2)); // slot-weighted reel deal (LUCKY.md §4)
@@ -307,6 +309,7 @@ export async function resolveLucky(stakeRaw: bigint): Promise<ResolvedBinary> {
         tier: solution.achievedTier,
         duration,
         strikeDisplay: fmt1e9(solution.strike1e9),
+        entrySpot: market.spot1e9 ? fmt1e9(BigInt(market.spot1e9)) : '',
         entryCost: solution.entryCost,
         maxPayout: solution.quantity,
         multiplier: solution.multiplier,
@@ -349,37 +352,7 @@ export async function resolveRange(stakeRaw: bigint, asset: string, widthPct: nu
     upperDisplay: fmt1e9(higher),
     widthPct,
     duration,
-    entryCost: amounts.cost,
-    maxPayout: quantity,
-    multiplier: multiplierOf(amounts.cost, quantity),
-  };
-}
-
-// Tap: one tapped box is a range position at the box's band (display USD bounds).
-export async function resolveTap(stakeRaw: bigint, asset: string, band: { lower: number; upper: number }, duration: number): Promise<ResolvedRange> {
-  if (!GAME_DURATIONS.includes(duration)) throw new PlayError('INVALID_PARAMS', 'Unsupported round duration');
-  if (!(band.lower < band.upper)) throw new PlayError('INVALID_PARAMS', 'Invalid tap band');
-
-  const market = pickMarket(asset);
-  await freshSpot(market);
-  const g = gridOf(market);
-  let lower = clampStrike(floorTick(usd1e9(band.lower), g.tick), g);
-  let higher = clampStrike(ceilTick(usd1e9(band.upper), g.tick), g);
-  if (higher <= lower) higher = clampStrike(lower + g.tick, g);
-  if (higher <= lower) throw new PlayError('INVALID_PARAMS', 'Invalid tap band');
-
-  const mk = (q: bigint): RangeParams => ({ oracleId: market.oracleId, expiryMs: market.expiryMs, lower1e9: lower, higher1e9: higher, quantity: q });
-  const { quantity, amounts } = await solveQuantity((q) => previewRange(mk(q)), stakeRaw);
-
-  return {
-    kind: 'range',
-    game: 'tap',
-    market,
-    params: mk(quantity),
-    asset,
-    lowerDisplay: fmt1e9(lower),
-    upperDisplay: fmt1e9(higher),
-    duration,
+    entrySpot: fmt1e9(spot),
     entryCost: amounts.cost,
     maxPayout: quantity,
     multiplier: multiplierOf(amounts.cost, quantity),

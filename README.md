@@ -20,7 +20,7 @@ Pips runs its **own** DeepBook Predict deployment on Sui testnet: we publish Mys
 ## Stack
 
 - **Frontend** (`web/`, :3200) — TanStack Start (React 19), TanStack Router + Query, Tailwind 4, HeroUI v3, GSAP, Lenis, Motion. The console UI. A 60fps canvas chart.
-- **Backend** (`backend/`, :3700) — Bun + Fastify 5, Prisma 7 (PostgreSQL). Game engine, the Predict operator (price-pusher, oracle ladder, settle), indexer, SSE streams.
+- **Backend** (`backend/`, :3780) — Bun + Fastify 5, Prisma 7 (PostgreSQL). Game engine, the Predict operator (price-pusher, oracle ladder, settle), indexer, SSE streams.
 - **Contracts** (`contracts/`) — Mysten's `packages/predict`, vendored and published as our own instance.
 - **Auth** — Sui zkLogin via Enoki (Google), plus a dev auto-login. Gasless plays via Enoki sponsorship.
 - **Runtime / package manager** — Bun everywhere (target Bun >= 22).
@@ -48,7 +48,7 @@ bun install
 bun run db:push                # push schema + generate client
 bun run prisma/seed.ts          # seed achievements + demo data
 bun run scripts/bootstrap.ts    # publish our Predict instance + seed vault + oracles (one time)
-bun dev                         # :3700
+bun dev                         # :3780
 
 # frontend (new terminal)
 cd web
@@ -76,7 +76,7 @@ It runs a fresh-session loop that works through [`bigdev/TODO.md`](bigdev/TODO.m
 ## Deployment
 
 - **Frontend (Vercel):** Root Directory `web`, preset Vite, build `bun run build`, output `.output`.
-- **Backend (Docker + Dokploy):** build `./backend`, port `3700`, health `GET /`. Run the Predict operator workers on a single leader instance.
+- **Backend (Docker + Dokploy):** build `./backend`, port `3780`, health `GET /`. Run the Predict operator workers on a single leader instance.
 
 Details and the mainnet re-point in [`bigdev/plans/09-DEPLOYMENT.md`](bigdev/plans/09-DEPLOYMENT.md).
 

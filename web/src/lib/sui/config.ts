@@ -10,13 +10,16 @@ export const PREDICT_ID = env.VITE_PREDICT_OBJECT_ID ?? ''
 export const DUSDC_TYPE = env.VITE_DUSDC_TYPE ?? ''
 
 export const DUSDC_DECIMALS = 1_000_000
+const PUBLIC_LOCALNET_RPC_URL = 'https://rpc.playpips.fun'
 
 // 6dp raw DUSDC -> display number
 export const fromDusdcRaw = (raw: bigint | string | number): number =>
   Number(BigInt(raw)) / DUSDC_DECIMALS
 
 export const explorerTxUrl = (digest: string): string =>
-  `https://suiscan.xyz/${NETWORK}/tx/${digest}`
+  NETWORK === 'localnet'
+    ? `https://custom.suiscan.xyz/custom/tx/${digest}?network=${encodeURIComponent(PUBLIC_LOCALNET_RPC_URL)}`
+    : `https://suiscan.xyz/${NETWORK}/tx/${digest}`
 
 export const explorerObjectUrl = (id: string): string =>
   `https://suiscan.xyz/${NETWORK}/object/${id}`

@@ -74,10 +74,10 @@ describe('evaluateMetrics', () => {
     const plays = [
       play({ game: 'lucky', status: 'won' }),
       play({ game: 'range', status: 'lost', payout: 0n, pnl: D(-10) }),
-      play({ game: 'tap', status: 'cashed_out' }),
+      play({ game: 'range', status: 'cashed_out' }),
       play({ game: 'lucky', status: 'open', payout: null, pnl: null }), // not settled, ignored
     ];
-    expect(evaluateMetrics(stats(), plays).distinct_games).toBe(3);
+    expect(evaluateMetrics(stats(), plays).distinct_games).toBe(2);
   });
 
   it('counts only winning cash-outs', () => {

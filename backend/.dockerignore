@@ -1,0 +1,19 @@
+# Never copy host deps: bun install rebuilds them for linux inside the image.
+node_modules
+
+# Secrets stay out of image layers. Inject env at runtime (Dokploy env vars).
+.env
+.env.*
+!.env.example
+
+# Regenerated in-build by `prisma generate`, never ship the host copy.
+prisma/generated
+
+# Dev-only noise.
+.git
+.gitignore
+.vscode
+.eslintrc.cjs
+.prettierrc.js
+*.md
+Pub.*.toml

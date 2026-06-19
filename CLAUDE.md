@@ -25,7 +25,7 @@ The twist that makes Pips Pips: the whole interface looks and behaves like a **p
 ```
 pips/
 ├── web/                TanStack Start + React 19 frontend (the console UI)   :3200
-├── backend/            Bun + Fastify API (auth, indexing, game state)        :3700
+├── backend/            Bun + Fastify API (auth, indexing, game state)        :3780
 ├── contracts/          Sui Move packages (game logic, Predict wrappers)
 ├── docs/
 │   ├── DESIGN.md       App Surface design language + the physical device (read this)
@@ -140,7 +140,7 @@ Demo mode (`VITE_DEMO_MODE`) stays the one sanctioned no-backend sim. Suiet wall
 - **Never run destructive Prisma commands.** No `migrate reset`, no `--force-reset`. If the schema changed, ask the user to run `bun run db:push` from `backend/` themselves.
 - **Package manager is `bun`** for every pillar. Do not introduce npm, yarn, or pnpm. Lockfiles (`bun.lock`, `bun.lockb`) are committed.
 - Both JS apps run on the **Bun runtime**. Verify Bun compatibility before suggesting Node specific APIs.
-- **Ports:** backend `:3700`, web `:3200`.
+- **Ports:** backend `:3780`, web `:3200`.
 - Frontend talks to backend via `VITE_API_URL` (validated in `web/src/env.ts`). Backend CORS is locked to `ALLOWED_ORIGIN` in production.
 - **Sui IDs and package addresses live in config, never inline.** This applies to DeepBook Predict, our own published Move packages, and any pool/object IDs.
 - **Sui only:** Pips is Sui only. The EVM (`ethers`) and Solana (`@solana/web3.js`, `bs58`) starter deps have been removed from the backend. If any `ethers` / `@solana/*` reference survives, it is dead, do not build on it.
@@ -185,7 +185,7 @@ The full v1 build (auth, the three games, menu, backend, indexer, the Predict in
 ```bash
 cd web && bunx tsc --noEmit        # fast typecheck gate (the loop's baseline check)
 cd backend && bun run typecheck    # backend typecheck gate
-cd backend && bun dev              # API on :3700
+cd backend && bun dev              # API on :3780
 cd web && bun dev                  # console on :3200
 cd backend && bun run db:push      # USER runs this after schema changes (never the loop)
 scripts/localnet.sh setup          # deploy our Predict stack + wire both .envs (run once)

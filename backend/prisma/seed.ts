@@ -26,7 +26,7 @@ const ACHIEVEMENTS = [
   { slug: 'win_streak_5', name: 'On Fire', description: 'Win 5 plays in a row.', illo: 'flame', metric: 'win_streak', threshold: 5, sortOrder: 3 },
   { slug: 'big_multiplier', name: 'Moonshot', description: 'Cash out a 25x or higher.', illo: 'up', metric: 'big_multiplier', threshold: 25, sortOrder: 4 },
   { slug: 'volume_1000', name: 'High Roller', description: 'Trade $1,000 in total volume.', illo: 'gem', metric: 'volume', threshold: 1000, sortOrder: 5 },
-  { slug: 'all_games', name: 'Sampler', description: 'Play all three games.', illo: 'dice', metric: 'distinct_games', threshold: 3, sortOrder: 6 },
+  { slug: 'all_games', name: 'Sampler', description: 'Play both games.', illo: 'dice', metric: 'distinct_games', threshold: 2, sortOrder: 6 },
   { slug: 'cashout_10', name: 'Quick Hands', description: 'Cash out 10 winning plays.', illo: 'coin', metric: 'cashouts', threshold: 10, sortOrder: 7 },
   { slug: 'comeback', name: 'Comeback', description: 'Win a play right after a loss.', illo: 'medal', metric: 'comeback', threshold: 1, sortOrder: 8 },
 ];
@@ -49,15 +49,15 @@ interface SeedPlay {
   h: number; // hours ago opened
 }
 
-// ~8 recent plays across all three games, mixed outcomes, realistic stakes/multipliers.
+// ~8 recent plays across both games, mixed outcomes, realistic stakes/multipliers.
 const PLAYS: SeedPlay[] = [
   { id: 'seed-play-1', game: 'lucky', status: 'won', asset: 'SOL', side: 'up', leverage: 5, strike: '144', stake: 25, mult: 3.5, pnl: 37.5, dur: 30, h: 2 },
   { id: 'seed-play-2', game: 'range', status: 'cashed_out', asset: 'BTC', lower: '61000', upper: '63000', widthPct: 3.2, stake: 15, mult: 4.0, pnl: 21.0, dur: 60, h: 6 },
-  { id: 'seed-play-3', game: 'tap', status: 'lost', asset: 'ETH', lower: '3380', upper: '3420', stake: 10, mult: 2.0, pnl: -10.0, dur: 30, h: 9 },
+  { id: 'seed-play-3', game: 'range', status: 'lost', asset: 'ETH', lower: '3380', upper: '3420', widthPct: 1.2, stake: 10, mult: 2.0, pnl: -10.0, dur: 30, h: 9 },
   { id: 'seed-play-4', game: 'lucky', status: 'won', asset: 'BTC', side: 'down', leverage: 10, strike: '62000', stake: 30, mult: 5.0, pnl: 90.0, dur: 60, h: 26 },
   { id: 'seed-play-5', game: 'lucky', status: 'lost', asset: 'SUI', side: 'up', leverage: 25, strike: '0.95', stake: 5, mult: 25.0, pnl: -5.0, dur: 10, h: 30 },
   { id: 'seed-play-6', game: 'range', status: 'won', asset: 'ETH', lower: '3300', upper: '3500', widthPct: 5.9, stake: 40, mult: 2.5, pnl: 60.0, dur: 60, h: 50 },
-  { id: 'seed-play-7', game: 'tap', status: 'cashed_out', asset: 'SOL', lower: '142', upper: '146', stake: 12, mult: 3.0, pnl: 14.0, dur: 30, h: 73 },
+  { id: 'seed-play-7', game: 'range', status: 'cashed_out', asset: 'SOL', lower: '142', upper: '146', widthPct: 2.8, stake: 12, mult: 3.0, pnl: 14.0, dur: 30, h: 73 },
   { id: 'seed-play-8', game: 'lucky', status: 'lost', asset: 'BTC', side: 'up', leverage: 2, strike: '61500', stake: 50, mult: 1.8, pnl: -50.0, dur: 60, h: 96 },
 ];
 

@@ -22,7 +22,6 @@ import { useAuth } from '@/lib/auth'
 const BACKDROP_GAMES = [
   { illo: 'dice', title: 'I Feel Lucky', sub: 'Spin. Ride it. Cash out.' },
   { illo: 'target', title: 'Range', sub: 'Call the zone. Tighter pays more.' },
-  { illo: 'bolt', title: 'Tap', sub: 'Tap the chart. Catch the move.' },
 ] as const
 
 const LOADING_EXIT_DELAY_MS = 150
@@ -32,8 +31,7 @@ const LOADING_EXIT_DURATION_MS = 520
 // directly from here, not through the router Outlet. That is what lets the screen survive the menu:
 // the menu is its own /menu route, so going through the Outlet would unmount the game the moment the
 // drawer opens and flash the device black behind the blur. Mounting by path keeps the same instance
-// alive across game <-> menu, so the live chart never blinks. Tap stays on the CSS shell, so it is
-// not here.
+// alive across game <-> menu, so the live chart never blinks.
 const DEVICE_SCREENS: Record<string, ComponentType> = {
   '/games': GamesConsole,
   '/games/lucky': LuckyScreen,
@@ -58,15 +56,13 @@ function AppLayout() {
   // The menu is a drawer over the device, not a screen inside it. When a /menu route is active we
   // render it through the drawer while the shell behind it stays put for the blur layer.
   const onMenu = Boolean(matchRoute({ to: '/menu', fuzzy: true }))
-  // The 3D handheld now hosts the games hub (the selectable list) and the games laid out for the
-  // L-shaped aperture (Lucky, Range). Tap still runs on the CSS shell until its tap-the-chart
-  // surface is migrated, so it is the one /games route that stays off the device.
-  const onTap = Boolean(matchRoute({ to: '/games/tap' }))
+  // The 3D handheld hosts the games hub (the selectable list) and every game laid out for the
+  // L-shaped aperture (Lucky, Range, plus the minigames).
   const onRange = Boolean(matchRoute({ to: '/games/range' }))
   const onLucky = Boolean(matchRoute({ to: '/games/lucky' }))
   const onLineRider = Boolean(matchRoute({ to: '/games/line-rider' }))
   const onCandleHop = Boolean(matchRoute({ to: '/games/candle-hop' }))
-  const on3D = Boolean(matchRoute({ to: '/games', fuzzy: true })) && !onTap
+  const on3D = Boolean(matchRoute({ to: '/games', fuzzy: true }))
   // Customize takes over the device: the menu drawer slides away and the device drops into the
   // workshop studio. It rides the same persistent 3D branch so the WebGL stays warm.
   const onCustomize = Boolean(matchRoute({ to: '/menu/customize' }))

@@ -8,7 +8,7 @@
 #
 # Common case (deployed node):
 #   scripts/localnet.sh setup            # one shot: import key, deploy Predict, wire both .envs
-#   cd backend && bun dev                # API  :3700
+#   cd backend && bun dev                # API  :3780
 #   cd web && bun dev                    # web  :3200
 #
 # Throwaway local node instead:
@@ -166,7 +166,7 @@ cmd_setup() {
   set_runtime_rpc "$RPC"   # the bootstrap wrote the deploy url; point the apps at the runtime url
   echo
   echo "${c_grn}Done.${c_rst} Predict is live and both .env files point the apps at $RPC. Now run:"
-  echo "  cd backend && bun dev      # :3700"
+  echo "  cd backend && bun dev      # :3780"
   echo "  cd web && bun dev          # :3200"
   echo "  open http://localhost:3200/tools/wallet   # balances / send funds on this node"
 }

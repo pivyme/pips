@@ -54,11 +54,23 @@ const DEPLOYED_FILE = SUI_NETWORK === 'testnet' ? 'deployed.json' : `deployed.${
 const DEPLOYED_PATH = path.resolve(import.meta.dir, DEPLOYED_FILE);
 
 function loadDeployed(): Deployed {
+  // Server/container builds (e.g. Dokploy from git) don't have the gitignored deploy file. Allow
+  // the whole record to come from PIPS_DEPLOYED_JSON instead (raw JSON or base64), so ids still
+  // live in config and never get hardcoded or committed. Local dev keeps using the bootstrap file.
+  const fromEnv = process.env.PIPS_DEPLOYED_JSON?.trim();
+  if (fromEnv) {
+    const raw = fromEnv.startsWith('{') ? fromEnv : Buffer.from(fromEnv, 'base64').toString('utf-8');
+    const d = JSON.parse(raw) as Deployed;
+    if (d.network !== SUI_NETWORK) {
+      throw new Error(`PIPS_DEPLOYED_JSON is for "${d.network}" but SUI_NETWORK is "${SUI_NETWORK}". Fix the env.`);
+    }
+    return d;
+  }
   if (!fs.existsSync(DEPLOYED_PATH)) {
     throw new Error(
-      `Predict deployment missing: backend/src/lib/sui/${DEPLOYED_FILE} not found. ` +
+      `Predict deployment missing: set PIPS_DEPLOYED_JSON or provide backend/src/lib/sui/${DEPLOYED_FILE}. ` +
         (SUI_NETWORK === 'localnet'
-          ? 'Start a local chain and bootstrap it: scripts/localnet.sh up + scripts/localnet.sh bootstrap.'
+          ? 'Locally: scripts/localnet.sh setup. On a server: paste the deploy file into PIPS_DEPLOYED_JSON.'
           : 'Run `bun scripts/bootstrap.ts` from backend/ to publish and seed the instance.'),
     );
   }

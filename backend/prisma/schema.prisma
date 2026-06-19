@@ -44,7 +44,7 @@ model Play {
   userId       String
   user         User      @relation(fields: [userId], references: [id])
 
-  game         String                          // 'lucky' | 'range' | 'tap'
+  game         String                          // 'lucky' | 'range'
   status       String    @default("pending")   // pending|open|won|lost|cashed_out|error
 
   asset        String                          // 'BTC' | 'ETH' | 'SOL' | 'SUI'
@@ -65,6 +65,9 @@ model Play {
   payout       BigInt?                         // set on settle / cashout
   pnl          BigInt?                         // signed: payout - stake
   multiplier   Float?                          // potential payout multiple at mint
+
+  entrySpot    String?                         // spot at entry (display units), debug/audit
+  settlePrice  String?                         // frozen settlement price at expiry (display units), debug/audit
 
   txMint       String?
   txRedeem     String?

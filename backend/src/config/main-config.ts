@@ -14,7 +14,7 @@ for (const envVar of requiredEnvVars) {
 }
 
 // App Configuration
-export const APP_PORT: number = Number(process.env.APP_PORT) || 3700;
+export const APP_PORT: number = Number(process.env.APP_PORT) || 3780;
 export const NODE_ENV: string = process.env.NODE_ENV || 'development';
 export const IS_DEV: boolean = NODE_ENV === 'development';
 export const IS_PROD: boolean = NODE_ENV === 'production';
@@ -163,20 +163,29 @@ export const ORACLE_ASSETS: string[] = (process.env.PIPS_ORACLE_ASSETS || 'BTC,S
   .map((s) => s.trim().toUpperCase())
   .filter(Boolean);
 // How long a freshly created oracle lives. Must comfortably exceed LUCKY_ROUND_MS so create+activate
-// never races expiry; the ladder ages these down to fill the near-round bucket.
-export const ORACLE_LIFETIME_MS: number = Number(process.env.PIPS_ORACLE_LIFETIME_MS) || 60_000;
+// never races expiry; the ladder ages these down to fill the near-round bucket. Generous on free
+// localnet: a longer life means the ladder always carries oracles with enough headroom that a slow
+// background mint lands before its routed oracle expires (the old 60s starved this under congestion).
+export const ORACLE_LIFETIME_MS: number = Number(process.env.PIPS_ORACLE_LIFETIME_MS) || 90_000;
 // The LUCKY round target: each play routes to the live oracle expiring nearest this far out and
-// settles there, so rounds stay ~30s regardless of how long the oracles themselves live.
-export const LUCKY_ROUND_MS: number = Number(process.env.PIPS_LUCKY_ROUND_MS) || 30_000;
-// Minimum oracle life a LUCKY play will route to. A play takes a few seconds to build+sign+submit;
-// routing it to an oracle with less life than this risks the mint outrunning expiry (EOracleExpired
-// → retry → the 10-20s stall). When the ladder is thin and nothing clears this bar, routing falls
-// back to the longest-lived live oracle instead of failing. Must exceed the worst-case mint time.
-export const LUCKY_MIN_ORACLE_LIFE_MS: number = Number(process.env.PIPS_LUCKY_MIN_ORACLE_LIFE_MS) || 12_000;
+// settles there, so rounds stay ~this long regardless of how long the oracles themselves live. Kept
+// short so the loop is a quick thrill: spin (reels ~2s) -> a brief watchable round -> instant settle.
+export const LUCKY_ROUND_MS: number = Number(process.env.PIPS_LUCKY_ROUND_MS) || 15_000;
+// Minimum oracle life a LUCKY play will route to. The mint runs in the background but must still land
+// before expiry (else EOracleExpired -> the play re-routes/re-racks), so a play never routes to an
+// oracle with less life than this. When the ladder is thin and nothing clears the bar, routing falls
+// back to the longest-lived live oracle instead of failing. Must comfortably exceed the mint time,
+// which spikes on the congested remote node, so this carries real headroom over a fast mint (~2.5s).
+export const LUCKY_MIN_ORACLE_LIFE_MS: number = Number(process.env.PIPS_LUCKY_MIN_ORACLE_LIFE_MS) || 13_000;
 // Oracles kept live per asset, spread evenly across the lifetime (~ORACLE_LIFETIME_MS / depth apart)
 // so a near-round one always exists. Higher = more buffer when the operator briefly falls behind
 // (free localnet gas), at the cost of bigger push PTBs and more settle work, both bounded.
-export const ORACLE_LADDER_DEPTH: number = Number(process.env.PIPS_ORACLE_LADDER_DEPTH) || 6;
+export const ORACLE_LADDER_DEPTH: number = Number(process.env.PIPS_ORACLE_LADDER_DEPTH) || 8;
+// Max oracles oracle-roll creates per asset in a single tick. Steady state needs only 1 (gentle,
+// spacing-gated). But after a reload/dry spell the ladder is empty and a 1-per-tick refill leaves
+// minutes of "No markets are live"; when an asset is below low-water the roller bursts up to this
+// many per tick (spacing gate bypassed) so the ladder refills in seconds. Free localnet gas.
+export const ORACLE_ROLL_MAX_PER_TICK: number = Number(process.env.PIPS_ORACLE_ROLL_MAX_PER_TICK) || 3;
 // Reclaim a settled oracle's strike matrix to recover its storage rebate. Only worth it on a
 // gas-scarce chain; on free localnet it is pure extra load on the serial operator queue, so off.
 export const ORACLE_COMPACT_SETTLED: boolean = process.env.PIPS_ORACLE_COMPACT_SETTLED === 'true';
@@ -237,6 +246,7 @@ export default {
   LUCKY_ROUND_MS,
   LUCKY_MIN_ORACLE_LIFE_MS,
   ORACLE_LADDER_DEPTH,
+  ORACLE_ROLL_MAX_PER_TICK,
   ORACLE_COMPACT_SETTLED,
   PREDICT_PACKAGE_ID,
   PREDICT_REGISTRY_ID,

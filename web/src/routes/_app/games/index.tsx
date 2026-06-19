@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'motion/react'
-import { Activity, CandlestickChart, Dices, Target, Zap } from 'lucide-react'
+import { Activity, CandlestickChart, Dices, Target } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useConsoleControls } from '@/components/console/controls'
@@ -44,7 +44,6 @@ type GameDef = { to: string; icon: LucideIcon; name: string; tag: string }
 const GAMES: ReadonlyArray<GameDef> = [
   { to: '/games/lucky', icon: Dices, name: 'I Feel Lucky', tag: 'Spin. Win. Cash out.' },
   { to: '/games/range', icon: Target, name: 'Range', tag: 'Call the zone. Tighter pays more.' },
-  { to: '/games/tap', icon: Zap, name: 'Tap', tag: 'Tap the chart. Catch the move.' },
 ]
 
 // Minigames. Pure local arcade, no chain, no funds. A totally separate, just-for-fun lane.
