@@ -31,9 +31,20 @@ const assetRank = (a: string): number => {
 };
 
 // Funnel any thrown value to the envelope: PlayError keeps its friendly code, anything else
-// is a 500 we do not leak details of.
-const fail = (reply: FastifyReply, e: unknown, fallbackCode: string, fallbackMsg: string): Promise<FastifyReply> => {
-  if (e instanceof PlayError) return handleError(reply, httpStatusForPlayError(e.code), e.message, e.code);
+// is a 500 we do not leak details of. A PlayError is an EXPECTED business outcome (no live market,
+// bad params, the cash-out buzzer race that resolves to a normal settle), not a server fault, so we
+// send its envelope directly and never log it. Routing it through handleError would write every
+// benign 4xx to the error table + console and bury real faults under that noise.
+const fail = async (reply: FastifyReply, e: unknown, fallbackCode: string, fallbackMsg: string): Promise<FastifyReply> => {
+  if (e instanceof PlayError) {
+    reply.code(httpStatusForPlayError(e.code)).send({
+      success: false,
+      error: { code: e.code, message: e.message },
+      data: null,
+      timestamp: new Date().toISOString(),
+    });
+    return reply;
+  }
   return handleError(reply, 500, fallbackMsg, fallbackCode, e as Error);
 };
 

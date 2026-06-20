@@ -20,7 +20,13 @@ export function friendlyError(e: unknown): string {
   return 'Something hiccuped. Try again.'
 }
 
+// Expected, benign outcomes the player should never see a toast for. The cash-out buzzer race returns
+// PLAY_NOT_OPEN: the round just crossed expiry and settles to a normal win/loss on its own, and the
+// screen already drops into its on-screen settling beat, so a toast would be wrong here.
+const SILENT = new Set(['PLAY_NOT_OPEN'])
+
 export function toastError(e: unknown): void {
+  if (e instanceof ApiError && SILENT.has(e.code)) return
   // Key the toast by error code (or the message for unknowns) so the same error replaces its own
   // toast instead of stacking. A retry loop hitting one failure shows one toast, not a wall of them.
   const id = e instanceof ApiError && e.code ? `err-${e.code}` : 'err-generic'
