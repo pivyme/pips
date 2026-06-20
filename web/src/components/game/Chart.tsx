@@ -48,6 +48,9 @@ interface ChartProps {
   onTap?: (price: number) => void
   // Degen: spark bursts + chart shake on momentum swings. On by default.
   degen?: boolean
+  // The leading-edge price + momentum readout by the dot. Off hides the number (the masked,
+  // not-yet-selected charts in Lucky's stack), leaving just the line + dot.
+  showPriceTag?: boolean
 }
 
 type Particle = { x: number; y: number; vx: number; vy: number; born: number; color: string }
@@ -116,7 +119,7 @@ function seedHistory(price: number, tNow: number): Point[] {
   return out
 }
 
-export function Chart({ asset, overlays, height, className, onPrice, livePriceRef, onError, onTap, degen = true }: ChartProps) {
+export function Chart({ asset, overlays, height, className, onPrice, livePriceRef, onError, onTap, degen = true, showPriceTag = true }: ChartProps) {
   const reduced = useReducedMotion()
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -140,6 +143,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
   const overlaysRef = useRef<ChartOverlays | undefined>(overlays)
   const reducedRef = useRef(reduced)
   const degenRef = useRef(degen)
+  const showPriceTagRef = useRef(showPriceTag)
   const sizeRef = useRef<{ w: number; h: number }>({ w: 0, h: height ?? 0 })
   const rimRef = useRef(12) // rim-safe inset (px) for edge text, read from --screen-rim per resize
   const onPriceRef = useRef(onPrice)
@@ -149,6 +153,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
   overlaysRef.current = overlays
   reducedRef.current = reduced
   degenRef.current = degen
+  showPriceTagRef.current = showPriceTag
   onPriceRef.current = onPrice
   onTapRef.current = onTap
   liveOutRef.current = livePriceRef
@@ -404,7 +409,8 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
 
       // Momentum arrow + readable live price by the tip. With a band (Range) there is a clean
       // zone to the right, so it reads there; otherwise it stays left, clear of boxes/edge.
-      if (display.current > 0 && pts.length) {
+      // Suppressed on the masked charts (showPriceTag off) so a not-yet-selected market hides its price.
+      if (showPriceTagRef.current && display.current > 0 && pts.length) {
         let refP = display.current
         for (let i = pts.length - 1; i >= 0; i--) {
           if (now - pts[i].t >= MOM_LOOKBACK) {

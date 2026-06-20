@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { roundedRect, roundedRectPath, frontZeroed } from './consoleGeo'
+import { roundedRect, roundedRectPath, circlePath, frontZeroed } from './consoleGeo'
 
 // Pure geometry/mesh factories for the handheld's physical controls. Each builds its meshes, parents
 // them to the `device` group, registers raycast targets in `interactive`, and hands back only the
@@ -406,4 +406,218 @@ export function createActionScreens(
   }
 
   return { dispose: () => trash.forEach((t) => t.dispose()), glow }
+}
+
+// Back-of-device dress: a parting seam that wraps the whole side at the front/back shell joint, four
+// gunmetal corner screws, a drilled speaker grille, a louvered vent, a printed spec label, and a strap
+// eyelet. Everything is low-relief on the rear face (dark decals + raised hardware) so the panel never
+// needs a real cavity cut, and it all parents to the back panel (the seam to the device, since it lives
+// on the side) so it tracks the screen stretch and the flip. The canvas owns the colors (recolored per
+// theme) and re-seats the corner-anchored pieces via place() when the panel grows on a tall frame.
+const BD_FONT = '-apple-system,"Segoe UI",system-ui,sans-serif'
+
+export function createBackDetails(
+  device: THREE.Group,
+  backPanel: THREE.Mesh,
+  dims: { bodyW: number; bodyH: number; corner: number; seamZ: number; bodyCx: number },
+  mats: {
+    metal: THREE.MeshStandardMaterial
+    seam: THREE.MeshStandardMaterial
+    recess: THREE.MeshStandardMaterial
+    shell: THREE.MeshStandardMaterial
+  },
+  inkColor: string,
+) {
+  const { bodyW, bodyH, corner, seamZ, bodyCx } = dims
+  const trash: { dispose(): void }[] = []
+  const tmp = new THREE.Matrix4()
+
+  /* side grip — a ribbed patch down each side wall: short vertical grooves, kept just inside the
+     silhouette so they read as recessed ribs from a 3/4 angle and stay hidden front-on (the front is
+     untouched). Lives on `device` and rides the body center; re-seated with the seam when it grows. */
+  const gripGroup = new THREE.Group()
+  device.add(gripGroup)
+  const grooveGeo = new THREE.CapsuleGeometry(0.022, 1.9, 4, 10) // capsule axis is Y → a vertical rib
+  trash.push(grooveGeo)
+  const GRIP_X = (bodyW + 0.16) / 2 - 0.05 // a hair inside the side wall so it never breaks the front
+  for (const side of [-1, 1])
+    for (const gz of [-0.45, -0.68, -0.91, -1.14, -1.37]) {
+      const rib = new THREE.Mesh(grooveGeo, mats.seam)
+      rib.position.set(side * GRIP_X, 0, gz)
+      gripGroup.add(rib)
+    }
+
+  /* parting seam — a thin recessed line on the body outline, slightly inset from the full silhouette so
+     it reads as a groove (and stays hidden behind the body when the device is seen front-on). The tube
+     follows the rounded-rect perimeter; rebuilt when the height grows. Lives on `device`, not the back
+     panel, so it shows on the side through the whole spin, not only when flipped. */
+  let seam: THREE.Mesh | null = null
+  function buildSeamGeo(ext: number) {
+    const outline = roundedRect(bodyW + 0.04, bodyH + ext + 0.04, corner + 0.02).getPoints(48)
+    const pts = outline.map((p) => new THREE.Vector3(p.x, p.y, 0))
+    return new THREE.TubeGeometry(
+      new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0),
+      280,
+      0.03,
+      8,
+      true,
+    )
+  }
+  function rebuildSeam(ext: number, cy: number) {
+    if (!seam) {
+      seam = new THREE.Mesh(buildSeamGeo(ext), mats.seam)
+      device.add(seam)
+    } else {
+      seam.geometry.dispose()
+      seam.geometry = buildSeamGeo(ext)
+    }
+    seam.position.set(bodyCx, cy, seamZ)
+    gripGroup.position.set(bodyCx, cy, 0) // grip patch rides the body center as it stretches
+  }
+
+  // Shared geometry for the four corner screws: a dark countersink cup, a gunmetal head, a cross slot.
+  const csGeo = new THREE.CircleGeometry(0.17, 24)
+  const headGeo = new THREE.CylinderGeometry(0.105, 0.125, 0.05, 22)
+  headGeo.rotateX(Math.PI / 2) // axis Y → faces ±z; the wider base ends up toward the viewer when flipped
+  const slotGeo = new THREE.BoxGeometry(0.16, 0.034, 0.02)
+  trash.push(csGeo, headGeo, slotGeo)
+  const screwGroups: THREE.Group[] = []
+  for (let i = 0; i < 4; i++) {
+    const g = new THREE.Group()
+    const cs = new THREE.Mesh(csGeo, mats.recess)
+    const head = new THREE.Mesh(headGeo, mats.metal)
+    head.position.z = -0.026
+    head.castShadow = true
+    const slot1 = new THREE.Mesh(slotGeo, mats.recess)
+    slot1.position.z = -0.05
+    const slot2 = new THREE.Mesh(slotGeo, mats.recess)
+    slot2.position.z = -0.05
+    slot2.rotation.z = Math.PI / 2
+    g.add(cs, head, slot1, slot2)
+    backPanel.add(g)
+    screwGroups.push(g)
+  }
+
+  /* speaker grille — a mid-tone sunk pad with a grid of dark drilled dots, the grid trimmed to a
+     rounded cluster. One instanced mesh for the dots keeps it a single draw call. */
+  const grilleGroup = new THREE.Group()
+  backPanel.add(grilleGroup)
+  const padW = 1.9
+  const padH = 0.92
+  const padGeo = new THREE.ShapeGeometry(roundedRect(padW, padH, 0.2), 24)
+  grilleGroup.add(new THREE.Mesh(padGeo, mats.seam))
+  trash.push(padGeo)
+  const dotGeo = new THREE.CircleGeometry(0.05, 14)
+  trash.push(dotGeo)
+  const cols = 9
+  const rows = 4
+  const dotPitch = 0.19
+  const dotPos: [number, number][] = []
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      const x = (c - (cols - 1) / 2) * dotPitch
+      const y = (r - (rows - 1) / 2) * dotPitch
+      // ellipse trim so the cluster reads as a rounded speaker patch, not a hard rectangle
+      if ((x / (padW / 2 - 0.18)) ** 2 + (y / (padH / 2 - 0.14)) ** 2 > 1) continue
+      dotPos.push([x, y])
+    }
+  const dots = new THREE.InstancedMesh(dotGeo, mats.recess, dotPos.length)
+  dotPos.forEach(([x, y], i) => {
+    tmp.makeTranslation(x, y, -0.004)
+    dots.setMatrixAt(i, tmp)
+  })
+  dots.instanceMatrix.needsUpdate = true
+  grilleGroup.add(dots)
+  trash.push(dots)
+
+  /* vent — a short centered run of dark louver slots near the bottom edge. */
+  const ventGroup = new THREE.Group()
+  backPanel.add(ventGroup)
+  const ventGeo = new THREE.ShapeGeometry(roundedRect(0.045, 0.46, 0.022), 4)
+  trash.push(ventGeo)
+  const ventN = 7
+  const ventPitch = 0.13
+  const vents = new THREE.InstancedMesh(ventGeo, mats.recess, ventN)
+  for (let i = 0; i < ventN; i++) {
+    tmp.makeTranslation((i - (ventN - 1) / 2) * ventPitch, 0, -0.004)
+    vents.setMatrixAt(i, tmp)
+  }
+  vents.instanceMatrix.needsUpdate = true
+  ventGroup.add(vents)
+  trash.push(vents)
+
+  /* spec label — printed silkscreen block (model no + a fine line + a regulatory row), faced toward
+     the rear so it reads when the device is flipped. Recolored to the theme's label ink. */
+  const labelGroup = new THREE.Group()
+  backPanel.add(labelGroup)
+  const lc = document.createElement('canvas')
+  lc.width = 512
+  lc.height = 256
+  const lg = lc.getContext('2d')!
+  function drawLabel(color: string) {
+    lg.clearRect(0, 0, 512, 256)
+    lg.fillStyle = color
+    lg.textAlign = 'center'
+    lg.font = `700 66px ${BD_FONT}`
+    lg.fillText('PIPS-01', 256, 76)
+    lg.globalAlpha = 0.72
+    lg.font = `500 30px ${BD_FONT}`
+    lg.fillText('DEEPBOOK PREDICT INSIDE', 256, 142)
+    lg.globalAlpha = 0.5
+    lg.font = `500 26px ${BD_FONT}`
+    lg.fillText('CE · FCC · RoHS', 256, 196)
+    lg.globalAlpha = 1
+  }
+  drawLabel(inkColor)
+  const ltex = new THREE.CanvasTexture(lc)
+  ltex.colorSpace = THREE.SRGBColorSpace
+  const lplaneGeo = new THREE.PlaneGeometry(1.6, 0.8)
+  const lmat = new THREE.MeshBasicMaterial({ map: ltex, transparent: true })
+  const lplane = new THREE.Mesh(lplaneGeo, lmat)
+  lplane.rotation.y = Math.PI // mirror so the print reads correctly once the panel is flipped to camera
+  labelGroup.add(lplane)
+  trash.push(ltex, lplaneGeo, lmat)
+
+  /* strap eyelet — a dark hole ringed by a gunmetal grommet, seated on the upper-left edge. */
+  const strapGroup = new THREE.Group()
+  backPanel.add(strapGroup)
+  const holeGeo = new THREE.CircleGeometry(0.075, 18)
+  const grommetGeo = new THREE.TorusGeometry(0.12, 0.038, 10, 24)
+  trash.push(holeGeo, grommetGeo)
+  strapGroup.add(new THREE.Mesh(holeGeo, mats.recess))
+  const grommet = new THREE.Mesh(grommetGeo, mats.metal)
+  grommet.position.z = -0.01
+  grommet.castShadow = true
+  strapGroup.add(grommet)
+
+  // Re-seat the corner/edge-anchored pieces against the current panel half-extents, and float every
+  // decal just proud of the rear face (faceZ is the most-negative panel z, so proud is faceZ - eps).
+  function place(halfW: number, halfH: number, faceZ: number) {
+    const inset = 0.5
+    const sx = halfW - inset
+    const sy = halfH - inset
+    const sc: [number, number][] = [
+      [-sx, sy],
+      [sx, sy],
+      [-sx, -sy],
+      [sx, -sy],
+    ]
+    screwGroups.forEach((g, i) => g.position.set(sc[i][0], sc[i][1], faceZ - 0.004))
+    grilleGroup.position.set(0, 2.55, faceZ - 0.003)
+    ventGroup.position.set(0, -(halfH - 1.2), faceZ - 0.004)
+    labelGroup.position.set(0, -2.75, faceZ - 0.012)
+    strapGroup.position.set(-(halfW - 0.42), halfH - 1.7, faceZ - 0.004)
+  }
+
+  function recolorInk(color: string) {
+    drawLabel(color)
+    ltex.needsUpdate = true
+  }
+
+  function dispose() {
+    if (seam) seam.geometry.dispose()
+    trash.forEach((t) => t.dispose())
+  }
+
+  return { place, rebuildSeam, recolorInk, dispose }
 }

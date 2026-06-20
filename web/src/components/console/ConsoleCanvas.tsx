@@ -17,6 +17,7 @@ import {
   createKnob,
   createNumberWheel,
   createActionScreens,
+  createBackDetails,
 } from './consoleElements'
 import { createAudio } from './consoleAudio'
 import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
@@ -424,6 +425,38 @@ export default function ConsoleCanvas({
     backPanel.geometry.computeBoundingBox()
     let backFaceLocalZ = backPanel.geometry.boundingBox!.min.z
 
+    // Back + side dress: parting seam, gunmetal corner screws, speaker grille, vent, spec label, strap
+    // eyelet. Fixed gunmetal hardware; seam + recesses are darker shades of the shell, recolored per
+    // theme in applyTheme. Half-extents grow with the screen stretch, so place() re-seats on relayout.
+    const matMetal = new THREE.MeshStandardMaterial({
+      color: 0x5f636b,
+      metalness: 0.85,
+      roughness: 0.34,
+    })
+    const matSeam = new THREE.MeshStandardMaterial({
+      color: 0x8c7f64,
+      roughness: 0.7,
+      metalness: 0,
+      side: THREE.DoubleSide,
+    })
+    const matBackRecess = new THREE.MeshStandardMaterial({
+      color: 0x282218,
+      roughness: 0.9,
+      metalness: 0,
+      side: THREE.DoubleSide,
+    })
+    const BACK_HALF_W = (6.2 + 0.16) / 2
+    const backHalfH = () => (11.95 + screenExt + 0.16) / 2
+    const backDetails = createBackDetails(
+      device,
+      backPanel,
+      { bodyW: 6.2, bodyH: 11.95, corner: deviceCfg.corner, seamZ: -0.72, bodyCx: wx(585) },
+      { metal: matMetal, seam: matSeam, recess: matBackRecess },
+      '#7c7870',
+    )
+    backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
+    backDetails.rebuildSeam(screenExt, wy(1130) + screenExt / 2)
+
     const SVG_W = 1539,
       SVG_H = 629
     const logoScale = 3.6 / SVG_W
@@ -573,6 +606,8 @@ export default function ConsoleCanvas({
       backPanel.geometry.computeBoundingBox()
       backFaceLocalZ = backPanel.geometry.boundingBox!.min.z
       logoGroup.position.z = backFaceLocalZ
+      // the rear face moved (the no-bevel logo cut changes min.z), so re-seat the back dress with it
+      backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
       rebuildLogo()
       buildMainGlyph()
     }
@@ -1139,8 +1174,10 @@ export default function ConsoleCanvas({
     const numberWheelLabels = Array.from(
       { length: MAX_NUMBER_WHEEL_LABELS },
       () => {
-        // Keep the digits above the drum instead of depth-fighting into its black surface.
-        const label = makeDynLabel(0.46, '#ffffff', true)
+        // Keep the digits above the drum instead of depth-fighting into its black surface. In the spin
+        // views (customize/export) they opt into real occlusion so they don't bleed through the flipped
+        // back panel; the front games view keeps them depth-test-free, exactly as before.
+        const label = makeDynLabel(0.46, '#ffffff', true, spinView)
         numberWheelRoll.add(label.plane)
         return { ...label, angle: 0, active: false }
       },
@@ -1429,6 +1466,11 @@ export default function ConsoleCanvas({
       matBack.color.set(t.back ?? t.body)
       matKnob.color.set(t.knob)
       matKnobSlab.color.set(t.knob)
+      // Back dress: the seam is a darker shade of the shell, the recesses (grille/vent/screw cups)
+      // darker still, so they read as molded-in on every skin. Gunmetal hardware stays fixed.
+      matSeam.color.set(t.body).multiplyScalar(0.5)
+      matBackRecess.color.set(t.back ?? t.body).multiplyScalar(0.32)
+      backDetails.recolorInk(t.label ?? '#7c7870')
       // Carved back logo: letters take the accent tone, the raised eyes match the back panel so they
       // read as the same material punched through, not a separate inlay.
       const logoColor = t.logo ?? t.knob
@@ -1475,6 +1517,9 @@ export default function ConsoleCanvas({
       backPanel.geometry.dispose()
       backPanel.geometry = buildBackPanelGeo()
       backPanel.position.y = wy(1130) + screenExt / 2
+      // the panel grew taller: re-hug the corner screws + strap to the new edges, regrow the seam
+      backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
+      backDetails.rebuildSeam(screenExt, wy(1130) + screenExt / 2)
     }
 
     // Stretch the screen + body top to `ext` world units past natural, then refresh the projection
@@ -2188,6 +2233,10 @@ export default function ConsoleCanvas({
       applyActiveRef.current = () => {}
       gui?.destroy()
       disposeActionScreens()
+      backDetails.dispose()
+      matMetal.dispose()
+      matSeam.dispose()
+      matBackRecess.dispose()
       for (const tokenScreen of tokenScreens) tokenScreen.dispose()
       logoGeo.forEach((g) => g.dispose())
       skinCache.forEach((t) => t.dispose())

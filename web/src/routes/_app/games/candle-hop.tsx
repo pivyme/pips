@@ -10,7 +10,7 @@ import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
 import { getScores, submitScore } from '@/lib/leaderboard'
-import { sound } from '@/lib/sound'
+import { sound, startBgm, stopBgm, hopScore, hopLose, hopResetCombo } from '@/lib/sound'
 import { cnm } from '@/utils/style'
 
 // Candle Hop. A one-button flappy minigame (no Sui, no backend): tap the big button to fly the
@@ -59,10 +59,14 @@ export function CandleHopScreen() {
     const eng = new FlapEngine(c, {
       onHud: setHud,
       onEnd: (s) => endRef.current(s),
-      onScore: () => haptic('selection'), // cleared a gap: a light tick
+      onScore: () => {
+        haptic('selection') // cleared a gap: a light tick
+        hopScore() // and a bright "tuiing" that climbs with the streak
+      },
       onCrash: () => {
         haptic('error')
-        sound('lose')
+        stopBgm() // cut the bed the instant you hit, so the lose synth lands clean
+        hopLose()
       },
       reduced,
     })
@@ -87,6 +91,15 @@ export function CandleHopScreen() {
   }, [])
 
   const playing = phase === 'playing'
+  // BGM rides the run: the synth bed loops only while you're alive, and the combo ladder resets each
+  // run so every "tuiing" streak starts fresh. Cleanup covers death, navigating away, and unmount.
+  useEffect(() => {
+    if (!playing) return
+    hopResetCombo()
+    startBgm()
+    return () => stopBgm()
+  }, [playing])
+
   // One button is the whole game: it flaps while a run is live, starts / restarts otherwise. The two
   // idle action screens drift through an ambient light show while a run is live, calm on death/title.
   useConsoleControls({

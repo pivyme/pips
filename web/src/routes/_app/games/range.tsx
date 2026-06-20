@@ -9,7 +9,7 @@ import { Cell, GameReadout, GameScreen, GameStage, ScreenMessage } from '@/compo
 import { Stat } from '@/components/Stat'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { haptic } from '@/lib/haptics'
-import { sound } from '@/lib/sound'
+import { startRangeBgm, stopRangeBgm, rangeLock, rangeCross, rangeBuzzer, rangeWin, rangeLose } from '@/lib/sound'
 import { api, streamPlay, type PlayDTO, type PlayStatus } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { explorerTxUrl } from '@/lib/sui/config'
@@ -134,8 +134,10 @@ export function RangeScreen() {
       setPlay(final)
       setLive({ markValue: final.markValue, pnl: final.pnl, multiplier: final.multiplier, status: final.status })
       setPhase('result')
+      stopRangeBgm() // cut the tension bed the instant it resolves, so the sting lands clean
       haptic(final.status === 'lost' ? 'error' : 'success')
-      sound(final.status === 'lost' ? 'lose' : 'win')
+      if (final.status === 'lost') rangeLose()
+      else rangeWin()
       notifyUnlocks(unlocked)
       void refresh()
       // Settle/cashout moved the record: freshen stats (streak), achievements, and history.
@@ -183,6 +185,14 @@ export function RangeScreen() {
 
   useEffect(() => () => clearResetTimer(), [])
 
+  // The cinematic tension bed rides the open hold only: it fades in when a position opens and out the
+  // moment the phase leaves 'open' (cash out, settle, re-rack, or navigating away).
+  useEffect(() => {
+    if (phase !== 'open') return
+    startRangeBgm()
+    return () => stopRangeBgm()
+  }, [phase])
+
   const doPlay = useCallback(async () => {
     if (phase !== 'idle' && phase !== 'result') return
     if (!canPlay) {
@@ -201,6 +211,7 @@ export function RangeScreen() {
       setLive({ markValue: p.markValue, pnl: p.pnl, multiplier: p.multiplier, status: p.status })
       setPhase('open')
       haptic('heavy')
+      rangeLock() // the band locks: a deep, committing confirm
     } catch (e) {
       toastError(e)
       setPhase('idle')
@@ -250,7 +261,10 @@ export function RangeScreen() {
   // tension is felt, not just seen.
   useEffect(() => {
     if (phase !== 'open' || inZone == null) return
-    if (wasInside.current != null && wasInside.current !== inZone) haptic('selection')
+    if (wasInside.current != null && wasInside.current !== inZone) {
+      haptic('selection')
+      rangeCross(inZone)
+    }
     wasInside.current = inZone
   }, [inZone, phase])
 
@@ -319,6 +333,11 @@ export function RangeScreen() {
   const settling = phase === 'open' && secsLeft != null && secsLeft <= 0
   const showZonePill = phase === 'open' && inZone != null && !settling
   const firstRun = !statsQ.isLoading && (statsQ.data?.stats.gamesPlayed ?? 0) === 0
+
+  // A one-shot riser at the buzzer, the last seconds before the oracle settles, to spike the tension.
+  useEffect(() => {
+    if (settling) rangeBuzzer()
+  }, [settling])
 
   // The device screen is the L-shaped aperture (web/CLAUDE.md "The console screen"): a top bar, the
   // chart filling the slack height, then a notch-safe readout band the chart stops above. The rim

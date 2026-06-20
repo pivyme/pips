@@ -69,8 +69,13 @@ function between(min: number, max: number) {
   return min + Math.random() * (max - min)
 }
 
+// Master level for all device SFX. The button/knob/roller samples are decoded at full scale, which
+// drowns out the synth game audio in sound.ts. Pull them down to a tactile, balanced level here.
+const SFX_LEVEL = 0.25
+
 export function createAudio() {
   let actx: AudioContext | null = null
+  let master: GainNode | null = null
   const sfx: Partial<Record<SfxKey, AudioBuffer>> = {}
   const variations: Partial<Record<ControlId, Variation>> = {}
 
@@ -142,7 +147,7 @@ export function createAudio() {
     filter.Q.value = profile.filterQ
     gain.gain.value = variation.gain
     pan.pan.value = variation.pan
-    src.connect(filter).connect(gain).connect(pan).connect(actx.destination)
+    src.connect(filter).connect(gain).connect(pan).connect(master ?? actx.destination)
   }
 
   function playSfx(key: SfxKey, control: ControlId) {
@@ -154,7 +159,13 @@ export function createAudio() {
   }
 
   function resumeAudio() {
-    if (!actx) { actx = new AudioContext(); loadSfx() }
+    if (!actx) {
+      actx = new AudioContext()
+      master = actx.createGain()
+      master.gain.value = SFX_LEVEL
+      master.connect(actx.destination)
+      loadSfx()
+    }
     if (actx.state === 'suspended') actx.resume()
   }
 
@@ -166,7 +177,7 @@ export function createAudio() {
     g.gain.setValueAtTime(0, t)
     g.gain.linearRampToValueAtTime(vol, t + 0.004)
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07)
-    o.connect(g).connect(actx.destination)
+    o.connect(g).connect(master ?? actx.destination)
     o.start(t)
     o.stop(t + 0.09)
   }

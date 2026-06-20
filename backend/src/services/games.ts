@@ -15,8 +15,10 @@ import {
   FLOAT_SCALING,
   ORACLE_STRIKE_GRID_TICKS,
   toDusdcRaw,
+  usd1e9,
   multiplier as multiplierOf,
 } from '../lib/sui/config.ts';
+import { gameSpot } from '../lib/game-price.ts';
 import { liveByAsset, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
 import {
   previewBinaryBatch,
@@ -36,6 +38,11 @@ import { newSeed, seedFloat, pickTier } from './rng.ts';
 // makes the reported cost/multiplier stale. Bounded so a long-lived process never grows it without
 // limit; entries fall out as oracles roll.
 const SOLVE_CURVE_TTL_MS = 3000;
+
+// The coinflip tier. The slot's most common deal (LUCKY_TIER_WEIGHTS): its strike sits one tick
+// inside the live spot, so ANY move in the bet direction wins (~2x, at the money). This is the
+// intuitive common case ("I bet down, it dipped, I win"); the bigger tiers stay OTM reach-a-target.
+const COINFLIP_TIER = 2;
 const curveCache = new Map<string, { curve: ScanCurve; at: number }>();
 function getFreshCurve(key: string, now: number): ScanCurve | undefined {
   const hit = curveCache.get(key);
@@ -266,6 +273,15 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
   const tier = pickTier(seedFloat(seed, 2)); // slot-weighted reel deal (LUCKY.md §4)
 
+  // The price the chart shows and the round settles against (gameSpot): solve the strike off THIS,
+  // not the oracle's cached spot, so the ENTRY and TARGET the player sees sit exactly on the live
+  // chart line. The old stale-cache spot floated them 2-4% off (worse in follower mode, two walks).
+  const liveSpot = await gameSpot(asset);
+  const fresh1e9 = liveSpot && liveSpot.price > 0 ? usd1e9(liveSpot.price) : undefined;
+  // Rare (cold boot / a Pyth blip): no live game price, so we fall back to the oracle's cached spot
+  // below, which can re-float the entry off the chart. Warn so it is diagnosable, never silent.
+  if (fresh1e9 == null) console.warn(`[Lucky] no live game price for ${asset}, solving off the cached oracle spot`);
+
   // Route to the oracle expiring nearest the round target and solve in a few batched round trips.
   // The asset/side/tier are fixed by the seed (fairness); only the oracle is re-picked if the first
   // one expires mid-solve, which the batched preview surfaces as a thrown error.
@@ -274,6 +290,12 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
     const market = roundOracle(asset);
     if (!market) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
     const g = gridOf(market);
+    // Center the solve + the entry mark on the live chart price; fall back to the oracle's cached
+    // spot only if the game feed has no price yet (cold boot, before the first push/sync).
+    const atm1e9 = fresh1e9 ?? (market.spot1e9 ? BigInt(market.spot1e9) : undefined);
+    const entrySpot = atm1e9 != null ? fmt1e9(atm1e9) : '';
+    // The round runs to the routed oracle's expiry, so the UI countdown matches the real settle.
+    const duration = Math.max(1, Math.round((market.expiryMs - now()) / 1000));
 
     // One batched devInspect per solver round. cost == 0 means that strike is unmintable.
     const preview: BatchPreviewFn = async (probes) => {
@@ -282,13 +304,46 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
     };
 
     try {
+      // Coinflip: the strike sits one tick inside the live spot, so ANY move in the bet direction
+      // wins (~2x, at the money). One probe sizes the quantity to the bet (analytic, like the OTM
+      // path below); the funding buffer absorbs the small pre/post-trade slippage.
+      if (tier <= COINFLIP_TIER && atm1e9 != null) {
+        const atmTick = side === 'up' ? floorTick(atm1e9, g.tick) : ceilTick(atm1e9, g.tick);
+        const strike = clampStrike(atmTick, g);
+        // Only a real coinflip when the ATM tick is genuinely inside the grid. If the spot has drifted
+        // to a grid edge so the clamp moved the strike, fall through to the OTM solver, which reports an
+        // honest tier/multiple instead of mislabeling a deep ITM/OTM edge strike as ~2x any-move-wins.
+        if (strike === atmTick) {
+          const [probe] = await previewBinaryBatch(market.oracleId, market.expiryMs, side, [{ strike1e9: strike, quantity: DUSDC_DECIMALS }]);
+          if (!probe || probe.cost <= 0n) throw new Error('coinflip strike unmintable');
+          const targetA = (stakeRaw * 98n) / 100n; // aim just under the bet; the funding buffer covers the rest
+          let q = (DUSDC_DECIMALS * targetA) / probe.cost;
+          if (q <= 0n) q = 1n;
+          const entryCost = (probe.cost * q) / DUSDC_DECIMALS;
+          return {
+            kind: 'binary',
+            game: 'lucky',
+            market,
+            params: { oracleId: market.oracleId, expiryMs: market.expiryMs, strike1e9: strike, side, quantity: q },
+            asset,
+            side,
+            tier: COINFLIP_TIER,
+            duration,
+            strikeDisplay: fmt1e9(strike),
+            entrySpot,
+            entryCost,
+            maxPayout: q,
+            multiplier: multiplierOf(entryCost, q),
+            seed,
+          };
+        }
+      }
+
       // Reuse a fresh cached scan for this oracle/side when one exists, so a warm play skips the
       // scan round trip and only pays for sizing. Cache whatever scan the solve ended up using.
       const cacheKey = `${market.oracleId}:${side}`;
       const t0 = now();
       const curve = getFreshCurve(cacheKey, t0);
-      // The live spot centers the scan window on ATM (the cached spot1e9 is pusher-fresh, ~2s old).
-      const atm1e9 = market.spot1e9 ? BigInt(market.spot1e9) : undefined;
       const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve, atm1e9, analyticSize: true });
       if (!curve) putCurve(cacheKey, solution.curve, t0);
       if (solution.clamped) {
@@ -297,8 +352,6 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
           `[Lucky] ${asset} ${side} ${tier}x unreachable, solved ${solution.multiplier.toFixed(2)}x (tier ${solution.achievedTier}x)`,
         );
       }
-      // The round runs to the routed oracle's expiry, so the UI countdown matches the real settle.
-      const duration = Math.max(1, Math.round((market.expiryMs - now()) / 1000));
       return {
         kind: 'binary',
         game: 'lucky',
@@ -309,7 +362,7 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
         tier: solution.achievedTier,
         duration,
         strikeDisplay: fmt1e9(solution.strike1e9),
-        entrySpot: market.spot1e9 ? fmt1e9(BigInt(market.spot1e9)) : '',
+        entrySpot,
         entryCost: solution.entryCost,
         maxPayout: solution.quantity,
         multiplier: solution.multiplier,

@@ -13,8 +13,9 @@
 // scaled horizontally, run the operator (and thus this engine) on exactly ONE instance, the same
 // single-leader rule the workers already follow (OPERATOR_ENABLED).
 
-import { GAME_VOL } from '../config/main-config.ts';
+import { GAME_VOL, OPERATOR_ENABLED } from '../config/main-config.ts';
 import { getSpot } from './price-cache.ts';
+import { assetSpot } from './sui/markets.ts';
 
 // Tuned so the realized move over a ~45s round is ~0.6% (calibrated): a ±0.1% band is a real long
 // shot, ±0.5% is roughly a coin flip, and wide bands are the safe, low-payout end. Motion stays
@@ -68,11 +69,41 @@ function refreshAnchor(asset: string, c: Cell): void {
   });
 }
 
+// Follower mode (this backend is NOT the operator): the operator owns the synthetic walk and pushes
+// it on-chain, and market-sync mirrors that pushed price into the live market set. We serve THAT here,
+// so the chart, the Lucky solve, and the on-chain settlement all read one price and there is no second
+// walk to diverge from (the bug that floated the entry/target a few percent off the live line). Ease
+// toward each market-sync step so the line glides instead of stepping. Falls back to raw Pyth only on
+// a cold boot before any oracle is synced.
+const followShown = new Map<string, { price: number; at: number }>();
+const FOLLOW_TAU_MS = 1100; // smoothing time constant for the ~3s chain-spot steps
+
+async function followerSpot(asset: string): Promise<{ price: number; ts: number } | null> {
+  let target = assetSpot(asset);
+  if (target == null || target <= 0) {
+    const s = await getSpot(asset);
+    target = s ? s.price : null;
+  }
+  if (target == null || target <= 0) return null;
+  const now = Date.now();
+  const cur = followShown.get(asset);
+  if (!cur) {
+    followShown.set(asset, { price: target, at: now });
+    return { price: target, ts: now };
+  }
+  const k = 1 - Math.exp(-(now - cur.at) / FOLLOW_TAU_MS);
+  cur.price += (target - cur.price) * k;
+  cur.at = now;
+  return { price: cur.price > 0 ? cur.price : target, ts: now };
+}
+
 // The live game price for an asset: the real Pyth anchor times the synthetic offset. Returns null
 // only on a cold start where Pyth has never answered for this asset, so callers fall back to raw.
-// With GAME_VOL <= 0 it is a pure pass-through of real Pyth (the kill switch).
+// With GAME_VOL <= 0 it is a pure pass-through of real Pyth (the kill switch). In follower mode the
+// operator's on-chain price is the single source (followerSpot), so we never run our own walk.
 export async function gameSpot(asset: string): Promise<{ price: number; ts: number } | null> {
   if (GAME_VOL <= 0) return getSpot(asset);
+  if (!OPERATOR_ENABLED) return followerSpot(asset);
   let c = cells.get(asset);
   if (!c) {
     const s = await getSpot(asset);

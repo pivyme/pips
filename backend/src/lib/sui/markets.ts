@@ -52,3 +52,20 @@ export const tradeableMarkets = (now: number, safetyMs: number): Market[] =>
 
 export const liveByAsset = (asset: string, now: number, minRemainingMs: number): Market[] =>
   allMarkets().filter((m) => m.underlying === asset && !m.settled && m.expiryMs - now > minRemainingMs);
+
+// The freshest on-chain spot for an asset, in display units, from the live oracle set. The
+// price-pusher writes spot1e9 each tick (operator), market-sync reads it off chain every few seconds
+// (follower). The follower chart serves this so the line the player watches is the price the round
+// settles against. Picks the most recently observed live market; null if none is live yet.
+export const assetSpot = (asset: string): number | null => {
+  let best: Market | undefined;
+  for (const m of markets.values()) {
+    if (m.underlying !== asset || m.settled || !m.spot1e9) continue;
+    const mp = m.lastPushAt ?? 0;
+    const bp = best?.lastPushAt ?? 0;
+    // Most recently observed; on a tie (market-sync stamps a whole tick with one timestamp) prefer the
+    // nearest-expiry oracle, the one actually being traded, so the pick is deterministic across restarts.
+    if (!best || mp > bp || (mp === bp && m.expiryMs < best.expiryMs)) best = m;
+  }
+  return best?.spot1e9 ? Number(best.spot1e9) / 1e9 : null;
+};

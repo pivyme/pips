@@ -540,6 +540,7 @@ function createRange(body: Record<string, unknown>): PlayDTO {
     markValue: str(stake),
     pnl: '0.00',
     multiplier: lockedMult,
+    entrySpot: String(entry),
     openedAt: new Date(openedMs).toISOString(),
   }
   registerOpen(p, { game: 'range', asset, stake, entry, lower, upper, lockedMult, openedMs, expiryMs })
