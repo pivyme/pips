@@ -170,6 +170,14 @@ export const capitalizeFirstLetter = (str: string): string => {
   return str.charAt(0).toUpperCase() + str.slice(1)
 }
 
+// The player's @handle for display: always lowercase, prefixed with @. Before a handle is set (or
+// as a guard) it falls back to the auth display name, then a generic label. One place so every
+// surface that shows the handle reads the same.
+export const displayHandle = (
+  user?: { username?: string | null; displayName?: string | null } | null,
+  fallback = 'Player',
+): string => (user?.username ? `@${user.username.toLowerCase()}` : (user?.displayName ?? fallback))
+
 export function unsluggify(slug: string, separator: string = '-'): string {
   return slug
     .split(separator)

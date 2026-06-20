@@ -13,6 +13,7 @@ import { isDemo } from '@/lib/demo'
 import { haptic } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
+import { displayHandle } from '@/utils/format'
 
 // The Home screen on the device (docs/FLOW.md §5). The console screen emulates a Teenage
 // Engineering instrument panel, so this is flat, edge-to-edge and high-contrast: true black,
@@ -98,7 +99,7 @@ export function GamesConsole() {
   })
 
   const demo = isDemo()
-  const name = user?.username ?? user?.displayName ?? 'Player'
+  const name = displayHandle(user)
   const balance = parseFloat(user?.balance ?? '0') || 0
 
   return (
@@ -152,7 +153,7 @@ export function GamesConsole() {
           who you are, streak, chip balance: all the read-only context lives down here now. */}
       <Rule />
       <div className={cnm('max-w-[62%] pt-3', RIM_B, RIM)}>
-        <div className="truncate text-[17px] font-extrabold uppercase leading-tight tracking-[0.02em] text-text">{name}</div>
+        <div className="truncate text-[17px] font-extrabold lowercase leading-tight tracking-[0.02em] text-text">{name}</div>
         <div className="mt-1 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-text-2">
           <span className="tnum truncate">{user ? shortAddr(user.address) : '—'}</span>
           {streak > 0 && (

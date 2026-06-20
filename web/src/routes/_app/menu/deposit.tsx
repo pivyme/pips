@@ -97,7 +97,7 @@ function DepositScreen() {
         </button>
 
         <p className="px-1 text-[13px] leading-snug text-text-3">
-          Pips network USDC only. Funds appear in your balance once the transfer
+          PIPS's Sui Localnet USDC only. Funds appear in your balance once the transfer
           confirms.
         </p>
 
@@ -116,10 +116,10 @@ function DepositScreen() {
           className="btn-primary flex h-12 items-center justify-center gap-2 rounded-card text-[15px] font-semibold disabled:opacity-60"
         >
           <Coins className="h-[18px] w-[18px]" strokeWidth={2.4} />
-          {claiming ? 'Sending…' : 'Get 100 test USDC'}
+          {claiming ? 'Sending…' : 'Get 500 test USDC'}
         </button>
         <p className="px-1 text-[13px] leading-snug text-text-3">
-          Instant play money on the Pips network. One batch per minute.
+          Instant play money on the PIPS's Sui Localnet. One batch per minute.
         </p>
       </div>
     </MenuScreen>

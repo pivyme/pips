@@ -19,6 +19,7 @@ import { Route as ToolsWalletRouteImport } from './routes/tools/wallet'
 import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
 import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
 import { Route as AppMenuWithdrawRouteImport } from './routes/_app/menu/withdraw'
+import { Route as AppMenuUsernameRouteImport } from './routes/_app/menu/username'
 import { Route as AppMenuStatsRouteImport } from './routes/_app/menu/stats'
 import { Route as AppMenuSettingsRouteImport } from './routes/_app/menu/settings'
 import { Route as AppMenuHistoryRouteImport } from './routes/_app/menu/history'
@@ -77,6 +78,11 @@ const AppGamesIndexRoute = AppGamesIndexRouteImport.update({
 const AppMenuWithdrawRoute = AppMenuWithdrawRouteImport.update({
   id: '/menu/withdraw',
   path: '/menu/withdraw',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMenuUsernameRoute = AppMenuUsernameRouteImport.update({
+  id: '/menu/username',
+  path: '/menu/username',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMenuStatsRoute = AppMenuStatsRouteImport.update({
@@ -147,6 +153,7 @@ export interface FileRoutesByFullPath {
   '/menu/history': typeof AppMenuHistoryRoute
   '/menu/settings': typeof AppMenuSettingsRoute
   '/menu/stats': typeof AppMenuStatsRoute
+  '/menu/username': typeof AppMenuUsernameRoute
   '/menu/withdraw': typeof AppMenuWithdrawRoute
   '/games/': typeof AppGamesIndexRoute
   '/menu/': typeof AppMenuIndexRoute
@@ -168,6 +175,7 @@ export interface FileRoutesByTo {
   '/menu/history': typeof AppMenuHistoryRoute
   '/menu/settings': typeof AppMenuSettingsRoute
   '/menu/stats': typeof AppMenuStatsRoute
+  '/menu/username': typeof AppMenuUsernameRoute
   '/menu/withdraw': typeof AppMenuWithdrawRoute
   '/games': typeof AppGamesIndexRoute
   '/menu': typeof AppMenuIndexRoute
@@ -191,6 +199,7 @@ export interface FileRoutesById {
   '/_app/menu/history': typeof AppMenuHistoryRoute
   '/_app/menu/settings': typeof AppMenuSettingsRoute
   '/_app/menu/stats': typeof AppMenuStatsRoute
+  '/_app/menu/username': typeof AppMenuUsernameRoute
   '/_app/menu/withdraw': typeof AppMenuWithdrawRoute
   '/_app/games/': typeof AppGamesIndexRoute
   '/_app/menu/': typeof AppMenuIndexRoute
@@ -214,6 +223,7 @@ export interface FileRouteTypes {
     | '/menu/history'
     | '/menu/settings'
     | '/menu/stats'
+    | '/menu/username'
     | '/menu/withdraw'
     | '/games/'
     | '/menu/'
@@ -235,6 +245,7 @@ export interface FileRouteTypes {
     | '/menu/history'
     | '/menu/settings'
     | '/menu/stats'
+    | '/menu/username'
     | '/menu/withdraw'
     | '/games'
     | '/menu'
@@ -257,6 +268,7 @@ export interface FileRouteTypes {
     | '/_app/menu/history'
     | '/_app/menu/settings'
     | '/_app/menu/stats'
+    | '/_app/menu/username'
     | '/_app/menu/withdraw'
     | '/_app/games/'
     | '/_app/menu/'
@@ -344,6 +356,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMenuWithdrawRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/menu/username': {
+      id: '/_app/menu/username'
+      path: '/menu/username'
+      fullPath: '/menu/username'
+      preLoaderRoute: typeof AppMenuUsernameRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/menu/stats': {
       id: '/_app/menu/stats'
       path: '/menu/stats'
@@ -428,6 +447,7 @@ interface AppRouteChildren {
   AppMenuHistoryRoute: typeof AppMenuHistoryRoute
   AppMenuSettingsRoute: typeof AppMenuSettingsRoute
   AppMenuStatsRoute: typeof AppMenuStatsRoute
+  AppMenuUsernameRoute: typeof AppMenuUsernameRoute
   AppMenuWithdrawRoute: typeof AppMenuWithdrawRoute
   AppGamesIndexRoute: typeof AppGamesIndexRoute
   AppMenuIndexRoute: typeof AppMenuIndexRoute
@@ -444,6 +464,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppMenuHistoryRoute: AppMenuHistoryRoute,
   AppMenuSettingsRoute: AppMenuSettingsRoute,
   AppMenuStatsRoute: AppMenuStatsRoute,
+  AppMenuUsernameRoute: AppMenuUsernameRoute,
   AppMenuWithdrawRoute: AppMenuWithdrawRoute,
   AppGamesIndexRoute: AppGamesIndexRoute,
   AppMenuIndexRoute: AppMenuIndexRoute,

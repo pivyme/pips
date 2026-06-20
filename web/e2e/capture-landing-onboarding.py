@@ -167,21 +167,38 @@ def run_arc(browser, vp_name, vp):
     except Exception as e:
         print(f"    [{vp_name}] theme repaint skipped: {e}")
 
-    # --- Onboarding step 3: welcome (camera push-in 700ms, hold 1100ms, out 700ms) ---
+    # --- Onboarding step 3: welcome. Zoom into the screen (~880ms, screen stays black) with a turn
+    #     flourish, then the splash reveals (logo pop + jingle) and HOLDS. No auto-advance: continue is
+    #     a tap. The reveal is gated on the device arriving, so the text can't show mid-zoom. ---
     page.evaluate("window.__pfReset && window.__pfReset()")
     page.click("button:has-text('Continue')")
-    page.wait_for_selector("text=Have fun", timeout=10000)
-    page.wait_for_timeout(1000)  # in-phase done (700ms), mid-hold: camera fully pushed in, logo popped
+    page.wait_for_selector("text=Have fun", timeout=10000)  # only appears once the zoom-in settles
     fps["welcome_zoom"] = page.evaluate("window.__pfStats && window.__pfStats()")
     shot(page, vp_name, "06-welcome")
 
-    # --- Auto-advance to the app (out phase -> onWelcomeComplete -> refresh -> games home) ---
+    # Regression 1: the splash HOLDS. Wait well past the old 1.1s auto-advance timer and confirm it
+    # is still up (the device no longer walks itself into the app).
+    page.wait_for_timeout(2200)
+    held = page.locator("text=Have fun").count() > 0
+    print(f"    [{vp_name}] welcome holds, no auto-advance -> {held}")
+
+    # Continue: tap the transparent catcher over the canvas. This is the path that was broken (a press
+    # used to bounce to the skin picker / wedge); it must zoom back out to the games home.
+    page.evaluate("window.__pfReset && window.__pfReset()")
+    advanced = False
+    bounced = False
     try:
+        page.click("button[aria-label='Continue']", timeout=4000)
         page.wait_for_selector("text=Have fun", state="detached", timeout=6000)
-        page.wait_for_timeout(1200)
+        fps["welcome_out"] = page.evaluate("window.__pfStats && window.__pfStats()")
+        page.wait_for_timeout(1000)
+        advanced = True
+        # Regression 2: must not be back on the skin picker after continuing.
+        bounced = page.locator("text=Make it yours").count() > 0 or page.locator("text=Pick a skin").count() > 0
         shot(page, vp_name, "07-app-home")
     except Exception as e:
-        print(f"    [{vp_name}] app-home capture skipped: {e}")
+        print(f"    [{vp_name}] tap-to-continue FAILED: {e}")
+    print(f"    [{vp_name}] tap-to-continue advanced -> {advanced}, bounced-to-customize -> {bounced}")
 
     ctx.close()
     return fps

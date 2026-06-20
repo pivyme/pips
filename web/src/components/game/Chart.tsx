@@ -45,6 +45,10 @@ interface ChartProps {
   // The chart's eased leading price, mirrored here every frame. Lets a readout track the line at
   // 60fps (the smooth value the player watches), instead of the ~1s raw onPrice ticks.
   livePriceRef?: { current: number }
+  // A known current price (the market spot) to paint from immediately on mount, so the chart shows a
+  // live line right away instead of a blank shimmer while the price stream warms up. Only seeds the
+  // first frame (cosmetic warm-up history behind it); the stream then drives the real leading edge.
+  initialPrice?: number
   onError?: () => void
   // Tap hit-test: maps a pointer-down to the price at that height. The canvas owns the
   // price<->y mapping (live, eased), so it is the only place this can be resolved correctly.
@@ -123,7 +127,7 @@ function seedHistory(price: number, tNow: number): Point[] {
   return out
 }
 
-export function Chart({ asset, overlays, height, className, onPrice, livePriceRef, onError, onTap, degen = true, showPriceTag = true }: ChartProps) {
+export function Chart({ asset, overlays, height, className, onPrice, livePriceRef, initialPrice, onError, onTap, degen = true, showPriceTag = true }: ChartProps) {
   const reduced = useReducedMotion()
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -196,6 +200,36 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     particles.current = []
     burst.current = null
     setHasData(false)
+
+    // Seed the flat baseline once: synthetic warm-up history anchored at `p`, the frame pre-fitted to
+    // it, and the live edge parked at the price. Runs on the first real tick, or up front from an
+    // initialPrice so the chart paints instantly instead of waiting on the stream. Guarded by `seeded`
+    // so the first stream tick never re-seeds.
+    const seedAt = (p: number, tNow: number): void => {
+      seeded.current = true
+      const seedPts = seedHistory(p, tNow)
+      let lo = p
+      let hi = p
+      for (const sp of seedPts) {
+        if (sp.p < lo) lo = sp.p
+        if (sp.p > hi) hi = sp.p
+        points.current.push(sp)
+      }
+      const center = (lo + hi) / 2
+      const half = Math.max(((hi - lo) / 2) * PAD, p * MIN_HALF_PCT)
+      display.current = p
+      target.current = p
+      range.current = { min: center - half, max: center + half }
+      setHasData(true)
+    }
+
+    // Paint immediately from the known current price (the market spot) so the chart is never a blank
+    // shimmer while the stream warms up. The real ticks scroll in over this and the leading edge stays
+    // the live price; only the history behind it is cosmetic.
+    if (initialPrice != null && Number.isFinite(initialPrice) && initialPrice > 0) {
+      seedAt(initialPrice, performance.now())
+      onPriceRef.current?.(initialPrice)
+    }
 
     const C = {
       text: readColor('--color-text'),
@@ -510,28 +544,10 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       const p = parseFloat(tick.price)
       if (!Number.isFinite(p)) return
       const tNow = performance.now()
-      if (!seeded.current) {
-        seeded.current = true
-        // Warm-up history: a synthetic walk anchored at the live price, drawn back across the
-        // window so a freshly opened chart shows a natural moving line instead of a flat bar.
-        // The leading edge is the real price, real ticks scroll in over it, and the whole seed
-        // clears within WINDOW_MS. No real or settlement data is fabricated.
-        const seedPts = seedHistory(p, tNow)
-        let lo = p
-        let hi = p
-        for (const sp of seedPts) {
-          if (sp.p < lo) lo = sp.p
-          if (sp.p > hi) hi = sp.p
-          points.current.push(sp)
-        }
-        // Open already fitted to the seed's extent, so the frame doesn't zoom out over the first
-        // frames as the eased range catches up to the wiggle.
-        const center = (lo + hi) / 2
-        const half = Math.max(((hi - lo) / 2) * PAD, p * MIN_HALF_PCT)
-        display.current = p
-        range.current = { min: center - half, max: center + half }
-        setHasData(true)
-      }
+      // First tick seeds the warm-up history + fits the frame (unless already seeded up front from
+      // initialPrice). The leading edge is the real price and real ticks scroll in over the seed,
+      // which clears within WINDOW_MS. No real or settlement data is fabricated.
+      if (!seeded.current) seedAt(p, tNow)
       // Momentum swing -> degen shake + spark burst (color follows the move's direction).
       const move = lastTickP.current ? (p - lastTickP.current) / lastTickP.current : 0
       lastTickP.current = p

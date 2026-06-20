@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { CandlestickChart } from 'lucide-react'
 import type { FlapHud } from '@/components/game/flapEngine'
 import type { ScoreEntry, SubmitResult } from '@/lib/leaderboard'
-import { useConsoleControls } from '@/components/console/controls'
+import { useConsoleControls, useDeviceSettled } from '@/components/console/controls'
 import { FlapEngine } from '@/components/game/flapEngine'
 import { GameReadout, GameScreen, GameStage, ScreenCRT } from '@/components/game/screen'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
@@ -12,6 +12,7 @@ import { haptic } from '@/lib/haptics'
 import { getScores, submitScore } from '@/lib/leaderboard'
 import { sound, startBgm, stopBgm, hopScore, hopLose, hopResetCombo } from '@/lib/sound'
 import { cnm } from '@/utils/style'
+import { displayHandle } from '@/utils/format'
 
 // Flappy Piper. A one-button flappy minigame (no Sui, no backend): tap the big button to fly the
 // Pips face through scrolling candlesticks. A hit shakes the screen, then drops the character
@@ -27,6 +28,18 @@ export function CandleHopScreen() {
   const { user } = useAuth()
   const reduced = useReducedMotion()
 
+  // Hold the screen black until the device has finished dropping in, then a short beat, then fade
+  // the game in, so it doesn't pop on mid-settle. No settle (nav / restore) just gives a clean fade.
+  const deviceSettled = useDeviceSettled()
+  const [revealed, setRevealed] = useState(false)
+  useEffect(() => {
+    if (reduced) return setRevealed(true)
+    if (!revealed && deviceSettled) {
+      const t = window.setTimeout(() => setRevealed(true), 300)
+      return () => window.clearTimeout(t)
+    }
+  }, [deviceSettled, reduced, revealed])
+
   const [phase, setPhase] = useState<Phase>('title')
   const [hud, setHud] = useState<FlapHud>(EMPTY_HUD)
   const [board, setBoard] = useState<Array<ScoreEntry>>(() => getScores(GAME))
@@ -36,7 +49,7 @@ export function CandleHopScreen() {
   const engineRef = useRef<FlapEngine | null>(null)
   const endRef = useRef<(score: number) => void>(() => {})
 
-  const name = user?.displayName ?? 'You'
+  const name = displayHandle(user, 'You')
   const best = board[0]?.score ?? 0
 
   // The run ends from inside the engine loop. Kept in a ref so the engine (built once) always
@@ -112,39 +125,46 @@ export function CandleHopScreen() {
   const liveBest = Math.max(best, hud.score) // best ticks up the moment you pass it
 
   return (
-    <GameScreen>
-      <GameStage
-        top={
-          playing ? (
-            <div className="pt-[18px]">
-              <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Score</div>
-              <div className="tnum text-4xl font-extrabold leading-none text-text">{fmt(hud.score)}</div>
-              <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                Best <span className="tnum text-text-2">{fmt(liveBest)}</span>
+    <div
+      className={cnm(
+        'h-full w-full transition-opacity duration-500 ease-out',
+        revealed ? 'opacity-100' : 'opacity-0',
+      )}
+    >
+      <GameScreen>
+        <GameStage
+          top={
+            playing ? (
+              <div className="pt-[18px]">
+                <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Score</div>
+                <div className="tnum text-4xl font-extrabold leading-none text-text">{fmt(hud.score)}</div>
+                <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                  Best <span className="tnum text-text-2">{fmt(liveBest)}</span>
+                </div>
               </div>
+            ) : null
+          }
+        >
+          <canvas ref={canvasRef} className="absolute inset-0 block h-full w-full" />
+        </GameStage>
+
+        {/* bottom-left: identity + how to play, always visible so it's instantly clear */}
+        <GameReadout>
+          <div className="flex items-center gap-3">
+            <CandlestickChart size={30} strokeWidth={2.4} className="shrink-0 text-brand-500" />
+            <div>
+              <div className="text-[20px] font-extrabold uppercase leading-none tracking-[0.03em] text-text">Flappy Piper</div>
+              <div className="mt-1.5 text-[15px] font-semibold leading-snug text-text-2">Tap the big button to fly</div>
             </div>
-          ) : null
-        }
-      >
-        <canvas ref={canvasRef} className="absolute inset-0 block h-full w-full" />
-      </GameStage>
-
-      {/* bottom-left: identity + how to play, always visible so it's instantly clear */}
-      <GameReadout>
-        <div className="flex items-center gap-3">
-          <CandlestickChart size={30} strokeWidth={2.4} className="shrink-0 text-brand-500" />
-          <div>
-            <div className="text-[20px] font-extrabold uppercase leading-none tracking-[0.03em] text-text">Flappy Piper</div>
-            <div className="mt-1.5 text-[15px] font-semibold leading-snug text-text-2">Tap the big button to fly</div>
           </div>
-        </div>
-      </GameReadout>
+        </GameReadout>
 
-      <ScreenCRT />
+        <ScreenCRT />
 
-      {phase === 'title' && <TitleOverlay best={best} board={board} />}
-      {phase === 'over' && result && <OverOverlay result={result} />}
-    </GameScreen>
+        {phase === 'title' && <TitleOverlay best={best} board={board} />}
+        {phase === 'over' && result && <OverOverlay result={result} />}
+      </GameScreen>
+    </div>
   )
 }
 

@@ -112,7 +112,7 @@ export const TREASURY_TOPUP_DUSDC: number = Number(process.env.PIPS_TREASURY_TOP
 
 // Request DUSDC faucet. Each tap sends FAUCET_AMOUNT display DUSDC to the user, rate-limited to one
 // tap per FAUCET_COOLDOWN_MS per user (in-memory, anti-spam, not security-critical on free localnet).
-export const FAUCET_AMOUNT: number = Number(process.env.PIPS_FAUCET_AMOUNT) || 100;
+export const FAUCET_AMOUNT: number = Number(process.env.PIPS_FAUCET_AMOUNT) || 500;
 export const FAUCET_COOLDOWN_MS: number = Number(process.env.PIPS_FAUCET_COOLDOWN_MS) || 60_000;
 
 // Demo override, OFF by default. When set to a valid leverage bucket (2/5/10/25/100), I Feel

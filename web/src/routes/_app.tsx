@@ -8,7 +8,7 @@ import { RangeScreen } from './_app/games/range'
 import { LineRiderScreen } from './_app/games/line-rider'
 import { CandleHopScreen } from './_app/games/candle-hop'
 import { AppFrame } from '@/components/console/AppFrame'
-import { ConsoleControlsProvider, useConsoleView } from '@/components/console/controls'
+import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '@/components/console/controls'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { MenuDrawer } from '@/components/console/MenuDrawer'
 import { CustomizeStudio } from '@/components/console/CustomizeStudio'
@@ -19,10 +19,14 @@ import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
 import { useAuth, loadToken } from '@/lib/auth'
 import { isDemo } from '@/lib/demo'
+import { env } from '@/env'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 const LOADING_EXIT_DELAY_MS = 150
 const LOADING_EXIT_DURATION_MS = 520
+// Mirrors the canvas hero -> app settle (ConsoleCanvas HERO_MS): how long the device "drops in"
+// before it's at rest. Screens can hold their content until then. Kept in sync by hand.
+const DEVICE_SETTLE_MS = 900
 
 // Runs before paint on the client, no-ops on the server. Lets us read localStorage (the auth token) and
 // commit the "returning session" decision into the first painted frame, so a refresh never flashes the
@@ -139,20 +143,32 @@ function AppLayout() {
   // real login this session (the door CTA / privy handshake), never on every page load. Detected in a
   // pre-paint client layout effect (localStorage is client-only), so the first painted frame is already
   // committed to the app, no door/zoom flash. Demo keeps its door (it never persists a real token here).
+  // Debug: replay the whole onboarding arc on every sign-in/reload even when the handle is already set,
+  // so the flow can be evaluated without resetting an account. It must run the REAL first-run path
+  // (door -> hero->app settle -> onboarding -> welcome zoom), so it skips the session-restore below.
+  // Restoring would pin the device to the settled app pose with no hero, which is what made the 3D
+  // movement break (the username step crossfaded instead of settling, the welcome zoom over-shot).
+  // onboardedRef still latches it to once per session (resets on sign-out), so a finished run can't loop.
+  const onboardingDebug = env.VITE_ONBOARDING_DEBUG === 'true'
   const [entered, setEntered] = useState(false)
   const [restoredSession, setRestoredSession] = useState(false)
   useIsoLayoutEffect(() => {
-    if (!isDemo() && loadToken() != null) {
+    if (!isDemo() && !onboardingDebug && loadToken() != null) {
       setEntered(true)
       setRestoredSession(true)
     }
   }, [])
   const onboardedRef = useRef(false)
   const enteredAndAuthed = entered && status === 'authed'
-  const needsOnboarding = enteredAndAuthed && !!user && user.username == null && !onboardedRef.current
+  const needsOnboarding =
+    enteredAndAuthed && !!user && (onboardingDebug || user.username == null) && !onboardedRef.current
   const [onboarding, setOnboarding] = useState(false)
   const [step, setStep] = useState<OnboardingStep>('username')
   const [chosenName, setChosenName] = useState('')
+  // Welcome (the final onboarding beat) sub-state. The skin step's Done snap (its own customize outro)
+  // already lands the device at the app pose with a black screen, so the welcome is pure screen content:
+  // `revealed` flips after a short black hold, which gates the splash content + jingle fading in.
+  const [welcomeRevealed, setWelcomeRevealed] = useState(false)
   // Sign-out (incl. the onboarding Log out) returns to the door with a clean slate, so the gate resets
   // and the next sign-in starts onboarding fresh, never mid-flow. A stale token that fails to restore
   // (401 -> anon, or error) also drops the no-animation path so the door comes back normally.
@@ -164,6 +180,7 @@ function AppLayout() {
       setOnboarding(false)
       setStep('username')
       setChosenName('')
+      setWelcomeRevealed(false)
     }
   }, [status])
   useEffect(() => {
@@ -176,14 +193,46 @@ function AppLayout() {
   const phase: 'landing' | 'onboarding' | 'app' =
     !enteredAndAuthed ? 'landing' : onboarding ? 'onboarding' : 'app'
 
-  // Welcome zoom finished: leave onboarding and refresh so the shell re-reads the new handle. We
-  // defer the refresh to here (not the username step) so the user object stays "not onboarded"
-  // through every step and the phase can't jump to the app mid-flow.
+  // The menu is only ever a drawer over the live app, never a standalone page. If we sit on a /menu
+  // route while the app phase isn't active (the door is up, or mid-onboarding), strip the URL back to
+  // home. Without this, signing out at /menu leaves the URL parked there, so the next sign-in reopens
+  // the drawer (and eats its mount cost) instead of landing on Home.
+  useEffect(() => {
+    if (phase !== 'app' && onMenu) void navigate({ to: '/games', replace: true })
+  }, [phase, onMenu, navigate])
+
+  // Welcome dismissed: leave onboarding and refresh so the shell re-reads the new handle. We defer the
+  // refresh to here (not the username step) so the user object stays "not onboarded" through every step
+  // and the phase can't jump to the app mid-flow.
   const finishOnboarding = useCallback(() => {
     onboardedRef.current = true
     setOnboarding(false)
+    setWelcomeRevealed(false)
     void refresh()
   }, [refresh])
+
+  // The skin step's Done snap puts the device at the app pose with the screen black. Hold that black for
+  // a beat (so it reads as "powered on, then greeted you", not a hard cut), then fade the splash in.
+  useEffect(() => {
+    if (phase !== 'onboarding' || step !== 'welcome' || welcomeRevealed) return
+    if (reduced) {
+      setWelcomeRevealed(true)
+      return
+    }
+    const t = window.setTimeout(() => setWelcomeRevealed(true), 1000)
+    return () => window.clearTimeout(t)
+  }, [phase, step, welcomeRevealed, reduced])
+  // The device tab buttons (HOME / MENU) bypass the controls registry and navigate directly, so they
+  // must stay inert until the app proper, or a stray press mid-onboarding navigates away and wedges
+  // the flow. In the welcome beat continue is the tap overlay, so tabs do nothing there too.
+  const handleTab = useCallback(
+    (tab: 'MENU' | 'GAMES') => {
+      if (phase !== 'app') return
+      haptic('selection')
+      void navigate({ to: tab === 'MENU' ? '/menu' : '/games' })
+    },
+    [phase, navigate],
+  )
 
   // The loading veil covers the very first paint until auth resolves (anon -> door, authed -> app),
   // then wipes up to reveal the live console underneath.
@@ -221,16 +270,32 @@ function AppLayout() {
 
   // What pose the one device holds, and whether its HTML screen content shows. A returning session
   // holds the settled app pose from the first frame (canvas inits heroT=0 -> no hero, so no settle).
-  const restoring = restoredSession && status !== 'anon' && status !== 'error'
-  const canvasStage: 'hero' | 'app' | 'welcome' = restoring
-    ? 'app'
-    : phase === 'landing'
-      ? 'hero'
-      : phase === 'onboarding' && step === 'welcome'
-        ? 'welcome'
-        : 'app'
+  // Onboarding keeps it on 'app': the skin step's Done snap (the customize outro) is what flies the
+  // device into the app pose for the welcome beat, so the persistent shell never runs its own zoom.
+  const restoring = restoredSession && !onboarding && status !== 'anon' && status !== 'error'
+  const canvasStage: 'hero' | 'app' = restoring ? 'app' : phase === 'landing' ? 'hero' : 'app'
   const screenVisible =
     phase === 'app' ? !showCustomizeStudio : phase === 'onboarding' ? step !== 'customize' : true
+
+  // The device plays a hero -> app settle the first time the app view appears (e.g. opening a game
+  // URL directly: the device drops in before the screen content). Track when that settle is done so
+  // screens can hold their content until the device is at rest. A restored session / reduced motion
+  // has no settle, so it's done immediately; a later game <-> game nav stays in 'app', so it never
+  // re-fires and content reveals right away.
+  const [deviceSettled, setDeviceSettled] = useState(true)
+  const prevPhaseRef = useRef(phase)
+  useEffect(() => {
+    const prev = prevPhaseRef.current
+    prevPhaseRef.current = phase
+    if (phase !== 'app' || prev === 'app') return
+    if (restoring || reduced) {
+      setDeviceSettled(true)
+      return
+    }
+    setDeviceSettled(false)
+    const t = window.setTimeout(() => setDeviceSettled(true), DEVICE_SETTLE_MS)
+    return () => window.clearTimeout(t)
+  }, [phase, restoring, reduced])
 
   // The content mounted on the device's screen, per phase. Onboarding's username + welcome render on
   // the screen (instrument language); the skin step turns the screen off so the body reads cleanly.
@@ -249,7 +314,7 @@ function AppLayout() {
       />
     )
   } else if (step === 'welcome') {
-    deviceChild = <WelcomeScreen name={chosenName} />
+    deviceChild = <WelcomeScreen name={chosenName} revealed={welcomeRevealed} onContinue={finishOnboarding} />
   }
 
   const loadingScreen = showLoadingScreen ? <AppLoadingScreen leaving={loadingScreenLeaving} /> : null
@@ -264,18 +329,25 @@ function AppLayout() {
             reducedMotion={reduced}
             instant={restoring}
             screenContentVisible={screenVisible}
-            onWelcomeComplete={finishOnboarding}
+            onNav={handleTab}
           >
-            {deviceChild}
+            <DeviceSettledProvider settled={deviceSettled}>{deviceChild}</DeviceSettledProvider>
           </Console3DRoute>
 
           {phase === 'landing' && !restoring && <LandingOverlay onEnter={() => setEntered(true)} />}
 
-          {phase === 'onboarding' && step === 'customize' && (
+          {/* Mounted a step early (on username) so the skin canvas builds + holds at the app pose behind
+              the handle screen, then `active` flips on the skin step and it snaps in over the live device
+              and zooms out. Pre-warming is what kills the old ~500ms build stall at the hand-off. */}
+          {phase === 'onboarding' && (step === 'username' || step === 'customize') && (
             <ThemePicker
               selectedId={savedTheme.id}
               onSelect={savedTheme.setId}
-              onDone={() => setStep('welcome')}
+              active={step === 'customize'}
+              onDone={() => {
+                setWelcomeRevealed(false)
+                setStep('welcome')
+              }}
             />
           )}
 
@@ -333,7 +405,9 @@ function Console3DRoute({
   reducedMotion,
   instant,
   screenContentVisible = true,
+  onWelcomeArrived,
   onWelcomeComplete,
+  onNav,
 }: {
   children?: ReactNode
   theme?: ConsoleTheme
@@ -341,17 +415,12 @@ function Console3DRoute({
   reducedMotion?: boolean
   instant?: boolean
   screenContentVisible?: boolean
+  onWelcomeArrived?: () => void
   onWelcomeComplete?: () => void
+  // Built by the parent so the device tabs respect the phase machine (inert outside the app).
+  onNav?: (tab: 'MENU' | 'GAMES') => void
 }) {
   const { view, handlers } = useConsoleView()
-  const navigate = useNavigate()
-  const onNav = useCallback(
-    (tab: 'MENU' | 'GAMES') => {
-      haptic('selection')
-      void navigate({ to: tab === 'MENU' ? '/menu' : '/games' })
-    },
-    [navigate],
-  )
   return (
     <ConsoleCanvas
       view={view}
@@ -362,6 +431,7 @@ function Console3DRoute({
       reducedMotion={reducedMotion}
       instant={instant}
       screenContentVisible={screenContentVisible}
+      onWelcomeArrived={onWelcomeArrived}
       onWelcomeComplete={onWelcomeComplete}
     >
       {children}

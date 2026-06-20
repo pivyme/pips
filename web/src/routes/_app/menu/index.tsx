@@ -1,6 +1,6 @@
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowDownToLine, ArrowUpFromLine, LogOut } from 'lucide-react'
+import { ArrowDownToLine, ArrowUpFromLine, LogOut, Pencil } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
@@ -12,12 +12,12 @@ import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
-import { formatStringToNumericDecimals } from '@/utils/format'
+import { displayHandle, formatStringToNumericDecimals } from '@/utils/format'
 
-// The menu home, rendered inside the bottom drawer. The trader card sits right at the top (tap to
-// share), then the achievements rail in the !Camera layout: the closest in-progress badge leads,
-// earned badges follow, all on one scroll, with the full catalog one tap away. Customize and
-// Settings round it out.
+// The menu home, rendered inside the bottom drawer. The trader card sits right at the top (the pen
+// on it opens the handle editor), then the achievements rail in the !Camera layout: the closest
+// in-progress badge leads, earned badges follow, all on one scroll, with the full catalog one tap
+// away. Customize and Settings round it out.
 export const Route = createFileRoute('/_app/menu/')({ component: MenuHome })
 
 function MenuHome() {
@@ -117,19 +117,37 @@ function BalanceHero() {
 
 function StatsSection() {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const q = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const stats = q.data?.stats
 
+  // The pen opens the handle editor: a plain menu sub-page with an input, pushed in with the drawer
+  // transition (same as History / Settings).
+  const editHandle = () => {
+    prepareMenuTransition('forward')
+    haptic('selection')
+    void navigate({ to: '/menu/username', viewTransition: true })
+  }
+
   if (q.isLoading) return <StatsCardSkeleton />
   if (!stats || stats.gamesPlayed === 0) {
+    // No card yet (no plays). Keep the first-play nudge; the handle sits next to a pen to change it.
     return (
       <div className="surface-skeuo flex items-center gap-3 rounded-card p-4">
         <Illo name="vault" size={48} />
         <div className="min-w-0 flex-1">
-          <div className="text-[15px] font-bold">No plays yet</div>
-          <div className="text-sm text-text-3">
-            Make your first play to fill in your card.
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-[15px] font-bold">{displayHandle(user)}</span>
+            <button
+              type="button"
+              onClick={editHandle}
+              aria-label="Change your handle"
+              className="shrink-0 text-text-3 transition active:scale-90"
+            >
+              <Pencil className="h-3.5 w-3.5" strokeWidth={2.4} />
+            </button>
           </div>
+          <div className="text-sm text-text-3">No plays yet. Make your first play.</div>
         </div>
         <Link
           to="/games"
@@ -143,11 +161,7 @@ function StatsSection() {
   }
 
   return (
-    <StatsCard
-      stats={stats}
-      displayName={user?.username ?? user?.displayName ?? 'Player'}
-      address={user?.address ?? ''}
-    />
+    <StatsCard stats={stats} displayName={displayHandle(user)} address={user?.address ?? ''} onEdit={editHandle} />
   )
 }
 
