@@ -15,7 +15,7 @@ use deepbook_predict::{
     predict::{Self, Predict}
 };
 use std::string::String;
-use sui::{clock::Clock, coin::TreasuryCap, coin_registry::Currency, event, table::{Self, Table}};
+use sui::{clock::Clock, coin::TreasuryCap, coin_registry::Currency, event};
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
@@ -50,8 +50,6 @@ public struct Registry has key {
     id: UID,
     /// ID of the Predict object (None if not yet created)
     predict_id: Option<ID>,
-    /// OracleSVICap ID -> vector of oracle IDs created by that cap
-    oracle_ids: Table<ID, vector<ID>>,
 }
 
 // === Public Functions ===
@@ -59,15 +57,6 @@ public struct Registry has key {
 /// Get the Predict ID (None if not yet created).
 public fun predict_id(registry: &Registry): Option<ID> {
     registry.predict_id
-}
-
-/// Get oracle IDs created by a given OracleSVICap.
-public fun oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
-    if (registry.oracle_ids.contains(cap_id)) {
-        registry.oracle_ids[cap_id]
-    } else {
-        vector[]
-    }
 }
 
 /// Create the Predict shared object. Can only be called once.
@@ -101,8 +90,11 @@ public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): Oracle
 }
 
 /// Create a new Oracle. Returns the oracle ID.
+/// `_registry` is kept in the signature for call-site stability; the registry no
+/// longer tracks per-cap oracle ids (that vector grew unbounded and overflowed the
+/// 256KB object cap, and nothing read it).
 public fun create_oracle(
-    registry: &mut Registry,
+    _registry: &mut Registry,
     predict: &mut Predict,
     _admin_cap: &AdminCap,
     cap: &OracleSVICap,
@@ -116,10 +108,6 @@ public fun create_oracle(
     let oracle_id = oracle::create_oracle(underlying_asset, expiry, ctx);
     let cap_id = object::id(cap);
 
-    if (!registry.oracle_ids.contains(cap_id)) {
-        registry.oracle_ids.add(cap_id, vector[]);
-    };
-    registry.oracle_ids[cap_id].push_back(oracle_id);
     predict.add_oracle_grid(oracle_id, min_strike, tick_size, ctx);
     event::emit(OracleCreated {
         oracle_id,
@@ -262,7 +250,6 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
         Registry {
             id: object::new(ctx),
             predict_id: option::none(),
-            oracle_ids: table::new(ctx),
         },
         AdminCap {
             id: object::new(ctx),

@@ -478,7 +478,6 @@ async function main(): Promise<void> {
         tx.moveCall({
           target: `${packageId}::registry::create_oracle`,
           arguments: [
-            tx.object(registryId),
             tx.object(predictId),
             tx.object(adminCapId),
             tx.object(capId),
