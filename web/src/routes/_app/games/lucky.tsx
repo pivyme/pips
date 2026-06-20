@@ -54,6 +54,9 @@ const ROUND_SEC = 15 // fallback only; the play's real on-chain expiry drives th
 // on OPENING / SETTLING forever. This guarantees the terminal frame always lands.
 const WATCHDOG_MS = 3000
 const SETTLE_EXPECT_MS = 12000 // the settle progress bar eases toward (never to) full over this window
+// Cash-out settling beat: min dwell + the progress-bar window. The redeem itself can land in ~120ms
+// (demo), too fast to read, so doCashOut holds the beat open this long and the bar eases over it.
+const CASHOUT_SETTLE_MS = 1100
 // Cash-out is a pre-expiry redeem; a tap in the final beat builds a tx that lands AFTER the buzzer,
 // when the oracle is no longer quoteable (EOracleExpired) and the round can only settle. So we disarm
 // CASH OUT this far ahead of expiry (a tx round-trip's worth) and let the round auto-settle. The
@@ -88,6 +91,7 @@ export function LuckyScreen() {
   const [entryPrice, setEntryPrice] = useState<number | null>(null)
   const [secsLeft, setSecsLeft] = useState<number | null>(null)
   const [settleMs, setSettleMs] = useState(0)
+  const [cashMs, setCashMs] = useState(0) // drives the cash-out settling bar
   const [closeLocked, setCloseLocked] = useState(false) // cash-out disarmed in the final beat before expiry
   const [overlay, setOverlay] = useState<Overlay>('none')
   // Which stacked chart is lit while the reels spin (the slot picking an asset). Locks to the dealt
@@ -116,6 +120,9 @@ export function LuckyScreen() {
   // The chart's eased leading price, written every frame by the Chart. The live P/L reads it to
   // track the line at 60fps instead of the laggy ~2.5s backend mark.
   const livePriceRef = useRef(0)
+  // The value LivePnl is currently showing, mirrored here each frame so the cash-out settling beat
+  // can freeze on the exact number the player saw the instant they tapped CASH OUT.
+  const liveValueRef = useRef({ value: 0, pnl: 0 })
 
   const marketsQ = useQuery({ queryKey: ['markets'], queryFn: () => api.markets(), refetchInterval: 10_000 })
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
@@ -176,6 +183,8 @@ export function LuckyScreen() {
   // The round hit the buzzer and we are waiting on the on-chain settle (won/lost) frame.
   const settling = phase === 'open' && live?.status === 'open' && secsLeft != null && secsLeft <= 0
   const settleSecs = Math.floor(settleMs / 1000)
+  // A mid-round cash-out is in flight: play the same settling beat as the buzzer.
+  const cashingOut = phase === 'cashing'
   // The dealt pick, shown under OPENING / SETTLING so the round always reads back what's in flight.
   const dealLine = lp ? `${lp.asset} ${sideLabel(lp.side)} · ${fmtMult(multiplier)} · Bet $${money(playBet)}` : '—'
   // First-run welcome: no plays on record yet.
@@ -409,8 +418,12 @@ export function LuckyScreen() {
     if (phase !== 'open' || !play || closeLocked) return
     setPhase('cashing')
     haptic('rigid')
+    const started = Date.now()
     try {
       const { play: p, unlocked } = await cashOut(play.id)
+      // Hold the settling beat open so it always reads, even when the redeem lands in ~120ms (demo).
+      const wait = CASHOUT_SETTLE_MS - (Date.now() - started)
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait))
       finishResult(p, unlocked)
     } catch (e) {
       // The buzzer may have beaten the cash-out. Reconcile against the chain before complaining.
@@ -462,6 +475,18 @@ export function LuckyScreen() {
     const iv = setInterval(tick, 250)
     return () => clearInterval(iv)
   }, [phase, play])
+
+  // Cash-out settling beat: a deterministic progress bar for the brief window the redeem is in flight,
+  // so a mid-round CASH OUT plays the same settling animation as the buzzer.
+  useEffect(() => {
+    if (phase !== 'cashing') {
+      setCashMs(0)
+      return
+    }
+    const start = Date.now()
+    const iv = setInterval(() => setCashMs(Date.now() - start), 100)
+    return () => clearInterval(iv)
+  }, [phase])
 
   const toggleHowto = useCallback(() => {
     haptic('selection')
@@ -596,6 +621,14 @@ export function LuckyScreen() {
               header and the footer. A spin lights one at random; on open the dealt chart expands to
               fill and the others collapse away, so the round plays out on the chosen market. */}
           <div className="relative min-h-0 flex-1">
+            {/* COUNTDOWN — a big faded watermark sitting behind the chart line. The canvas is transparent
+                (clearRect), so a layer under LuckyCharts shows through behind the line. Only while a round
+                runs; it tracks the real on-chain buzzer the timer counts to. */}
+            {showReadouts && secsLeft != null && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
+                <span className="tnum font-black leading-none text-text opacity-50 text-[clamp(64px,18vh,128px)]">{secsLeft}</span>
+              </div>
+            )}
             {displayAssets.length > 0 ? (
               <LuckyCharts
                 assets={displayAssets}
@@ -644,11 +677,24 @@ export function LuckyScreen() {
                     />
                   </div>
                 </>
+              ) : cashingOut ? (
+                <>
+                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Cashing out</div>
+                  <div className="tnum text-[40px] font-extrabold leading-none text-text">${money(liveValueRef.current.value)}</div>
+                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-text-2">{dealLine}</div>
+                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
+                    <div
+                      className="h-full bg-brand-500 transition-[width] duration-300 ease-out"
+                      style={{ width: `${Math.min(92, (cashMs / CASHOUT_SETTLE_MS) * 100)}%` }}
+                    />
+                  </div>
+                </>
               ) : showReadouts ? (
                 <>
                   <LivePnl
                     key={play?.id}
                     livePriceRef={livePriceRef}
+                    valueRef={liveValueRef}
                     side={lp?.side ?? 'up'}
                     target={strike ?? 0}
                     entry={entryVal ?? 0}
@@ -836,9 +882,10 @@ function LuckyCharts({
           >
             <ChartRow
               asset={a}
-              // Tabs only on the idle 3-up stack. Once a chart is picked (lock-in + expanded) the header
-              // already carries its symbol + price, so the on-chart tab would just duplicate it.
-              showLabel={!selecting && selectedAsset == null}
+              // Tabs stay through the idle stack and the scan, so each market keeps its name + price
+              // while the slot picks. They drop only once a chart is locked (selectedAsset set), since
+              // from there the header carries the symbol + price and the on-chart tab would duplicate it.
+              showLabel={selectedAsset == null}
               reveal={isSel}
               lit={lit}
               winner={winner}
@@ -951,6 +998,7 @@ function LuckyResult({ play, streak }: { play: PlayDTO; streak: number }) {
 // a tick. When ahead the hint nudges CASH OUT. On a terminal status it shows the settled result.
 function LivePnl({
   livePriceRef,
+  valueRef,
   side,
   target,
   entry,
@@ -960,6 +1008,7 @@ function LivePnl({
   finalPnl,
 }: {
   livePriceRef: { current: number }
+  valueRef: { current: { value: number; pnl: number } }
   side: Side
   target: number
   entry: number
@@ -987,9 +1036,13 @@ function LivePnl({
       const price = livePriceRef.current
       if (price > 0 && targetDist > 0) {
         // How far the dot has travelled from entry toward the target, in your direction. 0 at entry,
-        // 1 at the target. Partial profit in between, full win once reached, loss the other way.
+        // 1 at the target. The favorable side ramps the partial cash-out value 0 -> full win.
         const progress = (dir * (price - entry)) / targetDist
-        const pnl = Math.max(-bet, Math.min(profit, progress * profit))
+        // Past entry the wrong way (up below entry, down above it) a binary settling here loses the
+        // whole stake, so show the honest -bet, not a soft partial. A hair of neutral zone around
+        // entry stops a -bet flash at open / on feed jitter (entrySpot lags the live feed a touch).
+        const behind = -progress * targetDist > entry * 0.0003
+        const pnl = behind ? -bet : Math.max(0, Math.min(profit, progress * profit))
         const value = bet + pnl // total dollars back if you cash out now
         const nowPos = pnl >= -1e-9
         if (nowPos !== posRef.current) {
@@ -998,12 +1051,14 @@ function LivePnl({
         }
         if (pnlSpan.current) pnlSpan.current.textContent = `${nowPos ? '+' : '-'}$${money(Math.abs(pnl))}`
         if (cashSpan.current) cashSpan.current.textContent = money(value)
+        valueRef.current.value = value
+        valueRef.current.pnl = pnl
       }
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [terminal, valid, side, target, entry, bet, profit, livePriceRef])
+  }, [terminal, valid, side, target, entry, bet, profit, livePriceRef, valueRef])
 
   if (terminal) {
     const won = status === 'won' || (status === 'cashed_out' && finalPnl >= 0)
