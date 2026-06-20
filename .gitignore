@@ -61,6 +61,9 @@ ehthumbs.db
 .temp/
 .tmp/
 
+# ── Remotion launch video (heavy asset workspace, not part of the app) ─
+remotion/
+
 # ── BigDev autonomous build loop ───────────────────────────
 # plans/, TODO.md, the scripts, and requirements-log.md ARE tracked (project memory).
 # Only the transient runtime artifacts are ignored.

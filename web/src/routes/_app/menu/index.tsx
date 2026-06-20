@@ -4,6 +4,11 @@ import { ArrowDownToLine, ArrowUpFromLine, LogOut, Pencil } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
+import {
+  cardPressClass,
+  openFromCard,
+  useAchievementDetail,
+} from '@/components/menu/AchievementDetail'
 import { useMenuDrawer } from '@/components/console/MenuDrawer'
 import { StatsCard, StatsCardSkeleton } from '@/components/menu/StatsCard'
 import { Button } from '@/ui/Button'
@@ -13,6 +18,7 @@ import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
 import { displayHandle, formatStringToNumericDecimals } from '@/utils/format'
+import { cnm } from '@/utils/style'
 
 // The menu home, rendered inside the bottom drawer. The trader card sits right at the top (the pen
 // on it opens the handle editor), then the achievements rail in the !Camera layout: the closest
@@ -31,17 +37,23 @@ function MenuHome() {
         <BalanceHero />
         <div className="flex flex-col gap-3">
           <MenuRow
-            to="/menu/history"
-            icon="/assets/icons/icon-history.png"
-            title="History"
-            sub="Every play, with tx links"
-          />
-          <MenuRow
             to="/menu/customize"
             icon="/assets/icons/icon-customize.png"
             title="Customize"
             sub="Make it yours"
             launch
+          />
+          <MenuRow
+            to="/menu/leaderboard"
+            icon="/assets/icons/leaderboard-icon.png"
+            title="Leaderboard"
+            sub="Top gainers, REKT & game ranks"
+          />
+          <MenuRow
+            to="/menu/history"
+            icon="/assets/icons/icon-history.png"
+            title="History"
+            sub="Every play, with tx links"
           />
           <MenuRow
             to="/menu/settings"
@@ -235,8 +247,17 @@ const pct = (a: DisplayAchievement): number =>
 
 function AchievementCard({ a }: { a: DisplayAchievement }): ReactNode {
   const p = pct(a)
+  const { open } = useAchievementDetail()
   return (
-    <div className="surface-skeuo flex w-[160px] shrink-0 flex-col gap-3 rounded-card p-4">
+    <button
+      type="button"
+      aria-label={`${a.name}, ${a.unlocked ? 'unlocked' : `${Math.round(p * 100)}% complete`}`}
+      onClick={(e) => openFromCard(open, a, e)}
+      className={cnm(
+        'surface-skeuo flex w-[160px] shrink-0 flex-col gap-3 rounded-card p-4 text-left',
+        cardPressClass,
+      )}
+    >
       <div className="relative mx-auto flex h-[116px] w-[116px] items-center justify-center">
         {a.unlocked ? (
           <img
@@ -267,7 +288,7 @@ function AchievementCard({ a }: { a: DisplayAchievement }): ReactNode {
           {a.description}
         </div>
       </div>
-    </div>
+    </button>
   )
 }
 
@@ -302,12 +323,14 @@ function ProgressRing({ value }: { value: number }) {
 function MenuRow({
   to,
   icon,
+  illo,
   title,
   sub,
   launch = false,
 }: {
   to: string
-  icon: string
+  icon?: string // png icon slot (the existing rows)
+  illo?: string // or an Illo name (e.g. Leaderboard's trophy), for rows without a dedicated png
   title: string
   sub: string
   // `launch` rows hand off to a full takeover (the Customize studio): the drawer slides itself away
@@ -330,12 +353,18 @@ function MenuRow({
       }}
       className="surface-skeuo flex min-h-24 items-center gap-3 rounded-card px-3 py-1 transition-transform active:scale-[0.99]"
     >
-      <img
-        src={icon}
-        alt=""
-        className="h-20 w-20 shrink-0 object-contain"
-        draggable={false}
-      />
+      {illo ? (
+        <div className="flex h-20 w-20 shrink-0 items-center justify-center">
+          <Illo name={illo} size={64} />
+        </div>
+      ) : (
+        <img
+          src={icon}
+          alt=""
+          className="h-20 w-20 shrink-0 object-contain"
+          draggable={false}
+        />
+      )}
       <div className="ml-1 min-w-0 flex-1">
         <span className="text-xl font-bold">{title}</span>
         <div className="text-[15px] text-text-2">{sub}</div>

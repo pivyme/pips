@@ -3,11 +3,11 @@ import { useQuery } from '@tanstack/react-query'
 import { motion } from 'motion/react'
 import { Activity, CandlestickChart, Dices, Target } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useConsoleControls } from '@/components/console/controls'
 import { GameScreen } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
-import { api } from '@/lib/api'
+import { api, streamLive } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { isDemo } from '@/lib/demo'
 import { haptic } from '@/lib/haptics'
@@ -65,10 +65,23 @@ export function GamesConsole() {
   const reduced = useReducedMotion()
   const [sel, setSel] = useState(0)
 
-  const marketsQ = useQuery({ queryKey: ['markets'], queryFn: () => api.markets(), refetchInterval: 10_000 })
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
-  const liveCount = (marketsQ.data?.markets ?? []).filter((m) => m.live).length
   const streak = statsQ.data?.stats.currentStreak ?? 0
+
+  // Live presence over SSE: the ticker moves in real time as players open and close Pips. `online`
+  // stays null until the first frame lands; `liveOn` tracks the connection so the pip can breathe.
+  const [online, setOnline] = useState<number | null>(null)
+  const [liveOn, setLiveOn] = useState(false)
+  useEffect(() => {
+    const stop = streamLive(
+      (t) => {
+        setOnline(t.online)
+        setLiveOn(true)
+      },
+      () => setLiveOn(false),
+    )
+    return stop
+  }, [user?.id])
 
   const move = useCallback((next: number) => {
     setSel(Math.max(0, Math.min(ALL.length - 1, next)))
@@ -104,15 +117,22 @@ export function GamesConsole() {
 
   return (
     <GameScreen>
-      {/* status line — mono, like a device model strip */}
-      <div className={cnm('flex items-center justify-between pb-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.16em] text-text-2', RIM_T, RIM)}>
-        <span className="flex items-center gap-2">
-          <span className={cnm('h-2 w-2', demo ? 'bg-brand-500' : 'bg-up')} />
-          {demo ? 'Demo' : 'Testnet'}
+      {/* status line — mono, like a device model strip. Left: network. Right: live presence ticker. */}
+      <div className={cnm('flex items-center justify-between pb-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-text-2', RIM_T, RIM)}>
+        <span className="flex min-w-0 items-center gap-2">
+          <span className={cnm('h-2 w-2 shrink-0', demo ? 'bg-brand-500' : 'bg-up')} />
+          <span className="truncate">{demo ? 'Demo' : "PIPS's Localnet"}</span>
         </span>
-        <span className="flex items-center gap-2">
-          {marketsQ.isLoading ? '—' : liveCount > 0 ? `${liveCount} live` : 'Warming up'}
-          <span className={cnm('h-2 w-2', liveCount > 0 ? 'bg-up' : 'bg-text-3')} />
+        <span className="flex shrink-0 items-center gap-2 pl-3">
+          {online == null ? (
+            <span className="text-text-3">—</span>
+          ) : (
+            <>
+              <span className="tnum font-bold text-text">{online}</span>
+              <span className="text-text-3">online</span>
+            </>
+          )}
+          <LiveDot on={liveOn && online != null} reduced={reduced} />
         </span>
       </div>
       <Rule />
@@ -245,4 +265,15 @@ function MiniRow({
 // Full-bleed hairline rule. Slides under the rim so the visible line reaches the screen edge.
 function Rule() {
   return <div className="h-px w-full bg-line-strong" />
+}
+
+// The live-presence pip: a breathing green square while the stream is connected, a dim static one
+// when it isn't. Square to match the instrument-panel pixels (no rounded dot, no blur).
+function LiveDot({ on, reduced }: { on: boolean; reduced: boolean }) {
+  return (
+    <span className="relative inline-flex h-2 w-2 shrink-0">
+      {on && !reduced && <span className="absolute inset-0 animate-ping bg-up/70" />}
+      <span className={cnm('relative inline-block h-2 w-2', on ? 'bg-up' : 'bg-text-3')} />
+    </span>
+  )
 }

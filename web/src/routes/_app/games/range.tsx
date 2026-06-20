@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
 import { Chart, type BandOverlay } from '@/components/game/Chart'
 import { Cell, GameScreen, ScreenMessage } from '@/components/game/screen'
+import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
 import { Stat } from '@/components/Stat'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { haptic } from '@/lib/haptics'
@@ -58,7 +59,7 @@ type Live = {
   multiplier: number
   status: PlayStatus
 }
-type Overlay = 'none' | 'howto'
+type Overlay = 'none' | 'howto' | 'board'
 
 // Compact price for the band recap: 67,210 -> 67.2k, 3.94 -> 3.94.
 const compact = (n: number): string =>
@@ -593,6 +594,13 @@ export function RangeScreen() {
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
                     Tighter range, bigger prize
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => { haptic('selection'); setOverlay('board') }}
+                    className="mt-3 inline-flex items-center gap-1 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-text-2 transition-colors active:text-brand-500"
+                  >
+                    Top 10 <span className="text-brand-500">›</span>
+                  </button>
                 </>
               )}
             </div>
@@ -604,6 +612,7 @@ export function RangeScreen() {
         <RangeResult play={play} onDismiss={() => setPhase('idle')} />
       )}
       {overlay === 'howto' && <HowTo onClose={() => setOverlay('none')} />}
+      {overlay === 'board' && <GameLeaderboardOverlay game="range" title="Range" onClose={() => setOverlay('none')} />}
     </GameScreen>
   )
 }

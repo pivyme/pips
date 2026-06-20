@@ -14,6 +14,7 @@ export interface ConsoleTheme {
   back?: string // defaults to body
   ambient?: string // the page/surround color the device floats on; defaults to a deep tint of `body`
   skin?: string // optional SVG wrapped across the front body (overlays `body`); back stays flat
+  clear?: boolean // transparent case: both shells go translucent and the internals (board, coil, glyph) show
   knob: string
   main: string // big PLAY button
   action: string // the two action buttons
@@ -124,20 +125,41 @@ export const THEMES: ConsoleTheme[] = [
     cardImage: '/assets/pivy-theme-card.png',
   },
   {
-    id: 'carbon',
-    code: '212',
-    name: 'Carbon',
-    body: '#16171b',
-    back: '#101115',
-    knob: '#f2c044',
-    main: '#f2c044',
-    action: '#2a2d34',
-    pills: '#2a2d34',
-    label: '#9296a0',
-    logo: '#e6b740',
-    cardBg: '#15161a',
-    cardInk: '#e6b450',
-    cardSub: 'rgba(228,200,140,0.55)',
+    // The Nothing-style see-through case: the front shell goes to frosted acrylic and the guts show,
+    // black PCB, copper coil, battery, RF shields, ribbon, glyph light strips; the back is white frosted.
+    id: 'clear',
+    code: '000',
+    name: 'Clear',
+    badge: 'NEW',
+    clear: true,
+    body: '#d7dade', // smoke tint (the front shell rides its attenuation, not this, when clear)
+    back: '#eef1f3', // solid white frosted back (the white edition); also the backplate behind the guts
+    ambient: '#080a0e', // cool near-black so the internal glow reads
+    knob: '#eef0f3', // frosted white knob
+    main: '#e5322b', // the red record-dot play button
+    action: '#171a20', // dark LCD idle
+    pills: '#13151a',
+    label: '#9aa0a8',
+    logo: '#e5322b',
+    cardBg: '#15171c',
+    cardInk: '#eef0f3',
+    cardSub: 'rgba(216,222,230,0.6)',
+  },
+  {
+    id: 'tangerine',
+    code: '2005',
+    name: 'Teenager',
+    body: '#b8bcc2',
+    back: '#9ea2a8',
+    knob: '#e05a20',
+    main: '#e05a20',
+    action: '#555a60',
+    pills: '#e8ede0',
+    label: '#7a3d12',
+    logo: '#e8ede0',
+    cardBg: '#b8bcc2',
+    cardInk: '#e05a20',
+    cardSub: 'rgba(38,40,44,0.6)',
   },
   {
     id: 'moonshot',
@@ -156,22 +178,6 @@ export const THEMES: ConsoleTheme[] = [
     cardSub: 'rgba(40,44,52,0.5)',
   },
   {
-    id: 'cyberpunk',
-    code: '2077',
-    name: 'Cyberpunk',
-    body: '#cf42cf',
-    back: '#b943b9',
-    knob: '#efd53f',
-    main: '#00e5cc',
-    action: '#4c2399',
-    pills: '#9e75f2',
-    label: '#e8e8f0',
-    logo: '#08cdb6',
-    cardBg: '#cf42cf',
-    cardInk: '#00e5cc',
-    cardSub: 'rgba(255,255,255,0.72)',
-  },
-  {
     id: 'mint',
     code: '224',
     name: 'Wisteria',
@@ -188,20 +194,36 @@ export const THEMES: ConsoleTheme[] = [
     cardSub: 'rgba(20,72,50,0.6)',
   },
   {
-    id: 'tangerine',
-    code: '2005',
-    name: 'Teenager',
-    body: '#b8bcc2',
-    back: '#9ea2a8',
-    knob: '#e05a20',
-    main: '#e05a20',
-    action: '#555a60',
-    pills: '#e8ede0',
-    label: '#7a3d12',
-    logo: '#e8ede0',
-    cardBg: '#b8bcc2',
-    cardInk: '#e05a20',
-    cardSub: 'rgba(38,40,44,0.6)',
+    id: 'carbon',
+    code: '212',
+    name: 'Carbon',
+    body: '#16171b',
+    back: '#101115',
+    knob: '#f2c044',
+    main: '#f2c044',
+    action: '#2a2d34',
+    pills: '#2a2d34',
+    label: '#9296a0',
+    logo: '#e6b740',
+    cardBg: '#15161a',
+    cardInk: '#e6b450',
+    cardSub: 'rgba(228,200,140,0.55)',
+  },
+  {
+    id: 'cyberpunk',
+    code: '2077',
+    name: 'Cyberpunk',
+    body: '#cf42cf',
+    back: '#b943b9',
+    knob: '#efd53f',
+    main: '#00e5cc',
+    action: '#4c2399',
+    pills: '#9e75f2',
+    label: '#e8e8f0',
+    logo: '#08cdb6',
+    cardBg: '#cf42cf',
+    cardInk: '#00e5cc',
+    cardSub: 'rgba(255,255,255,0.72)',
   },
 ]
 

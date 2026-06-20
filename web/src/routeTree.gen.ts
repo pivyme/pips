@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as PitchRouteImport } from './routes/pitch'
 import { Route as ExportRouteImport } from './routes/export'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
+import { Route as ConsoleTransparentRouteImport } from './routes/console-transparent'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
@@ -22,6 +23,7 @@ import { Route as AppMenuWithdrawRouteImport } from './routes/_app/menu/withdraw
 import { Route as AppMenuUsernameRouteImport } from './routes/_app/menu/username'
 import { Route as AppMenuStatsRouteImport } from './routes/_app/menu/stats'
 import { Route as AppMenuSettingsRouteImport } from './routes/_app/menu/settings'
+import { Route as AppMenuLeaderboardRouteImport } from './routes/_app/menu/leaderboard'
 import { Route as AppMenuHistoryRouteImport } from './routes/_app/menu/history'
 import { Route as AppMenuDepositRouteImport } from './routes/_app/menu/deposit'
 import { Route as AppMenuCustomizeRouteImport } from './routes/_app/menu/customize'
@@ -44,6 +46,11 @@ const ExportRoute = ExportRouteImport.update({
 const DesignSystemRoute = DesignSystemRouteImport.update({
   id: '/design-system',
   path: '/design-system',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConsoleTransparentRoute = ConsoleTransparentRouteImport.update({
+  id: '/console-transparent',
+  path: '/console-transparent',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConsoleRoute = ConsoleRouteImport.update({
@@ -95,6 +102,11 @@ const AppMenuSettingsRoute = AppMenuSettingsRouteImport.update({
   path: '/menu/settings',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMenuLeaderboardRoute = AppMenuLeaderboardRouteImport.update({
+  id: '/menu/leaderboard',
+  path: '/menu/leaderboard',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppMenuHistoryRoute = AppMenuHistoryRouteImport.update({
   id: '/menu/history',
   path: '/menu/history',
@@ -139,6 +151,7 @@ const AppGamesCandleHopRoute = AppGamesCandleHopRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/console': typeof ConsoleRoute
+  '/console-transparent': typeof ConsoleTransparentRoute
   '/design-system': typeof DesignSystemRoute
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
@@ -151,6 +164,7 @@ export interface FileRoutesByFullPath {
   '/menu/customize': typeof AppMenuCustomizeRoute
   '/menu/deposit': typeof AppMenuDepositRoute
   '/menu/history': typeof AppMenuHistoryRoute
+  '/menu/leaderboard': typeof AppMenuLeaderboardRoute
   '/menu/settings': typeof AppMenuSettingsRoute
   '/menu/stats': typeof AppMenuStatsRoute
   '/menu/username': typeof AppMenuUsernameRoute
@@ -161,6 +175,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/console': typeof ConsoleRoute
+  '/console-transparent': typeof ConsoleTransparentRoute
   '/design-system': typeof DesignSystemRoute
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
@@ -173,6 +188,7 @@ export interface FileRoutesByTo {
   '/menu/customize': typeof AppMenuCustomizeRoute
   '/menu/deposit': typeof AppMenuDepositRoute
   '/menu/history': typeof AppMenuHistoryRoute
+  '/menu/leaderboard': typeof AppMenuLeaderboardRoute
   '/menu/settings': typeof AppMenuSettingsRoute
   '/menu/stats': typeof AppMenuStatsRoute
   '/menu/username': typeof AppMenuUsernameRoute
@@ -185,6 +201,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/console': typeof ConsoleRoute
+  '/console-transparent': typeof ConsoleTransparentRoute
   '/design-system': typeof DesignSystemRoute
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
@@ -197,6 +214,7 @@ export interface FileRoutesById {
   '/_app/menu/customize': typeof AppMenuCustomizeRoute
   '/_app/menu/deposit': typeof AppMenuDepositRoute
   '/_app/menu/history': typeof AppMenuHistoryRoute
+  '/_app/menu/leaderboard': typeof AppMenuLeaderboardRoute
   '/_app/menu/settings': typeof AppMenuSettingsRoute
   '/_app/menu/stats': typeof AppMenuStatsRoute
   '/_app/menu/username': typeof AppMenuUsernameRoute
@@ -209,6 +227,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/console'
+    | '/console-transparent'
     | '/design-system'
     | '/export'
     | '/pitch'
@@ -221,6 +240,7 @@ export interface FileRouteTypes {
     | '/menu/customize'
     | '/menu/deposit'
     | '/menu/history'
+    | '/menu/leaderboard'
     | '/menu/settings'
     | '/menu/stats'
     | '/menu/username'
@@ -231,6 +251,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/console'
+    | '/console-transparent'
     | '/design-system'
     | '/export'
     | '/pitch'
@@ -243,6 +264,7 @@ export interface FileRouteTypes {
     | '/menu/customize'
     | '/menu/deposit'
     | '/menu/history'
+    | '/menu/leaderboard'
     | '/menu/settings'
     | '/menu/stats'
     | '/menu/username'
@@ -254,6 +276,7 @@ export interface FileRouteTypes {
     | '/'
     | '/_app'
     | '/console'
+    | '/console-transparent'
     | '/design-system'
     | '/export'
     | '/pitch'
@@ -266,6 +289,7 @@ export interface FileRouteTypes {
     | '/_app/menu/customize'
     | '/_app/menu/deposit'
     | '/_app/menu/history'
+    | '/_app/menu/leaderboard'
     | '/_app/menu/settings'
     | '/_app/menu/stats'
     | '/_app/menu/username'
@@ -278,6 +302,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
   ConsoleRoute: typeof ConsoleRoute
+  ConsoleTransparentRoute: typeof ConsoleTransparentRoute
   DesignSystemRoute: typeof DesignSystemRoute
   ExportRoute: typeof ExportRoute
   PitchRoute: typeof PitchRoute
@@ -305,6 +330,13 @@ declare module '@tanstack/react-router' {
       path: '/design-system'
       fullPath: '/design-system'
       preLoaderRoute: typeof DesignSystemRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/console-transparent': {
+      id: '/console-transparent'
+      path: '/console-transparent'
+      fullPath: '/console-transparent'
+      preLoaderRoute: typeof ConsoleTransparentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/console': {
@@ -377,6 +409,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMenuSettingsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/menu/leaderboard': {
+      id: '/_app/menu/leaderboard'
+      path: '/menu/leaderboard'
+      fullPath: '/menu/leaderboard'
+      preLoaderRoute: typeof AppMenuLeaderboardRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/menu/history': {
       id: '/_app/menu/history'
       path: '/menu/history'
@@ -445,6 +484,7 @@ interface AppRouteChildren {
   AppMenuCustomizeRoute: typeof AppMenuCustomizeRoute
   AppMenuDepositRoute: typeof AppMenuDepositRoute
   AppMenuHistoryRoute: typeof AppMenuHistoryRoute
+  AppMenuLeaderboardRoute: typeof AppMenuLeaderboardRoute
   AppMenuSettingsRoute: typeof AppMenuSettingsRoute
   AppMenuStatsRoute: typeof AppMenuStatsRoute
   AppMenuUsernameRoute: typeof AppMenuUsernameRoute
@@ -462,6 +502,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppMenuCustomizeRoute: AppMenuCustomizeRoute,
   AppMenuDepositRoute: AppMenuDepositRoute,
   AppMenuHistoryRoute: AppMenuHistoryRoute,
+  AppMenuLeaderboardRoute: AppMenuLeaderboardRoute,
   AppMenuSettingsRoute: AppMenuSettingsRoute,
   AppMenuStatsRoute: AppMenuStatsRoute,
   AppMenuUsernameRoute: AppMenuUsernameRoute,
@@ -476,6 +517,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
   ConsoleRoute: ConsoleRoute,
+  ConsoleTransparentRoute: ConsoleTransparentRoute,
   DesignSystemRoute: DesignSystemRoute,
   ExportRoute: ExportRoute,
   PitchRoute: PitchRoute,

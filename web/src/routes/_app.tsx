@@ -9,6 +9,7 @@ import { LineRiderScreen } from './_app/games/line-rider'
 import { CandleHopScreen } from './_app/games/candle-hop'
 import { AppFrame } from '@/components/console/AppFrame'
 import { AchievementCelebration } from '@/components/AchievementCelebration'
+import { AchievementDetailProvider } from '@/components/menu/AchievementDetail'
 import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '@/components/console/controls'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { MenuDrawer } from '@/components/console/MenuDrawer'
@@ -254,11 +255,10 @@ function AppLayout() {
     if (onCustomize) setCustomizeOpening(false)
   }, [onCustomize])
 
-  useEffect(() => {
-    if (!onMenu || onCustomize || customizePrepared) return
-    const id = window.setTimeout(() => setCustomizePrepared(true), 0)
-    return () => window.clearTimeout(id)
-  }, [customizePrepared, onMenu, onCustomize])
+  // No Customize pre-warm on menu open. Building the studio is a whole second 3D device (~0.9s of
+  // synchronous Three.js), and doing it while the drawer is open froze every scroll/close. The studio
+  // builds only when you actually open it (onLaunchStart sets customizePrepared on the Customize tap),
+  // so the menu itself does zero 3D work and stays smooth.
 
   useEffect(() => {
     if (!onMenu && !onCustomize && !customizeHandoff) {
@@ -321,7 +321,7 @@ function AppLayout() {
   const loadingScreen = showLoadingScreen ? <AppLoadingScreen leaving={loadingScreenLeaving} /> : null
 
   return (
-    <>
+    <AchievementDetailProvider>
       <AppFrame bg={backdrop} dimmed={phase === 'landing' && !restoring}>
         <ConsoleControlsProvider>
           <Console3DRoute
@@ -385,7 +385,7 @@ function AppLayout() {
       </AppFrame>
       {loadingScreen}
       <AchievementCelebration />
-    </>
+    </AchievementDetailProvider>
   )
 }
 

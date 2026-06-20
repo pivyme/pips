@@ -3,7 +3,6 @@ import type { ReactNode } from 'react'
 import * as THREE from 'three'
 import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
 import { createConsoleGui } from './consoleGui'
-import { createCustomizeGui } from './customizeGui'
 import {
   roundedRect,
   roundedPoly,
@@ -18,6 +17,7 @@ import {
   createNumberWheel,
   createActionScreens,
   createBackDetails,
+  createInternals,
 } from './consoleElements'
 import { createAudio } from './consoleAudio'
 import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
@@ -55,9 +55,6 @@ interface ConsoleCanvasProps {
   // Customize studio: the device floats on a transparent backdrop, screen off, free-spin to inspect
   // front/back, and `theme` repaints the materials live. Mutually exclusive with debug.
   customize?: boolean
-  // Dev-only tuning GUI for the studio (camera distance, logo carve). Off by default so end-user
-  // surfaces (the onboarding skin pick) never show it; the menu studio opts in under import.meta.env.DEV.
-  tuner?: boolean
   theme?: ConsoleTheme
   // PNG export tool (/export): a still product shot, no idle float, the device pose driven entirely by
   // the x/y sliders (exportRot, radians). Forces preserveDrawingBuffer so the canvas reads out to PNG.
@@ -99,7 +96,6 @@ export default function ConsoleCanvas({
   children,
   debug = false,
   customize = false,
-  tuner = false,
   theme,
   exportMode = false,
   exportRot,
@@ -405,7 +401,11 @@ export default function ConsoleCanvas({
       metalness: 0,
     })
 
-    const matBody = new THREE.MeshStandardMaterial({
+    // Physical (not Standard) so the transparent "Clear" skin can add clearcoat for that wet-acrylic
+    // look without swapping the instance. It's a Standard subclass, so every later `as
+    // MeshStandardMaterial` cast and `.color/.map/.roughness` write still applies; opaque skins keep
+    // clearcoat at 0, which renders identically to the old Standard material.
+    const matBody = new THREE.MeshPhysicalMaterial({
       color: CREAM,
       roughness: 0.82,
       metalness: 0,
@@ -437,7 +437,7 @@ export default function ConsoleCanvas({
     /* back panel — solid cream shell behind the body. Covers the open back (button + knob undersides)
        when the device is flipped; the slab is deep enough to swallow the deepest button and the knob.
        Same outline as the body, so it never peeks past the front silhouette. Grows with screenExt. */
-    const matBack = new THREE.MeshStandardMaterial({
+    const matBack = new THREE.MeshPhysicalMaterial({
       color: CREAM,
       roughness: 0.88,
       metalness: 0,
@@ -493,6 +493,15 @@ export default function ConsoleCanvas({
     )
     backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
     backDetails.rebuildSeam(screenExt, wy(1130) + screenExt / 2)
+
+    // Exposed guts for the transparent "Clear" skin: a packed PCB, copper coil, battery, ribbon and
+    // glyph light strips sitting between the two shells. Built once and hidden; applyTheme reveals it
+    // when a clear skin is on. Rides the body center so it tracks the screen-stretch like the body does.
+    // Full guts (incl. the top-frame band) only in showcase contexts; the live game screen can grow up
+    // into that band, so a played clear skin keeps just the always-safe bottom + side internals.
+    const fullInternals = debug || customize || exportMode
+    const internals = createInternals(device, '#e5322b', fullInternals)
+    internals.group.position.set(wx(585), wy(1130) + screenExt / 2, 0)
 
     const SVG_W = 1539,
       SVG_H = 629
@@ -1638,8 +1647,35 @@ export default function ConsoleCanvas({
     // every card tap in the studio. emissive tracks the color so the press glow stays in-palette.
     function applyTheme(t?: ConsoleTheme) {
       if (!t) return
+      // Transparent "Clear" skin. FRONT shell is real frosted acrylic via transmission (not a flat alpha
+      // film, which just looked like a white overlay): the guts behind read as diffused frosted plastic
+      // under a glossy clearcoat skin. The smoke tint rides the attenuation so the transmitted internals
+      // keep their color. Non-clear skins reset every prop back to the molded look.
+      const clear = !!t.clear
+      matBody.transparent = clear
+      matBody.transmission = clear ? 1 : 0
+      matBody.opacity = 1
+      matBody.roughness = clear ? 0.28 : 0.82 // the frost: light enough to still read the guts
+      matBody.thickness = clear ? 0.5 : 0
+      matBody.ior = clear ? 1.47 : 1.5
+      matBody.clearcoat = clear ? 1 : 0
+      matBody.clearcoatRoughness = clear ? 0.18 : 0
+      matBody.attenuationColor.set(clear ? '#cdd4db' : '#ffffff') // smoke, not milk
+      matBody.attenuationDistance = clear ? 1.8 : Infinity
+      matBody.needsUpdate = true
+      // BACK shell: solid white frosted plastic (the white edition) so the back stays clean and easy to
+      // read, and doubles as a bright backplate the guts read against from the front.
+      matBack.transmission = 0
+      matBack.transparent = false
+      matBack.opacity = 1
+      matBack.roughness = clear ? 0.55 : 0.88
+      matBack.clearcoat = clear ? 0.5 : 0
+      matBack.clearcoatRoughness = clear ? 0.25 : 0
+      matBack.needsUpdate = true
+      internals.group.visible = clear
       // Body color is the flat skin and the pre-load tint; setBodySkin overlays the SVG when present.
-      matBody.color.set(t.body)
+      // Clear keeps it near-white so transmission shows the guts true (the tint is the attenuation).
+      matBody.color.set(clear ? 0xffffff : t.body)
       pendingSkinUrl = t.skin ?? null
       setBodySkin(t.skin)
       matBack.color.set(t.back ?? t.body)
@@ -1699,6 +1735,7 @@ export default function ConsoleCanvas({
       // the panel grew taller: re-hug the corner screws + strap to the new edges, regrow the seam
       backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
       backDetails.rebuildSeam(screenExt, wy(1130) + screenExt / 2)
+      internals.group.position.y = wy(1130) + screenExt / 2 // guts ride the body center
     }
 
     // Stretch the screen + body top to `ext` world units past natural, then refresh the projection
@@ -2022,7 +2059,7 @@ export default function ConsoleCanvas({
       dirty = true
     }
 
-    /* GUI — the full dev panel when debugging (the /console playground), a slim carve panel in the studio */
+    /* GUI — the full dev tuning panel, only on the /console playground (debug). No end-user surface shows it. */
     const gui = debug
       ? createConsoleGui({
           kp,
@@ -2049,23 +2086,8 @@ export default function ConsoleCanvas({
             dirty = true
           },
         })
-      : customize && tuner
-        ? createCustomizeGui({
-            carve: logoCarve,
-            onPlaceLogo: placeLogoCarve,
-            onRebuildLogo: rebuildLogo,
-            cam: custCam,
-            onCam: () => {
-              placeCustomizeCamera()
-              dirty = true
-            },
-          })
-        : null
-    applyActiveRef.current = (on: boolean) => {
-      if (customize && gui) {
-        if (on) gui.show()
-        else gui.hide()
-      }
+      : null
+    applyActiveRef.current = () => {
       dirty = true
     }
     applyActiveRef.current(activeRef.current)
@@ -2742,6 +2764,7 @@ export default function ConsoleCanvas({
       gui?.destroy()
       disposeActionScreens()
       backDetails.dispose()
+      internals.dispose()
       matMetal.dispose()
       matSeam.dispose()
       matBackRecess.dispose()
@@ -2792,7 +2815,9 @@ export default function ConsoleCanvas({
         // on a deep tint of the active skin so the surround feels themed, not flat black. Customize is
         // transparent so the workshop backdrop shows around the floating device.
         background: debug
-          ? 'radial-gradient(circle at 50% 38%, #f4ead6 0%, #decdab 82%)'
+          ? theme?.clear
+            ? 'radial-gradient(circle at 50% 36%, #202227 0%, #0b0c0f 84%)' // dark bench so the clear case + guts pop
+            : 'radial-gradient(circle at 50% 38%, #f4ead6 0%, #decdab 82%)'
           : customize
             ? 'transparent'
             : theme

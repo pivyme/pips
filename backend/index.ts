@@ -10,6 +10,7 @@ import { authRoutes } from './src/routes/authRoutes.ts';
 import { gameRoutes } from './src/routes/gameRoutes.ts';
 import { streamRoutes } from './src/routes/streamRoutes.ts';
 import { menuRoutes } from './src/routes/menuRoutes.ts';
+import { leaderboardRoutes } from './src/routes/leaderboardRoutes.ts';
 import { walletRoutes } from './src/routes/walletRoutes.ts';
 
 // Workers
@@ -55,6 +56,7 @@ fastify.register(exampletRoute, { prefix: '/example' });
 fastify.register(authRoutes, { prefix: '/auth' });
 fastify.register(gameRoutes);
 fastify.register(menuRoutes);
+fastify.register(leaderboardRoutes, { prefix: '/leaderboard' });
 fastify.register(walletRoutes, { prefix: '/wallet' });
 fastify.register(streamRoutes, { prefix: '/stream' });
 

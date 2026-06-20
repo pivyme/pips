@@ -8,6 +8,7 @@ import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { Chart, type ChartOverlays } from '@/components/game/Chart'
 import { GameScreen, ScreenMessage } from '@/components/game/screen'
+import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
 import { Stat } from '@/components/Stat'
 import { haptic } from '@/lib/haptics'
 import { slotSpin, slotTick, slotLock, slotPick, startLuckyBgm, stopLuckyBgm, luckyWin, luckyCashout, luckyLose } from '@/lib/sound'
@@ -68,7 +69,7 @@ const RESULT_TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out'])
 
 type Phase = 'idle' | 'placing' | 'spinning' | 'open' | 'cashing' | 'result'
 type Live = { markValue: string; pnl: string; multiplier: number; status: PlayStatus }
-type Overlay = 'none' | 'howto' | 'history'
+type Overlay = 'none' | 'howto' | 'history' | 'board'
 
 const money = (n: number): string =>
   n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -748,6 +749,13 @@ export function LuckyScreen() {
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
                     Press the button on the right to spin
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => { haptic('selection'); setOverlay('board') }}
+                    className="mt-3 inline-flex items-center gap-1 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-text-2 transition-colors active:text-brand-500"
+                  >
+                    Top 10 <span className="text-brand-500">›</span>
+                  </button>
                 </>
               )}
             </div>
@@ -758,6 +766,7 @@ export function LuckyScreen() {
       {phase === 'result' && play && <LuckyResult play={play} streak={streak} />}
       {overlay === 'howto' && <HowTo onClose={() => setOverlay('none')} />}
       {overlay === 'history' && <History onClose={() => setOverlay('none')} />}
+      {overlay === 'board' && <GameLeaderboardOverlay game="lucky" title="Lucky" onClose={() => setOverlay('none')} />}
     </GameScreen>
   )
 }

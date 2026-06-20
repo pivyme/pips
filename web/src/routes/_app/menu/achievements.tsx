@@ -3,6 +3,11 @@ import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuScreen, ScreenError } from '@/components/menu/shared'
+import {
+  cardPressClass,
+  openFromCard,
+  useAchievementDetail,
+} from '@/components/menu/AchievementDetail'
 import { api } from '@/lib/api'
 import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import { cnm } from '@/utils/style'
@@ -66,10 +71,16 @@ function AchievementCard({
 }: {
   achievement: DisplayAchievement
 }): ReactNode {
+  const { open } = useAchievementDetail()
   return (
-    <article
+    <button
+      type="button"
       aria-label={`${achievement.name}, ${achievement.unlocked ? 'unlocked' : 'locked'}`}
-      className="surface-skeuo relative flex min-h-[274px] flex-col overflow-hidden rounded-card px-4 pb-5 pt-4"
+      onClick={(e) => openFromCard(open, achievement, e)}
+      className={cnm(
+        'surface-skeuo relative flex min-h-[274px] flex-col overflow-hidden rounded-card px-4 pb-5 pt-4 text-left',
+        cardPressClass,
+      )}
     >
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.035)_0%,rgba(255,255,255,0)_38%,rgba(0,0,0,0.16)_100%)]" />
       <div className="relative flex min-h-[150px] flex-1 items-center justify-center pb-3">
@@ -93,7 +104,7 @@ function AchievementCard({
           {achievement.description}
         </p>
       </div>
-    </article>
+    </button>
   )
 }
 

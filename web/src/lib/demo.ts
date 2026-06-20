@@ -12,12 +12,19 @@ import type {
   AchievementDTO,
   CashoutResult,
   Game,
+  FullLeaderboard,
+  GameLeaderboard,
+  GlobalLeaderboard,
   MarketDTO,
+  Minigame,
+  MinigameLeaderboard,
+  MinigameSubmit,
   PlayDTO,
   PlayResult,
   PlayStatus,
   PlayTick,
   PriceTick,
+  LiveTick,
   Side,
   UserDTO,
   UserStatsDTO,
@@ -27,7 +34,7 @@ import type {
 
 const OVERRIDE_KEY = 'pips_demo' // '1' force on, '0' force off, unset = env default
 const STATE_KEY = 'pips_demo_state'
-const STATE_VERSION = 3 // bumped: live oracle prices + refreshed seed account
+const STATE_VERSION = 4 // bumped: minigame high scores for the leaderboards
 
 export function isDemo(): boolean {
   if (typeof window !== 'undefined') {
@@ -256,6 +263,7 @@ interface DemoState {
   counters: Counters
   unlocked: Record<string, string> // slug -> unlockedAt ISO
   history: PlayDTO[] // settled plays only, newest first
+  minigameScores: Record<string, number> // minigame key -> your best score, for the arcade boards
 }
 
 // Assigned by the init block at the very bottom, once every const/function below is in scope.
@@ -307,7 +315,9 @@ function freshState(): DemoState {
   // Pre-unlock whatever the seeded record already earns, so the grid lights up like a real account.
   const unlocked: Record<string, string> = {}
   for (const c of CATALOG) if (meets(c.metric, c.threshold, counters)) unlocked[c.slug] = past(60 * 24)
-  return { v: STATE_VERSION, balance: 2847.5, username: 'pips', settings: { sound: true, haptics: true, reducedMotion: false }, counters, unlocked, history }
+  // Seed the demo account's minigame bests so the arcade boards look played-in (mid-table, beatable).
+  const minigameScores: Record<string, number> = { 'line-rider': 1240, 'candle-hop': 14 }
+  return { v: STATE_VERSION, balance: 2847.5, username: 'pips', settings: { sound: true, haptics: true, reducedMotion: false }, counters, unlocked, history, minigameScores }
 }
 
 function load(): DemoState {
@@ -673,6 +683,88 @@ function achievementsDTO(): AchievementDTO[] {
   })
 }
 
+// === Leaderboards ===
+// A fixed roster of rival traders so the boards look alive offline. The demo account ('pips') is
+// mixed in and ranked against them, so its own row highlights like a real player's would.
+const LB_TRADERS: Array<{ username: string; netPnl: number; games: number }> = [
+  { username: 'satoshi', netPnl: 5820, games: 318 },
+  { username: 'mooncat', netPnl: 4210, games: 256 },
+  { username: 'degenduck', netPnl: 2890, games: 174 },
+  { username: 'pipqueen', netPnl: 1640, games: 121 },
+  { username: 'hodlr', netPnl: 980, games: 88 },
+  { username: 'rugslayer', netPnl: 410, games: 52 },
+  { username: 'paperhands', netPnl: -260, games: 61 },
+  { username: 'liquidated', netPnl: -740, games: 95 },
+  { username: 'fomofred', netPnl: -1320, games: 143 },
+  { username: 'maxpain', netPnl: -2480, games: 207 },
+  { username: 'apein', netPnl: -3960, games: 289 },
+]
+
+// Seed scores for the arcade boards (the demo account is mixed in via its own best).
+const MINIGAME_BOTS: Record<string, Array<[string, number]>> = {
+  'line-rider': [['kz', 3800], ['axel', 2650], ['void', 1850], ['neo', 1240], ['pip', 820], ['lux', 520], ['ray', 310], ['moe', 160]],
+  'candle-hop': [['kz', 52], ['axel', 38], ['void', 27], ['neo', 19], ['pip', 13], ['lux', 8], ['ray', 5], ['moe', 2]],
+}
+
+type Trader = { username: string | null; displayName: string; netPnl: number; games: number; isYou: boolean }
+function allTraders(): Trader[] {
+  const bots: Trader[] = LB_TRADERS.map((b) => ({ username: b.username, displayName: b.username, netPnl: b.netPnl, games: b.games, isYou: false }))
+  bots.push({ username: state.username, displayName: DEMO_HANDLE, netPnl: state.counters.netPnl, games: state.counters.gamesPlayed, isYou: true })
+  return bots
+}
+
+function globalLeaderboardDTO(): GlobalLeaderboard {
+  const all = allTraders()
+  const gainers = all.filter((t) => t.netPnl > 0).sort((a, b) => b.netPnl - a.netPnl)
+  const rekt = all.filter((t) => t.netPnl < 0).sort((a, b) => a.netPnl - b.netPnl)
+  const entry = (t: Trader, i: number) => ({ rank: i + 1, username: t.username, displayName: t.displayName, netPnl: str(t.netPnl), gamesPlayed: t.games, isYou: t.isYou })
+  const youNet = state.counters.netPnl
+  const gi = gainers.findIndex((t) => t.isYou)
+  const ri = rekt.findIndex((t) => t.isYou)
+  return {
+    gainers: gainers.slice(0, 10).map(entry),
+    rekt: rekt.slice(0, 10).map(entry),
+    you: {
+      gainerRank: youNet > 0 && gi >= 0 ? gi + 1 : null,
+      rektRank: youNet < 0 && ri >= 0 ? ri + 1 : null,
+      netPnl: str(youNet),
+      gamesPlayed: state.counters.gamesPlayed,
+    },
+  }
+}
+
+function gameLeaderboardDTO(game: Game): GameLeaderboard {
+  const mine = state.history.filter((p) => p.game === game)
+  const youPnl = mine.reduce((s, p) => s + parseFloat(p.pnl), 0)
+  const split = game === 'lucky' ? 0.6 : 0.4 // a believable per-game share of each rival's net
+  const rows = LB_TRADERS.map((b) => ({ username: b.username as string | null, displayName: b.username, pnl: Math.round(b.netPnl * split), plays: Math.max(1, Math.round(b.games * split)), isYou: false }))
+  rows.push({ username: state.username, displayName: DEMO_HANDLE, pnl: Math.round(youPnl), plays: mine.length, isYou: true })
+  const ranked = rows.filter((r) => r.pnl > 0).sort((a, b) => b.pnl - a.pnl).slice(0, 10)
+  return { entries: ranked.map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, pnl: str(r.pnl), plays: r.plays, isYou: r.isYou })) }
+}
+
+type ScoreRow = { username: string | null; displayName: string; score: number; isYou: boolean }
+function minigameRows(game: string): ScoreRow[] {
+  const rows: ScoreRow[] = (MINIGAME_BOTS[game] ?? []).map(([u, s]) => ({ username: u, displayName: u, score: s, isYou: false }))
+  const best = state.minigameScores[game] ?? 0
+  if (best > 0) rows.push({ username: state.username, displayName: DEMO_HANDLE, score: best, isYou: true })
+  return rows.sort((a, b) => b.score - a.score)
+}
+
+function minigameLeaderboardDTO(game: Minigame): MinigameLeaderboard {
+  const best = state.minigameScores[game] ?? 0
+  const entries = minigameRows(game).slice(0, 10).map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, score: r.score, isYou: r.isYou }))
+  return { entries, best }
+}
+
+function fullLeaderboardDTO(): FullLeaderboard {
+  return {
+    global: globalLeaderboardDTO(),
+    games: { lucky: gameLeaderboardDTO('lucky').entries, range: gameLeaderboardDTO('range').entries },
+    minigames: { 'line-rider': minigameLeaderboardDTO('line-rider'), 'candle-hop': minigameLeaderboardDTO('candle-hop') },
+  }
+}
+
 export const demoApi = {
   authDev: async () => {
     await delay(120)
@@ -776,12 +868,59 @@ export const demoApi = {
     save()
     return { settings: state.settings }
   },
+
+  leaderboard: async (): Promise<{ leaderboard: FullLeaderboard }> => {
+    await delay(120)
+    return { leaderboard: fullLeaderboardDTO() }
+  },
+
+  gameLeaderboard: async (game: Game): Promise<{ leaderboard: GameLeaderboard }> => {
+    await delay(120)
+    return { leaderboard: gameLeaderboardDTO(game) }
+  },
+
+  minigameLeaderboard: async (game: Minigame): Promise<{ leaderboard: MinigameLeaderboard }> => {
+    await delay(120)
+    return { leaderboard: minigameLeaderboardDTO(game) }
+  },
+
+  submitMinigameScore: async (game: Minigame, score: number): Promise<{ result: MinigameSubmit }> => {
+    await delay(120)
+    const prevBest = state.minigameScores[game] ?? 0
+    const best = Math.max(prevBest, score)
+    if (score > prevBest) {
+      state.minigameScores[game] = score
+      save()
+    }
+    const all = minigameRows(game) // now includes your row at `best`
+    const youIdx = all.findIndex((r) => r.isYou)
+    const rank = youIdx >= 0 ? youIdx + 1 : all.length + 1
+    const entries = all.slice(0, 10).map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, score: r.score, isYou: r.isYou }))
+    return { result: { entries, rank, best, isBest: score > prevBest && rank === 1, prevBest } }
+  },
 }
 
 // === SSE replacements ===
 
 export function demoStreamPrices(asset: string, onTick: (t: PriceTick) => void): () => void {
   return subscribePrice(asset, (p) => onTick({ price: String(p), ts: nowMs() }))
+}
+
+// A gently breathing "online" count so the demo Home feels alive. Demo is a sim (clearly badged),
+// so this is a bounded random walk, not real presence.
+export function demoStreamLive(onTick: (t: LiveTick) => void): () => void {
+  let n = 6 + Math.floor(Math.random() * 7) // start 6..12
+  let stopped = false
+  onTick({ online: n })
+  const iv = setInterval(() => {
+    if (stopped) return
+    n = Math.max(3, Math.min(24, n + (Math.random() < 0.5 ? -1 : 1)))
+    onTick({ online: n })
+  }, 3500)
+  return () => {
+    stopped = true
+    clearInterval(iv)
+  }
 }
 
 export function demoStreamPlay(playId: string, onTick: (t: PlayTick) => void, onError?: () => void): () => void {

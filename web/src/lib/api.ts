@@ -3,7 +3,7 @@
 // code to a friendly toast. DTO shapes mirror backend/src/types/api.ts.
 
 import { env } from '@/env'
-import { isDemo, demoApi, demoStreamPrices, demoStreamPlay } from './demo'
+import { isDemo, demoApi, demoStreamPrices, demoStreamPlay, demoStreamLive } from './demo'
 
 const BASE = env.VITE_API_URL
 
@@ -114,6 +114,59 @@ export interface WalletVerifyInput {
   signature: string
 }
 
+// === Leaderboards === (every row exposes username/displayName, never an address)
+
+export type Minigame = 'line-rider' | 'candle-hop'
+
+export interface LeaderboardPnlEntry {
+  rank: number
+  username: string | null
+  displayName: string
+  netPnl: string // signed DUSDC
+  gamesPlayed: number
+  isYou: boolean
+}
+export interface LeaderboardGameEntry {
+  rank: number
+  username: string | null
+  displayName: string
+  pnl: string // summed DUSDC for the game, positive
+  plays: number
+  isYou: boolean
+}
+export interface LeaderboardScoreEntry {
+  rank: number
+  username: string | null
+  displayName: string
+  score: number
+  isYou: boolean
+}
+export interface GlobalLeaderboard {
+  gainers: LeaderboardPnlEntry[]
+  rekt: LeaderboardPnlEntry[]
+  you: { gainerRank: number | null; rektRank: number | null; netPnl: string; gamesPlayed: number }
+}
+export interface GameLeaderboard {
+  entries: LeaderboardGameEntry[]
+}
+export interface MinigameLeaderboard {
+  entries: LeaderboardScoreEntry[]
+  best: number
+}
+export interface MinigameSubmit {
+  entries: LeaderboardScoreEntry[]
+  rank: number
+  best: number
+  isBest: boolean
+  prevBest: number
+}
+// One combined payload for the menu leaderboard, so tab switches are instant (no refetch).
+export interface FullLeaderboard {
+  global: GlobalLeaderboard
+  games: Record<Game, LeaderboardGameEntry[]>
+  minigames: Record<Minigame, MinigameLeaderboard>
+}
+
 // === Core ===
 
 export class ApiError extends Error {
@@ -200,6 +253,12 @@ const realApi = {
   achievements: () => request<{ achievements: AchievementDTO[] }>('GET', '/achievements'),
   settings: () => request<{ settings: UserDTO['settings'] }>('GET', '/settings'),
   patchSettings: (body: Partial<UserDTO['settings']>) => request<{ settings: UserDTO['settings'] }>('PATCH', '/settings', body),
+
+  // leaderboards
+  leaderboard: () => request<{ leaderboard: FullLeaderboard }>('GET', '/leaderboard'),
+  gameLeaderboard: (game: Game) => request<{ leaderboard: GameLeaderboard }>('GET', `/leaderboard/game/${game}`),
+  minigameLeaderboard: (game: Minigame) => request<{ leaderboard: MinigameLeaderboard }>('GET', `/leaderboard/minigame/${game}`),
+  submitMinigameScore: (game: Minigame, score: number) => request<{ result: MinigameSubmit }>('POST', `/leaderboard/minigame/${game}`, { score }),
 }
 
 // Demo mode swaps the whole client for an in-memory mock (no server, no chain). Resolved per
@@ -237,6 +296,8 @@ function stream<T>(path: string, onData: (data: T) => void, onError?: () => void
 
 export type PriceTick = { price: string; ts: number }
 export type PlayTick = { markValue: string; pnl: string; multiplier: number; status: PlayStatus; ts: number }
+// Live presence: how many players have Pips open right now. Pushed on every join/leave.
+export type LiveTick = { online: number }
 
 export const streamPrices = (asset: string, onTick: (t: PriceTick) => void, onError?: () => void): (() => void) =>
   isDemo()
@@ -247,3 +308,6 @@ export const streamPlay = (playId: string, onTick: (t: PlayTick) => void, onErro
   isDemo()
     ? demoStreamPlay(playId, onTick, onError)
     : stream<PlayTick>(`/stream/plays/${playId}`, onTick, onError)
+
+export const streamLive = (onTick: (t: LiveTick) => void, onError?: () => void): (() => void) =>
+  isDemo() ? demoStreamLive(onTick) : stream<LiveTick>('/stream/live', onTick, onError)

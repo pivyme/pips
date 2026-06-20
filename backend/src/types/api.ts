@@ -86,3 +86,77 @@ export interface WithdrawResult {
   user: UserDTO;
   digest: string;
 }
+
+// === Leaderboards ===
+// Every board exposes username (or the generated displayName as a fallback), never the address.
+
+export type Minigame = 'line-rider' | 'candle-hop';
+
+// A PnL-ranked row (global Gainers / REKT).
+export interface LeaderboardPnlEntryDTO {
+  rank: number;
+  username: string | null; // user-chosen handle; null until onboarded
+  displayName: string; // generated handle fallback, never the wallet address
+  netPnl: string; // signed DUSDC, e.g. "342.00" or "-128.50"
+  gamesPlayed: number;
+  isYou: boolean;
+}
+
+// A per-game winners row (Lucky / Range), ranked by summed PnL for that game.
+export interface LeaderboardGameEntryDTO {
+  rank: number;
+  username: string | null;
+  displayName: string;
+  pnl: string; // summed DUSDC for this game (positive: these are the winners)
+  plays: number; // settled plays of this game
+  isYou: boolean;
+}
+
+// A minigame high-score row (Line Rider / Flappy Piper).
+export interface LeaderboardScoreEntryDTO {
+  rank: number;
+  username: string | null;
+  displayName: string;
+  score: number;
+  isYou: boolean;
+}
+
+// GET /leaderboard
+export interface GlobalLeaderboardDTO {
+  gainers: LeaderboardPnlEntryDTO[]; // top 10 net-positive traders
+  rekt: LeaderboardPnlEntryDTO[]; // top 10 net-negative traders, worst first
+  you: {
+    gainerRank: number | null; // your standing among gainers, null if not net-positive
+    rektRank: number | null;
+    netPnl: string;
+    gamesPlayed: number;
+  };
+}
+
+// GET /leaderboard/game/:game
+export interface GameLeaderboardDTO {
+  entries: LeaderboardGameEntryDTO[];
+}
+
+// GET /leaderboard/minigame/:game
+export interface MinigameLeaderboardDTO {
+  entries: LeaderboardScoreEntryDTO[];
+  best: number; // your own best for this game, 0 if none
+}
+
+// POST /leaderboard/minigame/:game -> the refreshed board + where this run landed
+export interface MinigameSubmitDTO {
+  entries: LeaderboardScoreEntryDTO[];
+  rank: number; // your global rank after this run, 1-based
+  best: number; // your best after this run
+  isBest: boolean; // this run is a personal best AND now #1 overall
+  prevBest: number; // your best before this run
+}
+
+// GET /leaderboard -> every board in one response, so the menu fetches once and switches tabs with
+// no refetch. The in-game overlays still use the focused /game and /minigame endpoints.
+export interface FullLeaderboardDTO {
+  global: GlobalLeaderboardDTO;
+  games: Record<Game, LeaderboardGameEntryDTO[]>; // lucky, range
+  minigames: Record<Minigame, MinigameLeaderboardDTO>; // line-rider, candle-hop
+}

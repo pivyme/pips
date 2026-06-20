@@ -19,6 +19,27 @@ const TERMINAL = new Set(['won', 'lost', 'cashed_out', 'error']);
 // within ~1s of the worker resolving it instead of waiting out a full live-mark interval.
 const SETTLING_POLL_MS = 1000;
 
+// Presence keepalive. The live feed is event-driven (we only push on join/leave), so without a
+// periodic frame an idle proxy would hang the socket up. Re-sending the count on this interval is
+// the heartbeat and also self-heals any client that missed a broadcast.
+const LIVE_HEARTBEAT_MS = 25_000;
+
+// Live presence: every open device Home holds one connection here. Broadcast the current count to
+// all of them on every join/leave so the "N ONLINE" ticker moves in real time. One process serves
+// every web client (frontend talks to a single API), so this Set is the global count.
+const liveClients = new Set<{ send: (data: unknown) => void }>();
+
+function broadcastOnline(): void {
+  const payload = { online: liveClients.size };
+  for (const c of liveClients) {
+    try {
+      c.send(payload);
+    } catch {
+      // Dead socket; its close handler prunes it from the set.
+    }
+  }
+}
+
 // Hijack the reply and open the event-stream. Returns a writer + a close registration.
 function openStream(reply: FastifyReply, request: FastifyRequest): { send: (data: unknown) => void; onClose: (fn: () => void) => void } {
   reply.hijack();
@@ -54,6 +75,37 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
     void tick();
     const timer = setInterval(() => void tick(), 1000);
     onClose(() => clearInterval(timer));
+  });
+
+  // Live presence: one connection per open Home screen. No per-client tick beyond the keepalive,
+  // the count is pushed to everyone on join/leave. Drives the "N ONLINE" ticker on the device home.
+  app.get('/live', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { t } = request.query as { t?: string };
+    const user = t ? await userFromToken(t) : null;
+    if (!user) return handleError(reply, 401, 'Invalid stream token', 'INVALID_TOKEN');
+
+    const { send, onClose } = openStream(reply, request);
+    const client = { send };
+    liveClients.add(client);
+    broadcastOnline(); // newcomer is in the set, so this also primes the new connection
+
+    let closed = false;
+    let heartbeat: ReturnType<typeof setInterval>;
+    const cleanup = (): void => {
+      if (closed) return;
+      closed = true;
+      clearInterval(heartbeat);
+      liveClients.delete(client);
+      broadcastOnline();
+    };
+    heartbeat = setInterval(() => {
+      try {
+        send({ online: liveClients.size });
+      } catch {
+        cleanup();
+      }
+    }, LIVE_HEARTBEAT_MS);
+    onClose(cleanup);
   });
 
   // Live PnL for one open play. Emits a terminal frame and closes once the play settles.

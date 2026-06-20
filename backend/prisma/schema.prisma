@@ -44,6 +44,7 @@ model User {
   plays            Play[]
   achievements     UserAchievement[]
   stats            UserStats?
+  minigameScores   MinigameScore[]
 }
 
 model Play {
@@ -125,6 +126,22 @@ model UserStats {
   lastPlayAt    DateTime?
   favoriteGame  String?
   updatedAt     DateTime  @updatedAt
+}
+
+// Arcade minigame high scores (Line Rider, Flappy Piper). One row per user per game holds their
+// best score, so the leaderboard is a plain `order by score desc`. Submitting a lower score is a
+// no-op. Keyed to the user so every board reads off their username, never an address.
+model MinigameScore {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  game      String                          // 'line-rider' | 'candle-hop'
+  score     Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, game])
+  @@index([game, score])
 }
 
 model ErrorLog {

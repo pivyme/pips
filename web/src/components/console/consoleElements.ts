@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { roundedRect, roundedRectPath, circlePath, frontZeroed } from './consoleGeo'
+import { roundedRect, roundedRectPath, circlePath, frontZeroed, setBoxUVs } from './consoleGeo'
 
 // Pure geometry/mesh factories for the handheld's physical controls. Each builds its meshes, parents
 // them to the `device` group, registers raycast targets in `interactive`, and hands back only the
@@ -617,4 +617,243 @@ export function createBackDetails(
   }
 
   return { place, rebuildSeam, recolorInk, dispose }
+}
+
+// The guts. Built once, parented to `device`, hidden until a transparent (Nothing-style) skin is on.
+// Sits in a thin slab between the two shells (z ~ -0.62..-0.28) so it reads as packed inside the case
+// once the body goes to frosted acrylic. Coordinates are body-local (origin at the body center). The
+// screen L-cutout only ever grows UPWARD in Y (never in X), so the bottom deck (below the screen) and
+// the two side frames (beside it in X) are always safe to fill without occluding the live HTML screen.
+// It frames the screen on three sides with black PCB and stacks real mechanical parts, battery, RF
+// shield cans, copper coil, electrolytic caps, a vibration motor, ribbon and glyph light strips, for
+// parallax and weight through the frost.
+export function createInternals(device: THREE.Group, accent: string, full: boolean) {
+  const group = new THREE.Group()
+  group.visible = false
+  device.add(group)
+  const trash: { dispose(): void }[] = []
+  const G = <T extends THREE.BufferGeometry>(g: T): T => (trash.push(g), g) // register + return a geometry
+  const M = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
+    const m = new THREE.Mesh(geo, mat)
+    m.position.set(x, y, z)
+    group.add(m)
+    return m
+  }
+
+  // z layers, front-to-back inside the case (more negative = deeper toward the back shell)
+  const PCB_Z = -0.62
+  const LOW = -0.5 // low SMD parts sit just proud of the board
+  const TALL = -0.34 // tall masses (battery, shield cans, caps) crown nearer the frosted front
+  const LED_Z = -0.52
+
+  // --- black solder-mask PCB texture: dark substrate, copper traces, gold pads, white silk, vias ---
+  const pc = document.createElement('canvas')
+  pc.width = pc.height = 1024
+  const g2 = pc.getContext('2d')!
+  g2.fillStyle = '#0a0c0e'
+  g2.fillRect(0, 0, 1024, 1024)
+  for (let i = 0; i < 1600; i++) {
+    const x = (i * 137.5) % 1024
+    const y = (i * 311.7) % 1024
+    g2.fillStyle = i % 2 ? 'rgba(120,150,140,0.045)' : 'rgba(0,0,0,0.16)'
+    g2.fillRect(x, y, 3, 3)
+  }
+  g2.strokeStyle = '#b3742f' // copper on black
+  g2.lineCap = 'round'
+  g2.lineJoin = 'round'
+  const trace = (pts: number[][], w: number) => {
+    g2.lineWidth = w
+    g2.beginPath()
+    g2.moveTo(pts[0][0], pts[0][1])
+    for (let i = 1; i < pts.length; i++) g2.lineTo(pts[i][0], pts[i][1])
+    g2.stroke()
+  }
+  // a dense routed fabric: horizontal buses with rounded jogs, vertical risers, a couple of diagonals
+  for (let r = 0; r < 12; r++) {
+    const y = 56 + r * 80
+    trace([[24, y], [300, y], [372, y + 56], [660, y + 56], [732, y], [1000, y]], 3.5)
+  }
+  for (let c = 0; c < 10; c++) {
+    const x = 70 + c * 100
+    trace([[x, 30], [x, 300], [x + 46, 360], [x + 46, 994]], 3)
+  }
+  trace([[40, 980], [980, 60]], 6)
+  trace([[40, 60], [980, 980]], 6)
+  // gold pads + dark vias on a grid
+  for (let r = 0; r < 12; r++)
+    for (let c = 0; c < 10; c++) {
+      const x = 70 + c * 100
+      const y = 56 + r * 80
+      g2.fillStyle = '#cBA24a'
+      g2.beginPath(); g2.arc(x, y, 5.5, 0, Math.PI * 2); g2.fill()
+      g2.fillStyle = '#05070a'
+      g2.beginPath(); g2.arc(x, y, 2.4, 0, Math.PI * 2); g2.fill()
+    }
+  // white-silk component footprints + a QFP pad ring
+  g2.strokeStyle = 'rgba(220,228,224,0.7)'
+  g2.lineWidth = 2.5
+  g2.strokeRect(340, 320, 300, 300)
+  g2.strokeRect(120, 700, 200, 150)
+  g2.strokeRect(720, 700, 160, 200)
+  for (let i = 0; i < 14; i++) { // QFP pads down two sides of the big footprint
+    g2.fillStyle = '#cBA24a'
+    g2.fillRect(330, 340 + i * 20, 18, 9)
+    g2.fillRect(632, 340 + i * 20, 18, 9)
+  }
+  g2.fillStyle = 'rgba(224,230,226,0.82)'
+  g2.font = '700 44px -apple-system,"Segoe UI",system-ui,sans-serif'
+  g2.fillText('PIPS-01', 360, 375)
+  g2.font = '500 24px -apple-system,"Segoe UI",system-ui,sans-serif'
+  g2.fillText('DEEPBOOK · DBX', 352, 600)
+  g2.fillText('REV C', 132, 738)
+  g2.fillText('SUI', 760, 690)
+  const pcbTex = new THREE.CanvasTexture(pc)
+  pcbTex.colorSpace = THREE.SRGBColorSpace
+  pcbTex.anisotropy = 8
+  trash.push(pcbTex)
+
+  const matPcb = new THREE.MeshStandardMaterial({ map: pcbTex, roughness: 0.66, metalness: 0.2 })
+  const matCopper = new THREE.MeshStandardMaterial({ color: 0xc8803a, metalness: 0.85, roughness: 0.32 })
+  const matGold = new THREE.MeshStandardMaterial({ color: 0xd9b24a, metalness: 0.9, roughness: 0.28 })
+  const matIc = new THREE.MeshStandardMaterial({ color: 0x0a0a0d, metalness: 0.25, roughness: 0.48 })
+  const matCell = new THREE.MeshStandardMaterial({ color: 0x121317, metalness: 0.55, roughness: 0.38 })
+  const matShield = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, metalness: 0.82, roughness: 0.42 }) // brushed RF can
+  const matRibbon = new THREE.MeshStandardMaterial({ color: 0xd9892b, metalness: 0.2, roughness: 0.55 })
+  const matMetal = new THREE.MeshStandardMaterial({ color: 0x8b9099, metalness: 0.9, roughness: 0.3 })
+  const matCap = new THREE.MeshStandardMaterial({ color: 0x1a2233, metalness: 0.45, roughness: 0.44 }) // electrolytic can
+  const matAccent = new THREE.MeshStandardMaterial({ color: new THREE.Color(accent), metalness: 0.1, roughness: 0.5 })
+  const matLed = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1.35, roughness: 0.4 }) // glyph glow
+  trash.push(matPcb, matCopper, matGold, matIc, matCell, matShield, matRibbon, matMetal, matCap, matAccent, matLed)
+
+  // HARD screen clearance. The L-cutout in body-local is x[-2.775,2.775]; its left column drops to
+  // y -2.75, its right column only to y -0.975 (the notch below it is body). The screen only grows in
+  // Y, never X, so the side frames are always safe. NOTHING may enter the cutout, so every part is kept
+  // clear of these with real margin (the rounded rim overlaps the live HTML screen):
+  //   deck parts keep their TOP <= -3.05 ; notch parts keep their TOP <= -1.2 ; side parts center on
+  //   |x| = FRAME_X with width <= ~0.18 so their inner edge stays ~0.13 off the screen sides.
+  const FRAME_X = 3.0
+
+  // --- the boards: bottom deck + notch (behind the play button) + two side strips framing the screen ---
+  const boardPlane = (w: number, h: number, r: number, x: number, y: number) => {
+    const g = G(new THREE.ShapeGeometry(roundedRect(w, h, r), 16))
+    setBoxUVs(g)
+    M(g, matPcb, x, y, PCB_Z)
+  }
+  boardPlane(6.0, 2.9, 0.12, 0, -4.5) // bottom deck (top -3.05)
+  boardPlane(1.66, 1.42, 0.1, 1.82, -1.97) // notch (top -1.26)
+  boardPlane(0.2, 8.0, 0.06, -FRAME_X, 1.1) // left frame strip
+  boardPlane(0.2, 6.0, 0.06, FRAME_X, 2.1) // right frame strip
+
+  // --- battery cell: the dominant mass, lower-left of the deck, with a printed band + gold terminals ---
+  M(G(frontZeroed(roundedRect(2.25, 2.3, 0.1), 0.24, 0.02)), matCell, -1.5, -4.55, TALL) // top -3.4
+  M(G(new THREE.PlaneGeometry(2.0, 0.18)), matAccent, -1.5, -3.95, TALL + 0.13)
+  const termGeo = G(new THREE.BoxGeometry(0.22, 0.16, 0.06))
+  M(termGeo, matGold, -2.35, -3.55, TALL + 0.1)
+  M(termGeo, matGold, -0.65, -3.55, TALL + 0.1)
+
+  // --- copper wireless-charging coil: concentric flat rings (the signature Nothing detail) ---
+  const coil = new THREE.Group()
+  coil.position.set(1.55, -4.5, LOW)
+  group.add(coil)
+  for (let i = 0; i < 10; i++)
+    coil.add(new THREE.Mesh(G(new THREE.TorusGeometry(0.32 + i * 0.07, 0.024, 8, 56)), matCopper))
+
+  // --- RF shield cans: brushed-metal lids, the most mechanical detail, low on the deck (clear of screen) ---
+  M(G(frontZeroed(roundedRect(1.1, 0.62, 0.06), 0.16, 0.02)), matShield, -0.05, -3.74, TALL + 0.02) // top -3.43
+  M(G(new THREE.PlaneGeometry(0.86, 0.34)), matIc, -0.05, -3.74, TALL + 0.19) // etched lid recess
+
+  // --- ICs (notch + side strips), gold pin strips on the bigger ones ---
+  const chipBig = G(frontZeroed(roundedRect(0.58, 0.42, 0.04), 0.07, 0.012))
+  const pinGeo = G(new THREE.BoxGeometry(0.58, 0.05, 0.03))
+
+  // densely dress each side frame strip: a running column of small ICs + chip passives + connectors,
+  // all width-capped and pinned to the frame edge so nothing creeps onto the screen.
+  const smdIc = G(frontZeroed(roundedRect(0.16, 0.13, 0.025), 0.045, 0.008))
+  const r04 = G(new THREE.BoxGeometry(0.1, 0.06, 0.04)) // 0402-style chip resistor/cap
+  const sideConn = G(frontZeroed(roundedRect(0.16, 0.13, 0.03), 0.06, 0.008))
+  const dressStrip = (x: number, yBot: number, yTop: number) => {
+    let i = 0
+    for (let y = yBot; y < yTop; y += 0.28, i++) {
+      const ox = ((i % 3) - 1) * 0.02 // tiny jitter, stays inside the strip
+      if (i % 4 === 0) M(smdIc, matIc, x + ox, y, LOW + 0.03)
+      else M(r04, i % 2 ? matCap : matMetal, x + ox, y, LOW + 0.02)
+    }
+    M(sideConn, matAccent, x, yBot + 0.5, LOW + 0.05)
+    M(sideConn, matGold, x, yTop - 0.7, LOW + 0.05)
+  }
+  dressStrip(-FRAME_X, -2.6, 5.2) // left frame
+  dressStrip(FRAME_X, -0.5, 5.1) // right frame
+
+  // --- electrolytic capacitors: standing cans along the bottom edge (axis toward the viewer) ---
+  const capBody = G(new THREE.CylinderGeometry(0.1, 0.1, 0.26, 18))
+  capBody.rotateX(Math.PI / 2) // stand it up toward +z
+  const capTop = G(new THREE.CircleGeometry(0.1, 18))
+  const cap = (cx: number, cy: number) => {
+    M(capBody, matCap, cx, cy, TALL + 0.05)
+    M(capTop, matMetal, cx, cy, TALL + 0.18) // metal vent top
+  }
+  for (const [cx, cy] of [[-2.55, -5.55], [0.05, -5.6], [0.95, -5.55]] as [number, number][]) cap(cx, cy)
+
+  // --- vibration coin motor: a flat metal puck with a hub ---
+  M(G(new THREE.CylinderGeometry(0.22, 0.22, 0.1, 28).rotateX(Math.PI / 2)), matMetal, 2.45, -5.45, TALL + 0.02)
+  M(G(new THREE.CircleGeometry(0.07, 16)), matIc, 2.45, -5.45, TALL + 0.08)
+
+  // --- FPC ribbons + their red connectors, both pinned to the frame edge (clear of the screen) ---
+  M(G(new THREE.BoxGeometry(0.12, 4.4, 0.035)), matRibbon, FRAME_X, 1.7, LOW + 0.04)
+  M(G(new THREE.BoxGeometry(0.12, 2.0, 0.035)), matRibbon, -FRAME_X, -0.4, LOW + 0.04)
+
+  // --- the notch (behind the play button): mezzanine fingers + a shield + an IC and caps, packed ---
+  const fingerGeo = G(new THREE.BoxGeometry(0.07, 0.32, 0.03))
+  for (let i = 0; i < 8; i++) {
+    M(fingerGeo, matGold, 1.3 + i * 0.1, -2.35, LOW + 0.02) // top -2.19
+    M(fingerGeo, matGold, 1.3 + i * 0.1, -1.7, LOW + 0.02) // top -1.54
+  }
+  M(G(frontZeroed(roundedRect(0.58, 0.44, 0.05), 0.12, 0.02)), matShield, 1.5, -2.55, TALL) // top -2.33
+  M(chipBig, matIc, 2.32, -1.95, LOW + 0.04) // top -1.74
+  M(pinGeo, matGold, 2.32, -1.74, LOW + 0.02)
+  M(pinGeo, matGold, 2.32, -2.16, LOW + 0.02)
+  cap(2.5, -1.5) // top -1.4
+  cap(1.15, -1.55) // top -1.45
+
+  // --- top frame: a slim board with the selfie-camera module, sensor, earpiece bar + SMD row + glyph.
+  // Gated to showcase contexts; the live screen can grow up into this band, so a played skin skips it. ---
+  if (full) {
+    const topBoard = G(new THREE.ShapeGeometry(roundedRect(5.4, 0.28, 0.07), 12))
+    setBoxUVs(topBoard)
+    M(topBoard, matPcb, 0, 5.82, PCB_Z) // bottom 5.68 (screen top ~5.63)
+    // camera module: black housing + glassy lens + a metal trim ring
+    M(G(frontZeroed(roundedRect(0.36, 0.22, 0.04), 0.1, 0.01)), matIc, -0.25, 5.82, TALL)
+    M(G(new THREE.CylinderGeometry(0.075, 0.075, 0.07, 24).rotateX(Math.PI / 2)), matCap, -0.25, 5.82, TALL + 0.1)
+    M(G(new THREE.TorusGeometry(0.075, 0.015, 8, 24)), matMetal, -0.25, 5.82, TALL + 0.12)
+    // proximity sensor, a brushed earpiece bar, an SMD row and a side connector
+    M(G(new THREE.CylinderGeometry(0.04, 0.04, 0.05, 16).rotateX(Math.PI / 2)), matCap, 0.0, 5.82, TALL + 0.05)
+    M(G(new THREE.BoxGeometry(0.9, 0.045, 0.03)), matMetal, 0.85, 5.85, LOW + 0.04)
+    for (let i = 0; i < 6; i++) M(r04, i % 2 ? matCap : matMetal, -2.1 + i * 0.24, 5.79, LOW + 0.02)
+    M(G(frontZeroed(roundedRect(0.28, 0.14, 0.03), 0.06, 0.008)), matAccent, 2.3, 5.82, LOW + 0.05)
+  }
+
+  // --- glyph lighting: the signature Nothing light. Brighter emissive runs down both frames, a ring
+  // around the charging coil and a bar along the bottom edge. All clear of the screen. ---
+  const led = (w: number, h: number, x: number, y: number) =>
+    M(G(frontZeroed(roundedRect(w, h, Math.min(w, h) / 2), 0.04, 0.01)), matLed, x, y, LED_Z)
+  led(0.1, 7.4, -FRAME_X, 1.1) // left frame glyph
+  led(0.1, 5.4, FRAME_X, 2.1) // right frame glyph
+  led(2.4, 0.1, -0.2, -5.88) // bottom-edge glyph bar
+  M(G(new THREE.TorusGeometry(1.07, 0.035, 10, 80)), matLed, 1.55, -4.5, LED_Z) // glyph ring around the coil
+  if (full) led(2.8, 0.09, 0, 5.7) // a glyph run along the top, in showcase
+
+  // --- hardware screws dotted around every board (all clear of the screen) ---
+  const screwGeo = G(new THREE.CylinderGeometry(0.07, 0.085, 0.05, 16).rotateX(Math.PI / 2))
+  for (const [sx, sy] of [
+    [-2.95, -3.2], [2.95, -5.75], [-2.95, -5.75], [2.6, -1.35], [1.2, -2.5],
+    [-FRAME_X, 5.0], [-FRAME_X, -2.9], [FRAME_X, 4.9], [FRAME_X, -0.8],
+  ] as [number, number][])
+    M(screwGeo, matMetal, sx, sy, LOW + 0.04)
+
+  function dispose() {
+    trash.forEach((t) => t.dispose())
+    device.remove(group)
+  }
+
+  return { group, dispose }
 }

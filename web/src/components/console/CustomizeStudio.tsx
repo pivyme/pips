@@ -82,7 +82,6 @@ export function CustomizeStudio({
       {ready && (
         <ConsoleCanvas
           customize
-          tuner={import.meta.env.DEV}
           active={active}
           theme={theme}
           outro={exiting}

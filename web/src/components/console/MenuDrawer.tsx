@@ -12,7 +12,7 @@ import {
   useState,
 } from 'react'
 import { useRouter, useRouterState } from '@tanstack/react-router'
-import type { AnimationEvent, ReactNode } from 'react'
+import type { AnimationEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { haptic } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
@@ -49,6 +49,13 @@ export function MenuDrawer({
   const closeTimerRef = useRef<number | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const scrollPositionsRef = useRef(new Map<string, number>())
+  // Drag-to-dismiss: the grabber pulls the whole sheet down, native bottom-sheet style. We drive the
+  // transform straight on the node (no per-move re-render) and only flip React state on release.
+  const sheetRef = useRef<HTMLDivElement>(null)
+  const scrimRef = useRef<HTMLDivElement>(null)
+  const restedRef = useRef(false) // true once the rise settles, so a drag never fights the open
+  const draggedRef = useRef(false) // distinguishes a real drag from a plain tap on the grabber
+  const dragRef = useRef({ active: false, startY: 0, dy: 0, maxDy: 0, lastY: 0, lastT: 0, vel: 0 })
 
   // Each route owns its scroll viewport, so changing the destination cannot move the outgoing
   // page before the browser snapshots it. Popping back restores that route's previous position.
@@ -98,6 +105,112 @@ export function MenuDrawer({
   )
   const close = useCallback(() => closeTo(returnTo), [closeTo, returnTo])
 
+  // Reduced motion skips the rise keyframe, so there's no animationend to mark it settled: treat the
+  // sheet as ready right away so the grabber drag still works.
+  useEffect(() => {
+    if (reduced) restedRef.current = true
+  }, [reduced])
+
+  // Fly the sheet the rest of the way down from wherever the finger left it, then route.
+  const dragClose = useCallback(
+    (h: number) => {
+      if (closingRef.current) return
+      closingRef.current = true
+      haptic('selection')
+      const el = sheetRef.current
+      if (el) {
+        el.style.transition = 'transform 260ms cubic-bezier(0.32,0.72,0,1)'
+        el.style.transform = `translateY(${h + 48}px)`
+      }
+      const sc = scrimRef.current
+      if (sc) {
+        sc.style.transition = 'opacity 240ms ease'
+        sc.style.opacity = '0'
+      }
+      closeTargetRef.current = returnTo
+      closeTimerRef.current = window.setTimeout(finishClose, 270)
+    },
+    [finishClose, returnTo],
+  )
+
+  // Released short of the threshold: ease back to fully open.
+  const snapBack = useCallback(() => {
+    const el = sheetRef.current
+    if (el) {
+      el.style.transition = 'transform 300ms cubic-bezier(0.22,1,0.36,1)'
+      el.style.transform = 'translateY(0)'
+    }
+    const sc = scrimRef.current
+    if (sc) {
+      sc.style.transition = 'opacity 280ms ease'
+      sc.style.opacity = '1'
+    }
+  }, [])
+
+  const onGrabberPointerDown = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!restedRef.current || closingRef.current) return
+    const d = dragRef.current
+    d.active = true
+    d.startY = e.clientY
+    d.dy = 0
+    d.maxDy = 0
+    d.lastY = e.clientY
+    d.lastT = e.timeStamp
+    d.vel = 0
+    draggedRef.current = false
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      // capture is best-effort
+    }
+    const el = sheetRef.current
+    if (el) el.style.transition = 'none'
+    const sc = scrimRef.current
+    if (sc) {
+      sc.style.animation = 'none'
+      sc.style.transition = 'none'
+    }
+  }, [])
+
+  const onGrabberPointerMove = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = dragRef.current
+    if (!d.active) return
+    let dy = e.clientY - d.startY
+    if (dy < 0) dy = dy * 0.25 // rubber-band the upward overshoot, this sheet only closes downward
+    d.dy = dy
+    d.maxDy = Math.max(d.maxDy, Math.abs(dy))
+    const dt = Math.max(1, e.timeStamp - d.lastT)
+    d.vel = (e.clientY - d.lastY) / dt
+    d.lastY = e.clientY
+    d.lastT = e.timeStamp
+    if (d.maxDy > 6) draggedRef.current = true
+    const shown = Math.max(0, dy)
+    const el = sheetRef.current
+    if (el) el.style.transform = `translateY(${shown}px)`
+    const sc = scrimRef.current
+    const h = el?.offsetHeight || 1
+    if (sc) sc.style.opacity = String(Math.max(0, 1 - shown / h))
+  }, [])
+
+  const onGrabberPointerUp = useCallback(
+    (e: ReactPointerEvent<HTMLButtonElement>) => {
+      const d = dragRef.current
+      if (!d.active) return
+      d.active = false
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch {
+        // already released
+      }
+      if (!draggedRef.current) return // a tap, let the grabber's onClick close it
+      const h = sheetRef.current?.offsetHeight || 800
+      // Past a quarter of the sheet, or a firm downward flick, dismiss. Otherwise spring back.
+      if (d.dy > h * 0.25 || d.vel > 0.7) dragClose(h)
+      else snapBack()
+    },
+    [dragClose, snapBack],
+  )
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close()
@@ -116,13 +229,14 @@ export function MenuDrawer({
   )
 
   const handleSheetAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
-    if (
-      closingRef.current &&
-      event.currentTarget === event.target &&
-      event.animationName === 'drawer-fall'
-    ) {
-      finishClose()
+    if (event.currentTarget !== event.target) return
+    // Rise done: the keyframe no longer holds the transform (fill: backwards), so inline transform
+    // from the grabber drag takes over from here. Just mark it ready.
+    if (event.animationName === 'drawer-rise') {
+      restedRef.current = true
+      return
     }
+    if (closingRef.current && event.animationName === 'drawer-fall') finishClose()
   }
 
   return (
@@ -133,24 +247,36 @@ export function MenuDrawer({
     >
       {/* The console behind, dimmed and blurred. Fades in with the sheet and back out on close. Tap to close. */}
       <div
+        ref={scrimRef}
         className="drawer-scrim absolute inset-0 bg-black/22 backdrop-blur-[9px]"
         onClick={close}
         aria-hidden
       />
 
       <div
+        ref={sheetRef}
         role="dialog"
         aria-modal="true"
         aria-label="Menu"
         onAnimationEnd={handleSheetAnimationEnd}
         className="drawer-sheet absolute inset-x-0 bottom-0 top-[10%] flex flex-col overflow-hidden rounded-t-[28px] border-x border-t border-white/10 bg-black shadow-[0_-24px_64px_-24px_rgba(0,0,0,0.95)]"
       >
-        {/* Grabber: tap to dismiss. */}
+        {/* Grabber: drag down to dismiss, or tap. touch-none so the drag never fights native scroll. */}
         <button
           type="button"
-          onClick={close}
+          onClick={() => {
+            if (draggedRef.current) {
+              draggedRef.current = false
+              return
+            }
+            close()
+          }}
+          onPointerDown={onGrabberPointerDown}
+          onPointerMove={onGrabberPointerMove}
+          onPointerUp={onGrabberPointerUp}
+          onPointerCancel={onGrabberPointerUp}
           aria-label="Close menu"
-          className="flex h-5 w-full shrink-0 items-center justify-center"
+          className="flex h-9 w-full shrink-0 touch-none cursor-grab items-center justify-center active:cursor-grabbing"
         >
           <span className="h-1.5 w-10 rounded-full bg-text-3/60" />
         </button>

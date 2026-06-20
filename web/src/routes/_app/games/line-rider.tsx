@@ -3,14 +3,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Activity } from 'lucide-react'
 import { useConsoleControls } from '@/components/console/controls'
 import { GameReadout, GameScreen, GameStage, ScreenCRT } from '@/components/game/screen'
+import { MinigameBoard, useMinigameLeaderboard } from '@/components/game/MinigameBoard'
 import { RideEngine, type RideHud } from '@/components/game/rideEngine'
+import type { LeaderboardScoreEntry, MinigameSubmit } from '@/lib/api'
 import { haptic } from '@/lib/haptics'
 import { sound } from '@/lib/sound'
-import { useAuth } from '@/lib/auth'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
-import { getScores, submitScore, type ScoreEntry, type SubmitResult } from '@/lib/leaderboard'
 import { cnm } from '@/utils/style'
-import { displayHandle } from '@/utils/format'
 
 // Line Rider. A pure local arcade minigame (no Sui, no backend): a neon trend line scrolls in and
 // the thumbwheel rides a pip on it. Hug the line and your score climbs (faster the tighter you hug,
@@ -27,31 +26,30 @@ const EMPTY_HUD: RideHud = { score: 0, multiplier: 1, grip: 1, elapsed: 0, onLin
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US')
 
 export function LineRiderScreen() {
-  const { user } = useAuth()
   const reduced = useReducedMotion()
 
   const [phase, setPhase] = useState<Phase>('title')
   const [wheel, setWheel] = useState(CENTER)
   const [hud, setHud] = useState<RideHud>(EMPTY_HUD)
-  const [board, setBoard] = useState<ScoreEntry[]>(() => getScores(GAME))
-  const [result, setResult] = useState<SubmitResult | null>(null)
+  const { board, submit } = useMinigameLeaderboard(GAME)
+  const [over, setOver] = useState<{ score: number; result: MinigameSubmit | null } | null>(null)
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const engineRef = useRef<RideEngine | null>(null)
   const endRef = useRef<(score: number) => void>(() => {})
 
-  const name = displayHandle(user, 'You')
   const best = board[0]?.score ?? 0 // the high score to chase (top of the board)
 
   // The run ends from inside the engine loop. Kept in a ref so the engine (built once) always calls
-  // the latest closure with the current display name.
+  // the latest closure. Show the score instantly; the rank + refreshed board land when submit resolves.
   endRef.current = (score: number) => {
     haptic('error')
     sound('lose')
-    const res = submitScore(GAME, name, score)
-    setResult(res)
-    setBoard(res.scores)
+    setOver({ score, result: null })
     setPhase('over')
+    void submit(score)
+      .then((result) => setOver((o) => (o ? { ...o, result } : { score, result })))
+      .catch(() => {})
   }
 
   // Build the engine once the canvas is mounted; it lives for the screen and is reused across runs.
@@ -75,7 +73,7 @@ export function LineRiderScreen() {
   }, [])
 
   const start = useCallback(() => {
-    setResult(null)
+    setOver(null)
     setHud(EMPTY_HUD)
     setWheel(CENTER) // recenter so the run opens with the pip on the (flat) line
     setPhase('playing')
@@ -135,13 +133,13 @@ export function LineRiderScreen() {
       <ScreenCRT />
 
       {phase === 'title' && <TitleOverlay best={best} board={board} />}
-      {phase === 'over' && result && <OverOverlay result={result} />}
+      {phase === 'over' && over && <OverOverlay over={over} board={board} />}
     </GameScreen>
   )
 }
 
 // Title: the pitch, the board, the prompt. Full-screen over the canvas.
-function TitleOverlay({ best, board }: { best: number; board: ScoreEntry[] }) {
+function TitleOverlay({ best, board }: { best: number; board: LeaderboardScoreEntry[] }) {
   return (
     <div className="absolute inset-0 z-20 flex flex-col justify-center bg-black/93 p-[var(--screen-rim,24px)] backdrop-blur-[1px]">
       <div className="flex items-center gap-2.5">
@@ -152,7 +150,7 @@ function TitleOverlay({ best, board }: { best: number; board: ScoreEntry[] }) {
         Spin the wheel to keep the dot on the line. The longer you ride it, the faster your score climbs. Don't fall off.
       </p>
       <div className="mt-5 w-full">
-        <Board rows={board.slice(0, 5)} />
+        <MinigameBoard rows={board.slice(0, 5)} />
       </div>
       <div className="mt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-text-3">
         Best <span className="tnum text-text">{fmt(best)}</span> · press the <span className="text-brand-500">big button</span>
@@ -161,48 +159,25 @@ function TitleOverlay({ best, board }: { best: number; board: ScoreEntry[] }) {
   )
 }
 
-// Game over: the banner, the final score, where it landed. Shown after every run.
-function OverOverlay({ result }: { result: SubmitResult }) {
-  const you = result.scores.find((s) => s.you)
-  const score = you?.score ?? 0
-  const placed = result.rank > 0
+// Game over: the banner, the final score, where it landed globally. The score shows instantly; the
+// rank + refreshed board fill in when the submit resolves (board is the pre-run fallback meanwhile).
+function OverOverlay({ over, board }: { over: { score: number; result: MinigameSubmit | null }; board: LeaderboardScoreEntry[] }) {
+  const { score, result } = over
+  const rows = result?.entries ?? board
+  const isBest = result?.isBest ?? false
+  const banner = isBest ? '★ New best' : result ? (result.rank <= 10 ? `Ranked #${result.rank}` : `Rank #${result.rank}`) : 'Run over'
+  const sub = isBest ? 'Top of the board' : result ? (result.rank <= 10 ? 'On the board' : 'Keep climbing') : 'Saving score…'
   return (
     <div className="absolute inset-0 z-20 flex flex-col justify-center bg-black/95 p-[var(--screen-rim,24px)]">
-      <div className={cnm('text-[11px] font-bold uppercase tracking-[0.2em]', result.isBest ? 'text-brand-500' : 'text-text-3')}>
-        {result.isBest ? '★ New best' : placed ? `Ranked #${result.rank}` : 'Run over'}
-      </div>
+      <div className={cnm('text-[11px] font-bold uppercase tracking-[0.2em]', isBest ? 'text-brand-500' : 'text-text-3')}>{banner}</div>
       <div className="tnum text-5xl font-extrabold leading-none text-text">{fmt(score)}</div>
-      <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-text-3">
-        {result.isBest ? 'Top of the board' : placed ? 'On the board' : `${fmt(result.prevBest)} to place`}
-      </div>
+      <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-text-3">{sub}</div>
       <div className="mt-5 w-full">
-        <Board rows={result.scores.slice(0, 6)} />
+        <MinigameBoard rows={rows.slice(0, 6)} />
       </div>
       <div className="mt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-text-3">
         Press the <span className="text-brand-500">big button</span> to play again
       </div>
-    </div>
-  )
-}
-
-// The shared leaderboard list. The player's just-set row glows.
-function Board({ rows }: { rows: ScoreEntry[] }) {
-  return (
-    <div className="flex w-full flex-col font-mono">
-      {rows.map((r, i) => (
-        <div
-          key={`${r.name}-${r.at}`}
-          className={cnm(
-            'flex items-center gap-3 py-1.5 text-[16px] tracking-[0.04em]',
-            r.you ? 'text-brand-500' : 'text-text-2',
-          )}
-        >
-          <span className="tnum w-6 text-text-3">{i + 1}</span>
-          <span className="flex-1 truncate font-bold uppercase">{r.you ? 'You' : r.name}</span>
-          <span className="tnum font-bold">{fmt(r.score)}</span>
-          {r.you && <span className="text-brand-500">◀</span>}
-        </div>
-      ))}
     </div>
   )
 }
