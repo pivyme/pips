@@ -98,10 +98,10 @@ function CopyBtn({ text, label }: { text: string; label?: string }) {
         try {
           await navigator.clipboard.writeText(text)
           setDone(true)
-          toast.success(label ?? 'Copied')
+          toast.success(label ?? 'Copied', { id: 'wallet-copy' })
           setTimeout(() => setDone(false), 1200)
         } catch {
-          toast.error('Copy failed')
+          toast.error('Copy failed', { id: 'wallet-copy' })
         }
       }}
       className="inline-grid size-7 shrink-0 place-items-center rounded-lg text-text-2 transition hover:bg-surface-2 hover:text-text"
@@ -201,7 +201,7 @@ function Inner() {
     savePrivKey(key)
     setPk(key)
     setShowPk(true)
-    toast.success('New key generated. Fund it from the faucet below.')
+    toast.success('New key generated. Fund it from the faucet below.', { id: 'wallet-key' })
   }
   const onImport = () => {
     const v = importInput.trim()
@@ -210,53 +210,53 @@ function Inner() {
       savePrivKey(v)
       setPk(v)
       setImportInput('')
-      toast.success('Key imported')
+      toast.success('Key imported', { id: 'wallet-key' })
     } catch {
-      toast.error('Not a valid suiprivkey key')
+      toast.error('Not a valid suiprivkey key', { id: 'wallet-key' })
     }
   }
   const onClear = () => {
     clearPrivKey()
     setPk(null)
     setShowPk(false)
-    toast.success('Key removed from this browser')
+    toast.success('Key removed from this browser', { id: 'wallet-key' })
   }
 
   const selected = balances?.find((b) => b.coinType === sendType)
   const sendDecimals = sendType === SUI_TYPE ? SUI_DECIMALS : (selected?.decimals ?? 0)
 
   const onSend = async () => {
-    if (!pk) return toast.error('Load a key to send (watch-only address cannot sign)')
-    if (!isAddress(sendTo)) return toast.error('Enter a valid recipient address')
+    if (!pk) return toast.error('Load a key to send (watch-only address cannot sign)', { id: 'wallet-send' })
+    if (!isAddress(sendTo)) return toast.error('Enter a valid recipient address', { id: 'wallet-send' })
     let amountRaw: bigint
     try {
       amountRaw = parseToRaw(sendAmt, sendDecimals)
     } catch (e) {
-      return toast.error(errMsg(e))
+      return toast.error(errMsg(e), { id: 'wallet-send' })
     }
-    if (amountRaw <= 0n) return toast.error('Amount must be greater than zero')
+    if (amountRaw <= 0n) return toast.error('Amount must be greater than zero', { id: 'wallet-send' })
     setSending(true)
     try {
       const digest = await sendCoin({ client, pk, coinType: sendType, recipient: sendTo.trim(), amountRaw })
-      toast.success(`Sent. ${short(digest, 8, 6)}`)
+      toast.success(`Sent. ${short(digest, 8, 6)}`, { id: 'wallet-send' })
       setSendAmt('')
       await refreshBalances()
     } catch (e) {
-      toast.error(errMsg(e))
+      toast.error(errMsg(e), { id: 'wallet-send' })
     } finally {
       setSending(false)
     }
   }
 
   const onFaucet = async () => {
-    if (!address) return toast.error('Load or watch an address first')
+    if (!address) return toast.error('Load or watch an address first', { id: 'wallet-faucet' })
     setBusy(true)
     try {
       await requestFaucet(faucetUrl, address)
-      toast.success('Faucet request sent. Refreshing…')
+      toast.success('Faucet request sent. Refreshing…', { id: 'wallet-faucet' })
       setTimeout(() => void refreshBalances(), 1500)
     } catch (e) {
-      toast.error(errMsg(e))
+      toast.error(errMsg(e), { id: 'wallet-faucet' })
     } finally {
       setBusy(false)
     }

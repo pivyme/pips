@@ -22,7 +22,6 @@ import { api, streamPlay, type PlayDTO, type PlayStatus } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { explorerTxUrl } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
-import { notifyUnlocks } from '@/lib/achievements'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
 import { formatStringToNumericDecimals } from '@/utils/format'
@@ -181,7 +180,7 @@ export function RangeScreen() {
   }
 
   const finishResult = useCallback(
-    (final: PlayDTO, unlocked: string[]) => {
+    (final: PlayDTO) => {
       finalized.current = true
       wasInside.current = null
       setPlay(final)
@@ -196,7 +195,6 @@ export function RangeScreen() {
       haptic(final.status === 'lost' ? 'error' : 'success')
       if (final.status === 'lost') rangeLose()
       else rangeWin()
-      notifyUnlocks(unlocked)
       void refresh()
       // Settle/cashout moved the record: freshen stats (streak), achievements, and history.
       for (const key of ['stats', 'achievements', 'plays'])
@@ -225,9 +223,9 @@ export function RangeScreen() {
         })
         if (tick.status === 'error' && !finalized.current) {
           finalized.current = true
-          toast.error(
-            'Could not open that play. Your chips are safe, play again.',
-          )
+          toast.error('Could not open that play. Your chips are safe, play again.', {
+            id: 'range-play-error',
+          })
           clearResetTimer()
           setPlay(null)
           setLive(null)
@@ -238,7 +236,7 @@ export function RangeScreen() {
           finalized.current = true
           void api
             .getPlay(play.id)
-            .then(({ play: final }) => finishResult(final, []))
+            .then(({ play: final }) => finishResult(final))
             .catch(() => setPhase('idle'))
         }
       },
@@ -262,7 +260,7 @@ export function RangeScreen() {
   const doPlay = useCallback(async () => {
     if (phase !== 'idle' && phase !== 'result') return
     if (!canPlay) {
-      toast.error('No live market right now. Try again in a sec.')
+      toast.error('No live market right now. Try again in a sec.', { id: 'no-market' })
       return
     }
     clearResetTimer()
@@ -298,14 +296,14 @@ export function RangeScreen() {
     setPhase('cashing')
     haptic('rigid')
     try {
-      const { play: p, unlocked } = await cashOut(play.id)
-      finishResult(p, unlocked)
+      const { play: p } = await cashOut(play.id)
+      finishResult(p)
     } catch (e) {
       // The buzzer settle may have beaten the cash-out. Reconcile against the chain before complaining.
       try {
         const { play: final } = await api.getPlay(play.id)
         if (TERMINAL.has(final.status)) {
-          finishResult(final, [])
+          finishResult(final)
           return
         }
       } catch {

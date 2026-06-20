@@ -134,7 +134,7 @@ export function CustomizeStudio({
               label="Share"
               onPress={() => {
                 haptic('selection')
-                toast('Sharing your rig is coming soon')
+                toast('Sharing your rig is coming soon', { id: 'share-rig' })
               }}
             >
               <Share2 className="h-[22px] w-[22px]" strokeWidth={2.4} />

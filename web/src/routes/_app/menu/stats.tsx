@@ -30,7 +30,7 @@ function StatsScreen() {
       haptic('success')
     } catch {
       const { default: toast } = await import('react-hot-toast')
-      toast.error('Could not make your card. Try again.')
+      toast.error('Could not make your card. Try again.', { id: 'share-card' })
     } finally {
       setSharing(false)
     }

@@ -53,14 +53,14 @@ function WithdrawScreen() {
       })
       await refresh()
       haptic('success')
-      toast.success('Withdrawal sent')
+      toast.success('Withdrawal sent', { id: 'withdraw' })
       prepareMenuTransition('back')
       void navigate({ to: '/menu', viewTransition: true })
     } catch (e) {
       haptic('error')
-      toast.error(
-        e instanceof ApiError ? e.message : 'Could not withdraw right now',
-      )
+      toast.error(e instanceof ApiError ? e.message : 'Could not withdraw right now', {
+        id: 'withdraw',
+      })
       setSubmitting(false)
     }
   }

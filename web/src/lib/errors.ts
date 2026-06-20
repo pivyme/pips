@@ -21,5 +21,8 @@ export function friendlyError(e: unknown): string {
 }
 
 export function toastError(e: unknown): void {
-  toast.error(friendlyError(e))
+  // Key the toast by error code (or the message for unknowns) so the same error replaces its own
+  // toast instead of stacking. A retry loop hitting one failure shows one toast, not a wall of them.
+  const id = e instanceof ApiError && e.code ? `err-${e.code}` : 'err-generic'
+  toast.error(friendlyError(e), { id })
 }

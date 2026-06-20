@@ -8,6 +8,7 @@ import { RangeScreen } from './_app/games/range'
 import { LineRiderScreen } from './_app/games/line-rider'
 import { CandleHopScreen } from './_app/games/candle-hop'
 import { AppFrame } from '@/components/console/AppFrame'
+import { AchievementCelebration } from '@/components/AchievementCelebration'
 import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '@/components/console/controls'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { MenuDrawer } from '@/components/console/MenuDrawer'
@@ -383,6 +384,7 @@ function AppLayout() {
         </ConsoleControlsProvider>
       </AppFrame>
       {loadingScreen}
+      <AchievementCelebration />
     </>
   )
 }

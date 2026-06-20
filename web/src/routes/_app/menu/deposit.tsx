@@ -53,7 +53,7 @@ function DepositScreen() {
       toast.success('Address copied', { id: 'copy-address' })
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      toast.error('Could not copy the address')
+      toast.error('Could not copy the address', { id: 'copy-address' })
     }
   }
 

@@ -14,7 +14,6 @@ import { slotSpin, slotTick, slotLock, slotPick, startLuckyBgm, stopLuckyBgm, lu
 import { api, streamPlay, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { toastError } from '@/lib/errors'
-import { notifyUnlocks } from '@/lib/achievements'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
 import { formatStringToNumericDecimals } from '@/utils/format'
@@ -220,7 +219,7 @@ export function LuckyScreen() {
   }
 
   const finishResult = useCallback(
-    (final: PlayDTO, unlocked: string[]) => {
+    (final: PlayDTO) => {
       finalized.current = true
       setPlay(final)
       setLive({ markValue: final.markValue, pnl: final.pnl, multiplier: final.multiplier, status: final.status })
@@ -230,7 +229,6 @@ export function LuckyScreen() {
       if (final.status === 'won') luckyWin()
       else if (final.status === 'cashed_out') luckyCashout()
       else luckyLose()
-      notifyUnlocks(unlocked)
       void refresh()
       // Settle/cashout moved the record: freshen stats (streak), achievements, and history.
       for (const key of ['stats', 'achievements', 'plays']) void qc.invalidateQueries({ queryKey: [key] })
@@ -249,7 +247,9 @@ export function LuckyScreen() {
       if (finalized.current) return
       if (status === 'error') {
         finalized.current = true
-        toast.error('Could not open that play. Your chips are safe, spin again.')
+        toast.error('Could not open that play. Your chips are safe, spin again.', {
+          id: 'lucky-play-error',
+        })
         clearResetTimer()
         setPlay(null)
         setLive(null)
@@ -260,7 +260,7 @@ export function LuckyScreen() {
         finalized.current = true
         void api
           .getPlay(playId)
-          .then(({ play: final }) => finishResult(final, []))
+          .then(({ play: final }) => finishResult(final))
           .catch(() => setPhase('idle'))
       }
     },
@@ -400,7 +400,7 @@ export function LuckyScreen() {
     // re-spun straight from the result. That keeps the post-round always landing on the 3-up stack.
     if (phase !== 'idle') return
     if (!canPlay) {
-      toast.error('No live market right now. Try again in a sec.')
+      toast.error('No live market right now. Try again in a sec.', { id: 'no-market' })
       return
     }
     clearResetTimer()
@@ -444,17 +444,17 @@ export function LuckyScreen() {
     haptic('rigid')
     const started = Date.now()
     try {
-      const { play: p, unlocked } = await cashOut(play.id)
+      const { play: p } = await cashOut(play.id)
       // Hold the settling beat open so it always reads, even when the redeem lands in ~120ms (demo).
       const wait = CASHOUT_SETTLE_MS - (Date.now() - started)
       if (wait > 0) await new Promise((r) => setTimeout(r, wait))
-      finishResult(p, unlocked)
+      finishResult(p)
     } catch (e) {
       // The buzzer may have beaten the cash-out. Reconcile against the chain before complaining.
       try {
         const { play: final } = await api.getPlay(play.id)
         if (TERMINAL.has(final.status)) {
-          finishResult(final, [])
+          finishResult(final)
           return
         }
       } catch {

@@ -109,6 +109,59 @@ export function welcomeJingle(): void {
   blip(ac, 2093.0, t + 0.62, 0.25, 0.02) // C7 air
 }
 
+// Achievement unlocked: an elegant little fanfare, fancy not silly. A deep bass swell anchors a lush
+// Cmaj9 chord (the maj7 + 9th are the "fancy" color) that blooms like a slow harp roll on the warm
+// bell voice, lifted by one soft high shimmer. Refined, weighted with bass, no arcade sweep. Fired
+// when the unlock overlay appears (always over a real gesture, a play just settled).
+export function achievementUnlock(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+
+  // Bass foundation: a deep sub plus a filtered low octave for body. Swells in soft, holds, fades long,
+  // the weight under the chord (felt more than heard), never a thud.
+  const sub = ac.createOscillator()
+  const subG = ac.createGain()
+  sub.type = 'sine'
+  sub.frequency.setValueAtTime(65.41, t) // C2
+  subG.gain.setValueAtTime(0.0001, t)
+  subG.gain.exponentialRampToValueAtTime(0.2, t + 0.13)
+  subG.gain.exponentialRampToValueAtTime(0.0001, t + 1.6)
+  sub.connect(subG).connect(out(ac))
+  sub.start(t)
+  sub.stop(t + 1.65)
+
+  const low = ac.createOscillator()
+  const lowG = ac.createGain()
+  const lowF = ac.createBiquadFilter()
+  low.type = 'triangle'
+  low.frequency.setValueAtTime(130.81, t) // C3
+  lowF.type = 'lowpass'
+  lowF.frequency.value = 520
+  lowG.gain.setValueAtTime(0.0001, t)
+  lowG.gain.exponentialRampToValueAtTime(0.085, t + 0.15)
+  lowG.gain.exponentialRampToValueAtTime(0.0001, t + 1.25)
+  low.connect(lowF).connect(lowG).connect(out(ac))
+  low.start(t)
+  low.stop(t + 1.3)
+
+  // The chord over the C bass: E G B D = Cmaj9, the lush "fancy" color. Bloomed a few ms apart like a
+  // soft harp roll so it reads as one rich chord, not an arpeggio. Warm bell voice, long mellow tails.
+  const chord: Array<[number, number]> = [
+    [329.63, 0.0], // E4  (3rd)
+    [392.0, 0.06], // G4  (5th)
+    [493.88, 0.12], // B4  (maj7)
+    [587.33, 0.19], // D5  (9th)
+  ]
+  for (const [freq, dt] of chord) bell(ac, freq, t + dt, 1.1, 0.05)
+
+  // One gentle high shimmer a beat later for the lift, kept quiet so it lands refined, not twinkly.
+  bell(ac, 987.77, t + 0.4, 0.9, 0.03) // B5
+  bell(ac, 1318.51, t + 0.52, 0.7, 0.016) // E6, a whisper of air
+}
+
 export function sound(kind: Sound): void {
   if (!enabled) return
   const ac = audio()
