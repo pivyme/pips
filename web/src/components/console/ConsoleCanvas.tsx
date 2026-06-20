@@ -1011,7 +1011,7 @@ export default function ConsoleCanvas({
       g.textBaseline = 'middle'
       // 1) Bloom: a couple of tight blurred gold passes for a restrained halo around the glyphs. No white.
       g.save()
-      g.shadowColor = '#ffb31e'
+      g.shadowColor = '#ff9d12'
       for (const [blur, alpha] of [
         [26, 0.3],
         [12, 0.6],
@@ -1019,7 +1019,7 @@ export default function ConsoleCanvas({
       ] as const) {
         g.shadowBlur = blur
         g.globalAlpha = alpha
-        g.fillStyle = '#ffc016'
+        g.fillStyle = '#ffa820'
         g.fillText(text, X, Y)
       }
       g.restore()
@@ -1033,11 +1033,11 @@ export default function ConsoleCanvas({
       // 3) Solid gold body, then a brighter-gold core (still yellow, no white blow-out).
       g.globalCompositeOperation = 'source-over'
       g.globalAlpha = 1
-      g.fillStyle = '#ffc016'
+      g.fillStyle = '#ffa820'
       g.fillText(text, X, Y)
       g.globalCompositeOperation = 'lighter'
       g.globalAlpha = 0.55
-      g.fillStyle = '#ffd95e'
+      g.fillStyle = '#ffc257'
       g.fillText(text, X, Y)
       // 4) Scanlines, confined to the lit pixels (source-atop only paints over existing content).
       g.globalCompositeOperation = 'source-atop'
@@ -1070,9 +1070,9 @@ export default function ConsoleCanvas({
       gc.width = gc.height = GS
       const gg = gc.getContext('2d')!
       const grad = gg.createRadialGradient(GS / 2, GS / 2, 0, GS / 2, GS / 2, GS / 2)
-      grad.addColorStop(0, 'rgba(255,193,22,0.55)')
-      grad.addColorStop(0.3, 'rgba(255,172,12,0.22)')
-      grad.addColorStop(1, 'rgba(255,150,0,0)')
+      grad.addColorStop(0, 'rgba(255,158,26,0.55)')
+      grad.addColorStop(0.3, 'rgba(255,146,12,0.22)')
+      grad.addColorStop(1, 'rgba(255,138,0,0)')
       gg.fillStyle = grad
       gg.fillRect(0, 0, GS, GS)
       const glowTex = new THREE.CanvasTexture(gc)
