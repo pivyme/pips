@@ -432,33 +432,39 @@ export function createBackDetails(
   const trash: { dispose(): void }[] = []
   const tmp = new THREE.Matrix4()
 
-  /* side grip — a ribbed patch down each side wall: short vertical grooves, kept just inside the
-     silhouette so they read as recessed ribs from a 3/4 angle and stay hidden front-on (the front is
-     untouched). Lives on `device` and rides the body center; re-seated with the seam when it grows. */
+  const WALL = (bodyW + 0.16) / 2 // the side wall sits ~here; features crown here to read without poking
+
+  /* side grip — a ribbed patch down the flat back-shell wall on each side: short vertical ribs whose
+     crown sits right at the wall surface, so they read as a grip texture from any side angle while the
+     crown never passes the front silhouette (the front stays untouched). Lives on `device` and rides the
+     body center; re-seated with the seam when it grows. */
   const gripGroup = new THREE.Group()
   device.add(gripGroup)
-  const grooveGeo = new THREE.CapsuleGeometry(0.022, 1.9, 4, 10) // capsule axis is Y → a vertical rib
+  const ribR = 0.03
+  const grooveGeo = new THREE.CapsuleGeometry(ribR, 1.6, 4, 12) // capsule axis is Y → a vertical rib
   trash.push(grooveGeo)
-  const GRIP_X = (bodyW + 0.16) / 2 - 0.05 // a hair inside the side wall so it never breaks the front
+  const GRIP_X = WALL - ribR // crown flush with the wall
   for (const side of [-1, 1])
-    for (const gz of [-0.45, -0.68, -0.91, -1.14, -1.37]) {
-      const rib = new THREE.Mesh(grooveGeo, mats.seam)
+    for (const gz of [-0.82, -1.04, -1.26, -1.48, -1.7]) {
+      const rib = new THREE.Mesh(grooveGeo, mats.recess)
       rib.position.set(side * GRIP_X, 0, gz)
       gripGroup.add(rib)
     }
 
-  /* parting seam — a thin recessed line on the body outline, slightly inset from the full silhouette so
-     it reads as a groove (and stays hidden behind the body when the device is seen front-on). The tube
-     follows the rounded-rect perimeter; rebuilt when the height grows. Lives on `device`, not the back
-     panel, so it shows on the side through the whole spin, not only when flipped. */
+  /* parting seam — a recessed line on the body outline, its crown at the side-wall surface so it reads
+     as a crisp parting groove, yet still tucked under the front silhouette. Follows the rounded-rect
+     perimeter; rebuilt when the height grows. Lives on `device`, not the back panel, so it shows on the
+     side through the whole spin, not only when flipped. */
   let seam: THREE.Mesh | null = null
+  const SEAM_R = 0.032
   function buildSeamGeo(ext: number) {
-    const outline = roundedRect(bodyW + 0.04, bodyH + ext + 0.04, corner + 0.02).getPoints(48)
+    const grow = (WALL - SEAM_R) * 2 - bodyW // outline so the tube crown lands on the wall
+    const outline = roundedRect(bodyW + grow, bodyH + ext + grow, corner + grow / 2).getPoints(48)
     const pts = outline.map((p) => new THREE.Vector3(p.x, p.y, 0))
     return new THREE.TubeGeometry(
       new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0),
       280,
-      0.03,
+      SEAM_R,
       8,
       true,
     )
@@ -498,37 +504,41 @@ export function createBackDetails(
     screwGroups.push(g)
   }
 
-  /* speaker grille — a mid-tone sunk pad with a grid of dark drilled dots, the grid trimmed to a
-     rounded cluster. One instanced mesh for the dots keeps it a single draw call. */
+  /* speaker grille — a thin shell-tone boss that stands proud of the back with a cluster of real
+     punched holes (true extrude openings, chamfered so the rims catch light), over a dark backing the
+     holes reveal. The depth is genuine: you look down each hole onto the dark cavity floor. */
   const grilleGroup = new THREE.Group()
   backPanel.add(grilleGroup)
   const padW = 1.9
   const padH = 0.92
-  const padGeo = new THREE.ShapeGeometry(roundedRect(padW, padH, 0.2), 24)
-  grilleGroup.add(new THREE.Mesh(padGeo, mats.seam))
-  trash.push(padGeo)
-  const dotGeo = new THREE.CircleGeometry(0.05, 14)
-  trash.push(dotGeo)
+  // dark cavity floor the holes look down onto, just proud of the rear face
+  const backing = new THREE.Mesh(
+    new THREE.ShapeGeometry(roundedRect(padW - 0.06, padH - 0.06, 0.17), 24),
+    mats.recess,
+  )
+  backing.position.z = -0.01
+  grilleGroup.add(backing)
+  trash.push(backing.geometry)
+  // the drilled boss: a rounded plate with the hole grid cut clean through, trimmed to a rounded cluster
+  const boss = roundedRect(padW, padH, 0.2)
   const cols = 9
   const rows = 4
   const dotPitch = 0.19
-  const dotPos: [number, number][] = []
   for (let r = 0; r < rows; r++)
     for (let c = 0; c < cols; c++) {
       const x = (c - (cols - 1) / 2) * dotPitch
       const y = (r - (rows - 1) / 2) * dotPitch
-      // ellipse trim so the cluster reads as a rounded speaker patch, not a hard rectangle
       if ((x / (padW / 2 - 0.18)) ** 2 + (y / (padH / 2 - 0.14)) ** 2 > 1) continue
-      dotPos.push([x, y])
+      boss.holes.push(circlePath(x, y, 0.046))
     }
-  const dots = new THREE.InstancedMesh(dotGeo, mats.recess, dotPos.length)
-  dotPos.forEach(([x, y], i) => {
-    tmp.makeTranslation(x, y, -0.004)
-    dots.setMatrixAt(i, tmp)
-  })
-  dots.instanceMatrix.needsUpdate = true
-  grilleGroup.add(dots)
-  trash.push(dots)
+  const bossGeo = frontZeroed(boss, 0.075, 0.009)
+  const bossMesh = new THREE.Mesh(bossGeo, mats.shell)
+  bossMesh.rotation.y = Math.PI // drilled face toward the viewer when the device is flipped
+  bossMesh.position.z = -0.072 // stands proud; the holes reveal the dark backing behind
+  bossMesh.castShadow = true
+  bossMesh.receiveShadow = true
+  grilleGroup.add(bossMesh)
+  trash.push(bossGeo)
 
   /* vent — a short centered run of dark louver slots near the bottom edge. */
   const ventGroup = new THREE.Group()
@@ -578,18 +588,6 @@ export function createBackDetails(
   labelGroup.add(lplane)
   trash.push(ltex, lplaneGeo, lmat)
 
-  /* strap eyelet — a dark hole ringed by a gunmetal grommet, seated on the upper-left edge. */
-  const strapGroup = new THREE.Group()
-  backPanel.add(strapGroup)
-  const holeGeo = new THREE.CircleGeometry(0.075, 18)
-  const grommetGeo = new THREE.TorusGeometry(0.12, 0.038, 10, 24)
-  trash.push(holeGeo, grommetGeo)
-  strapGroup.add(new THREE.Mesh(holeGeo, mats.recess))
-  const grommet = new THREE.Mesh(grommetGeo, mats.metal)
-  grommet.position.z = -0.01
-  grommet.castShadow = true
-  strapGroup.add(grommet)
-
   // Re-seat the corner/edge-anchored pieces against the current panel half-extents, and float every
   // decal just proud of the rear face (faceZ is the most-negative panel z, so proud is faceZ - eps).
   function place(halfW: number, halfH: number, faceZ: number) {
@@ -606,7 +604,6 @@ export function createBackDetails(
     grilleGroup.position.set(0, 2.55, faceZ - 0.003)
     ventGroup.position.set(0, -(halfH - 1.2), faceZ - 0.004)
     labelGroup.position.set(0, -2.75, faceZ - 0.012)
-    strapGroup.position.set(-(halfW - 0.42), halfH - 1.7, faceZ - 0.004)
   }
 
   function recolorInk(color: string) {

@@ -451,7 +451,7 @@ export default function ConsoleCanvas({
       device,
       backPanel,
       { bodyW: 6.2, bodyH: 11.95, corner: deviceCfg.corner, seamZ: -0.72, bodyCx: wx(585) },
-      { metal: matMetal, seam: matSeam, recess: matBackRecess },
+      { metal: matMetal, seam: matSeam, recess: matBackRecess, shell: matBack },
       '#7c7870',
     )
     backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
@@ -1186,8 +1186,20 @@ export default function ConsoleCanvas({
     let numberWheelTarget = 0
     let numberWheelInitialized = false
     let debugNumberValue = 1
-    let idleNumberValue = 2
     const idleStakes = [1, 5, 10, 25, 50, 100]
+    // The home wheel shares one persisted stake with the games (same ladder), so the value the user
+    // leaves it on stays put across navigation instead of resetting to a sample.
+    const STAKE_KEY = 'pips_stake_idx'
+    const readStakeIdx = () => {
+      try {
+        const raw = window.localStorage.getItem(STAKE_KEY)
+        const n = raw == null ? 2 : Math.round(JSON.parse(raw))
+        return Number.isFinite(n) ? Math.max(0, Math.min(idleStakes.length - 1, n)) : 2
+      } catch {
+        return 2
+      }
+    }
+    let idleNumberValue = readStakeIdx()
     const debugNumberWheel = {
       min: 0,
       max: 9,
@@ -1314,6 +1326,8 @@ export default function ConsoleCanvas({
       state.knob = k
       state.knobAvailable = !!k
       state.numberWheelBound = !!v?.numberWheel
+      // Falling back to the home wheel: pick up any stake the game just set, so home shows it too.
+      if (!v?.numberWheel && !debug && !customize) idleNumberValue = readStakeIdx()
       const n =
         v?.numberWheel ??
         (debug
@@ -1859,6 +1873,11 @@ export default function ConsoleCanvas({
                 setNumberWheelLabels(debugSpec)
               } else if (!customize) {
                 idleNumberValue = next
+                try {
+                  window.localStorage.setItem(STAKE_KEY, JSON.stringify(next))
+                } catch {
+                  // storage blocked, keep the in-memory value
+                }
                 const idleSpec = { ...idleNumberWheel, value: idleNumberValue }
                 state.numberWheel = idleSpec
                 setNumberWheelLabels(idleSpec)
@@ -2007,7 +2026,11 @@ export default function ConsoleCanvas({
           minY = Infinity,
           maxX = -Infinity,
           maxY = -Infinity
-        for (const v of screenWorld) {
+        // Top of the L-notch (the step from the full-width screen to the occluded bottom-right where
+        // the knob + PLAY body sit). SCREEN_PX[2]/[3] are that step (py 1325); take the topmost so a
+        // screen that hangs a readout off the bottom-left can meet the button's top, never overshoot it.
+        let notchTopY = Infinity
+        screenWorld.forEach((v, i) => {
           const n = v.clone().project(camera)
           const x = (n.x * 0.5 + 0.5) * w
           const y = (-n.y * 0.5 + 0.5) * h
@@ -2015,7 +2038,8 @@ export default function ConsoleCanvas({
           if (x > maxX) maxX = x
           if (y < minY) minY = y
           if (y > maxY) maxY = y
-        }
+          if ((i === 2 || i === 3) && y < notchTopY) notchTopY = y
+        })
         el.style.left = `${minX - M}px`
         el.style.top = `${minY - M}px`
         el.style.width = `${maxX - minX + M * 2}px`
@@ -2029,6 +2053,13 @@ export default function ConsoleCanvas({
         el.style.setProperty(
           '--screen-rim',
           `${Math.max(16, Math.round(M + 0.33 * scale))}px`,
+        )
+        // Height of the occluded bottom-right band (knob + PLAY body), projected to px each resize so
+        // it tracks the device at any scale or browser zoom (a fixed px would drift). A bottom-left
+        // readout sizes to this so its top meets the button's top instead of running past it.
+        el.style.setProperty(
+          '--screen-notch',
+          `${Math.max(0, Math.round(maxY + M - notchTopY))}px`,
         )
       }
       dirty = true // camera/geometry moved, repaint once

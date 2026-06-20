@@ -80,7 +80,22 @@ function isStaleObjectError(e: unknown): boolean {
 // rejected build never ran. A genuine revert (Move abort) does not match isStaleObjectError and
 // surfaces on the first attempt. objectChanges is reduced to the created objects (with their Move
 // type), which is all any caller reads (the new oracle / manager id).
-export async function executeAsOperator(tx: Transaction, label: string): Promise<ExecResult> {
+//
+// opts.retries lets a background, latency-tolerant caller (settle, the oracle nudge) be far more
+// patient about the stale-object race. When a SECOND signer shares this operator key (the deployed
+// backend operating the same node, see the cache note above), the gas coin's version churns under us;
+// a few quick retries can all land inside the same busy burst and give up. More attempts with a
+// longer, jittered backoff straddle the gaps between the other signer's txs, so the re-resolved build
+// finally lands. User-facing plays keep the snappy default so a mint never hangs on this.
+//
+// opts.freshFirst forces a node re-resolution of the operator's owned objects (gas coin, oracle cap)
+// BEFORE the first attempt, not just after a failure. With a competing signer the executor's cached
+// gas/cap version is usually already stale by the time a settle fires, so attempt 0 is wasted on a
+// version the node has moved past. Re-reading first means the very first build carries the current
+// version and lands in the gap, instead of burning a retry to discover it is stale.
+export async function executeAsOperator(tx: Transaction, label: string, opts?: { retries?: number; freshFirst?: boolean }): Promise<ExecResult> {
+  const maxRetries = Math.max(1, opts?.retries ?? STALE_OBJECT_RETRIES);
+  if (opts?.freshFirst) await withTimeout(operatorExecutor.resetCache(), 8_000, 'resetCache').catch(() => {});
   for (let attempt = 0; ; attempt++) {
     try {
       const out = await withTimeout(operatorExecutor.executeTransaction(tx, { objectTypes: true }), OPERATOR_TX_TIMEOUT_MS, `operator ${label}`);
@@ -94,12 +109,14 @@ export async function executeAsOperator(tx: Transaction, label: string): Promise
         .map((o) => ({ type: 'created', objectId: o.objectId, objectType: t.objectTypes?.[o.objectId] }));
       return { digest: t.digest ?? t.effects.transactionDigest ?? '', objectChanges };
     } catch (e) {
-      if (!isStaleObjectError(e) || attempt >= STALE_OBJECT_RETRIES - 1) throw e;
-      console.warn(`[operator] ${label}: stale object cache, resetting and retrying (${attempt + 1}/${STALE_OBJECT_RETRIES - 1})`);
+      if (!isStaleObjectError(e) || attempt >= maxRetries - 1) throw e;
+      console.warn(`[operator] ${label}: stale object cache, resetting and retrying (${attempt + 1}/${maxRetries - 1})`);
       // Bounded so a wedged waitForLastTransaction can't hang the retry; failure to reset is non-fatal,
       // the next build still re-resolves against the node.
       await withTimeout(operatorExecutor.resetCache(), 8_000, 'resetCache').catch(() => {});
-      await new Promise((r) => setTimeout(r, 120 * (attempt + 1) + Math.floor(Math.random() * 120)));
+      // Backoff grows and carries a wide jitter so retries desync from a competing operator's ~2s
+      // rhythm instead of bunching inside its busy window. Capped so a patient call stays bounded.
+      await new Promise((r) => setTimeout(r, Math.min(1200, 150 * (attempt + 1)) + Math.floor(Math.random() * 300)));
     }
   }
 }

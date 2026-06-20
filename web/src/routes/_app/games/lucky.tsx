@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
+import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { Chart, type ChartOverlays } from '@/components/game/Chart'
 import { Cell, GameScreen, ScreenMessage } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
@@ -30,6 +31,8 @@ export const Route = createFileRoute('/_app/games/lucky')({ component: LuckyScre
 
 // BET ladder, scrubbed on the number wheel and clamped to the live USDC balance.
 const BET_LADDER = [1, 5, 10, 25, 50, 100] as const
+// Shared persisted stake index (home idle wheel writes the same key, see ConsoleCanvas).
+const STAKE_KEY = 'pips_stake_idx'
 // Reel cycle pools (cosmetic blur before the snap). The real targets come from the dealt play.
 // Preferred order for the stacked asset panel (the rest of the live markets follow, capped at 3).
 const PREFERRED = ['BTC', 'SUI', 'ETH', 'SOL']
@@ -44,6 +47,11 @@ const ROUND_SEC = 15 // fallback only; the play's real on-chain expiry drives th
 // on OPENING / SETTLING forever. This guarantees the terminal frame always lands.
 const WATCHDOG_MS = 3000
 const SETTLE_EXPECT_MS = 12000 // the settle progress bar eases toward (never to) full over this window
+// Cash-out is a pre-expiry redeem; a tap in the final beat builds a tx that lands AFTER the buzzer,
+// when the oracle is no longer quoteable (EOracleExpired) and the round can only settle. So we disarm
+// CASH OUT this far ahead of expiry (a tx round-trip's worth) and let the round auto-settle. The
+// countdown already knows the exact close, so there is nothing to cash out in this window.
+const CASHOUT_LOCKOUT_MS = 1500
 const TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out', 'error'])
 // Terminal states that resolve to a win/loss RESULT screen. 'error' is excluded: an errored play is
 // a background mint that could not open (chips safe), handled as a clean re-rack, not a result.
@@ -103,7 +111,8 @@ export function LuckyScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
 
-  const [betIdx, setBetIdx] = useState(2)
+  // One persistent stake shared with the home wheel (same ladder), so it stays put across navigation.
+  const [betIdx, setBetIdx] = useLocalStorage(STAKE_KEY, 2)
   const [phase, setPhase] = useState<Phase>('idle')
   const [play, setPlay] = useState<PlayDTO | null>(null)
   const [live, setLive] = useState<Live | null>(null)
@@ -111,6 +120,7 @@ export function LuckyScreen() {
   const [entryPrice, setEntryPrice] = useState<number | null>(null)
   const [secsLeft, setSecsLeft] = useState<number | null>(null)
   const [settleMs, setSettleMs] = useState(0)
+  const [closeLocked, setCloseLocked] = useState(false) // cash-out disarmed in the final beat before expiry
   const [overlay, setOverlay] = useState<Overlay>('none')
   // Which stacked chart is lit while the reels spin (the slot picking an asset). Locks to the dealt
   // asset on open, then that chart expands.
@@ -118,6 +128,9 @@ export function LuckyScreen() {
 
   const finalized = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The play id the entry line was marked for, so an immediate replay re-marks for the new round
+  // instead of holding the previous round's price (which left ENTRY and TARGET out of sync).
+  const entryPlayId = useRef<string | null>(null)
   // Entry line marks the dealt asset's first live price. Track the latest spot and the asset it
   // belongs to (set together in onPrice) so a round on a new asset never marks entry at the old one.
   const spotRef = useRef<number | null>(null)
@@ -300,11 +313,16 @@ export function LuckyScreen() {
   // Mark the entry line at the dealt asset's first live price. Waits until the chart has switched
   // to the round's asset (spotAssetRef matches) so it never anchors at the previous asset's price.
   useEffect(() => {
-    if (entryPrice != null || !play) return
+    if (!play) {
+      entryPlayId.current = null
+      return
+    }
+    if (entryPlayId.current === play.id) return // already marked for this round
     if (spotAssetRef.current === play.market.asset && spotRef.current != null) {
+      entryPlayId.current = play.id
       setEntryPrice(spotRef.current)
     }
-  }, [spot, play, entryPrice])
+  }, [spot, play])
 
   // Every stacked chart reports its ticks here. We stash them per asset (no re-render) and, for the
   // focused asset, drive the header price + the entry pipeline (same single ~1/s parent re-render as
@@ -380,7 +398,7 @@ export function LuckyScreen() {
   }, [phase, canPlay, bet])
 
   const doCashOut = useCallback(async () => {
-    if (phase !== 'open' || !play) return
+    if (phase !== 'open' || !play || closeLocked) return
     setPhase('cashing')
     haptic('rigid')
     try {
@@ -400,7 +418,7 @@ export function LuckyScreen() {
       toastError(e)
       setPhase('open')
     }
-  }, [phase, play, finishResult])
+  }, [phase, play, finishResult, closeLocked])
 
   // Round countdown for the TIME readout. At the buzzer the settle worker (or the demo stream)
   // produces the terminal frame; the stream effect above catches it. No auto-cash here.
@@ -408,6 +426,7 @@ export function LuckyScreen() {
     if (phase !== 'open' || !play) {
       setSecsLeft(null)
       setSettleMs(0)
+      setCloseLocked(false)
       return
     }
     // Count down to the real on-chain buzzer (the oracle expiry the round settles at), not
@@ -419,6 +438,8 @@ export function LuckyScreen() {
       setSecsLeft(Math.max(0, Math.ceil(remaining / 1000)))
       // Time spent past the buzzer drives the deterministic settle progress (so it never looks frozen).
       setSettleMs(remaining < 0 ? -remaining : 0)
+      // Disarm cash-out a tx round-trip before the buzzer so a redeem can't land in the settling gap.
+      setCloseLocked(remaining <= CASHOUT_LOCKOUT_MS)
     }
     tick()
     const iv = setInterval(tick, 250)
@@ -437,8 +458,11 @@ export function LuckyScreen() {
   // The mint lands a beat after the reels snap, so CASH OUT only arms once the play is confirmed
   // 'open' on-chain; until then the button reads OPENING (cashing a not-yet-minted play would revert).
   const confirmed = live?.status === 'open'
-  const isOpen = phase === 'open' && confirmed
+  // Cash-out arms only while the round is comfortably pre-expiry. In the final beat (closeLocked) the
+  // button flips to SETTLING and the round auto-settles, so a redeem can never land in the expiry gap.
+  const isOpen = phase === 'open' && confirmed && !closeLocked
   const isOpening = phase === 'open' && !confirmed
+  const closing = phase === 'open' && confirmed && closeLocked
   useConsoleControls({
     numberWheel: {
       label: 'BET',
@@ -447,11 +471,11 @@ export function LuckyScreen() {
       step: 1,
       value: safeBetIdx,
       onChange: setBetIdx,
-      format: (v) => `$${BET_LADDER[Math.min(v, maxBetIdx)]}`,
+      format: (v) => `${BET_LADDER[Math.min(v, maxBetIdx)]}`,
     },
     action1: { label: 'HOW TO', color: 'neutral', onPress: toggleHowto },
     action2: { label: 'HISTORY', color: 'neutral', onPress: toggleHistory },
-    main: settling
+    main: settling || closing
       ? { label: 'SETTLING', color: 'amber', onPress: () => {}, loading: true }
       : isOpen
         ? { label: 'CASH OUT', color: 'up', onPress: () => void doCashOut() }
@@ -560,10 +584,12 @@ export function LuckyScreen() {
           {/* Tall enough to span the device's occluded bottom-right (the PLAY body): the chart ends
               at this band's top, so the bottom-most chart never runs under the button. Content stays
               left-only; the empty space below it is the notch the body covers. */}
-          <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5 min-h-[27%]">
-            {/* Fixed height: the readout swaps between bet / dealing / value, but the card must not
-                jump size as the copy changes, so the tallest state sets the floor for all of them. */}
-            <div className="max-w-[60%] min-h-[120px]">
+          <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5 min-h-[var(--screen-notch,21%)]">
+            {/* Height tracks the device's occluded bottom-right band, projected as --screen-notch by
+                ConsoleCanvas, so this readout's top meets the PLAY button's top at any device scale or
+                browser zoom (a fixed px would drift). 21% ~ the notch's share of the natural screen,
+                the fallback before the canvas has projected. */}
+            <div className="max-w-[60%]">
               {opening ? (
                 <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Opening</div>

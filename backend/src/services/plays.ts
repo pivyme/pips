@@ -351,9 +351,22 @@ async function cashoutPlayLocked(user: User, playId: string): Promise<CashoutRes
     const exec = await executeForUser(tx, userCtx(user));
     return finalizeCashout(play, amounts.payout, exec.digest);
   } catch (e) {
+    // The buzzer beat the cash-out: once the round crosses expiry the oracle is no longer quoteable
+    // (assert_quoteable_oracle aborts EOracleExpired), so the live sell is gone and the position will
+    // settle to its win/loss. Surface that plainly instead of a retryable error, the settle worker
+    // finalizes it shortly. Any other failure stays a generic retryable redeem error.
+    if (isOracleExpiredAbort(e)) throw new PlayError('PLAY_NOT_OPEN', 'Round is settling, your result is locking in');
     throw asPlayError(e, 'REDEEM_FAILED', 'Could not cash out right now. Try again.');
   }
 }
+
+// A redeem that lost the race to the buzzer: the oracle crossed expiry into the unsettled gap, so it
+// is no longer quoteable for a live cash-out (oracle_config::assert_quoteable_oracle / EOracleExpired)
+// or it already settled. Either way the round is over and will resolve via settlement, not a re-try.
+const isOracleExpiredAbort = (e: unknown): boolean => {
+  const m = e instanceof Error ? e.message : String(e);
+  return /assert_quoteable_oracle|EOracleExpired|EOracleSettled/i.test(m);
+};
 
 async function finalizeCashout(play: Play, payoutRaw: bigint, digest: string): Promise<{ play: PlayDTO; unlocked: string[] }> {
   const pnl = payoutRaw - play.entryCost;
@@ -429,12 +442,19 @@ async function settleSpotUsd(asset: string, lastSpot1e9: bigint): Promise<number
 // together) into a single tx. The frozen price IS the value pushed, so the settled state is updated
 // in place with no re-read. Returns true on success (marks the states settled, retires them from the
 // cache); false if the tx reverts, so the caller can isolate a bad oracle and retry the rest.
+// Settle operator txs (the oracle nudge + the redeem) are background and latency-tolerant, so they
+// ride a more patient stale-object retry than a user mint: when another signer shares the operator
+// key (the deployed backend operating the same node), the gas coin's version churns and a few quick
+// retries lose. Extra patient attempts straddle the other signer's bursts so the settle lands this
+// tick instead of spilling noise and deferring to the next one.
+const SETTLE_STALE_RETRIES = 12;
+
 async function settleOracles(items: Array<{ st: OracleState; cap: string; spotUsd: number }>, states: Map<string, OracleState | null>): Promise<boolean> {
   if (items.length === 0) return true;
   try {
     const tx = new Transaction();
     for (const it of items) appendPriceUpdate(tx, it.st.oracleId, it.cap, it.spotUsd);
-    await executeAsOperator(tx, `settle-nudge x${items.length}`);
+    await executeAsOperator(tx, `settle-nudge x${items.length}`, { retries: SETTLE_STALE_RETRIES, freshFirst: true });
     for (const it of items) {
       removeMarket(it.st.oracleId);
       states.set(it.st.oracleId, { ...it.st, settled: true, active: false, settlementPrice1e9: usd1e9(it.spotUsd) });
@@ -475,8 +495,13 @@ export async function settleDuePlays(): Promise<void> {
     }),
   );
 
-  // Phase 1: settle every expired-unsettled oracle in one batched nudge. Skip oracles with no usable
-  // cap (a dead deployment), the give-up sweep clears their plays; never feed a bad cap to the batch.
+  // Phase 1: freeze settlement on every expired-unsettled oracle in one batched nudge. Per the Predict
+  // oracle model, settlement is NOT automatic: an authorized cap must push a post-expiry price via
+  // update_prices, which freezes the settlement price (PENDING_SETTLEMENT -> SETTLED). Until then the
+  // oracle is not quoteable, so a redeem aborts (EOracleExpired). Whoever holds a usable cap settles it
+  // here; skip oracles with no cap we hold (a dead deployment) so we never feed a bad cap to the batch.
+  // Idempotent across hosts: an already-settled push just aborts harmlessly, so it is safe even if
+  // another operator settles the same oracle concurrently.
   const now = Date.now();
   const toNudge: Array<{ st: OracleState; cap: string; spotUsd: number }> = [];
   for (const [oracleId, plays] of byOracle) {
@@ -553,7 +578,7 @@ async function settleOnePlay(play: Play, settlement1e9: bigint): Promise<void> {
       const tx = new Transaction();
       if (key.kind === 'binary') buildRedeemPermissionless(tx, user.predictManagerId, key.params);
       else buildRedeemRangePermissionless(tx, user.predictManagerId, key.params);
-      digest = (await executeAsOperator(tx, `settle-redeem ${play.id}`)).digest;
+      digest = (await executeAsOperator(tx, `settle-redeem ${play.id}`, { retries: SETTLE_STALE_RETRIES, freshFirst: true })).digest;
     } catch (e) {
       console.error(`[Settle] on-chain redeem failed for ${play.id}, will retry:`, e instanceof Error ? e.message : e);
       return; // leave status 'open' so the next settle tick retries the redeem

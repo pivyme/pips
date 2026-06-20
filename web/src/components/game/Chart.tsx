@@ -61,6 +61,7 @@ const SMOOTH = 0.09 // leading-edge ease toward the latest tick (glides, never s
 const CENTER_SMOOTH = 0.06 // vertical recenter ease, slow so the frame stops breathing
 const HALF_GROW = 0.12 // zoom-out ease when content needs more room
 const HALF_SHRINK = 0.03 // zoom-in ease when there is slack, slow so the frame stays calm
+const LIVE_CALM = 0.34 // ~3x slower recenter/zoom while a round is live, so entry/target barely drift
 const FILL_SMOOTH = 0.08 // band right-zone -> full-width ease on lock
 const PAD = 1.22 // headroom around the fitted content (tighter = the move fills more of the frame)
 const MIN_HALF_PCT = 0.0025 // floor so a flat line never zooms to infinity
@@ -290,8 +291,12 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
         center = tCenter
         half = tHalf
       } else if (continuous) {
-        center += (tCenter - center) * CENTER_SMOOTH
-        half += (tHalf - half) * (tHalf > half ? HALF_GROW : HALF_SHRINK)
+        // While a round is live, the entry/target lines are fixed-price references. Recentering the
+        // frame makes them drift around the screen, which reads as the lines "not tracking" the price.
+        // So ease the scale much calmer once a round is on; the hard clamp below still prevents clipping.
+        const calm = ov?.entry != null || ov?.target != null ? LIVE_CALM : 1
+        center += (tCenter - center) * CENTER_SMOOTH * calm
+        half += (tHalf - half) * (tHalf > half ? HALF_GROW : HALF_SHRINK) * calm
         if (Number.isFinite(lo) && Number.isFinite(hi)) {
           const m = half * 0.06
           if (lo < center - half + m || hi > center + half - m) {

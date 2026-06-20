@@ -43,11 +43,12 @@ const pruneRetiredOracles = (): void => {
 };
 
 export const startSettleWorker = (): void => {
-  if (!OPERATOR_ENABLED) {
-    console.log('[Settle] Operator disabled (PIPS_OPERATOR_ENABLED != true), not scheduling');
-    return;
-  }
-  console.log(`[Settle] Scheduled: ${SETTLE_CRON}`);
+  // Runs in BOTH modes. The operator also nudges expired oracles to settlement (settleDuePlays
+  // Phase 1); a follower skips the nudge (it holds no cap for those oracles) and only finalizes its
+  // OWN database's plays against the oracles the leader settles on the shared chain. Without this, a
+  // follower's plays (separate DB, invisible to the deployed operator) sit on SETTLING forever.
+  const role = OPERATOR_ENABLED ? 'operator' : 'follower: settle-only, no oracle nudge';
+  console.log(`[Settle] Scheduled: ${SETTLE_CRON} (${role})`);
   cron.schedule(SETTLE_CRON, settleTick);
   settleTick();
 };
