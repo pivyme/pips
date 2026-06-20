@@ -17,10 +17,10 @@ import {
   ORACLE_ROLL_CRON,
   OPERATOR_ENABLED,
 } from '../config/main-config.ts';
-import { gridForSpot, usd1e9 } from '../lib/sui/config.ts';
+import { gridForSpot, usd1e9, replaceOracleCap } from '../lib/sui/config.ts';
 import { operatorCaps } from '../lib/sui/signer.ts';
 import { executeAsOperator } from '../lib/sui/execute.ts';
-import { buildActivateOracle, buildCreateOracle } from '../lib/sui/predict.ts';
+import { buildActivateOracle, buildCreateOracle, buildCreateOracleCap } from '../lib/sui/predict.ts';
 import { liveByAsset, upsertMarket } from '../lib/sui/markets.ts';
 import { gameSpot } from '../lib/game-price.ts';
 import { fetchSpot } from '../lib/pyth.ts';
@@ -57,6 +57,34 @@ const findCreatedOracle = (changes: Array<{ type: string; objectId?: string; obj
   const c = changes.find((x) => x.type === 'created' && x.objectType?.endsWith('::oracle::OracleSVI'));
   if (!c?.objectId) throw new Error('create_oracle returned no OracleSVI object');
   return c.objectId;
+};
+
+const findCreatedCap = (changes: Array<{ type: string; objectId?: string; objectType?: string }>): string => {
+  const c = changes.find((x) => x.type === 'created' && x.objectType?.endsWith('::oracle::OracleSVICap'));
+  if (!c?.objectId) throw new Error('rotateCap: tx created no OracleSVICap');
+  return c.objectId;
+};
+
+// Each create appends the new oracle id to Registry.oracle_ids[cap], an unbounded vector<ID> in the
+// vendored Predict. After ~8k oracles that one dynamic-field object crosses Sui's 256KB object cap and
+// EVERY further create_oracle on that cap aborts MoveObjectTooBig. On our short-round ladder a cap
+// fills in ~a day (Mysten's 15-min markets would take ~80x longer, which is why they never hit it).
+// This is the signal to rotate to a fresh cap, not a transient error to retry on the same cap.
+const isCapFull = (msg: string): boolean => msg.includes('MoveObjectTooBig');
+
+// Mint a fresh oracle cap and swap it in for a full one. create_oracle_cap is a stock Predict admin
+// call that does NOT touch the bricked vector, so it still succeeds on a full deployment; the fresh
+// cap's own vector starts empty, so creation resumes immediately. We never modify Predict itself. The
+// fresh cap is operator-owned and persisted to the deploy file. Existing oracles keep their original
+// authorized cap (price-push groups by per-oracle capId, settle reads it off-chain), so only NEW
+// creates move onto the fresh cap and nothing in flight breaks.
+const rotateCap = async (fullCapId: string): Promise<string> => {
+  const tx = new Transaction();
+  buildCreateOracleCap(tx);
+  const fresh = findCreatedCap((await executeAsOperator(tx, 'rotate full oracle cap')).objectChanges);
+  replaceOracleCap(fullCapId, fresh);
+  console.warn(`[OracleRoll] oracle cap ${fullCapId} hit the 256KB registry cap; rotated to fresh cap ${fresh}`);
+  return fresh;
 };
 
 // Stand up one live oracle for an asset at the given expiry. Two PTBs: create (the oracle
@@ -138,11 +166,25 @@ const rollLadder = async (): Promise<void> => {
         continue;
       }
 
+      let lane = capId; // rotated in place below if this cap's registry slot is full
       for (const expiry of expiries) {
         try {
-          await createOracle(asset, capId, spot, expiry);
+          await createOracle(asset, lane, spot, expiry);
         } catch (err) {
-          console.error(`[OracleRoll] failed to create ${asset} oracle:`, err instanceof Error ? err.message : err);
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!isCapFull(msg)) {
+            console.error(`[OracleRoll] failed to create ${asset} oracle:`, msg);
+            continue;
+          }
+          // Cap's registry vector is full: mint a fresh cap, retry this slot on it. The swap
+          // persists, so the next tick's snapshot already routes this asset onto the fresh cap.
+          try {
+            lane = await rotateCap(lane);
+            await createOracle(asset, lane, spot, expiry);
+          } catch (rotErr) {
+            console.error(`[OracleRoll] ${asset} cap rotation failed:`, rotErr instanceof Error ? rotErr.message : rotErr);
+            break; // give the lane a rest this tick; it recovers on the rotated cap next tick
+          }
         }
       }
     }
