@@ -103,6 +103,9 @@ export function RangeScreen() {
   const finalized = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasInside = useRef<boolean | null>(null) // last in/out band state, for the crossing tick
+  // The chart's eased leading price (the active dot), written every frame by the Chart. The live P/L
+  // reads it to track the line at 60fps instead of the laggy ~2s backend mark.
+  const livePriceRef = useRef(0)
 
   const marketsQ = useQuery({
     queryKey: ['markets'],
@@ -152,6 +155,18 @@ export function RangeScreen() {
         ? { pct: halfPct }
         : undefined
   const showBand = phase !== 'result' || play != null
+
+  // Round-start + settle dots on the line (band center = the entry level). The now-dot rides from the
+  // start dot toward the settle dot, which lands at the buzzer. Same window the countdown uses.
+  const openedAtMs = play?.openedAt ? Date.parse(play.openedAt) : 0
+  const settleMs = openedAtMs ? openedAtMs + (play?.params.duration || NOMINAL_ROUND_SEC) * 1000 : 0
+  const markers =
+    play && lower != null && upper != null && openedAtMs
+      ? [
+          { t: openedAtMs, p: (lower + upper) / 2 },
+          { t: settleMs, p: (lower + upper) / 2 },
+        ]
+      : undefined
 
   // Is the live price inside the locked band right now? Drives the open-state IN ZONE / OUT pill and
   // the tactile crossing tick. (lower, upper] matches the on-chain settlement rule.
@@ -474,7 +489,8 @@ export function RangeScreen() {
             {asset ? (
               <Chart
                 asset={asset}
-                overlays={showBand && band ? { band } : undefined}
+                overlays={showBand && band ? { band, markers } : undefined}
+                livePriceRef={livePriceRef}
                 onPrice={(p) => setSpot(p)}
                 className="absolute inset-0"
               />
@@ -536,14 +552,15 @@ export function RangeScreen() {
                       </span>
                     )}
                   </div>
-                  <div
-                    className={cnm(
-                      'tnum text-[40px] font-extrabold leading-none',
-                      pnlNum >= 0 ? 'text-up' : 'text-down',
-                    )}
-                  >
-                    {pnlNum >= 0 ? '+' : '-'}$<Stat value={Math.abs(pnlNum)} />
-                  </div>
+                  <RangePnl
+                    livePriceRef={livePriceRef}
+                    lower={lower ?? 0}
+                    upper={upper ?? 0}
+                    stake={playStake}
+                    mult={mult}
+                    status={live?.status ?? 'open'}
+                    finalPnl={pnlNum}
+                  />
                   <div className="mt-2.5 grid grid-cols-3 gap-x-3">
                     <Cell label="Mult" value={`${mult.toFixed(2)}x`} />
                     <Cell label="Stake" value={`$${playStake}`} />
@@ -590,6 +607,61 @@ export function RangeScreen() {
       )}
       {overlay === 'howto' && <HowTo onClose={() => setOverlay('none')} />}
     </GameScreen>
+  )
+}
+
+// The live P/L while a band is open. Range settles binary: inside the band at the buzzer wins
+// stake x mult (spread-free), outside loses the stake. So the live number is just that outcome
+// projected onto where the chart's active dot sits right now: inside the band -> the win profit,
+// outside -> -stake. It rides the 60fps dot (livePriceRef) so it flips the instant the line crosses
+// an edge, and Stat rolls it between the two. On a terminal status it shows the real settled P/L.
+function RangePnl({
+  livePriceRef,
+  lower,
+  upper,
+  stake,
+  mult,
+  status,
+  finalPnl,
+}: {
+  livePriceRef: { current: number }
+  lower: number
+  upper: number
+  stake: number
+  mult: number
+  status: PlayStatus
+  finalPnl: number
+}) {
+  const terminal = RESULT_TERMINAL.has(status)
+  const valid = lower > 0 && upper > lower && stake > 0
+  const profit = Math.max(0, stake * (mult - 1)) // walk-away profit if it lands in the zone
+  const [inside, setInside] = useState(true)
+  const insideRef = useRef(true)
+
+  useEffect(() => {
+    if (terminal || !valid) return
+    let raf = 0
+    const loop = () => {
+      const p = livePriceRef.current
+      if (p > 0) {
+        const now = p > lower && p <= upper // (lower, upper] matches on-chain settlement
+        if (now !== insideRef.current) {
+          insideRef.current = now
+          setInside(now)
+        }
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [terminal, valid, lower, upper, livePriceRef])
+
+  const pnl = terminal ? finalPnl : inside ? profit : -stake
+  const up = pnl >= 0
+  return (
+    <div className={cnm('tnum text-[40px] font-extrabold leading-none', up ? 'text-up' : 'text-down')}>
+      {up ? '+' : '-'}$<Stat value={Math.abs(pnl)} />
+    </div>
   )
 }
 

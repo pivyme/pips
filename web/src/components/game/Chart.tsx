@@ -30,6 +30,9 @@ export interface ChartOverlays {
   target?: { price: number; side: 'up' | 'down' }
   band?: BandOverlay
   boxes?: ChartBox[]
+  // Time-anchored dots on the line (round start, settle): each maps by its timestamp on the same axis
+  // as the price line, so they scroll with it. Dimmer than the live "now" dot. The now-dot rides between.
+  markers?: Array<{ t: number; p: number }>
 }
 
 interface ChartProps {
@@ -269,6 +272,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
           consider(b.upper)
         }
       }
+      if (ov?.markers) for (const m of ov.markers) consider(m.p)
 
       // Target window (center + half-height), padded, with a floor so a flat line never zooms in.
       let tCenter: number
@@ -388,6 +392,26 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
         ctx.beginPath()
         tracePath(ctx, path)
         ctx.stroke()
+      }
+
+      // Round markers: dim amber dots anchored in time (round start, settle), so they scroll with the
+      // line. The now-dot rides between them; drawn first so the bright dot sits on top.
+      if (continuous && ov?.markers?.length) {
+        const pxPerMs = nowX / WINDOW_MS
+        for (const m of ov.markers) {
+          const mx = nowX - (now - m.t) * pxPerMs
+          if (mx < -DOT_R || mx > w + DOT_R) continue
+          const my = y(m.p)
+          ctx.fillStyle = withAlpha(C.brand, 0.22)
+          ctx.beginPath()
+          ctx.arc(mx, my, DOT_R * 0.8, 0, TAU)
+          ctx.fill()
+          ctx.strokeStyle = withAlpha(C.brand, 0.5)
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          ctx.arc(mx, my, DOT_R * 0.8, 0, TAU)
+          ctx.stroke()
+        }
       }
 
       // Leading edge: a steady amber "now" dot with a soft, constant glow. No pulsing.
@@ -575,14 +599,17 @@ function drawOverlays(
     edge(top, locked && !inside && price > band.upper)
     edge(bot, locked && !inside && price <= band.lower)
     ctx.setLineDash([])
-    // Edge price labels, so the exact band is always readable (the etched field-guide detail).
+    // Edge price labels, so the exact band is always readable (the etched field-guide detail). Inset
+    // off the rim like ENTRY: once locked the band spans full width (left -> 0), so a bare left+4 sits
+    // under the device's beveled edge. Clamp to the rim-safe inset so the front panel never covers it.
+    const labelLX = Math.max(left, rim) + 4
     ctx.save()
     ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'left'
     ctx.fillStyle = withAlpha(C.text, 0.7)
-    ctx.fillText(formatPrice(band.upper), left + 4, top - 7)
-    ctx.fillText(formatPrice(band.lower), left + 4, bot + 7)
+    ctx.fillText(formatPrice(band.upper), labelLX, top - 7)
+    ctx.fillText(formatPrice(band.lower), labelLX, bot + 7)
     ctx.restore()
   }
 

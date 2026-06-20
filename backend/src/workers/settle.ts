@@ -44,9 +44,9 @@ const pruneRetiredOracles = (): void => {
 
 export const startSettleWorker = (): void => {
   // Runs in BOTH modes. The operator also nudges expired oracles to settlement (settleDuePlays
-  // Phase 1); a follower skips the nudge (it holds no cap for those oracles) and only finalizes its
-  // OWN database's plays against the oracles the leader settles on the shared chain. Without this, a
-  // follower's plays (separate DB, invisible to the deployed operator) sit on SETTLING forever.
+  // Phase 1); a follower skips the nudge and only finalizes its OWN database's plays against the
+  // oracles the leader settles on the shared chain. Without this, a follower's plays (separate DB,
+  // invisible to the deployed operator) sit on SETTLING forever. settleDuePlays gates per phase.
   const role = OPERATOR_ENABLED ? 'operator' : 'follower: settle-only, no oracle nudge';
   console.log(`[Settle] Scheduled: ${SETTLE_CRON} (${role})`);
   cron.schedule(SETTLE_CRON, settleTick);

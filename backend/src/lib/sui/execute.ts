@@ -95,7 +95,7 @@ function isStaleObjectError(e: unknown): boolean {
 // version and lands in the gap, instead of burning a retry to discover it is stale.
 export async function executeAsOperator(tx: Transaction, label: string, opts?: { retries?: number; freshFirst?: boolean }): Promise<ExecResult> {
   const maxRetries = Math.max(1, opts?.retries ?? STALE_OBJECT_RETRIES);
-  if (opts?.freshFirst) await withTimeout(operatorExecutor.resetCache(), 8_000, 'resetCache').catch(() => {});
+  if (opts?.freshFirst) await withTimeout(operatorExecutor.resetCache(), 8_000, 'resetCache').catch(() => { });
   for (let attempt = 0; ; attempt++) {
     try {
       const out = await withTimeout(operatorExecutor.executeTransaction(tx, { objectTypes: true }), OPERATOR_TX_TIMEOUT_MS, `operator ${label}`);
@@ -113,7 +113,7 @@ export async function executeAsOperator(tx: Transaction, label: string, opts?: {
       console.warn(`[operator] ${label}: stale object cache, resetting and retrying (${attempt + 1}/${maxRetries - 1})`);
       // Bounded so a wedged waitForLastTransaction can't hang the retry; failure to reset is non-fatal,
       // the next build still re-resolves against the node.
-      await withTimeout(operatorExecutor.resetCache(), 8_000, 'resetCache').catch(() => {});
+      await withTimeout(operatorExecutor.resetCache(), 8_000, 'resetCache').catch(() => { });
       // Backoff grows and carries a wide jitter so retries desync from a competing operator's ~2s
       // rhythm instead of bunching inside its busy window. Capped so a patient call stays bounded.
       await new Promise((r) => setTimeout(r, Math.min(1200, 150 * (attempt + 1)) + Math.floor(Math.random() * 300)));
@@ -137,7 +137,7 @@ async function refGasPrice(): Promise<bigint> {
 // Tagged so callers can tell a budget overrun (the call may still be completing on the node) apart
 // from a real rejection (a clean revert that definitively did not land). The message format is kept
 // identical to the previous generic Error, so any message-based matching still works.
-class TimeoutError extends Error {}
+class TimeoutError extends Error { }
 
 // Reject if a promise outruns its budget, so a stuck network call can never hang a request. The
 // underlying call is not aborted (it may still complete on the node), the caller just stops waiting.

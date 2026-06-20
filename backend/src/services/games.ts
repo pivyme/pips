@@ -7,7 +7,6 @@ import {
   EXPIRY_SAFETY_MS,
   LUCKY_ROUND_MS,
   LUCKY_MIN_ORACLE_LIFE_MS,
-  LUCKY_MIN_TARGET_FRAC,
   MIN_STAKE,
   MAX_STAKE,
 } from '../config/main-config.ts';
@@ -37,7 +36,6 @@ import { newSeed, seedFloat, pickTier } from './rng.ts';
 // makes the reported cost/multiplier stale. Bounded so a long-lived process never grows it without
 // limit; entries fall out as oracles roll.
 const SOLVE_CURVE_TTL_MS = 3000;
-
 const curveCache = new Map<string, { curve: ScanCurve; at: number }>();
 function getFreshCurve(key: string, now: number): ScanCurve | undefined {
   const hit = curveCache.get(key);
@@ -163,14 +161,6 @@ function rangeBand(spot1e9: bigint, widthPct: number, g: Grid): { lower: bigint;
 
 const fmt1e9 = (v: bigint): string => String(Number(v) / 1e9);
 
-// Smallest distance a LUCKY target sits from entry: at least one grid tick, and at least
-// LUCKY_MIN_TARGET_FRAC of spot. Keeps the floor tier a visible directional move (never a strike on
-// the entry line) without distorting the odds, since the implied vol over a round dwarfs it.
-const luckyMinOffset = (atm1e9: bigint, tick: bigint): bigint => {
-  const frac = (atm1e9 * BigInt(Math.round(LUCKY_MIN_TARGET_FRAC * 1e9))) / FLOAT_SCALING;
-  return frac > tick ? frac : tick;
-};
-
 // === Quantity solver ===
 
 // Invert the curve-priced mint cost: find the quantity whose real preview cost lands just
@@ -272,36 +262,20 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
   // Reuse the original seed on a re-route so the dealt asset/side/tier stay identical (fairness, and
   // the reels already snapped to them); only the oracle is re-picked + re-priced. Fresh seed otherwise.
   const seed = existingSeed ?? newSeed();
-  const asset = assets[Math.floor(seedFloat(seed, 0) * assets.length)];
+  // TEMP (testing): pin the dealt asset to BTC instead of dealing it randomly. Falls back to the random
+  // pick if BTC has no live market. Revert to `assets[Math.floor(seedFloat(seed, 0) * assets.length)]`.
+  const asset = assets.includes('BTC') ? 'BTC' : assets[Math.floor(seedFloat(seed, 0) * assets.length)];
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
   const tier = pickTier(seedFloat(seed, 2)); // slot-weighted reel deal (LUCKY.md §4)
 
   // Route to the oracle expiring nearest the round target and solve in a few batched round trips.
   // The asset/side/tier are fixed by the seed (fairness); only the oracle is re-picked if the first
-  // one expires or its price goes stale mid-solve.
+  // one expires mid-solve, which the batched preview surfaces as a thrown error.
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     const market = roundOracle(asset);
     if (!market) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
     const g = gridOf(market);
-    // Anchor BOTH the entry mark and the strike solve to the routed oracle's REAL on-chain spot: the
-    // exact price the Predict mint quotes the strike against and the round settles on. This one number
-    // has to agree end to end. The eased chart feed (gameSpot) drifts from the oracle by the push/sync
-    // lag, and pricing the strike off the oracle while marking entry off that feed is what collapsed a
-    // dealt 3x/4x onto the entry line (or floated it out). Reading it fresh per attempt self-heals a
-    // just-rolled oracle; a stale/settled one throws and re-routes to a fresher market.
-    let atm1e9: bigint;
-    try {
-      atm1e9 = await freshSpot(market);
-    } catch (e) {
-      lastErr = e;
-      continue;
-    }
-    const entrySpot = fmt1e9(atm1e9);
-    // The floor a tier's strike must clear past entry, so even a 2x is a visible directional move.
-    const minOffset1e9 = luckyMinOffset(atm1e9, g.tick);
-    // The round runs to the routed oracle's expiry, so the UI countdown matches the real settle.
-    const duration = Math.max(1, Math.round((market.expiryMs - now()) / 1000));
 
     // One batched devInspect per solver round. cost == 0 means that strike is unmintable.
     const preview: BatchPreviewFn = async (probes) => {
@@ -310,23 +284,27 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
     };
 
     try {
-      // Every tier (the 2x floor included) routes through the solver, so the strike is ALWAYS a real
-      // grid strike a minimum directional move past spot: an UP target sits above your entry, a DOWN
-      // target below it, never at-the-money on the entry line. Reuse a fresh cached scan for this
-      // oracle/side when one exists, so a warm play skips the scan round trip and only pays for sizing.
-      // Cache whatever scan the solve ended up using.
+      // Reuse a fresh cached scan for this oracle/side when one exists, so a warm play skips the
+      // scan round trip and only pays for sizing. Cache whatever scan the solve ended up using.
       const cacheKey = `${market.oracleId}:${side}`;
       const t0 = now();
       const curve = getFreshCurve(cacheKey, t0);
-      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve, atm1e9, minOffset1e9, analyticSize: true });
+      // The live spot centers the scan window on ATM (the cached spot1e9 is pusher-fresh, ~2s old).
+      const atm1e9 = market.spot1e9 ? BigInt(market.spot1e9) : undefined;
+      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve, atm1e9, analyticSize: true });
       if (!curve) putCurve(cacheKey, solution.curve, t0);
-      if (solution.clamped && solution.multiplier < tier) {
-        // Dealt tier sat past the live ask bounds; we minted the closest achievable (lower) one. A
-        // floor tier landing a touch ABOVE 2x is by design (the min directional offset), not a clamp.
+      if (solution.clamped) {
+        // Dealt tier was past the live ask bounds; we minted the closest achievable one and report it.
         console.log(
-          `[Lucky] ${asset} ${side} ${tier}x out of reach, solved ${solution.multiplier.toFixed(2)}x (tier ${solution.achievedTier}x)`,
+          `[Lucky] ${asset} ${side} ${tier}x unreachable, solved ${solution.multiplier.toFixed(2)}x (tier ${solution.achievedTier}x)`,
         );
       }
+      // The round runs to the routed oracle's expiry, so the UI countdown matches the real settle.
+      const duration = Math.max(1, Math.round((market.expiryMs - now()) / 1000));
+      // TEMP (debug): the dealt position. Win rule for DOWN is settlement <= strike, for UP settlement > strike.
+      console.log(
+        `[LuckyDebug] DEAL ${asset} ${side} ${solution.multiplier.toFixed(2)}x | entrySpot=${market.spot1e9 ? fmt1e9(BigInt(market.spot1e9)) : '?'} strike=${fmt1e9(solution.strike1e9)} qty=${solution.quantity} oracle=${market.oracleId.slice(0, 10)} expiry=${new Date(market.expiryMs).toISOString()}`,
+      );
       return {
         kind: 'binary',
         game: 'lucky',
@@ -337,7 +315,7 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
         tier: solution.achievedTier,
         duration,
         strikeDisplay: fmt1e9(solution.strike1e9),
-        entrySpot,
+        entrySpot: market.spot1e9 ? fmt1e9(BigInt(market.spot1e9)) : '',
         entryCost: solution.entryCost,
         maxPayout: solution.quantity,
         multiplier: solution.multiplier,
@@ -351,9 +329,6 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
       throw new PlayError('MINT_FAILED', `Could not price this play: ${e instanceof Error ? e.message : e}`);
     }
   }
-  // Preserve a specific cause (e.g. ORACLE_STALE from freshSpot when every routed oracle was stale)
-  // so the client gets the actionable code, not a generic price error.
-  if (lastErr instanceof PlayError) throw lastErr;
   throw new PlayError('MINT_FAILED', `Could not price this play: ${lastErr instanceof Error ? lastErr.message : lastErr}`);
 }
 

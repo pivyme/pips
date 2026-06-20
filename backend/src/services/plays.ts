@@ -9,7 +9,7 @@ import { coinWithBalance } from '@mysten/sui/transactions';
 
 import type { Play, User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
-import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS, OPERATOR_ENABLED } from '../config/main-config.ts';
+import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS } from '../config/main-config.ts';
 import { DUSDC_TYPE, usd1e9 } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import {
@@ -167,8 +167,8 @@ export function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T
   userChains.set(
     userId,
     run.then(
-      () => {},
-      () => {},
+      () => { },
+      () => { },
     ),
   );
   return run;
@@ -259,6 +259,13 @@ async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, pla
       else buildMintRange(tx, managerId, cur.params);
       try {
         const exec = await executeForUser(tx, userCtx(user));
+        // TEMP (debug): exactly what was minted on-chain (the key the redeem/settle will reconstruct).
+        console.log(
+          `[LuckyDebug] MINT play=${playId} digest=${exec.digest.slice(0, 10)} ${cur.kind === 'binary'
+            ? `side=${cur.params.side} strike=${cur.params.strike1e9}`
+            : `range lower=${cur.params.lower1e9} higher=${cur.params.higher1e9}`
+          } qty=${cur.params.quantity} oracle=${cur.params.oracleId.slice(0, 10)}`,
+        );
         await prismaQuery.play.update({
           where: { id: playId },
           data: { status: 'open', txMint: exec.digest, openedAt: new Date() },
@@ -285,7 +292,7 @@ async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, pla
     throw lastErr;
   } catch (e) {
     console.error(`[plays] mint failed for ${playId}:`, e instanceof Error ? e.message : e);
-    await prismaQuery.play.update({ where: { id: playId }, data: { status: 'error' } }).catch(() => {});
+    await prismaQuery.play.update({ where: { id: playId }, data: { status: 'error' } }).catch(() => { });
     invalidateBal(user.id);
   }
 }
@@ -449,27 +456,6 @@ async function settleSpotUsd(asset: string, lastSpot1e9: bigint): Promise<number
 // tick instead of spilling noise and deferring to the next one.
 const SETTLE_STALE_RETRIES = 12;
 
-// After a failed nudge, reconcile against the chain. A push aborts EOracleSettled (oracle.move abort
-// code 6) precisely when the oracle is ALREADY settled, which is the state the nudge wanted: a
-// co-operator beat us to it, or our own earlier nudge timed out on the wait yet actually landed. So
-// re-read each oracle; any that now reads settled is a SUCCESS, marked here with the chain's frozen
-// settlement price (the real value, which may differ from what we were about to push) so Phase 2
-// resolves its play THIS tick. Returns true iff every oracle in the batch is now settled.
-async function reconcileSettled(items: Array<{ st: OracleState; cap: string; spotUsd: number }>, states: Map<string, OracleState | null>): Promise<boolean> {
-  const fresh = await Promise.all(items.map((it) => readOracle(it.st.oracleId).catch(() => null)));
-  let allSettled = true;
-  for (let i = 0; i < items.length; i++) {
-    const o = fresh[i];
-    if (o?.settled && o.settlementPrice1e9 != null) {
-      removeMarket(items[i].st.oracleId);
-      states.set(items[i].st.oracleId, o);
-    } else {
-      allSettled = false;
-    }
-  }
-  return allSettled;
-}
-
 async function settleOracles(items: Array<{ st: OracleState; cap: string; spotUsd: number }>, states: Map<string, OracleState | null>): Promise<boolean> {
   if (items.length === 0) return true;
   try {
@@ -482,11 +468,6 @@ async function settleOracles(items: Array<{ st: OracleState; cap: string; spotUs
     }
     return true;
   } catch (e) {
-    // A nudge most often fails because the oracle is ALREADY settled (a co-operator beat us, or our
-    // own timed-out nudge actually landed): that is the end state we wanted, not an error. Reconcile
-    // against the chain and treat any now-settled oracle as done. Only an oracle that is still
-    // genuinely unsettled is a real failure worth logging and retrying.
-    if (await reconcileSettled(items, states)) return true;
     console.error(`[Settle] settle-nudge x${items.length} failed, will retry:`, e instanceof Error ? e.message : e);
     return false;
   }
@@ -500,10 +481,6 @@ async function settleOracles(items: Array<{ st: OracleState; cap: string; spotUs
 // through the operator, capped per tick so a backlog can't monopolize the serial executor.
 export async function settleDuePlays(): Promise<void> {
   await sweepStuckPendings();
-  // Move the payouts for already-resolved wins on-chain, decoupled from showing the result (a win is
-  // marked the instant its oracle freezes; the redeem just sweeps the money in after). Runs every tick
-  // independent of new expiries, so a redeem that was interrupted still lands on a later tick.
-  await redeemWonPlays();
   const due = await prismaQuery.play.findMany({ where: { status: 'open', expiry: { lte: BigInt(Date.now()) } } });
   if (due.length === 0) return;
 
@@ -528,49 +505,40 @@ export async function settleDuePlays(): Promise<void> {
   // Phase 1: freeze settlement on every expired-unsettled oracle in one batched nudge. Per the Predict
   // oracle model, settlement is NOT automatic: an authorized cap must push a post-expiry price via
   // update_prices, which freezes the settlement price (PENDING_SETTLEMENT -> SETTLED). Until then the
-  // oracle is not quoteable, so a redeem aborts (EOracleExpired).
-  //
-  // This phase is OPERATOR-ONLY. The nudge needs an oracle cap and only the leader should drive it. A
-  // follower shares the operator key (so it technically owns the caps and WOULD pass resolveOracleCap),
-  // but it is not the leader: a second writer racing the leader on the same oracle just makes the
-  // loser's push abort EOracleSettled and churns the one shared gas coin, which is the storm in the
-  // logs. A follower instead lets the leader settle the oracle on the shared chain and finalizes its
-  // own DB's plays in Phase 2. (The price-pusher and oracle-roll workers gate on OPERATOR_ENABLED the
-  // same way; settle runs in both modes because a follower still needs Phase 2/3.)
+  // oracle is not quoteable, so a redeem aborts (EOracleExpired). Whoever holds a usable cap settles it
+  // here; skip oracles with no cap we hold (a dead deployment) so we never feed a bad cap to the batch.
+  // Idempotent across hosts: an already-settled push just aborts harmlessly, so it is safe even if
+  // another operator settles the same oracle concurrently.
   const now = Date.now();
-  if (OPERATOR_ENABLED) {
-    const toNudge: Array<{ st: OracleState; cap: string; spotUsd: number }> = [];
-    for (const [oracleId, plays] of byOracle) {
-      const st = states.get(oracleId);
-      if (!st || st.settled || st.expiryMs > now) continue;
-      const cap = resolveOracleCap(st);
-      if (!cap) continue;
-      const spotUsd = await settleSpotUsd(plays[0].asset, st.spot1e9);
-      if (spotUsd != null) toNudge.push({ st, cap, spotUsd });
-    }
-    if (toNudge.length > 0 && !(await settleOracles(toNudge, states))) {
-      // The batch reverted (e.g. one oracle settled out from under it): isolate so one bad oracle can't
-      // block the rest. Skip any the batch reconcile already marked settled, so we don't re-nudge it.
-      for (const it of toNudge) {
-        if (states.get(it.st.oracleId)?.settled) continue;
-        await settleOracles([it], states);
-      }
-    }
+  const toNudge: Array<{ st: OracleState; cap: string; spotUsd: number }> = [];
+  for (const [oracleId, plays] of byOracle) {
+    const st = states.get(oracleId);
+    if (!st || st.settled || st.expiryMs > now) continue;
+    const cap = resolveOracleCap(st);
+    if (!cap) continue;
+    const spotUsd = await settleSpotUsd(plays[0].asset, st.spot1e9);
+    if (spotUsd != null) toNudge.push({ st, cap, spotUsd });
+  }
+  if (toNudge.length > 0 && !(await settleOracles(toNudge, states))) {
+    // The batch reverted (e.g. one oracle was settled out from under it): isolate, so one bad oracle
+    // can't block the rest. Each retry is idempotent (an already-settled push just aborts harmlessly).
+    for (const it of toNudge) await settleOracles([it], states);
   }
 
-  // Phase 2: resolve plays whose oracle is now settled. The frozen settlement price decides won/lost
-  // with certainty, so this marks the result THIS tick with NO tx, the player sees won/lost the instant
-  // the oracle freezes instead of waiting on a redeem round trip. A win's payout is swept on-chain by
-  // redeemWonPlays (above), decoupled, because a redeem only MOVES the money, it never changes the
-  // outcome. Runs in both modes so a follower finalizes its own DB's plays off the leader's freeze.
+  // Phase 2: resolve plays whose oracle is now settled. Losing plays cost no tx; winning plays redeem
+  // through the operator, capped per tick.
+  let redeems = 0;
   for (const [oracleId, plays] of byOracle) {
     const st = states.get(oracleId);
     if (!st?.settled || st.settlementPrice1e9 == null) continue;
     for (const play of plays) {
+      const itm = isItm(deserializeKey(play), st.settlementPrice1e9);
+      if (itm && redeems >= SETTLE_MAX_REDEEMS_PER_TICK) continue; // over the per-tick redeem budget
       try {
-        await resolvePlay(play, st.settlementPrice1e9);
+        await settleOnePlay(play, st.settlementPrice1e9);
+        if (itm) redeems++;
       } catch (e) {
-        console.error(`[Settle] play ${play.id} resolve failed:`, e instanceof Error ? e.message : e);
+        console.error(`[Settle] play ${play.id} settle failed:`, e instanceof Error ? e.message : e);
       }
     }
   }
@@ -597,15 +565,42 @@ export async function settleDuePlays(): Promise<void> {
   }
 }
 
-// Resolve a settled play's result the instant its oracle freezes. The frozen settlement price decides
-// won/lost with certainty (ITM pays $1/contract, else 0), so the result is recorded here with NO tx and
-// the player sees it immediately. A win's actual payout is swept on-chain separately by redeemWonPlays
-// (a redeem only MOVES the money, it never changes the outcome), so the result never stalls on a slow
-// redeem round trip. A win is left txRedeem-null so the redeem sweep picks it up and finishes the money
-// move; a loss has nothing to redeem and is fully done here.
-async function resolvePlay(play: Play, settlement1e9: bigint): Promise<void> {
+async function settleOnePlay(play: Play, settlement1e9: bigint): Promise<void> {
   const key = deserializeKey(play);
   const itm = isItm(key, settlement1e9);
+
+  // TEMP (debug): the settlement decision. DOWN wins iff settlement <= strike; UP iff settlement > strike.
+  const fmt = (v: bigint) => (Number(v) / 1e9).toFixed(2);
+  console.log(
+    `[LuckyDebug] SETTLE play=${play.id} ${key.kind === 'binary'
+      ? `side=${key.params.side} strike=${fmt(key.params.strike1e9)}`
+      : `range (${fmt(key.params.lower1e9)}, ${fmt(key.params.higher1e9)}]`
+    } settlement=${fmt(settlement1e9)} entrySpot=${play.entrySpot ?? '?'} -> ${itm ? 'WIN' : 'LOSS'}`,
+  );
+
+  // An in-the-money settle sweeps the $1/contract payout into the user's manager. Both legs use a
+  // permissionless redeem (no owner check once settled), so the operator finalizes the win in
+  // either auth mode. Mark the play won ONLY after that redeem confirms on-chain, so the record
+  // never claims a payout the chain did not move; a failed redeem leaves the play open to retry on
+  // the next settle tick. A losing play has nothing to redeem, so it settles immediately.
+  let digest: string | undefined;
+  if (itm) {
+    const user = await prismaQuery.user.findUnique({ where: { id: play.userId } });
+    if (!user?.predictManagerId) {
+      console.error(`[Settle] play ${play.id} is ITM but the user has no manager; will retry`);
+      return;
+    }
+    try {
+      const tx = new Transaction();
+      if (key.kind === 'binary') buildRedeemPermissionless(tx, user.predictManagerId, key.params);
+      else buildRedeemRangePermissionless(tx, user.predictManagerId, key.params);
+      digest = (await executeAsOperator(tx, `settle-redeem ${play.id}`, { retries: SETTLE_STALE_RETRIES, freshFirst: true })).digest;
+    } catch (e) {
+      console.error(`[Settle] on-chain redeem failed for ${play.id}, will retry:`, e instanceof Error ? e.message : e);
+      return; // leave status 'open' so the next settle tick retries the redeem
+    }
+  }
+
   const payoutRaw = itm ? key.params.quantity : 0n; // settled ITM pays $1 per contract, else 0
   const pnl = payoutRaw - play.entryCost;
   await prismaQuery.play.update({
@@ -617,56 +612,13 @@ async function resolvePlay(play: Play, settlement1e9: bigint): Promise<void> {
       pnl,
       // The frozen settlement price (display): what the round actually settled at, for debug/audit.
       settlePrice: String(Number(settlement1e9) / 1e9),
+      txRedeem: digest ?? play.txRedeem,
       settledAt: new Date(),
     },
   });
-  // A win credits the manager once its redeem lands (redeemWonPlays); drop the fast-reject bet cache
-  // now so the next bet re-reads the real on-chain balance instead of a stale-low figure. Runs in both
-  // modes, so a follower (which never redeems) still clears its own cache the moment it resolves a win.
-  if (itm) invalidateBal(play.userId);
+  if (itm) invalidateBal(play.userId); // the settle redeem credited the manager; the next gate re-reads
   await recordSettlement(play.userId, { game: play.game, stakeRaw: play.stake, pnlRaw: pnl, won: itm });
   await evaluateAndUnlock(play.userId);
-}
-
-// Sweep the payout for already-resolved wins into their managers, decoupled from showing the result.
-// resolvePlay marks a win the moment its oracle freezes (txRedeem null); this moves the actual
-// $1/contract on-chain and stamps txRedeem so the play retires from the sweep. Self-healing: a redeem
-// that fails or is interrupted leaves the play won+txRedeem-null, so a later tick retries it. Capped
-// per tick so a backlog can't monopolize the serial operator executor.
-//
-// Operator-only: the redeem is a permissionless tx, but only the leader should drive it. A follower
-// (separate process sharing the operator key) racing the leader on the same position just makes the
-// loser abort and churns the one shared gas coin. The follower still resolves its own DB's plays in
-// resolvePlay (DB-only, no tx); the leader moves the payout here.
-async function redeemWonPlays(): Promise<void> {
-  if (!OPERATOR_ENABLED) return;
-  const wins = await prismaQuery.play.findMany({
-    where: { status: 'won', txRedeem: null },
-    orderBy: { settledAt: 'asc' },
-    take: SETTLE_MAX_REDEEMS_PER_TICK,
-  });
-  for (const play of wins) {
-    try {
-      await redeemWonPlay(play);
-    } catch (e) {
-      console.error(`[Settle] redeem for won play ${play.id} failed, will retry:`, e instanceof Error ? e.message : e);
-    }
-  }
-}
-
-async function redeemWonPlay(play: Play): Promise<void> {
-  const key = deserializeKey(play);
-  const user = await prismaQuery.user.findUnique({ where: { id: play.userId } });
-  if (!user?.predictManagerId) {
-    console.error(`[Settle] won play ${play.id} has no manager to redeem into; will retry`);
-    return;
-  }
-  const tx = new Transaction();
-  if (key.kind === 'binary') buildRedeemPermissionless(tx, user.predictManagerId, key.params);
-  else buildRedeemRangePermissionless(tx, user.predictManagerId, key.params);
-  const { digest } = await executeAsOperator(tx, `settle-redeem ${play.id}`, { retries: SETTLE_STALE_RETRIES, freshFirst: true });
-  await prismaQuery.play.update({ where: { id: play.id }, data: { txRedeem: digest } });
-  invalidateBal(play.userId); // the redeem credited the manager; the next balance gate re-reads
 }
 
 // === Reads / DTO ===
