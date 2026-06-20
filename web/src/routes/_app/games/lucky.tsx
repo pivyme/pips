@@ -556,19 +556,19 @@ export function LuckyScreen() {
     main: isResult
       ? { label: 'CONTINUE', color: 'amber', onPress: dismissResult }
       : settling || closing
-        ? { label: 'SETTLING', color: 'amber', onPress: () => {}, loading: true }
+        ? { label: 'SETTLING', color: 'amber', onPress: () => { }, loading: true }
         : isOpen
           ? { label: 'CASH OUT', color: 'up', onPress: () => void doCashOut() }
           : isOpening
-            ? { label: 'OPENING', color: 'up', onPress: () => {}, loading: true }
+            ? { label: 'OPENING', color: 'up', onPress: () => { }, loading: true }
             : phase === 'cashing'
-              ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true }
+              ? { label: 'CASH OUT', color: 'up', onPress: () => { }, loading: true }
               : {
-                  label: 'SPIN',
-                  color: 'amber',
-                  onPress: () => void doPlay(),
-                  loading: phase === 'placing' || phase === 'spinning',
-                },
+                label: 'SPIN',
+                color: 'amber',
+                onPress: () => void doPlay(),
+                loading: phase === 'placing' || phase === 'spinning',
+              },
   })
 
   // Layout: a solid header (price/balance over the reel cluster) divides off the chart with a foot
@@ -650,7 +650,7 @@ export function LuckyScreen() {
                 runs; it tracks the real on-chain buzzer the timer counts to. */}
             {showReadouts && secsLeft != null && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
-                <span className="tnum font-black leading-none text-text opacity-50 text-[clamp(64px,18vh,128px)]">{secsLeft}</span>
+                <span className="tnum font-black leading-none text-text opacity-20 text-[clamp(64px,18vh,128px)]">{secsLeft}</span>
               </div>
             )}
             {displayAssets.length > 0 ? (
@@ -812,12 +812,12 @@ function Reel({
     const to =
       landing && target
         ? setTimeout(() => {
-            stopped = true
-            clearInterval(iv)
-            setShown(target)
-            haptic('rigid')
-            slotLock(index, last)
-          }, stopAt)
+          stopped = true
+          clearInterval(iv)
+          setShown(target)
+          haptic('rigid')
+          slotLock(index, last)
+        }, stopAt)
         : undefined
     return () => {
       clearInterval(iv)
@@ -1094,14 +1094,24 @@ function LivePnl({
   if (terminal) {
     const won = status === 'won' || (status === 'cashed_out' && finalPnl >= 0)
     const label = status === 'won' ? 'Won' : status === 'cashed_out' ? 'Cashed out' : 'Missed'
+    // A win/cash-out shows the total cash returned (bet + P/L), the same framing as the live CASH OUT
+    // NOW hero, so the headline never drops the stake on settle. A loss shows the stake lost. The signed
+    // P/L sits underneath for the net move.
+    const total = bet + finalPnl
     return (
       <>
         <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">{label}</div>
         <div className={cnm('text-[40px] font-extrabold leading-none', won ? 'text-up' : 'text-down')}>
-          {finalPnl >= 0 ? '+' : '-'}$<Stat value={Math.abs(finalPnl)} />
+          {won ? <>$<Stat value={total} /></> : <>-$<Stat value={Math.abs(finalPnl)} /></>}
         </div>
-        <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-text-2">
-          {side === 'up' ? 'UP' : 'DOWN'} · {fmtMult(mult)}
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em]">
+          <span className={cnm('tnum', won ? 'text-up' : 'text-down')}>
+            {finalPnl >= 0 ? '+' : '-'}${money(Math.abs(finalPnl))}
+          </span>
+          <span className="text-text-3">·</span>
+          <span className="text-text-2">
+            {side === 'up' ? 'UP' : 'DOWN'} · {fmtMult(mult)}
+          </span>
         </div>
       </>
     )
