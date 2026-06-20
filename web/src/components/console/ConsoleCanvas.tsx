@@ -725,6 +725,8 @@ export default function ConsoleCanvas({
     // Ambient light-show clock + a scratch color, used by the loop while state.lightShow is on.
     let lightT = 0
     const lightColor = new THREE.Color()
+    // Result-blink clock: drives the slow breathing of any action button flagged to pulse.
+    let pulseT = 0
 
     // The main button wears the first glyph of the Pips wordmark, raised proud of the cap face (built
     // once the logo SVG loads, see buildMainGlyph). The glyph is a separate mesh, so the cap stays a
@@ -1240,6 +1242,8 @@ export default function ConsoleCanvas({
       a2Color: undefined as ButtonColor | undefined,
       a1Display: undefined as ActionDisplay | undefined,
       a2Display: undefined as ActionDisplay | undefined,
+      a1Pulse: false,
+      a2Pulse: false,
       knob: null as null | NonNullable<ConsoleView['knob']>,
       numberWheel: null as null | NonNullable<ConsoleView['numberWheel']>,
       lightShow: false,
@@ -1316,6 +1320,12 @@ export default function ConsoleCanvas({
       state.a2Color = a2?.color
       state.a2Display = a2?.display
       a2Lbl.set(a2?.label ?? '', state.a2Available ? 1 : 0.34)
+      // Restart the blink clock from dim when a pulse first arms, so the win/lose CONTINUE eases up
+      // from dark instead of snapping to a random phase.
+      const pulsingNow = !!a1?.pulse || !!a2?.pulse
+      if (pulsingNow && !state.a1Pulse && !state.a2Pulse) pulseT = 0
+      state.a1Pulse = !!a1?.pulse
+      state.a2Pulse = !!a2?.pulse
       tokenScreens[0].setDisplay(state.a1Display)
       tokenScreens[1].setDisplay(state.a2Display)
       state.lightShow = !!v?.lightShow
@@ -2225,6 +2235,32 @@ export default function ConsoleCanvas({
             halo.opacity = 0.34
           }
         })
+        animating = true
+      }
+
+      // Result blink: a flagged action button (Lucky's win/lose caps) blinks its bound color (green
+      // win / red lose) so the outcome reads at a glance. A steep sine pinned near 0 or 1 most of the
+      // cycle gives a clean on/off blink (not a gentle breathe) with quick transitions so it never
+      // strobes or clicks. ~1s period, calm. The off beat drives BOTH the emissive AND the diffuse to
+      // near-black, so the cap goes genuinely dark, not a dim lit color. Color-only like the light
+      // show, so it stays a cheap, shadow-free repaint.
+      if (state.a1Pulse || state.a2Pulse) {
+        pulseT += dt
+        const k = Math.max(0, Math.min(1, 0.5 + 3.4 * Math.sin(pulseT * 6.3)))
+        const emissive = 1.05 * k // off: 0 (dark); on: a bright lit screen
+        const blink = (i: number, on: boolean, color: ButtonColor | undefined) => {
+          if (!on) return
+          const hex = (color && SCREEN_COLORS[color]) || actionThemeColor
+          const mat = bm[i].material as THREE.MeshStandardMaterial
+          // Sink the diffuse toward black on the off beat (floor ~0.04) so it reads as off, not green.
+          mat.color.set(hex).multiplyScalar(0.04 + 0.96 * k)
+          mat.emissive.set(hex)
+          bm[i].userData.baseEmissive = emissive
+          const halo = actionGlow[i]
+          if (halo) halo.opacity = 0.42 * k
+        }
+        blink(1, state.a1Pulse, state.a1Color)
+        blink(2, state.a2Pulse, state.a2Color)
         animating = true
       }
 

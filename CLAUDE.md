@@ -112,7 +112,7 @@ Pips does **not** run on Sui testnet. It runs on **our own Sui localnet**, deplo
 - `apply-ids <file>` — wire ids from a deploy done on another machine.
 - `up` — start a throwaway local node + faucet (the fully-local flow, instead of the deployed box).
 
-**Editing a game, the UI, or the backend needs NO redeploy.** The three games just compose the two on-chain Predict instruments, so a plain `bun dev` restart is enough. Only `contracts/` (Move) changes need `redeploy`.
+**Editing a game, the UI, or the backend needs NO redeploy.** The games just compose the two on-chain Predict instruments, so a plain `bun dev` restart is enough. Only `contracts/` (Move) changes need `redeploy`.
 
 **The deploy gotcha (already solved, do not relearn):** the sui CLI 1.71 publishes over **gRPC**, and Cloudflare 403s gRPC while passing JSON-RPC. So the apps (JSON-RPC) run fine through `rpc.playpips.fun`, but the CLI cannot publish there. The fix: publish through the node's **origin** (`http://95.111.237.44:9000`, where gRPC is unblocked), run through the proxied url. The origin is recorded as `PIPS_DEPLOY_RPC` in `backend/.env`; `scripts/localnet.sh` uses it automatically and resets the apps back to the proxied url after each deploy.
 
@@ -158,7 +158,7 @@ Demo mode (`VITE_DEMO_MODE`) stays the one sanctioned no-backend sim. Suiet wall
 
 ## v1 build (BigDev)
 
-The full v1 build (auth, the three games, menu, backend, indexer, the Predict integration) is planned under [`bigdev/`](./bigdev/) and built by an autonomous loop (`./bigdev/autobuild`). Durable steering lives in [`bigdev/claude/requirements-log.md`](./bigdev/claude/requirements-log.md) (committed, read every iteration); one-shot corrections go to `bigdev/claude/inject.md` (gitignored). Use `./bigdev/autobuild say "rule"` for durable, `./bigdev/autobuild fix "msg"` for transient.
+The full v1 build (auth, the games, menu, backend, indexer, the Predict integration) is planned under [`bigdev/`](./bigdev/) and built by an autonomous loop (`./bigdev/autobuild`). Durable steering lives in [`bigdev/claude/requirements-log.md`](./bigdev/claude/requirements-log.md) (committed, read every iteration); one-shot corrections go to `bigdev/claude/inject.md` (gitignored). Use `./bigdev/autobuild say "rule"` for durable, `./bigdev/autobuild fix "msg"` for transient.
 
 **The spine (decided):** Pips runs its **own** DeepBook Predict deployment on its **own Sui localnet** (live at `rpc.playpips.fun`, no longer testnet: we publish `packages/predict` ourselves, seed the vault with free DUSDC, run short-expiry oracles via a backend price-pusher). Every play is a real `mint`/`redeem`. No sim. Plays are server-signed (privy mode = the user's embedded wallet via Privy `rawSign` under a session signer; dev mode = the operator key), gas is free localnet SUI. Fast paced is the priority. The why and how: `bigdev/plans/01-ARCHITECTURE.md` and `05-SUI-PREDICT.md`; the deploy mechanics live in "The chain" above.
 
@@ -171,7 +171,7 @@ The full v1 build (auth, the three games, menu, backend, indexer, the Predict in
 | `bigdev/plans/03-DATABASE.md` | Prisma schema, queries, seed |
 | `bigdev/plans/04-AUTH.md` | JWT plumbing, `authMiddleware`, onboarding (the Enoki design is superseded by LUCKY.md §6, Privy) |
 | `bigdev/plans/05-SUI-PREDICT.md` | The verified Predict recipe, wrappers, operator workers, gotchas |
-| `bigdev/plans/06-GAMES.md` | The three games, console bindings, the 60fps chart |
+| `bigdev/plans/06-GAMES.md` | The games, console bindings, the 60fps chart |
 | `bigdev/plans/07-DESIGN-SYSTEM.md` | Screen states + verbatim copy (defers to `docs/DESIGN.md`) |
 | `bigdev/plans/08-DEMO-FLOW.md` | The 2-min arc, seed data, achievements, fallbacks |
 | `bigdev/plans/09-DEPLOYMENT.md` | Local run, the Predict bootstrap, deploy, mainnet re-point |
@@ -199,7 +199,7 @@ Track it in [`.claude/progress.md`](./.claude/progress.md). That file holds the 
 
 ## Review mode
 
-/bigdev-review setup. Run `./bigdev/autoreview` to start the autonomous review loop (games-first: chart + the three games are the priority, web3 is test-if-reachable, security runs last).
+/bigdev-review setup. Run `./bigdev/autoreview` to start the autonomous review loop (games-first: chart + the games are the priority, web3 is test-if-reachable, security runs last).
 - `./bigdev/autoreview` full pass with state.json skip-on-pass
 - `./bigdev/autoreview --diff` re-audit only items whose deps changed
 - `./bigdev/autoreview --phase 2` run a single phase (2 = games)

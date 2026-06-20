@@ -57,7 +57,8 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   ├── schema.prisma        # Database schema
 │   └── seed.ts              # Seed data (bun run db:seed)
 ├── scripts/
-│   └── bootstrap.ts         # Publishes + seeds our Predict deployment (bun run bootstrap)
+│   ├── bootstrap.ts         # Publishes + seeds our Predict deployment (bun run bootstrap)
+│   └── (diagnostics)        # bench-lucky, bench-settle, preflight, probe-settle, verify-privy, verify-sponsor
 ├── src/
 │   ├── config/main-config.ts    # Centralized env config (import from here, not process.env)
 │   ├── routes/              # Fastify plugins, grouped by prefix
@@ -65,12 +66,14 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   │   ├── gameRoutes.ts    # /games/* play, /plays/* confirm + cashout
 │   │   ├── menuRoutes.ts    # /stats, /achievements, /settings
 │   │   ├── streamRoutes.ts  # SSE: /stream/prices, /stream/plays/:id
+│   │   ├── walletRoutes.ts  # /wallet: balances + send for the standalone node wallet
 │   │   └── exampleRoutes.ts # starter sample
 │   ├── services/            # Business logic, called by routes
-│   │   └── auth, games, plays, stats, achievements, rng (+ *.test.ts)
+│   │   └── auth, games, plays, stats, achievements, rng, wallet (+ *.test.ts)
 │   ├── workers/             # node-cron jobs (isRunning guard)
 │   │   ├── price-pusher.ts  # pushes oracle prices for short-expiry markets
 │   │   ├── oracle-roll.ts   # rolls the oracle ladder forward
+│   │   ├── market-sync.ts   # discovers live oracle markets from chain (follower mode)
 │   │   ├── settle.ts        # settles expired plays
 │   │   └── errorLogCleanup.ts (+ exampleWorkers.ts)
 │   ├── middlewares/authMiddleware.ts
@@ -80,27 +83,21 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │       ├── prisma.ts        # Database client
 │       ├── pyth.ts          # Pyth price reads
 │       ├── price-cache.ts   # In-memory price cache
-│       └── sui/             # client, predict, solver, markets, math, signer, privy, dusdc, gas, execute, config, deployed.json
+│       ├── game-price.ts    # Unified follower price feed for games
+│       └── sui/             # client, predict, solver, markets, math, signer, privy, dusdc, gas, sponsor, execute, config, deployed(.localnet).json
 ```
 
 ---
 
 ## Configuration (`src/config/main-config.ts`)
 
-All commonly used environment variables are centralized here. Import from config instead of using `process.env` directly:
+**The single source of truth for env.** Every tunable is a named export here, read from `process.env` with a default. Import from config, never touch `process.env` directly:
 
 ```ts
-import { JWT_SECRET, APP_PORT, IS_DEV } from '../config/main-config.ts';
+import { JWT_SECRET, APP_PORT, AUTH_MODE, OPERATOR_ENABLED } from '../config/main-config.ts';
 ```
 
-**Available exports:**
-- `APP_PORT: number` - Server port (default: 3780)
-- `NODE_ENV: string` - Environment mode
-- `IS_DEV: boolean` / `IS_PROD: boolean` - Boolean flags
-- `DATABASE_URL: string` - Database connection string
-- `JWT_SECRET: string` - JWT signing secret
-- `JWT_EXPIRES_IN: string` - Token expiration (default: '7d')
-- `ERROR_LOG_MAX_RECORDS: number` - Max error logs (default: 10000)
+It covers, grouped: **core** (`APP_PORT`, `NODE_ENV`, `IS_DEV`/`IS_PROD`, `DATABASE_URL`, `JWT_SECRET`, `ALLOWED_ORIGIN`), **auth** (`AUTH_MODE` dev|privy, the `PRIVY_*` keys, `TESTING_WALLET_PK`), **Sui** (`SUI_NETWORK`, `SUI_FULLNODE_URL`, the `PREDICT_*` ids, `PYTH_HERMES_URL`), **economy** (`STARTING_BALANCE`, `MIN_STAKE`/`MAX_STAKE`, `GAME_DURATIONS`), **gas** (`GAS_FUND_SUI`, `PLAY_GAS_BUDGET`, `GAS_SPONSORSHIP_WALLET_PK` + the `SPONSOR_*` topup knobs), and the **operator** (`OPERATOR_ENABLED`, the `*_CRON` schedules for price-push / oracle-roll / settle / market-sync, plus the oracle ladder + `LUCKY_*` tuning). Add a new tunable here, not inline.
 
 ---
 

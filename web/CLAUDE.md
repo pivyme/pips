@@ -12,11 +12,11 @@ This is the **Pips** frontend: the gamified trading console. Pips makes trading 
 
 **v1 build:** frontend work is planned in [`../bigdev/plans/`](../bigdev/plans/). Read `06-GAMES.md` (the three games + the 60fps chart, bound to the existing console controls), `07-DESIGN-SYSTEM.md` (screen states + verbatim copy; `../docs/DESIGN.md` is canonical), `05-SUI-PREDICT.md` (the thin client Predict wrapper), `LUCKY.md` §6 (dev + Privy auth, the current source of truth), `02-API.md` (the backend contract). The console shell, Knob, `useConsoleControls`, and `Illo` are already built, do not rebuild them.
 
-**Predict capability box (read before inventing a game mechanic):** the on-chain vocabulary is exactly two expiry-settled instruments, **binary up/down** and **vertical range**, both with live-bid early cash-out. No barrier/touch, no path-dependent or crash-style payoff, no in-Predict leverage, no fixed odds. The three games (Lucky, Range, Moonshot) all compose from those two. Full source-cited box in `../bigdev/plans/05-SUI-PREDICT.md` and the root [`../CLAUDE.md`](../CLAUDE.md).
+**Predict capability box (read before inventing a game mechanic):** the on-chain vocabulary is exactly two expiry-settled instruments, **binary up/down** and **vertical range**, both with live-bid early cash-out. No barrier/touch, no path-dependent or crash-style payoff, no in-Predict leverage, no fixed odds. The games (Lucky, Range, Line Rider, Candle Hop) all compose from those two. Full source-cited box in `../bigdev/plans/05-SUI-PREDICT.md` and the root [`../CLAUDE.md`](../CLAUDE.md).
 
 ## Pips frontend specifics
 
-**The UI is a device, not a dashboard.** Everything renders inside a persistent console shell with a swappable **Screen**. The physical controls (Main Action Button, Action Buttons 1/2, Knob, Menu/Games tabs) belong to the shell, but each game binds their behavior via a controls registration (`useConsoleControls()`). The shell exists in two forms today: a CSS/DOM `ConsoleShell`, and the real 3D **WebGL handheld** `ConsoleCanvas` (Three.js). Range runs on the 3D device; the other routes are still on the CSS shell until their screens are laid out for the L-shaped aperture. Use `web-haptics` for tactile feedback. Full spec and layout in [`../docs/DESIGN.md`](../docs/DESIGN.md). If a screen could pass for any other trading app, it is wrong.
+**The UI is a device, not a dashboard.** Everything renders inside a persistent console shell with a swappable **Screen**. The physical controls (Main Action Button, Action Buttons 1/2, Knob, Menu/Games tabs) belong to the shell, but each game binds their behavior via a controls registration (`useConsoleControls()`). The shell exists in two forms: the real 3D **WebGL handheld** `ConsoleCanvas` (Three.js) and a CSS/DOM `ConsoleShell` fallback. The whole `/games` subtree (the hub + Lucky, Range, Line Rider, Candle Hop) runs on the 3D device, laid out for the L-shaped aperture; `ConsoleShell` is the fallback behind the menu. Use `web-haptics` for tactile feedback. Full spec and layout in [`../docs/DESIGN.md`](../docs/DESIGN.md). If a screen could pass for any other trading app, it is wrong.
 
 ### Menu drawer page transitions
 
@@ -74,6 +74,30 @@ Game screens (`/games/*`) render as an HTML layer **behind** the 3D device and s
 - It is always clearly badged (the `Demo` chip in the status strip, the landing chip + toggle, a reset in Settings). Keep it that way.
 - Do NOT wire demo state into the real backend or chain, and do NOT leak it into the real path. If you add a new `api` method or stream, add its demo twin in `demo.ts` so demo stays complete.
 
+## Game audio
+
+All game sound is **hand-built WebAudio, zero asset files**. Two files, two jobs:
+
+- **`src/lib/sound.ts`** is the per-game musical layer: the looping beds and the one-shot stings (spin, lock, win, lose, cash-out). This is where new game audio goes.
+- **`src/components/console/consoleAudio.ts`** is the physical device SFX (button/knob/roller), sample-based, owned by the shell. Leave it alone unless you are changing a control's feel.
+
+**The quality bar (this is the whole point, keep it).** The house sound is "clean, warm, not 8-bit, never intrusive." It comes from a few hard rules:
+
+- **No raw square/blip waves for anything melodic.** Melodic content uses `bell()` (the soft mallet/marimba voice: filtered triangle + an octave shimmer) or a plain filtered `triangle`/`sine`. `sawtooth`/`square` are texture only (bass, a tense arp) and always go through a lowpass. A bare square tone is the 8-bit smell, avoid it.
+- **Soft attack, exponential decay, always.** ~6-12ms ramp on, exponential ramp off, never an instant on/off (that clicks). Use `setValueAtTime(0.0001, ...)` then `exponentialRampToValueAtTime`, the pattern every voice already uses.
+- **Percussion is filtered noise, not bright noise.** Shakers, detents, whooshes are short bursts of the shared `noise()` buffer through a band/low/high-pass at a tamed cutoff. Bright unfiltered noise reads cheap.
+- **Beds stay beds.** A loop runs at low bus gain (~0.2-0.26), fades in and out, and **only rides the active round** (wire start/stop to the playing phase, never play at idle). Silence at rest is what keeps it non-annoying. The resolve sting always lands over silence, so **stop the bed first**, then play win/lose.
+- **Every game gets its own identity, do NOT reuse a bed.** Same quality bar, different music. Pick a distinct key, tempo, progression, and timbre per game so they never blur together. The two references: **Lucky** is bright/playful (major C-G-Am-F, ~104bpm, mallet arp + soft kick + shaker), **Range** is dark/tense (minor i-VI-VII-V, ~122bpm, resonant saw arp + four-on-the-floor). A new game should sound like neither.
+
+**Plumbing (reuse it, don't reinvent).** Every voice: no-ops when sound is off (`enabled`), resumes a suspended `AudioContext`, and fires after a user gesture so autoplay policy is never hit. Everything routes through the shared synth bus `out(ac)` (master `SYNTH_LEVEL`) so it balances against the device SFX (`SFX_LEVEL` in consoleAudio.ts). A bed gets its own sub-gain that fades, then connects to `out(ac)`. The shared helpers are `blip()` (quick percussive ping), `bell()` (the warm mallet, the default for melody), and `noise()` (the lazy noise buffer).
+
+**Recipe for a new game's audio:**
+1. In `sound.ts`, add a section mirroring the Range/Lucky blocks: `start<Game>Bgm()`/`stop<Game>Bgm()` (copy the lookahead scheduler verbatim, it keeps note timing tight through timer jitter) plus the one-shot stings the game needs.
+2. Reuse `bell()`/`blip()`/`noise()`; write per-game `kick`/`bass`/`arp`/`shaker` helpers that take a `dest` bus so they fade with the bed.
+3. Wire it in the game screen like Lucky does: a `bedPlaying` boolean (`reelsCycling || roundActive`) effect that starts on the active round and `stopXBgm()` in the cleanup, and route the result to win/lose/cash-out in `finishResult` after stopping the bed.
+4. If sound can be toggled off mid-round, add your `stop<Game>Bgm()` to `setSoundEnabled()`.
+5. The one balance knob per game is the bed's fade-in target gain in `start<Game>Bgm()` (Lucky `0.2`, Range `0.26`). Master is `SYNTH_LEVEL`.
+
 ## Tech Stack
 
 - **Framework**: TanStack Start (React 19 meta-framework, SSR-capable)
@@ -96,31 +120,37 @@ src/
 │   ├── index.tsx             # Landing / sign-in door (outside the console shell)
 │   ├── console.tsx           # Standalone 3D console route
 │   ├── design-system.tsx     # Living UI-kit reference (/design-system)
+│   ├── pitch.tsx             # Standalone pitch deck (/pitch), outside the shell
+│   ├── export.tsx            # Dev-only PNG dump of the device per skin (personal tooling)
+│   ├── tools/wallet.tsx      # Standalone node wallet (/tools/wallet)
 │   └── _app/                 # Pathless layout: everything "inside the device"
-│       ├── games/            # index, lucky, range, tap
+│       ├── games/            # index, lucky, range, line-rider, candle-hop
 │       └── menu/             # index, stats, achievements, customize, settings
 ├── components/
 │   ├── console/              # The device shell (the heart of the app)
 │   │   ├── ConsoleCanvas.tsx # 3D WebGL handheld (Three.js) + screen-cutout projection
-│   │   ├── ConsoleShell.tsx  # CSS/DOM shell (routes not yet on the 3D aperture)
+│   │   ├── ConsoleShell.tsx  # CSS/DOM shell (fallback behind the menu)
+│   │   ├── CustomizeStudio.tsx # Skin/theme workshop (/menu/customize)
 │   │   ├── AppFrame.tsx      # Phone-sized frame wrapper
 │   │   ├── MenuDrawer.tsx    # Menu as a drawer over the device
 │   │   ├── Knob.tsx          # The physical knob
 │   │   ├── controls.tsx      # useConsoleControls + provider (the binding registry)
 │   │   ├── consoleGeo.ts     # Three.js geometry for the device body
-│   │   ├── consoleGui.ts     # lil-gui tuning panel (dev)
+│   │   ├── consoleElements.ts # Geometry/mesh factories for the physical controls
+│   │   ├── themes.ts         # Console skins/themes
+│   │   ├── consoleGui.ts / customizeGui.ts # lil-gui tuning panels (dev)
 │   │   └── consoleAudio.ts   # Console SFX
-│   ├── game/                 # Chart.tsx (live chart), screen.tsx, instruments.tsx
+│   ├── game/                 # Chart.tsx (live chart), screen.tsx, instruments.tsx, CoinCRT.tsx, flapEngine.ts (candle-hop), rideEngine.ts (line-rider)
 │   ├── menu/                 # StatsCard.tsx, shared.tsx
 │   └── elements/             # AnimateComponent (starter residue, currently unused)
-├── ui/                       # HeroUI v3 wrappers + Illo (Button, Card, Modal, TextField, Tooltip, Switch)
+├── ui/                       # HeroUI v3 wrappers + Illo (Button, Card, Modal, TextField, Tooltip, Switch, LoadingIcon)
 ├── lib/                      # Integrations + app logic
 │   ├── api.ts                # Typed backend client + SSE; the demo seam lives here
 │   ├── auth.tsx              # Auth context (dev auto-login / Privy login)
 │   ├── privy.tsx             # Privy provider + login->wallet->verify bridge (privy mode)
 │   ├── demo.ts               # The ONE sanctioned in-memory sim (demo mode)
 │   ├── achievements.ts, haptics.ts, sound.ts, shareCard.ts, errors.ts, polyfills.ts
-│   └── sui/                  # predict.ts (the one Predict wrapper), config.ts (ids from env)
+│   └── sui/                  # predict.ts (the one Predict wrapper), config.ts (ids from env), devwallet.ts (/tools/wallet helper)
 ├── hooks/                    # useLocalStorage, useReducedMotion
 ├── utils/                    # style.ts (cnm), format.ts, motion.ts
 ├── integrations/             # tanstack-query root provider

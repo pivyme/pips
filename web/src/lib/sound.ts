@@ -33,7 +33,10 @@ function out(ac: AudioContext): AudioNode {
 // and any running BGM is cut so the toggle takes effect immediately.
 export function setSoundEnabled(value: boolean): void {
   enabled = value
-  if (!value) stopBgm()
+  if (!value) {
+    stopBgm()
+    stopLuckyBgm()
+  }
 }
 
 // A short percussive blip at a frequency, shaped by a quick attack + exponential decay.
@@ -48,6 +51,37 @@ function blip(ac: AudioContext, freq: number, start: number, dur: number, gain =
   osc.connect(g).connect(out(ac))
   osc.start(start)
   osc.stop(start + dur + 0.02)
+}
+
+// A soft mallet/bell: a triangle through a gentle lowpass with a quick attack and a rounded tail,
+// plus an octave shimmer for air. Warmer and fuller than `blip`, this is the Lucky voice (marimba,
+// not chiptune). Reused across the reel locks, the commit, and the win/cash-out resolves so the
+// whole game speaks one tone. Routes to `dest` when given (the bed bus), else the shared synth bus.
+function bell(ac: AudioContext, freq: number, start: number, dur: number, gain = 0.06, dest?: AudioNode): void {
+  const sink = dest ?? out(ac)
+  const o = ac.createOscillator()
+  const sh = ac.createOscillator()
+  const g = ac.createGain()
+  const shG = ac.createGain()
+  const f = ac.createBiquadFilter()
+  o.type = 'triangle'
+  sh.type = 'sine'
+  o.frequency.setValueAtTime(freq, start)
+  sh.frequency.setValueAtTime(freq * 2.01, start) // a hair sharp keeps the shimmer alive, not dead-on
+  f.type = 'lowpass'
+  f.frequency.value = Math.min(freq * 5, 8500)
+  g.gain.setValueAtTime(0.0001, start)
+  g.gain.exponentialRampToValueAtTime(gain, start + 0.008)
+  g.gain.exponentialRampToValueAtTime(0.0001, start + dur)
+  shG.gain.setValueAtTime(0.0001, start)
+  shG.gain.exponentialRampToValueAtTime(gain * 0.22, start + 0.006)
+  shG.gain.exponentialRampToValueAtTime(0.0001, start + dur * 0.6)
+  o.connect(f).connect(g).connect(sink)
+  sh.connect(shG).connect(sink)
+  o.start(start)
+  o.stop(start + dur + 0.05)
+  sh.start(start)
+  sh.stop(start + dur + 0.05)
 }
 
 export function sound(kind: Sound): void {
@@ -67,66 +101,315 @@ export function sound(kind: Sound): void {
   }
 }
 
-// --- Lucky slot voices. The reels make their own little instrument: a launch flourish, a quiet
-// ratchet while they spin, and a snap that climbs per reel so landing all three resolves a chord.
+// --- Lucky slot voices. The reels are a little instrument: a soft launch whoosh, a warm ratchet
+// while they spin, and a rounded mallet snap that climbs per reel. All built on the `bell` voice and
+// filtered noise (no raw square blips), so the slot reads tactile and playful, never chiptune.
 
-// Spin-up: a quick three-step rise as the reels are dealt and start tumbling.
+// Spin-up: a quick filtered-noise whoosh rising under a warm three-note bloom (C-E-G), as the reels
+// are dealt and start tumbling. The whoosh gives motion, the bloom gives it a friendly major lift.
 export function slotSpin(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
   if (ac.state === 'suspended') void ac.resume()
   const t = ac.currentTime
-  blip(ac, 440, t, 0.06, 0.03)
-  blip(ac, 660, t + 0.045, 0.06, 0.03)
-  blip(ac, 880, t + 0.09, 0.09, 0.035)
+  const src = ac.createBufferSource()
+  src.buffer = noise(ac)
+  const f = ac.createBiquadFilter()
+  f.type = 'bandpass'
+  f.Q.value = 0.8
+  f.frequency.setValueAtTime(320, t)
+  f.frequency.exponentialRampToValueAtTime(2200, t + 0.22) // sweep up = the reels taking off
+  const ng = ac.createGain()
+  ng.gain.setValueAtTime(0.0001, t)
+  ng.gain.exponentialRampToValueAtTime(0.03, t + 0.05)
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.26)
+  src.connect(f).connect(ng).connect(out(ac))
+  src.start(t)
+  src.stop(t + 0.3)
+  bell(ac, 523.25, t, 0.14, 0.035) // C5
+  bell(ac, 659.25, t + 0.05, 0.14, 0.035) // E5
+  bell(ac, 783.99, t + 0.1, 0.18, 0.04) // G5
 }
 
-// One ratchet tick: ultra-short, quiet, a hair of pitch jitter so a stream of them reads as
-// mechanical reel motion rather than a held tone. Driven on an interval while the reels cycle.
+// One ratchet tick: a tiny filtered-noise detent, ultra-short and quiet, a hair of bandpass jitter
+// so a stream of them reads as a mechanical reel rolling rather than a chiptune click. Driven on an
+// interval while the reels cycle.
 export function slotTick(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
   if (ac.state === 'suspended') void ac.resume()
   const t = ac.currentTime
-  const osc = ac.createOscillator()
+  const src = ac.createBufferSource()
+  src.buffer = noise(ac)
+  const f = ac.createBiquadFilter()
+  f.type = 'bandpass'
+  f.Q.value = 1.6
+  f.frequency.value = 1700 + Math.random() * 900
   const g = ac.createGain()
-  osc.type = 'triangle'
-  osc.frequency.setValueAtTime(1300 + Math.random() * 500, t)
   g.gain.setValueAtTime(0.0001, t)
-  g.gain.exponentialRampToValueAtTime(0.016, t + 0.003)
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.028)
-  osc.connect(g).connect(out(ac))
-  osc.start(t)
-  osc.stop(t + 0.035)
+  g.gain.exponentialRampToValueAtTime(0.013, t + 0.002)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.03)
+  src.connect(f).connect(g).connect(out(ac))
+  src.start(t)
+  src.stop(t + 0.04)
 }
 
-// A reel lands: a short body "thunk" plus a bright ding that climbs by reel (A5, C#6, E6), so the
-// three staggered stops land an A-major triad. The last reel rings a touch longer.
-export function slotLock(step: number): void {
+// A reel lands: a soft body thunk + a noise detent click + a rounded mallet ding that climbs by reel
+// (A5, C#6, E6). The final reel (`last`) rings longer and tops itself with a little sparkle, so the
+// last stop feels like the payoff beat instead of just another click.
+export function slotLock(step: number, last = false): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
   if (ac.state === 'suspended') void ac.resume()
   const t = ac.currentTime
-  const osc = ac.createOscillator()
+  // warm body thunk
+  const o = ac.createOscillator()
   const g = ac.createGain()
-  osc.type = 'sine'
-  osc.frequency.setValueAtTime(190, t)
-  osc.frequency.exponentialRampToValueAtTime(95, t + 0.09)
+  o.type = 'sine'
+  o.frequency.setValueAtTime(200, t)
+  o.frequency.exponentialRampToValueAtTime(92, t + 0.1)
   g.gain.setValueAtTime(0.0001, t)
-  g.gain.exponentialRampToValueAtTime(0.05, t + 0.006)
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12)
-  osc.connect(g).connect(out(ac))
-  osc.start(t)
-  osc.stop(t + 0.14)
-  const notes = [880, 1108.7, 1318.5]
-  const last = step >= notes.length - 1
-  blip(ac, notes[Math.min(step, notes.length - 1)], t + 0.005, last ? 0.22 : 0.13, 0.05)
+  g.gain.exponentialRampToValueAtTime(0.055, t + 0.006)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13)
+  o.connect(g).connect(out(ac))
+  o.start(t)
+  o.stop(t + 0.15)
+  // a short detent click rides the snap
+  const src = ac.createBufferSource()
+  src.buffer = noise(ac)
+  const nf = ac.createBiquadFilter()
+  nf.type = 'highpass'
+  nf.frequency.value = 3500
+  const ng = ac.createGain()
+  ng.gain.setValueAtTime(0.0001, t)
+  ng.gain.exponentialRampToValueAtTime(0.02, t + 0.002)
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.04)
+  src.connect(nf).connect(ng).connect(out(ac))
+  src.start(t)
+  src.stop(t + 0.05)
+  const notes = [880, 1108.7, 1318.5] // A5 C#6 E6
+  bell(ac, notes[Math.min(step, notes.length - 1)], t + 0.005, last ? 0.32 : 0.16, 0.05)
+  if (last) bell(ac, 1760.0, t + 0.08, 0.24, 0.025) // A6 sparkle to top the final landing
 }
 
-// --- Candle Hop voices. A calm, loopable synth bed for the run plus two punchy one-shots: a
+// The chart locks in after the reels settle: a bright ascending mallet confirm (B5-E6-A6), the slot
+// committing to its market right before the chart blooms open. Its own voice, clear of the reel chord.
+export function slotPick(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  bell(ac, 987.77, t, 0.16, 0.045) // B5
+  bell(ac, 1318.51, t + 0.06, 0.18, 0.05) // E6
+  bell(ac, 1760.0, t + 0.12, 0.26, 0.055) // A6, held a touch longer
+}
+
+// --- Lucky bed + resolves. A subtle, bright bed rides the whole round (deal -> open), and the round
+// ends on one of three warm mallet stings: a jackpot climb on a win, a confident chime on a cash-out,
+// a soft sigh on a miss. Bright and major where Range is dark and tense, so the two games feel apart.
+
+// C - G - Am - F (I - V - vi - IV): the universally hopeful, bouncy progression. A low bass root +
+// three chord tones for the mallet arp. Four bars.
+const LUCKY_BARS = [
+  { bass: 130.81, arp: [261.63, 329.63, 392.0] }, // C   (C E G)
+  { bass: 98.0, arp: [293.66, 392.0, 493.88] }, // G   (D G B)
+  { bass: 110.0, arp: [261.63, 329.63, 440.0] }, // Am  (C E A)
+  { bass: 87.31, arp: [261.63, 349.23, 440.0] }, // F   (C F A)
+]
+const LUCKY_TEMPO = 104
+const LUCKY_STEP = 60 / LUCKY_TEMPO / 4 // sixteenth-note length, seconds
+const LUCKY_STEPS = LUCKY_BARS.length * 16
+
+function luckyKick(ac: AudioContext, dest: AudioNode, t: number): void {
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(120, t)
+  o.frequency.exponentialRampToValueAtTime(50, t + 0.1)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.12, t + 0.006) // soft: this is a playful bed, not a club kick
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16)
+  o.connect(g).connect(dest)
+  o.start(t)
+  o.stop(t + 0.18)
+}
+
+function luckyBass(ac: AudioContext, dest: AudioNode, freq: number, t: number): void {
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  const f = ac.createBiquadFilter()
+  o.type = 'triangle'
+  o.frequency.setValueAtTime(freq, t)
+  f.type = 'lowpass'
+  f.frequency.value = 600
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.09, t + 0.02)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24)
+  o.connect(f).connect(g).connect(dest)
+  o.start(t)
+  o.stop(t + 0.27)
+}
+
+function luckyShaker(ac: AudioContext, dest: AudioNode, t: number, accent: boolean): void {
+  const src = ac.createBufferSource()
+  const f = ac.createBiquadFilter()
+  const g = ac.createGain()
+  src.buffer = noise(ac)
+  f.type = 'bandpass'
+  f.Q.value = 0.9
+  f.frequency.value = 5200 // warmer than a bright hi-hat, so the bed stays soft
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(accent ? 0.026 : 0.016, t + 0.005)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05)
+  src.connect(f).connect(g).connect(dest)
+  src.start(t)
+  src.stop(t + 0.06)
+}
+
+// One sixteenth of the bed: soft kick + octave-bouncing bass on the beat, a rolling mallet arp on the
+// eighths (the `bell` voice routed to the bed bus), a light shaker on the offbeats.
+function luckyStepAt(ac: AudioContext, dest: AudioNode, step: number, t: number): void {
+  const chord = LUCKY_BARS[Math.floor(step / 16) % LUCKY_BARS.length]
+  const s = step % 16
+  if (s % 4 === 0) {
+    luckyKick(ac, dest, t)
+    luckyBass(ac, dest, s === 8 ? chord.bass * 2 : chord.bass, t)
+  }
+  if (s % 2 === 0) {
+    const idx = [0, 1, 2, 1][(step >> 1) & 3]
+    bell(ac, chord.arp[idx], t, 0.22, 0.05, dest)
+  }
+  if (s === 2 || s === 6 || s === 10 || s === 14) luckyShaker(ac, dest, t, s === 6 || s === 14)
+}
+
+let luckyTimer: ReturnType<typeof setInterval> | null = null
+let luckyStepIdx = 0
+let luckyNext = 0
+let luckyBus: GainNode | null = null
+
+// Start the bed (deal -> open). Same lookahead scheduler as the other beds; kept low so it sits under
+// the reels and readouts. No-op if sound is off or it is already running.
+export function startLuckyBgm(): void {
+  if (!enabled || luckyTimer) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const bus = ac.createGain()
+  bus.gain.setValueAtTime(0.0001, ac.currentTime)
+  bus.gain.exponentialRampToValueAtTime(0.2, ac.currentTime + 0.5) // subtle bed, eased in
+  bus.connect(out(ac))
+  luckyBus = bus
+  luckyStepIdx = 0
+  luckyNext = ac.currentTime + 0.08
+  luckyTimer = setInterval(() => {
+    if (!ac || !luckyBus) return
+    while (luckyNext < ac.currentTime + 0.1) {
+      luckyStepAt(ac, luckyBus, luckyStepIdx, luckyNext)
+      luckyNext += LUCKY_STEP
+      luckyStepIdx = (luckyStepIdx + 1) % LUCKY_STEPS
+    }
+  }, 25)
+}
+
+// Stop the bed with a quick fade so it never clicks off and the resolve sting lands clean. Safe to
+// call when nothing is playing.
+export function stopLuckyBgm(): void {
+  if (luckyTimer) {
+    clearInterval(luckyTimer)
+    luckyTimer = null
+  }
+  const bus = luckyBus
+  luckyBus = null
+  if (bus && ctx) {
+    const now = ctx.currentTime
+    bus.gain.cancelScheduledValues(now)
+    bus.gain.setValueAtTime(Math.max(0.0001, bus.gain.value), now)
+    bus.gain.exponentialRampToValueAtTime(0.0001, now + 0.2)
+    setTimeout(() => bus.disconnect(), 300)
+  }
+}
+
+// Jackpot win: a warm sub boom under a bright ascending major arpeggio (C up two octaves) with a
+// twinkling sparkle tail. The payout climb. Triumphant and fun, never cheesy.
+export function luckyWin(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(95, t)
+  o.frequency.exponentialRampToValueAtTime(48, t + 0.5)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.22, t + 0.01)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7)
+  o.connect(g).connect(out(ac))
+  o.start(t)
+  o.stop(t + 0.72)
+  const climb = [523.25, 659.25, 783.99, 1046.5, 1318.51, 1567.98] // C E G C E G
+  climb.forEach((f, i) => bell(ac, f, t + 0.04 + i * 0.075, 0.42, 0.055))
+  const spark = [2093.0, 2637.0, 1975.5, 2349.3]
+  spark.forEach((f, i) => bell(ac, f, t + 0.52 + i * 0.07, 0.18, 0.02)) // high twinkle tail
+}
+
+// Cash-out: a confident two-note bell climb (G5 -> C6) topped with a sparkle, over a soft body. The
+// "locked it in" chime, distinct from a held jackpot so cashing out feels like its own win.
+export function luckyCashout(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(110, t)
+  o.frequency.exponentialRampToValueAtTime(70, t + 0.22)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.12, t + 0.008)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28)
+  o.connect(g).connect(out(ac))
+  o.start(t)
+  o.stop(t + 0.3)
+  bell(ac, 783.99, t, 0.22, 0.06) // G5
+  bell(ac, 1046.5, t + 0.1, 0.32, 0.065) // C6
+  bell(ac, 1567.98, t + 0.22, 0.2, 0.03) // G6 sparkle
+}
+
+// Miss: a soft low sigh under a gentle descending minor third on the mallet (E4 -> C4). Acknowledges
+// the loss, warm and brief, never a harsh nag.
+export function luckyLose(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  const f = ac.createBiquadFilter()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(220, t)
+  o.frequency.exponentialRampToValueAtTime(150, t + 0.45)
+  f.type = 'lowpass'
+  f.frequency.setValueAtTime(1200, t)
+  f.frequency.exponentialRampToValueAtTime(500, t + 0.4)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.09, t + 0.02)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55)
+  o.connect(f).connect(g).connect(out(ac))
+  o.start(t)
+  o.stop(t + 0.58)
+  bell(ac, 329.63, t + 0.02, 0.3, 0.04) // E4
+  bell(ac, 261.63, t + 0.16, 0.42, 0.04) // C4
+}
+
+// --- Flappy Piper voices. A calm, loopable synth bed for the run plus two punchy one-shots: a
 // bright "tuiing" that climbs a pentatonic ladder per cleared candle (so a streak feels good), and
 // a falling synth sigh on a crash. The bed is a bed, not a foreground: low gain, soft filtering.
 

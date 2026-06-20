@@ -5,7 +5,7 @@ import type { FlapHud } from '@/components/game/flapEngine'
 import type { ScoreEntry, SubmitResult } from '@/lib/leaderboard'
 import { useConsoleControls } from '@/components/console/controls'
 import { FlapEngine } from '@/components/game/flapEngine'
-import { GameReadout, GameScreen, GameStage } from '@/components/game/screen'
+import { GameReadout, GameScreen, GameStage, ScreenCRT } from '@/components/game/screen'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
@@ -13,7 +13,7 @@ import { getScores, submitScore } from '@/lib/leaderboard'
 import { sound, startBgm, stopBgm, hopScore, hopLose, hopResetCombo } from '@/lib/sound'
 import { cnm } from '@/utils/style'
 
-// Candle Hop. A one-button flappy minigame (no Sui, no backend): tap the big button to fly the
+// Flappy Piper. A one-button flappy minigame (no Sui, no backend): tap the big button to fly the
 // Pips face through scrolling candlesticks. A hit shakes the screen, then drops the character
 // before the leaderboard appears. Runs on the 3D handheld's L-shaped aperture.
 export const Route = createFileRoute('/_app/games/candle-hop')({ component: CandleHopScreen })
@@ -134,11 +134,13 @@ export function CandleHopScreen() {
         <div className="flex items-center gap-3">
           <CandlestickChart size={30} strokeWidth={2.4} className="shrink-0 text-brand-500" />
           <div>
-            <div className="text-[20px] font-extrabold uppercase leading-none tracking-[0.03em] text-text">Candle Hop</div>
-            <div className="mt-1.5 text-[15px] font-semibold leading-snug text-text-2">Tap FLAP to fly. Thread the candles</div>
+            <div className="text-[20px] font-extrabold uppercase leading-none tracking-[0.03em] text-text">Flappy Piper</div>
+            <div className="mt-1.5 text-[15px] font-semibold leading-snug text-text-2">Tap the big button to fly</div>
           </div>
         </div>
       </GameReadout>
+
+      <ScreenCRT />
 
       {phase === 'title' && <TitleOverlay best={best} board={board} />}
       {phase === 'over' && result && <OverOverlay result={result} />}
@@ -152,7 +154,7 @@ function TitleOverlay({ best, board }: { best: number; board: Array<ScoreEntry> 
     <div className="absolute inset-0 z-20 flex flex-col justify-center bg-black/93 p-[var(--screen-rim,24px)] backdrop-blur-[1px]">
       <div className="flex items-center gap-2.5">
         <CandlestickChart size={26} strokeWidth={2.4} className="text-brand-500" />
-        <h1 className="text-4xl font-extrabold leading-none tracking-tight text-text">Candle Hop</h1>
+        <h1 className="text-4xl font-extrabold leading-none tracking-tight text-text">Flappy Piper</h1>
       </div>
       <p className="mt-2 max-w-[82%] text-sm leading-snug text-text-2">
         Tap to lift Pips, let it fall, and slip through the candle gaps. It moves calmly, but one bad line ends the run.
@@ -161,7 +163,7 @@ function TitleOverlay({ best, board }: { best: number; board: Array<ScoreEntry> 
         <Board rows={board.slice(0, 5)} />
       </div>
       <div className="mt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-text-3">
-        Best <span className="tnum text-text">{fmt(best)}</span> · hit <span className="text-brand-500">PLAY</span>
+        Best <span className="tnum text-text">{fmt(best)}</span> · press the <span className="text-brand-500">big button</span>
       </div>
     </div>
   )
@@ -185,7 +187,7 @@ function OverOverlay({ result }: { result: SubmitResult }) {
         <Board rows={result.scores.slice(0, 6)} />
       </div>
       <div className="mt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-text-3">
-        Hit <span className="text-brand-500">PLAY AGAIN</span>
+        Press the <span className="text-brand-500">big button</span> to play again
       </div>
     </div>
   )

@@ -39,10 +39,6 @@ import { newSeed, seedFloat, pickTier } from './rng.ts';
 // limit; entries fall out as oracles roll.
 const SOLVE_CURVE_TTL_MS = 3000;
 
-// The coinflip tier. The slot's most common deal (LUCKY_TIER_WEIGHTS): its strike sits one tick
-// inside the live spot, so ANY move in the bet direction wins (~2x, at the money). This is the
-// intuitive common case ("I bet down, it dipped, I win"); the bigger tiers stay OTM reach-a-target.
-const COINFLIP_TIER = 2;
 const curveCache = new Map<string, { curve: ScanCurve; at: number }>();
 function getFreshCurve(key: string, now: number): ScanCurve | undefined {
   const hit = curveCache.get(key);
@@ -304,41 +300,10 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
     };
 
     try {
-      // Coinflip: the strike sits one tick inside the live spot, so ANY move in the bet direction
-      // wins (~2x, at the money). One probe sizes the quantity to the bet (analytic, like the OTM
-      // path below); the funding buffer absorbs the small pre/post-trade slippage.
-      if (tier <= COINFLIP_TIER && atm1e9 != null) {
-        const atmTick = side === 'up' ? floorTick(atm1e9, g.tick) : ceilTick(atm1e9, g.tick);
-        const strike = clampStrike(atmTick, g);
-        // Only a real coinflip when the ATM tick is genuinely inside the grid. If the spot has drifted
-        // to a grid edge so the clamp moved the strike, fall through to the OTM solver, which reports an
-        // honest tier/multiple instead of mislabeling a deep ITM/OTM edge strike as ~2x any-move-wins.
-        if (strike === atmTick) {
-          const [probe] = await previewBinaryBatch(market.oracleId, market.expiryMs, side, [{ strike1e9: strike, quantity: DUSDC_DECIMALS }]);
-          if (!probe || probe.cost <= 0n) throw new Error('coinflip strike unmintable');
-          const targetA = (stakeRaw * 98n) / 100n; // aim just under the bet; the funding buffer covers the rest
-          let q = (DUSDC_DECIMALS * targetA) / probe.cost;
-          if (q <= 0n) q = 1n;
-          const entryCost = (probe.cost * q) / DUSDC_DECIMALS;
-          return {
-            kind: 'binary',
-            game: 'lucky',
-            market,
-            params: { oracleId: market.oracleId, expiryMs: market.expiryMs, strike1e9: strike, side, quantity: q },
-            asset,
-            side,
-            tier: COINFLIP_TIER,
-            duration,
-            strikeDisplay: fmt1e9(strike),
-            entrySpot,
-            entryCost,
-            maxPayout: q,
-            multiplier: multiplierOf(entryCost, q),
-            seed,
-          };
-        }
-      }
-
+      // Every tier (the 2x floor included) routes through the solver, so the strike is ALWAYS a real
+      // grid strike on the OTM side of spot: an UP target sits at/above your entry, a DOWN target
+      // at/below it. There is no at-the-money "any move wins" deal anymore, which is what used to put
+      // the target one tick from entry (and on the wrong side: a sub-2x mark, an UP target below entry).
       // Reuse a fresh cached scan for this oracle/side when one exists, so a warm play skips the
       // scan round trip and only pays for sizing. Cache whatever scan the solve ended up using.
       const cacheKey = `${market.oracleId}:${side}`;

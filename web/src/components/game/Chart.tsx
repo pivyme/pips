@@ -547,6 +547,11 @@ function drawOverlays(
 ) {
   const { w, h, nowX, fill, entryReveal, targetReveal, rim, price, locked, y, C } = ctxv
 
+  // TARGET label rides the RIGHT edge (the amber hero), ENTRY stays on the LEFT. Opposite corners, so
+  // the two can never stack into each other the way the old both-on-the-left pair did on a small move.
+  const labelX = w - rim - 2
+  const clampLabelY = (v: number): number => Math.max(11, Math.min(h - 8, v))
+
   if (band) {
     const top = y(band.upper)
     const bot = y(band.lower)
@@ -597,9 +602,8 @@ function drawOverlays(
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'left'
     ctx.fillStyle = withAlpha(C.text, 0.85 * a)
-    // Inset off the rim, and flip below the line when it sits too near the top to label above it.
-    const ly = ys - 16 < 4 ? ys + 14 : ys - 9
-    ctx.fillText(`ENTRY ${formatPrice(ov.entry)}`, rim + 2, ly)
+    // Inset off the left rim, flipped below the line when it sits too near the top to label above it.
+    ctx.fillText(`ENTRY ${formatPrice(ov.entry)}`, rim + 2, clampLabelY(ys - 16 < 4 ? ys + 14 : ys - 9))
     ctx.restore()
   }
 
@@ -630,10 +634,9 @@ function drawOverlays(
     ctx.save()
     ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
     ctx.textBaseline = 'middle'
-    ctx.textAlign = 'left'
+    ctx.textAlign = 'right'
     ctx.fillStyle = withAlpha(C.brand, 0.95 * a)
-    const ly = Math.max(12, Math.min(h - 8, winUp ? ys - 10 : ys + 12))
-    ctx.fillText(`TARGET ${formatPrice(tp)}`, rim + 2, ly)
+    ctx.fillText(`TARGET ${formatPrice(tp)}`, labelX, clampLabelY(winUp ? ys - 10 : ys + 12))
     ctx.restore()
   }
 

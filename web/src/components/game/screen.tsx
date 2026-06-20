@@ -40,6 +40,27 @@ export function GameReadout({ children }: { children: ReactNode }) {
   return <div className={cnm('pointer-events-none max-w-[62%] space-y-2.5', SCREEN_PAD)}>{children}</div>
 }
 
+// CRT finish for the canvas minigames. The DOM screens (Home, Lucky, Range) get the "this is a
+// powered display" look for free, from the screen surface (scanlines + vignette) and the per-glyph
+// text bloom. A raw <canvas> field gets none of it and reads flat, so the minigames paint it on
+// themselves. Drop it once inside GameScreen, after the stage and readout so it rides over the field
+// but under the title/result overlays. Pointer-transparent, purely cosmetic.
+export function ScreenCRT() {
+  return (
+    <div className="pointer-events-none absolute inset-0">
+      {/* phosphor bloom: a soft screen-blend lift so the bright ink glows like a tube, not flat pixels */}
+      <div
+        className="absolute inset-0 mix-blend-screen"
+        style={{ background: 'radial-gradient(120% 95% at 50% 40%, rgba(130,165,205,0.11), transparent 60%)' }}
+      />
+      {/* tv scanlines */}
+      <div className="viz-scanlines absolute inset-0" />
+      {/* edge falloff so the flat panel reads like a curved tube */}
+      <div className="viz-vignette absolute inset-0" />
+    </div>
+  )
+}
+
 export function ResultOverlay({
   title,
   tone,

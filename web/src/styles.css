@@ -720,6 +720,32 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
+/* Lucky lock-in: the dealt chart's amber frame charges in and flashes once when the slot lands on it,
+   the "this one" beat before it expands. One-shot; reduced motion just holds the frame solid. */
+.lucky-lock {
+  animation: lucky-lock 520ms var(--ease-out-expo) both;
+}
+@keyframes lucky-lock {
+  0% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lucky-lock {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 /* ── Game-screen instrument viz (teenage-engineering line graphics) ──────
    Crisp vivid SVG line instruments rendered inside the console screen. The
    motion lives here as cheap GPU transforms so the components stay pure. Each

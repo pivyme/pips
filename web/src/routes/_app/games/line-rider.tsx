@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Activity } from 'lucide-react'
 import { useConsoleControls } from '@/components/console/controls'
-import { GameReadout, GameScreen, GameStage } from '@/components/game/screen'
+import { GameReadout, GameScreen, GameStage, ScreenCRT } from '@/components/game/screen'
 import { RideEngine, type RideHud } from '@/components/game/rideEngine'
 import { haptic } from '@/lib/haptics'
 import { sound } from '@/lib/sound'
@@ -131,6 +131,8 @@ export function LineRiderScreen() {
         </div>
       </GameReadout>
 
+      <ScreenCRT />
+
       {phase === 'title' && <TitleOverlay best={best} board={board} />}
       {phase === 'over' && result && <OverOverlay result={result} />}
     </GameScreen>
@@ -152,7 +154,7 @@ function TitleOverlay({ best, board }: { best: number; board: ScoreEntry[] }) {
         <Board rows={board.slice(0, 5)} />
       </div>
       <div className="mt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-text-3">
-        Best <span className="tnum text-text">{fmt(best)}</span> · hit <span className="text-brand-500">PLAY</span>
+        Best <span className="tnum text-text">{fmt(best)}</span> · press the <span className="text-brand-500">big button</span>
       </div>
     </div>
   )
@@ -176,7 +178,7 @@ function OverOverlay({ result }: { result: SubmitResult }) {
         <Board rows={result.scores.slice(0, 6)} />
       </div>
       <div className="mt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-text-3">
-        Hit <span className="text-brand-500">PLAY AGAIN</span>
+        Press the <span className="text-brand-500">big button</span> to play again
       </div>
     </div>
   )

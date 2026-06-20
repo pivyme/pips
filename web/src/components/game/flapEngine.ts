@@ -1,4 +1,4 @@
-// Candle Hop engine. A one-button flappy: the Pips face flies through the gaps between
+// Flappy Piper engine. A one-button flappy: the Pips face flies through the gaps between
 // candlesticks that scroll right to left. Tap to flap (a kick upward), gravity pulls it back
 // down. Clear a gap and the score ticks up; clip a candle, the ceiling or the floor and the run
 // ends after a short impact and fall animation. Pure score chase, no chain, no funds.

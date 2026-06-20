@@ -49,7 +49,7 @@ const GAMES: ReadonlyArray<GameDef> = [
 // Minigames. Pure local arcade, no chain, no funds. A totally separate, just-for-fun lane.
 const MINIGAMES: ReadonlyArray<GameDef> = [
   { to: '/games/line-rider', icon: Activity, name: 'Line Rider', tag: 'Ride the line. Don’t slip.' },
-  { to: '/games/candle-hop', icon: CandlestickChart, name: 'Candle Hop', tag: 'Flap through the gaps.' },
+  { to: '/games/candle-hop', icon: CandlestickChart, name: 'Flappy Piper', tag: 'Flap through the gaps.' },
 ]
 
 // One flat order for the knob/PLAY selection; rendered in two separate sections below.

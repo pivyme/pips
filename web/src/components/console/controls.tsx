@@ -37,6 +37,8 @@ export interface ActionSpec {
   color?: ButtonColor
   // Text is the default. Games opt into richer physical-screen treatments per button.
   display?: ActionDisplay
+  // Slow breathing glow in the button's color, to draw the eye (e.g. Lucky's win/lose CONTINUE).
+  pulse?: boolean
 }
 
 export interface MainSpec {
@@ -142,6 +144,7 @@ function toView(c: ConsoleControls): ConsoleView {
           label: c.action1.label,
           color: c.action1.color,
           display: c.action1.display,
+          pulse: c.action1.pulse,
         }
       : null,
     action2: c.action2
@@ -149,6 +152,7 @@ function toView(c: ConsoleControls): ConsoleView {
           label: c.action2.label,
           color: c.action2.color,
           display: c.action2.display,
+          pulse: c.action2.pulse,
         }
       : null,
     knob: c.knob
@@ -184,10 +188,11 @@ function viewKey(v: ConsoleView): string {
       color?: string
       loading?: boolean
       display?: ActionDisplay
+      pulse?: boolean
     } | null,
   ) =>
     b
-      ? `${b.label}/${b.color ?? ''}/${b.loading ? 1 : 0}/${b.display?.mode ?? 'text'}/${b.display?.mode === 'token' ? `${b.display.ticker}/${b.display.logoSrc ?? ''}` : ''}`
+      ? `${b.label}/${b.color ?? ''}/${b.loading ? 1 : 0}/${b.pulse ? 1 : 0}/${b.display?.mode ?? 'text'}/${b.display?.mode === 'token' ? `${b.display.ticker}/${b.display.logoSrc ?? ''}` : ''}`
       : '-'
   const dial = (d: ConsoleView['knob']) => d
     ? `${d.min}/${d.max}/${d.step}/${d.value}/${d.label ?? ''}`
