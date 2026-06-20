@@ -45,6 +45,13 @@ import { recordSettlement } from './stats.ts';
 import { evaluateAndUnlock } from './achievements.ts';
 import type { Game, PlayDTO, PlayStatus, Side } from '../types/api.ts';
 
+// Bright-yellow round-lifecycle console line (open + settle): time, price, game, asset, side/band.
+// These are the two moments the player feels, so surfacing them makes a stuck settle obvious at a
+// glance, the SETTLE line prints how long after expiry it actually landed.
+const px1e9 = (v: bigint): string => (Number(v) / 1e9).toFixed(2);
+const hhmmss = (): string => new Date().toTimeString().slice(0, 8);
+const roundLog = (msg: string): void => console.log(`\x1b[33m${msg}\x1b[0m`);
+
 // === Redeem key descriptor (stored on Play.marketKey) ===
 // Holds the exact 1e9 strikes + quantity so redeem reconstructs the on-chain key precisely,
 // without re-deriving from lossy display strings.
@@ -260,12 +267,14 @@ async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, pla
       else buildMintRange(tx, managerId, cur.params);
       try {
         const exec = await executeForUser(tx, userCtx(user));
-        // TEMP (debug): exactly what was minted on-chain (the key the redeem/settle will reconstruct).
-        console.log(
-          `[LuckyDebug] MINT play=${playId} digest=${exec.digest.slice(0, 10)} ${cur.kind === 'binary'
-            ? `side=${cur.params.side} strike=${cur.params.strike1e9}`
-            : `range lower=${cur.params.lower1e9} higher=${cur.params.higher1e9}`
-          } qty=${cur.params.quantity} oracle=${cur.params.oracleId.slice(0, 10)}`,
+        roundLog(
+          `[Round OPEN]   ${cur.game.padEnd(5)} ${cur.asset.padEnd(4)} ` +
+          (cur.kind === 'binary'
+            ? `${cur.side.toUpperCase().padEnd(4)} strike=${px1e9(cur.params.strike1e9)}`
+            : `band=(${px1e9(cur.params.lower1e9)}, ${px1e9(cur.params.higher1e9)}]`) +
+          `  x${cur.multiplier.toFixed(2)}  entry=$${Number(cur.entrySpot).toFixed(2)}` +
+          `  expires in ${Math.max(0, Math.round((cur.market.expiryMs - Date.now()) / 1000))}s` +
+          `  @${hhmmss()}  tx=${exec.digest.slice(0, 8)}`,
         );
         await prismaQuery.play.update({
           where: { id: playId },
@@ -570,13 +579,15 @@ async function settleOnePlay(play: Play, settlement1e9: bigint): Promise<void> {
   const key = deserializeKey(play);
   const itm = isItm(key, settlement1e9);
 
-  // TEMP (debug): the settlement decision. DOWN wins iff settlement <= strike; UP iff settlement > strike.
-  const fmt = (v: bigint) => (Number(v) / 1e9).toFixed(2);
-  console.log(
-    `[LuckyDebug] SETTLE play=${play.id} ${key.kind === 'binary'
-      ? `side=${key.params.side} strike=${fmt(key.params.strike1e9)}`
-      : `range (${fmt(key.params.lower1e9)}, ${fmt(key.params.higher1e9)}]`
-    } settlement=${fmt(settlement1e9)} entrySpot=${play.entrySpot ?? '?'} -> ${itm ? 'WIN' : 'LOSS'}`,
+  // The settlement decision. DOWN wins iff settlement <= strike; UP iff settlement > strike. The lag
+  // is how long after expiry the round actually settled, a big number here is the stuck-settle symptom.
+  const lagS = Math.round((Date.now() - Number(play.expiry)) / 1000);
+  roundLog(
+    `[Round SETTLE] ${play.game.padEnd(5)} ${play.asset.padEnd(4)} ` +
+    (key.kind === 'binary'
+      ? `${(key.params.side as string).toUpperCase().padEnd(4)} strike=${px1e9(key.params.strike1e9)}`
+      : `band=(${px1e9(key.params.lower1e9)}, ${px1e9(key.params.higher1e9)}]`) +
+    `  settle=$${px1e9(settlement1e9)}  ${itm ? 'WIN ' : 'LOSS'}  (expired ${lagS}s ago)  @${hhmmss()}`,
   );
 
   // An in-the-money settle sweeps the $1/contract payout into the user's manager. Both legs use a

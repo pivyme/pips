@@ -75,51 +75,6 @@ const sideLabel = (s: Side): string => (s === 'up' ? 'UP' : 'DOWN')
 const priceLabel = (p: number): string =>
   `$${p.toLocaleString('en-US', { maximumFractionDigits: p >= 1000 ? 0 : p >= 1 ? 2 : 4 })}`
 
-// Live cash-out estimate model. A binary's fair value = max payout x P(finish on the winning side of
-// TARGET). Standard normal CDF (Zelen & Severo); the same shape the backend prices against, so the
-// smooth client number tracks the eventual settle and converges to the full win / zero at the buzzer.
-function normCdf(x: number): number {
-  const t = 1 / (1 + 0.2316419 * Math.abs(x))
-  const poly = t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
-  const u = 0.39894228 * Math.exp((-x * x) / 2) * poly
-  return x >= 0 ? 1 - u : u
-}
-const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
-// Fallback round vol for the estimate when the target sits at the money (a ~2x coinflip), where the
-// vol can't be backed out of the strike distance. Display only: the real cash-out is the on-chain
-// redeem, and the win/loss is decided purely by price vs TARGET (vol-independent).
-const LIVE_VOL = 0.03
-
-// The live cash-out is anchored to the backend mark and only interpolated by the chart line between
-// ticks; this is the fraction of the round (counting down) over which that chart interpolation fades to
-// zero, so the readout converges to the real on-chain redeem value at the buzzer instead of snapping to
-// a confident win/lose off a chart line that can lag the oracle (a binary settles on the price AT expiry).
-const DELTA_FADE_FRAC = 0.3
-
-// Inverse standard normal CDF (Acklam). Used to back the implied round vol out of a strike's distance
-// and odds, so the live estimate reads ~0 P/L at entry and converges to the full win / zero at the
-// buzzer no matter how the target was placed (real path prices at IMPLIED_VOL, demo a touch tighter).
-function invNorm(p: number): number {
-  if (p <= 0) return -Infinity
-  if (p >= 1) return Infinity
-  const a = [-3.969683028665376e1, 2.209460984245205e2, -2.75928510446969e2, 1.38357751867269e2, -3.066479806614716e1, 2.506628277459239]
-  const b = [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1]
-  const c = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783]
-  const d = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416]
-  const plow = 0.02425
-  if (p < plow) {
-    const q = Math.sqrt(-2 * Math.log(p))
-    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
-  }
-  if (p <= 1 - plow) {
-    const q = p - 0.5
-    const r = q * q
-    return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
-  }
-  const q = Math.sqrt(-2 * Math.log(1 - p))
-  return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
-}
-
 export function LuckyScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
@@ -207,14 +162,10 @@ export function LuckyScreen() {
   const roundActive = phase === 'spinning' || phase === 'open' || phase === 'cashing'
   const multiplier = live?.multiplier ?? play?.multiplier ?? 0
   const playBet = play ? parseFloat(play.stake) : bet
-  const entryCost = play ? parseFloat(play.entryValue) : bet
   // Entry reference: the spot the strike was solved against, so the ENTRY line, the TARGET line, and
   // the settlement all agree. Falls back to the chart's first captured price if entrySpot is absent.
   const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
   const entryVal = Number.isFinite(entrySpotNum) && entrySpotNum > 0 ? entrySpotNum : entryPrice
-  // The round window (open -> buzzer), for the time-decay in the live cash-out estimate.
-  const expiryMs = play ? play.market.expiry : 0
-  const openedAtMs = play?.openedAt ? Date.parse(play.openedAt) : lp ? expiryMs - lp.duration * 1000 : 0
   // Chart overlays: the ENTRY line plus the directional TARGET line + winning-zone shading.
   const overlays =
     showEntry && entryVal != null
@@ -701,14 +652,10 @@ export function LuckyScreen() {
                     side={lp?.side ?? 'up'}
                     target={strike ?? 0}
                     entry={entryVal ?? 0}
-                    entryCost={entryCost}
                     bet={playBet}
                     mult={play?.multiplier ?? multiplier}
-                    markValue={live ? parseFloat(live.markValue) : entryCost}
                     status={live?.status ?? 'open'}
                     finalPnl={live ? parseFloat(live.pnl) : 0}
-                    openedAtMs={openedAtMs}
-                    expiryMs={expiryMs}
                   />
                 </>
               ) : reelsCycling ? (
@@ -996,89 +943,54 @@ function LuckyResult({ play, streak }: { play: PlayDTO; streak: number }) {
   )
 }
 
-// The live readout while a round is open. The hero is CASH OUT NOW: the total dollars you walk with
-// if you exit right now (not a scary mark-to-market), with a small signed P/L beside it and WIN as the
-// total payout if you hold and land. It rides the chart's eased price (livePriceRef) at 60fps, written
-// imperatively so the screen never re-renders on a tick, and converges to the real win/loss at the
-// buzzer. When you are ahead the hint nudges CASH OUT (the honest way to keep a move the buzzer could
-// reverse). On a terminal status it shows the settled result.
+// The live readout while a round is open. The hero is CASH OUT NOW (the total dollars you walk with if
+// you exit now); beside it the signed P/L, and WIN as the full payout if you hold and land. It rides the
+// chart's eased price (livePriceRef) at 60fps: the P/L scales with how far the dot has moved from ENTRY
+// toward the TARGET, 0 at entry, partial profit on the way, the full win once it reaches the target
+// (capped past it), and down to -bet against you. Written imperatively so the screen never re-renders on
+// a tick. When ahead the hint nudges CASH OUT. On a terminal status it shows the settled result.
 function LivePnl({
   livePriceRef,
   side,
   target,
   entry,
-  entryCost,
   bet,
   mult,
-  markValue,
   status,
   finalPnl,
-  openedAtMs,
-  expiryMs,
 }: {
   livePriceRef: { current: number }
   side: Side
   target: number
   entry: number
-  entryCost: number
   bet: number
   mult: number
-  markValue: number // backend's real oracle-priced redeem bid (what you'd actually get), $; the anchor
   status: PlayStatus
   finalPnl: number
-  openedAtMs: number
-  expiryMs: number
 }) {
   const terminal = RESULT_TERMINAL.has(status)
-  const valid = entry > 0 && target > 0 && entryCost > 0
-  // WIN is the TOTAL you walk with if it lands (bet x multiplier = the max payout), not the gross
-  // profit. The hero CASH OUT number is likewise the total back now, so the readout is dollars you
-  // keep, never a scary mark-to-market.
-  const winTotal = Math.max(0, entryCost * mult)
+  const valid = entry > 0 && target > 0 && bet > 0 && Math.abs(target - entry) > 1e-9
+  // WIN = the total you walk with if it lands (bet x mult); profit = that minus the stake.
+  const winTotal = Math.max(0, bet * mult)
+  const profit = Math.max(0, bet * (mult - 1))
   const [pos, setPos] = useState(true) // ahead/behind, drives the P/L color + the lock hint
   const posRef = useRef(true)
   const pnlSpan = useRef<HTMLSpanElement>(null)
   const cashSpan = useRef<HTMLSpanElement>(null)
-  // The displayed cash-out is ANCHORED to the backend mark (the real on-chain redeem bid, oracle-priced,
-  // exactly what a cash-out pays) and only INTERPOLATED by the chart line for 60fps liveliness between
-  // the ~2s backend ticks. The chart line (the follower feed) can lag the oracle, and the old pure-chart
-  // estimate snapped to a confident win/lose off that lagging line near expiry, which is how a play that
-  // settled a LOSS flashed a full win a second earlier. baseMark = backend value at the last tick,
-  // baseModel = the chart-model value at that same instant; we add (modelNow - baseModel), faded out as
-  // expiry nears so the readout converges to the real mark, never a chart-driven mirage.
-  const baseMarkRef = useRef(entryCost)
-  const baseModelRef = useRef(entryCost)
-  const lastModelRef = useRef(entryCost)
-
-  // Re-anchor to the backend mark whenever a fresh one arrives (SSE tick / watchdog poll).
-  useEffect(() => {
-    baseMarkRef.current = markValue
-    baseModelRef.current = lastModelRef.current
-  }, [markValue])
 
   useEffect(() => {
     if (terminal || !valid) return
     const dir = side === 'up' ? 1 : -1
-    // Back the round vol out of where the target actually sits, so the chart-model estimate reads ~0 P/L
-    // at entry and tracks toward the win/loss. z = the tier's normal quantile; at-the-money (~2x) the
-    // distance is ~0 and the vol can't be inferred, so fall back to LIVE_VOL.
-    const distFrac = Math.abs(target - entry) / entry
-    const z = -invNorm(Math.min(0.5, Math.max(1e-4, 1 / mult)))
-    const sigmaFull = distFrac > 1e-6 && z > 1e-3 ? distFrac / z : LIVE_VOL
+    const targetDist = dir * (target - entry) // favorable distance from entry to the win line (> 0)
     let raf = 0
     const loop = () => {
       const price = livePriceRef.current
-      if (price > 0) {
-        const gap = (dir * (price - target)) / entry // > 0 = on the winning side of TARGET
-        const remaining = clamp01((expiryMs - Date.now()) / Math.max(1, expiryMs - openedAtMs))
-        const sigma = sigmaFull * Math.sqrt(Math.max(remaining, 0.0015))
-        const model = entryCost * mult * clamp01(normCdf(gap / sigma)) // smooth chart-driven estimate
-        lastModelRef.current = model
-        // Anchor (real backend mark) + the chart's move since that anchor, faded over the final stretch
-        // so the value lands on the real redeem at the buzzer, not a confident chart snap.
-        const fade = clamp01(remaining / DELTA_FADE_FRAC)
-        const value = Math.max(0, Math.min(winTotal, baseMarkRef.current + (model - baseModelRef.current) * fade))
-        const pnl = value - entryCost
+      if (price > 0 && targetDist > 0) {
+        // How far the dot has travelled from entry toward the target, in your direction. 0 at entry,
+        // 1 at the target. Partial profit in between, full win once reached, loss the other way.
+        const progress = (dir * (price - entry)) / targetDist
+        const pnl = Math.max(-bet, Math.min(profit, progress * profit))
+        const value = bet + pnl // total dollars back if you cash out now
         const nowPos = pnl >= -1e-9
         if (nowPos !== posRef.current) {
           posRef.current = nowPos
@@ -1091,7 +1003,7 @@ function LivePnl({
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [terminal, valid, side, target, entry, entryCost, mult, openedAtMs, expiryMs, livePriceRef, winTotal])
+  }, [terminal, valid, side, target, entry, bet, profit, livePriceRef])
 
   if (terminal) {
     const won = status === 'won' || (status === 'cashed_out' && finalPnl >= 0)
@@ -1114,7 +1026,7 @@ function LivePnl({
       <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Cash out now</div>
       <div className="flex items-baseline justify-between gap-3">
         <div className="tnum text-[40px] font-extrabold leading-none text-text">
-          $<span ref={cashSpan}>{money(valid ? entryCost : 0)}</span>
+          $<span ref={cashSpan}>{money(valid ? bet : 0)}</span>
         </div>
         <div className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-text-3">
           Bet <span className="tnum text-text-2">${money(bet)}</span>

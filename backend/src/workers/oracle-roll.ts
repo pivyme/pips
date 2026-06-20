@@ -97,27 +97,39 @@ const rollLadder = async (): Promise<void> => {
       return;
     }
 
-    for (let ai = 0; ai < ORACLE_ASSETS.length; ai++) {
-      const asset = ORACLE_ASSETS[ai];
-      // Distinct cap per asset so each asset becomes its own price-push lane (one PTB per
-      // cap, gotcha #5). Round-robins when the deployment has fewer caps than assets.
-      const capId = caps[ai % caps.length];
-      const now = Date.now();
-      const live = liveByAsset(asset, now, EXPIRY_SAFETY_MS);
-      if (live.length >= ORACLE_LADDER_DEPTH) continue; // ladder full
+    // Snapshot every asset's ladder up front, then service the NEEDIEST first (fewest live oracles).
+    // The old fixed BTC,SUI,ETH order serviced the tail assets last each tick; on a busy single operator
+    // lane (create+activate is 2 serial txs) the tick ran out of lane time before SUI/ETH recovered, so
+    // they kept dropping off the stack while BTC, always first, stayed up. Neediest-first hands the lane
+    // to whichever asset is closest to draining.
+    const now = Date.now();
+    const snapshot = ORACLE_ASSETS.map((asset, ai) => ({
+      asset,
+      // Distinct cap per asset so each asset stays its own price-push lane (one PTB per cap, gotcha #5).
+      // Round-robins when the deployment has fewer caps than assets.
+      capId: caps[ai % caps.length],
+      live: liveByAsset(asset, now, EXPIRY_SAFETY_MS),
+    }));
+    const lanes = snapshot
+      .filter((l) => l.live.length < ORACLE_LADDER_DEPTH) // skip full ladders
+      .sort((a, b) => a.live.length - b.live.length);
+    if (lanes.length === 0) return; // every ladder full, nothing to roll
+    console.log(
+      `[OracleRoll] ladders ${snapshot.map((l) => `${l.asset}:${l.live.length}`).join(' ')} | servicing ${lanes.map((l) => l.asset).join('>')}`,
+    );
 
-      // In steady state add at most one per tick, and only once the newest live oracle is at least a
-      // step old, so fresh oracles land ~ORACLE_STEP_MS apart and the ladder spreads evenly. When the
-      // ladder is STARVING (post-reload / dry spell) skip that gate and burst several near-first slots
-      // so a playable market is back within a tick or two instead of ~30s of "No markets are live".
+    for (const { asset, capId, live } of lanes) {
+      // Fill the nearest uncovered slots. Healthy: one per tick, which also self-heals a gap a failed
+      // create left (the old 1-for-1 far-end refill stayed a slot short forever, so a single miss drained
+      // the ladder with zero margin). Starving (post-reload / dry spell): burst up to
+      // ORACLE_ROLL_MAX_PER_TICK so a playable market is back within a tick or two.
       const starving = live.length < LADDER_LOW_WATER;
-      if (!starving) {
-        const newestExpiry = live.reduce((mx, m) => Math.max(mx, m.expiryMs), 0);
-        if (newestExpiry > now + ORACLE_LIFETIME_MS - ORACLE_STEP_MS) continue;
-      }
+      const perTick = starving ? ORACLE_ROLL_MAX_PER_TICK : 1;
+      const expiries = nearestUncoveredExpiries(now, live).slice(0, Math.min(ORACLE_LADDER_DEPTH - live.length, perTick));
+      if (expiries.length === 0) continue;
 
       // Stand oracles up at the live game price (real Pyth anchor + vol) so the first on-chain spot
-      // already matches the feed; fall back to raw Pyth on a cold start. One read serves this tick.
+      // already matches the feed; fall back to raw Pyth on a cold start. One read serves this asset.
       let spot: number;
       try {
         spot = (await gameSpot(asset))?.price ?? (await fetchSpot(asset));
@@ -126,12 +138,6 @@ const rollLadder = async (): Promise<void> => {
         continue;
       }
 
-      // Steady state: one fresh oracle at full life (ages down to fill the near buckets). Starving:
-      // up to ORACLE_ROLL_MAX_PER_TICK at the nearest uncovered slots, so the recovery is fast AND
-      // staggered (no synchronized far-end bunching that would just re-drain together).
-      const expiries = starving
-        ? nearestUncoveredExpiries(now, live).slice(0, Math.min(ORACLE_LADDER_DEPTH - live.length, ORACLE_ROLL_MAX_PER_TICK))
-        : [now + ORACLE_LIFETIME_MS];
       for (const expiry of expiries) {
         try {
           await createOracle(asset, capId, spot, expiry);

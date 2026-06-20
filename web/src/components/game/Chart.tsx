@@ -140,6 +140,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
   const entryReveal = useRef(0) // 0 -> 1 fade-in as the entry line appears on a new round
   const targetReveal = useRef(0) // 0 -> 1 fade-in as the target line appears on a new round
   const momDir = useRef<'up' | 'down' | 'flat'>('flat') // momentum-arrow state, hysteretic
+  const trendUp = useRef(true) // whole-line direction: green up / red down, flips on a real move
   const lastTickP = useRef(0) // last raw tick, to detect momentum swings
   const shake = useRef(0) // 0..1 chart-shake intensity, decays each frame
   const particles = useRef<Particle[]>([]) // live spark bursts
@@ -367,9 +368,20 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       }
       path.push({ x: nowX, y: yDisp })
 
-      // Direction tint over the visible window: green if up vs the oldest visible point.
-      const refY = path.length > 1 ? path[0].y : yDisp
-      const lineColor = yDisp <= refY ? C.up : C.down
+      // Whole-line direction: green while the price is rising, red while falling. Read over a short
+      // MOM_LOOKBACK window with a small dead-zone, so it flips on a real move (not window-wide lag)
+      // and holds steady through noise instead of strobing. Colors the whole line + the area fill.
+      let trendRefP = display.current
+      for (let i = pts.length - 1; i >= 0; i--) {
+        if (now - pts[i].t >= MOM_LOOKBACK) {
+          trendRefP = pts[i].p
+          break
+        }
+      }
+      const trendChange = (display.current - trendRefP) / (trendRefP || 1)
+      if (trendChange > 0.0008) trendUp.current = true
+      else if (trendChange < -0.0008) trendUp.current = false
+      const lineColor = trendUp.current ? C.up : C.down
 
       if (path.length > 1) {
         // Soft area under the curve so it reads as a chart, not a lone stroke.
@@ -384,7 +396,8 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
         ctx.fillStyle = g
         ctx.fill()
 
-        // The price line, smoothed so noisy ticks flow instead of zigzag.
+        // The price line, smoothed so noisy ticks flow instead of zigzag. One color for the whole
+        // line, set by the current direction above: green while rising, red while falling.
         ctx.lineJoin = 'round'
         ctx.lineCap = 'round'
         ctx.lineWidth = 2
