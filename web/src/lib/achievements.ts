@@ -1,24 +1,4 @@
-import toast from 'react-hot-toast'
 import type { AchievementDTO } from '@/lib/api'
-
-// Slug -> display name, mirrors the seeded catalog (08-DEMO-FLOW.md). Confirm/cashout return the
-// slugs that just unlocked; we surface each with the verbatim toast from 07-DESIGN-SYSTEM.md.
-const NAMES: Record<string, string> = {
-  first_play: 'First Play',
-  first_win: "Beginner's Luck",
-  win_streak_5: 'On Fire',
-  big_multiplier: 'Moonshot',
-  volume_1000: 'High Roller',
-  all_games: 'Sampler',
-  cashout_10: 'Quick Hands',
-  comeback: 'Comeback',
-}
-
-export function notifyUnlocks(slugs: string[]): void {
-  for (const slug of slugs) {
-    toast.success(`Achievement unlocked: ${NAMES[slug] ?? 'New achievement'}`)
-  }
-}
 
 // Canonical achievement catalog: the source of truth for names, copy, and sticker art, shared by
 // the menu home rail and the full Achievements grid so the two never drift. The backend may still
@@ -63,6 +43,27 @@ export const ACHIEVEMENTS: Array<CatalogAchievement> = [
 // Sticker art lives at /assets/achievements, named by the canonical slug.
 export const achievementImage = (slug: string): string =>
   `/assets/achievements/achievement-${slug.replaceAll('_', '-')}.png`
+
+// The backend hands back catalog/legacy slugs (e.g. `first_play`); resolve each to its canonical
+// entry so a fresh unlock surfaces with the right sticker art + copy in the celebration overlay.
+const BY_ANY_SLUG = new Map<string, CatalogAchievement>()
+for (const a of ACHIEVEMENTS) {
+  BY_ANY_SLUG.set(a.slug, a)
+  if (a.legacySlug) BY_ANY_SLUG.set(a.legacySlug, a)
+}
+
+export type ResolvedAchievement = { slug: string; name: string; description: string; image: string }
+
+export function resolveAchievement(slug: string): ResolvedAchievement {
+  const entry = BY_ANY_SLUG.get(slug)
+  const canonical = entry?.slug ?? slug
+  return {
+    slug: canonical,
+    name: entry?.name ?? 'New achievement',
+    description: entry?.description ?? '',
+    image: achievementImage(canonical),
+  }
+}
 
 // Merge backend rows (which may use legacy slugs) onto the canonical catalog.
 export function mergeCatalog(apiAchievements: Array<AchievementDTO>): Array<DisplayAchievement> {

@@ -128,6 +128,19 @@ function useCtx(): Ctx {
   return ctx
 }
 
+// True once the device has finished its entry settle (the hero -> app "drops in" zoom). Screens read
+// this to hold their content until the device is at rest, then fade in. Defaults true: a plain
+// game <-> game nav has no settle, so content reveals right away.
+const DeviceSettledContext = createContext(true)
+
+export function DeviceSettledProvider({ settled, children }: { settled: boolean; children: ReactNode }) {
+  return <DeviceSettledContext.Provider value={settled}>{children}</DeviceSettledContext.Provider>
+}
+
+export function useDeviceSettled(): boolean {
+  return useContext(DeviceSettledContext)
+}
+
 // Read side: the shell.
 export function useConsoleView() {
   const { view, handlers } = useCtx()

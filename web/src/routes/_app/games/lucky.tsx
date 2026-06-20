@@ -14,7 +14,6 @@ import { slotSpin, slotTick, slotLock, slotPick, startLuckyBgm, stopLuckyBgm, lu
 import { api, streamPlay, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { toastError } from '@/lib/errors'
-import { notifyUnlocks } from '@/lib/achievements'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
 import { formatStringToNumericDecimals } from '@/utils/format'
@@ -127,7 +126,20 @@ export function LuckyScreen() {
   const marketsQ = useQuery({ queryKey: ['markets'], queryFn: () => api.markets(), refetchInterval: 10_000 })
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const markets = marketsQ.data?.markets ?? []
+  // Current spot per asset, straight off the markets query. Fed to each chart as its initial price so
+  // it paints a live line on mount instead of a blank shimmer while the price stream warms up.
+  const spotByAsset = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const mk of markets) {
+      const s = parseFloat(mk.spot)
+      if (Number.isFinite(s) && s > 0) m[mk.asset] = s
+    }
+    return m
+  }, [markets])
   const liveAssets = markets.filter((m) => m.live).map((m) => m.asset)
+  // Every asset the backend returned (live or mid-roll); each carries a spot + feed, so any of them
+  // renders a real chart. Used to keep the stack full when fewer than three are live this instant.
+  const allAssets = markets.map((m) => m.asset)
   const noLiveMarket = !marketsQ.isLoading && !marketsQ.isError && liveAssets.length === 0
   const canPlay = liveAssets.length > 0
   const streak = statsQ.data?.stats.currentStreak ?? 0
@@ -143,14 +155,25 @@ export function LuckyScreen() {
   // asset is always included so a spin always has a chart to expand into. focusAsset is the one the
   // header price + the entry pipeline track (the dealt asset mid-round, the primary at rest).
   const displayAssets = useMemo(() => {
-    const order = (a: string) => {
+    const rank = (a: string) => {
       const i = PREFERRED.indexOf(a)
       return i < 0 ? 99 : i
     }
-    let top = [...liveAssets].sort((a, b) => order(a) - order(b)).slice(0, 3)
-    if (lp?.asset && !top.includes(lp.asset)) top = [lp.asset, ...top].slice(0, 3)
-    return top
-  }, [liveAssets.join(','), lp?.asset])
+    const byPref = (arr: string[]) => [...arr].sort((a, b) => rank(a) - rank(b))
+    const out: string[] = []
+    const add = (a: string | undefined) => {
+      if (a && !out.includes(a) && out.length < 3) out.push(a)
+    }
+    // The dealt asset always leads so its chart is in the stack to expand into mid-round. Then a stable
+    // preferred order over every market we have (so the stack never reshuffles as oracles roll live in
+    // and out), finally padded with the feed-known fallbacks, so the stack is ALWAYS three charts even
+    // when only one or two are live this instant. Non-live charts are display-only; you always play a
+    // live one (the dealt asset).
+    if (lp?.asset) add(lp.asset)
+    byPref(allAssets).forEach(add)
+    byPref([...PREFERRED]).forEach(add)
+    return out
+  }, [allAssets.join(','), lp?.asset])
   const focusAsset = lp?.asset ?? displayAssets[0]
   focusAssetRef.current = focusAsset
   // The entry line shows while a round is live. Not in 'result': once the round ends the screen behind
@@ -196,7 +219,7 @@ export function LuckyScreen() {
   }
 
   const finishResult = useCallback(
-    (final: PlayDTO, unlocked: string[]) => {
+    (final: PlayDTO) => {
       finalized.current = true
       setPlay(final)
       setLive({ markValue: final.markValue, pnl: final.pnl, multiplier: final.multiplier, status: final.status })
@@ -206,7 +229,6 @@ export function LuckyScreen() {
       if (final.status === 'won') luckyWin()
       else if (final.status === 'cashed_out') luckyCashout()
       else luckyLose()
-      notifyUnlocks(unlocked)
       void refresh()
       // Settle/cashout moved the record: freshen stats (streak), achievements, and history.
       for (const key of ['stats', 'achievements', 'plays']) void qc.invalidateQueries({ queryKey: [key] })
@@ -225,7 +247,9 @@ export function LuckyScreen() {
       if (finalized.current) return
       if (status === 'error') {
         finalized.current = true
-        toast.error('Could not open that play. Your chips are safe, spin again.')
+        toast.error('Could not open that play. Your chips are safe, spin again.', {
+          id: 'lucky-play-error',
+        })
         clearResetTimer()
         setPlay(null)
         setLive(null)
@@ -236,7 +260,7 @@ export function LuckyScreen() {
         finalized.current = true
         void api
           .getPlay(playId)
-          .then(({ play: final }) => finishResult(final, []))
+          .then(({ play: final }) => finishResult(final))
           .catch(() => setPhase('idle'))
       }
     },
@@ -376,7 +400,7 @@ export function LuckyScreen() {
     // re-spun straight from the result. That keeps the post-round always landing on the 3-up stack.
     if (phase !== 'idle') return
     if (!canPlay) {
-      toast.error('No live market right now. Try again in a sec.')
+      toast.error('No live market right now. Try again in a sec.', { id: 'no-market' })
       return
     }
     clearResetTimer()
@@ -420,17 +444,17 @@ export function LuckyScreen() {
     haptic('rigid')
     const started = Date.now()
     try {
-      const { play: p, unlocked } = await cashOut(play.id)
+      const { play: p } = await cashOut(play.id)
       // Hold the settling beat open so it always reads, even when the redeem lands in ~120ms (demo).
       const wait = CASHOUT_SETTLE_MS - (Date.now() - started)
       if (wait > 0) await new Promise((r) => setTimeout(r, wait))
-      finishResult(p, unlocked)
+      finishResult(p)
     } catch (e) {
       // The buzzer may have beaten the cash-out. Reconcile against the chain before complaining.
       try {
         const { play: final } = await api.getPlay(play.id)
         if (TERMINAL.has(final.status)) {
-          finishResult(final, [])
+          finishResult(final)
           return
         }
       } catch {
@@ -639,6 +663,7 @@ export function LuckyScreen() {
                 highlightAsset={highlightAsset}
                 overlays={revealOverlays ? overlays : undefined}
                 livePriceRef={livePriceRef}
+                initialPrices={spotByAsset}
                 onPrice={handleRowPrice}
               />
             ) : null}
@@ -848,6 +873,7 @@ function LuckyCharts({
   highlightAsset,
   overlays,
   livePriceRef,
+  initialPrices,
   onPrice,
 }: {
   assets: Array<string>
@@ -858,6 +884,7 @@ function LuckyCharts({
   highlightAsset: string | null
   overlays: ChartOverlays | undefined
   livePriceRef: { current: number }
+  initialPrices: Record<string, number>
   onPrice: (asset: string, price: number) => void
 }) {
   // The beat between "reels landed on this asset" and "chart expands": the winner sits lit + flashed
@@ -892,6 +919,7 @@ function LuckyCharts({
               dimmed={(selecting && !lit) || (locking && !isSel)}
               overlays={isSel ? overlays : undefined}
               livePriceRef={a === focusAsset ? livePriceRef : undefined}
+              initialPrice={initialPrices[a]}
               onPrice={onPrice}
             />
           </div>
@@ -913,6 +941,7 @@ function ChartRow({
   dimmed,
   overlays,
   livePriceRef,
+  initialPrice,
   onPrice,
 }: {
   asset: string
@@ -923,6 +952,7 @@ function ChartRow({
   dimmed: boolean
   overlays?: ChartOverlays
   livePriceRef?: { current: number }
+  initialPrice?: number
   onPrice: (asset: string, price: number) => void
 }) {
   const [price, setPrice] = useState<number | null>(null)
@@ -932,6 +962,7 @@ function ChartRow({
         asset={asset}
         overlays={overlays}
         livePriceRef={livePriceRef}
+        initialPrice={initialPrice}
         showPriceTag={reveal}
         onPrice={(p) => {
           setPrice(p)

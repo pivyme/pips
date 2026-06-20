@@ -1,3 +1,4 @@
+import { Pencil } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { UserStatsDTO } from '@/lib/api'
 import { cnm } from '@/utils/style'
@@ -14,10 +15,13 @@ export function StatsCard({
   stats,
   displayName,
   address,
+  onEdit,
 }: {
   stats: UserStatsDTO
   displayName: string
   address: string
+  // When set, a pen sits next to the handle so it can be changed. Omitted on the shareable card.
+  onEdit?: () => void
 }) {
   const net = parseFloat(stats.netPnl)
   const winPct = Math.round(stats.winRate * 100)
@@ -26,8 +30,22 @@ export function StatsCard({
     <div className="trader-bezel overflow-hidden rounded-[26px] p-2.5">
       <CardHeader />
       <div className="trader-screen relative overflow-hidden rounded-[18px] p-5">
-        <div className="text-2xl font-extrabold leading-tight text-white">{displayName}</div>
-        {address && <div className="tnum mt-1 text-xs text-white/45">{shortAddr(address)}</div>}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-2xl font-extrabold leading-tight text-white">{displayName}</div>
+            {address && <div className="tnum mt-1 text-xs text-white/45">{shortAddr(address)}</div>}
+          </div>
+          {onEdit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              aria-label="Change your handle"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.1] text-white/80 transition active:scale-90"
+            >
+              <Pencil className="h-[18px] w-[18px]" strokeWidth={2.4} />
+            </button>
+          )}
+        </div>
 
         <div className="mt-5 flex items-end justify-between">
           <div>

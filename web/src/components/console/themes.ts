@@ -109,17 +109,19 @@ export const THEMES: ConsoleTheme[] = [
     code: '110',
     name: 'PIVY IT UP!',
     badge: 'pivy.me',
-    body: '#7EFE9F',
-    back: '#6bcd83',
-    knob: '#f2c044',
-    main: '#f4f7ff',
-    action: '#098227',
-    pills: '#2b2b2b',
-    label: '#098227',
+    body: '#00ce2b', // the skin's green frame: under-skin fallback + the ambient surround
+    back: '#6bcd83', // back panel isn't skinned; kept lighter so the embossed logo stays legible
+    skin: '/assets/pivy-skin.png',
+    knob: '#f4f7ff',
+    main: '#7efe9f',
+    action: '#00ce2b',
+    pills: '#7efe9f', // mint nav pills
+    label: '#373737', // white MENU / HOME caption reads clean on the green skin
     logo: '#098227',
-    cardBg: '#7EFE9F',
+    cardBg: '#29e655', // matches the card art's green frame so the load flash blends
     cardInk: '#098227',
     cardSub: 'rgba(20, 41, 21, 0.5)',
+    cardImage: '/assets/pivy-theme-card.png',
   },
   {
     id: 'carbon',

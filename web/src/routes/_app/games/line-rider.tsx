@@ -10,6 +10,7 @@ import { useAuth } from '@/lib/auth'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { getScores, submitScore, type ScoreEntry, type SubmitResult } from '@/lib/leaderboard'
 import { cnm } from '@/utils/style'
+import { displayHandle } from '@/utils/format'
 
 // Line Rider. A pure local arcade minigame (no Sui, no backend): a neon trend line scrolls in and
 // the thumbwheel rides a pip on it. Hug the line and your score climbs (faster the tighter you hug,
@@ -39,7 +40,7 @@ export function LineRiderScreen() {
   const engineRef = useRef<RideEngine | null>(null)
   const endRef = useRef<(score: number) => void>(() => {})
 
-  const name = user?.displayName ?? 'You'
+  const name = displayHandle(user, 'You')
   const best = board[0]?.score ?? 0 // the high score to chase (top of the board)
 
   // The run ends from inside the engine loop. Kept in a ref so the engine (built once) always calls

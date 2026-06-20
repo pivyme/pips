@@ -8,6 +8,7 @@ import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { shareStatsCard } from '@/lib/shareCard'
 import { haptic } from '@/lib/haptics'
+import { displayHandle } from '@/utils/format'
 
 // The shareable trader card detail. "Share card" renders the same card to a PNG and opens the
 // native share sheet. Reached by tapping the card on the menu home.
@@ -25,11 +26,11 @@ function StatsScreen() {
     haptic('medium')
     setSharing(true)
     try {
-      await shareStatsCard(stats, { displayName: user.displayName, address: user.address })
+      await shareStatsCard(stats, { displayName: displayHandle(user), address: user.address })
       haptic('success')
     } catch {
       const { default: toast } = await import('react-hot-toast')
-      toast.error('Could not make your card. Try again.')
+      toast.error('Could not make your card. Try again.', { id: 'share-card' })
     } finally {
       setSharing(false)
     }
@@ -53,7 +54,7 @@ function StatsScreen() {
         </ScreenEmpty>
       ) : (
         <div className="flex flex-col gap-4">
-          <StatsCard stats={stats} displayName={user?.displayName ?? 'Player'} address={user?.address ?? ''} />
+          <StatsCard stats={stats} displayName={displayHandle(user)} address={user?.address ?? ''} />
           <Button disabled={sharing} onClick={() => void onShare()} className="w-full">
             {sharing ? 'Making your card...' : 'Share card'}
           </Button>

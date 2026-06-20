@@ -53,7 +53,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   useEffect(() => {
     if (status === 'error') {
       setConnecting(false)
-      toast.error('Could not sign you in. Try again.')
+      toast.error('Could not sign you in. Try again.', { id: 'signin-error' })
     }
   }, [status])
 
@@ -73,7 +73,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
       // real failure worth flagging.
       setConnecting(false)
       if (!(e instanceof Error && e.message === 'login_cancelled')) {
-        toast.error('Could not sign you in. Try again.')
+        toast.error('Could not sign you in. Try again.', { id: 'signin-error' })
       }
     }
   }, [status, signIn, onEnter])
@@ -88,7 +88,8 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
         await signInWithWallet(wallet)
       } catch (e) {
         setConnecting(false)
-        if (!isUserRejection(e)) toast.error('Could not connect that wallet. Try again.')
+        if (!isUserRejection(e))
+          toast.error('Could not connect that wallet. Try again.', { id: 'wallet-connect-error' })
       }
     },
     [signInWithWallet],
@@ -100,7 +101,10 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
     const found = listSuiWallets()
     setWallets(found)
     if (found.length === 0) {
-      toast('No Sui wallet found. Install Slush, Sui Wallet, or Suiet.', { icon: '👛' })
+      toast('No Sui wallet found. Install Slush, Sui Wallet, or Suiet.', {
+        id: 'no-wallet',
+        icon: '👛',
+      })
       return
     }
     if (found.length === 1) {

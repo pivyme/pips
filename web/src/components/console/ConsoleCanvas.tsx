@@ -72,12 +72,20 @@ interface ConsoleCanvasProps {
   screenContentVisible?: boolean
   // A prepared customize canvas renders once while hidden, then resumes its intro when revealed.
   active?: boolean
+  // Customize only: start the intro at the exact live games/app pose (the mirror of the Done outro
+  // target) instead of the studio's default fly-in. Lets onboarding hand off from the live device so it
+  // reads as the same handheld zooming back out into the workshop, not a crossfade to a second one.
+  introFromApp?: boolean
   // Landing/onboarding arc on the LIVE shell (customize stays false). 'hero' floats the device as a
   // pulled-back product shot with the screen showing; 'app' is the exact resting games pose (the
-  // "moves to center" settle); 'welcome' pushes the camera into the screen for a splash, holds, then
-  // returns to rest and fires onWelcomeComplete. Mirrors outro/onOutroComplete.
+  // "moves to center" settle); 'welcome' zooms the camera into the screen with a turn flourish, fires
+  // onWelcomeArrived once it squares up + fills (the splash content reveals then), and HOLDS there. It
+  // does not auto-advance: switching stage back to 'app' plays the zoom-out and fires onWelcomeComplete.
   stage?: 'hero' | 'app' | 'welcome'
   onWelcomeComplete?: () => void
+  // Fired once the welcome zoom-in settles (front-on, screen filled), so the app can reveal the splash
+  // content + play its jingle in sync with the device arriving.
+  onWelcomeArrived?: () => void
   reducedMotion?: boolean
   // Hold the resting app pose with no hero -> app settle. A returning session sets this so a refresh
   // never replays the entry zoom (that animation is for a real login only).
@@ -99,8 +107,10 @@ export default function ConsoleCanvas({
   onOutroComplete,
   screenContentVisible = true,
   active = true,
+  introFromApp = false,
   stage = 'app',
   onWelcomeComplete,
+  onWelcomeArrived,
   reducedMotion = false,
   instant = false,
 }: ConsoleCanvasProps) {
@@ -110,8 +120,8 @@ export default function ConsoleCanvas({
   const screenLayerRef = useRef<HTMLDivElement>(null)
 
   // Fresh per render so the scene's input handlers never read a stale binding.
-  const propsRef = useRef({ handlers, onNav, onOutroComplete, onWelcomeComplete })
-  propsRef.current = { handlers, onNav, onOutroComplete, onWelcomeComplete }
+  const propsRef = useRef({ handlers, onNav, onOutroComplete, onWelcomeComplete, onWelcomeArrived })
+  propsRef.current = { handlers, onNav, onOutroComplete, onWelcomeComplete, onWelcomeArrived }
   const viewRef = useRef(view)
   viewRef.current = view
   const exportRotRef = useRef(exportRot)
@@ -122,6 +132,9 @@ export default function ConsoleCanvas({
   reducedMotionRef.current = reducedMotion
   const instantRef = useRef(instant)
   instantRef.current = instant
+  // Read at keypress time: false while the customize studio takes the device over (screen off).
+  const screenContentVisibleRef = useRef(screenContentVisible)
+  screenContentVisibleRef.current = screenContentVisible
   // The scene exposes its label/state updater here; the [view] effect calls it.
   const applyViewRef = useRef<(v?: ConsoleView) => void>(() => {})
   // Same pattern for the skin: the [theme] effect repaints the live materials, no rebuild.
@@ -1752,7 +1765,6 @@ export default function ConsoleCanvas({
     // bit-for-bit, so the settle from hero lands exactly where the games view sits (seamless).
     const restCamPos = new THREE.Vector3()
     const restLook = new THREE.Vector3()
-    let liveExt = 0
     let viewW = 0
     let viewH = 0
     // Hero product-shot offset, relative to rest: pulled well back so the device floats smaller, and
@@ -1760,17 +1772,24 @@ export default function ConsoleCanvas({
     // A gentle 3/4 tilt gives it the product-shot feel.
     const HERO = { dz: 13, dLookY: -1.6, yaw: -0.11, pitch: -0.05 }
     const HERO_MS = 900
-    const WELCOME_IN_MS = 700
-    const WELCOME_HOLD_MS = 1100
-    const WELCOME_OUT_MS = 700
+    const WELCOME_IN_MS = 880
+    const WELCOME_OUT_MS = 680
+    // Entrance flourish while zooming in: the deck turns out and squares back to front-on. The screen
+    // is black through the zoom (content reveals only once squared up), so the turn reads on the body
+    // and never skews the splash. Yaw is the headline move; a touch of pitch gives it some lift.
+    const WELCOME_SPIN = 0.45
+    const WELCOME_PITCH = -0.05
+    // Fraction of the resting camera distance at the held splash (lower = closer = bigger screen). The
+    // games pose already fits the device to the frame, so the welcome has to push PAST it to read as a
+    // zoom at all; this dollies in ~30% and recenters on the screen so the splash fills the frame.
+    const WELCOME_ZOOM = 0.7
     let liveStage: 'hero' | 'app' | 'welcome' = stage
     let heroT = stage === 'hero' ? 1 : 0
     let welcomeT = 0
     let welcomePhase: 'in' | 'hold' | 'out' | 'idle' = 'idle'
-    let welcomeHold = 0
     let welcomeFired = false
+    let welcomeArrivedFired = false
     let liveFloatPhase = 0
-    let welcomeRmTimer: ReturnType<typeof setTimeout> | null = null
 
     // Keep zero power physically black. Non-zero values retain the optional cool LCD boot glow.
     function setScreenPower(p: number) {
@@ -1788,10 +1807,27 @@ export default function ConsoleCanvas({
 
     function placeCustomizeCamera() {
       const e = easeOutExpo(introT)
-      let lookY = lerp(CUST.lookY[0], CUST.lookY[1], e)
-      let camZ = lerp(CUST.camZ[0], CUST.camZ[1], e) * custCam.zoom
-      let yaw = lerp(CUST.yaw[0], CUST.yaw[1], e) + orbitYaw * e
-      let pitch = lerp(CUST.pitch[0], CUST.pitch[1], e) + orbitPitch * e
+      let lookY: number, camZ: number
+      let yaw: number, pitch: number
+      if (introFromApp) {
+        // Intro starts at the exact games/app pose (same cy/d math as the Done outro target and the
+        // resize handler) so it hands off seamlessly from the live device, then eases out to the studio
+        // rest pose. Reads as the one handheld zooming back out into the workshop.
+        const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
+        const aspect = Math.max(camera.aspect, 0.0001)
+        const ext = responsiveScreenExt()
+        const appCy = wy(1130) + ext / 2
+        const appZ = (ext > 0 ? (6.2 * 0.5) / (tanHalf * aspect) : (11.95 * 0.5) / tanHalf) + DEVICE_Z
+        lookY = lerp(appCy, CUST.lookY[1], e)
+        camZ = lerp(appZ, CUST.camZ[1] * custCam.zoom, e)
+        yaw = lerp(0, CUST.yaw[1], e) + orbitYaw * e
+        pitch = lerp(0, CUST.pitch[1], e) + orbitPitch * e
+      } else {
+        lookY = lerp(CUST.lookY[0], CUST.lookY[1], e)
+        camZ = lerp(CUST.camZ[0], CUST.camZ[1], e) * custCam.zoom
+        yaw = lerp(CUST.yaw[0], CUST.yaw[1], e) + orbitYaw * e
+        pitch = lerp(CUST.pitch[0], CUST.pitch[1], e) + orbitPitch * e
+      }
       if (outroActive) {
         // Land on the exact pose the games view computes for this aspect (same cy/d math as the
         // resize handler), so when the studio hands off to the live game device there's no jump.
@@ -1888,15 +1924,22 @@ export default function ConsoleCanvas({
       const lookY = restLook.y + HERO.dLookY * he
       const yaw = HERO.yaw * he
       const pitch = HERO.pitch * he
-      // Welcome push reuses the outro into-screen math (fills the screen), front-on.
-      const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
-      const aspect = Math.max(camera.aspect, 0.0001)
-      const cyScreen = wy(1130) + liveExt / 2
-      const frontZ =
-        (liveExt > 0 ? (6.2 * 0.5) / (tanHalf * aspect) : (11.95 * 0.5) / tanHalf) + DEVICE_Z
-      camera.position.set(0, lerp(lookY, cyScreen, we), lerp(camZ, frontZ, we))
-      camera.lookAt(0, lerp(lookY, cyScreen, we), 0)
-      deck.rotation.set(lerp(pitch, 0, we), lerp(yaw, 0, we), 0)
+      // Welcome splash target: dolly toward the SCREEN (closer than rest + recentered on the screen,
+      // not the whole device) so the splash grows to fill the frame, the customize hand-off feel. The
+      // games pose already fits the device edge-to-edge, so the zoom has to push past it to read.
+      const welcomeZ = (restCamPos.z - DEVICE_Z) * WELCOME_ZOOM + DEVICE_Z
+      const welcomeLookY = screenCenterY()
+      // Turn flourish, IN only: 0 at the start, peaks mid-zoom, back to 0 as it squares up front-on.
+      // Off during the hold/out so the splash sits square and the zoom-out stays aligned. The screen
+      // is black through the zoom (content reveals only on arrival), so the turn never skews it.
+      const spin = welcomePhase === 'in' ? Math.sin(clamp01(welcomeT) * Math.PI) : 0
+      camera.position.set(0, lerp(lookY, welcomeLookY, we), lerp(camZ, welcomeZ, we))
+      camera.lookAt(0, lerp(lookY, welcomeLookY, we), 0)
+      deck.rotation.set(
+        lerp(pitch, 0, we) + spin * WELCOME_PITCH,
+        lerp(yaw, 0, we) + spin * WELCOME_SPIN,
+        0,
+      )
       camera.updateMatrixWorld()
       projectScreenLayer()
     }
@@ -1914,35 +1957,45 @@ export default function ConsoleCanvas({
     applyStageRef.current = (s: 'hero' | 'app' | 'welcome') => {
       if (customize || exportMode || debug) return // the arc is the LIVE shell only
       liveStage = s
-      if (welcomeRmTimer) {
-        clearTimeout(welcomeRmTimer)
-        welcomeRmTimer = null
-      }
       if (s === 'welcome') {
+        // Zoom in (with the turn flourish) and HOLD. No auto-advance: the app dismisses it by
+        // switching stage back to 'app', which plays the zoom-out below.
         heroT = 0
         welcomeFired = false
+        welcomeArrivedFired = false
         if (reducedMotionRef.current) {
-          // Snap to the splash, hold, then snap back and report done (no camera travel).
+          // Snap straight to the filled splash and report arrival; the return is the same instant snap.
           snapLivePose('welcome')
-          welcomeRmTimer = setTimeout(() => {
-            welcomeT = 0
-            placeLiveCamera()
-            dirty = true
-            if (!welcomeFired) {
-              welcomeFired = true
-              propsRef.current.onWelcomeComplete?.()
-            }
-          }, WELCOME_HOLD_MS)
+          welcomePhase = 'hold'
+          welcomeArrivedFired = true
+          propsRef.current.onWelcomeArrived?.()
         } else {
           welcomePhase = 'in'
           welcomeT = 0
-          welcomeHold = 0
+        }
+      } else if (
+        s === 'app' &&
+        (welcomePhase === 'in' || welcomePhase === 'hold' || welcomeT > 0.001)
+      ) {
+        // Dismissing a showing welcome splash: zoom back out, then report completion (loop, or
+        // instantly under reduced motion).
+        if (reducedMotionRef.current) {
+          welcomePhase = 'idle'
+          welcomeT = 0
+          snapLivePose('app')
+          if (!welcomeFired) {
+            welcomeFired = true
+            propsRef.current.onWelcomeComplete?.()
+          }
+        } else {
+          welcomePhase = 'out'
         }
       } else {
-        // hero / app: cancel any welcome and let the loop ease heroT (or snap if reduced motion).
+        // hero / app with no welcome showing: cancel any welcome and ease heroT (or snap if reduced).
         welcomePhase = 'idle'
         welcomeT = 0
         welcomeFired = false
+        welcomeArrivedFired = false
         if (reducedMotionRef.current || instantRef.current) snapLivePose(s)
       }
       dirty = true
@@ -2269,10 +2322,53 @@ export default function ConsoleCanvas({
       }
     }
 
+    // Keyboard = a physical tap of a button: same press travel, glow, sound, and dispatch as a click.
+    // bi 0 = main, 1 = left action, 2 = right action. Self-contained (no pointer capture), it sinks
+    // the cap, fires the handler, then schedules the release like a real press.
+    function keyTap(bi: number) {
+      const btn = bm[bi]
+      if (!btn) return
+      btn.userData.pressed = true
+      btn.userData.pressedAt = performance.now()
+      btn.userData.glow = Math.max(btn.userData.glow, 0.001)
+      const channel = bi === 0 ? 'main' : bi === 1 ? 'action1' : 'action2'
+      audio.playSfx(bi === 0 ? 'mainPress' : 'actionPress', channel)
+      dispatch(bi)
+      const t = setTimeout(() => {
+        audio.playSfx(bi === 0 ? 'mainRelease' : 'actionRelease', channel)
+        btn.userData.pressed = false
+      }, MIN_PRESS_MS)
+      pressTimers.push(t)
+      dirty = true
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Map the keyboard to the physical buttons: Enter = main, ArrowLeft/Right = the two action caps.
+      const bi =
+        e.key === 'Enter' ? 0 : e.key === 'ArrowLeft' ? 1 : e.key === 'ArrowRight' ? 2 : -1
+      // Only on the live games device, only when that button is actually bound, and never on
+      // key-repeat (hold shouldn't machine-gun the button).
+      if (bi < 0 || e.repeat || customize || debug) return
+      if (liveStage !== 'app') return
+      const available =
+        bi === 0 ? state.mainAvailable : bi === 1 ? state.a1Available : state.a2Available
+      if (!available) return
+      if (!screenContentVisibleRef.current) return // customize studio owns the device
+      // Stay out of the way of real keyboard use: typing, focused controls, or an open drawer/modal
+      // (the menu drawer renders role="dialog") that owns the keyboard.
+      if (document.querySelector('[role="dialog"]')) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(t.tagName)))
+        return
+      e.preventDefault()
+      keyTap(bi)
+    }
+
     canvas.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)
+    window.addEventListener('keydown', onKeyDown)
     // Returning to the tab can drop the drawing buffer; force one repaint so the device never
     // shows a blank frame after we have been idle (not rendering).
     const onVisible = () => {
@@ -2329,7 +2425,6 @@ export default function ConsoleCanvas({
             : (11.95 * 0.5) / tanHalf // contain by height (wider frame)
         restCamPos.set(0, cy, d + DEVICE_Z)
         restLook.set(0, cy, 0)
-        liveExt = ext
       }
       camera.updateProjectionMatrix()
 
@@ -2442,13 +2537,13 @@ export default function ConsoleCanvas({
             welcomeT = Math.min(1, welcomeT + (dt * 1000) / WELCOME_IN_MS)
             animating = true
             if (welcomeT >= 1) {
+              // Squared up + filled: hold here (no timer) and tell the app to reveal the splash.
               welcomePhase = 'hold'
-              welcomeHold = 0
+              if (!welcomeArrivedFired) {
+                welcomeArrivedFired = true
+                propsRef.current.onWelcomeArrived?.()
+              }
             }
-          } else if (welcomePhase === 'hold') {
-            welcomeHold += dt * 1000
-            animating = true
-            if (welcomeHold >= WELCOME_HOLD_MS) welcomePhase = 'out'
           } else if (welcomePhase === 'out') {
             welcomeT = Math.max(0, welcomeT - (dt * 1000) / WELCOME_OUT_MS)
             animating = true
@@ -2460,6 +2555,7 @@ export default function ConsoleCanvas({
               }
             }
           }
+          // 'hold' just waits: the app plays the zoom-out by switching stage back to 'app'.
         }
         // Idle float: alive at hero, fades to nothing at app and during the welcome push.
         const floatFade = reduced ? 0 : heroT * (1 - easeInOutCubic(welcomeT))
@@ -2633,11 +2729,11 @@ export default function ConsoleCanvas({
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', release)
       window.removeEventListener('pointercancel', release)
+      window.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('focus', onVisible)
       ro.disconnect()
       pressTimers.forEach(clearTimeout)
-      if (welcomeRmTimer) clearTimeout(welcomeRmTimer)
       applyViewRef.current = () => {}
       applyThemeRef.current = () => {}
       applyOutroRef.current = () => {}

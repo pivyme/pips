@@ -732,7 +732,7 @@ export const demoApi = {
     return { user: userDTO(), digest: `demo-wd-${newId()}` }
   },
 
-  // Request DUSDC faucet (demo twin): a fixed +100 chips with the same per-tap cooldown as the backend.
+  // Request DUSDC faucet (demo twin): a fixed +500 chips with the same per-tap cooldown as the backend.
   requestDusdc: async (): Promise<{ user: UserDTO; amount: string; digest: string }> => {
     await delay(160)
     const now = nowMs()

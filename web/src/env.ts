@@ -12,6 +12,9 @@ export const env = createEnv({
     VITE_DEMO_MODE: z.enum(['true', 'false']).default('false'),
     // Mirrors the backend PIPS_AUTH_MODE so the UI shows the right door.
     VITE_AUTH_MODE: z.enum(['dev', 'privy']).default('dev'),
+    // Debug switch: force every sign-in (and reload) through the full onboarding arc
+    // (handle -> skin -> welcome), even when the account already has a username. Dev-only.
+    VITE_ONBOARDING_DEBUG: z.enum(['true', 'false']).default('false'),
     // Mirrors the backend PIPS_WALLET_AUTH_ENABLED: show the "Connect Sui Wallet" door option
     // (custodial play-wallet login), alongside Privy social. Independent of VITE_AUTH_MODE.
     VITE_WALLET_CONNECT_ENABLED: z.enum(['true', 'false']).default('false'),
@@ -34,6 +37,7 @@ export const env = createEnv({
     VITE_API_URL: import.meta.env.VITE_API_URL,
     VITE_DEMO_MODE: import.meta.env.VITE_DEMO_MODE,
     VITE_AUTH_MODE: import.meta.env.VITE_AUTH_MODE,
+    VITE_ONBOARDING_DEBUG: import.meta.env.VITE_ONBOARDING_DEBUG,
     VITE_WALLET_CONNECT_ENABLED: import.meta.env.VITE_WALLET_CONNECT_ENABLED,
     VITE_SUI_NETWORK: import.meta.env.VITE_SUI_NETWORK,
     VITE_SUI_FULLNODE_URL: import.meta.env.VITE_SUI_FULLNODE_URL,

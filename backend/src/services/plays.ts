@@ -9,7 +9,7 @@ import { coinWithBalance } from '@mysten/sui/transactions';
 
 import type { Play, User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
-import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS } from '../config/main-config.ts';
+import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS, OPERATOR_ENABLED } from '../config/main-config.ts';
 import { DUSDC_TYPE, usd1e9 } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import {
@@ -466,6 +466,27 @@ async function settleSpotUsd(asset: string, lastSpot1e9: bigint): Promise<number
 // tick instead of spilling noise and deferring to the next one.
 const SETTLE_STALE_RETRIES = 12;
 
+// After a failed nudge, reconcile against the chain. A push aborts EOracleSettled (oracle.move abort
+// code 6) precisely when the oracle is ALREADY settled, which is the state the nudge wanted: a
+// co-operator beat us to it, or our own earlier nudge timed out on the wait yet actually landed. So
+// re-read each oracle; any that now reads settled is a SUCCESS, marked here with the chain's frozen
+// settlement price (the real value, which may differ from what we were about to push) so Phase 2
+// resolves its play THIS tick. Returns true iff every oracle in the batch is now settled.
+async function reconcileSettled(items: Array<{ st: OracleState; cap: string; spotUsd: number }>, states: Map<string, OracleState | null>): Promise<boolean> {
+  const fresh = await Promise.all(items.map((it) => readOracle(it.st.oracleId).catch(() => null)));
+  let allSettled = true;
+  for (let i = 0; i < items.length; i++) {
+    const o = fresh[i];
+    if (o?.settled && o.settlementPrice1e9 != null) {
+      removeMarket(items[i].st.oracleId);
+      states.set(items[i].st.oracleId, o);
+    } else {
+      allSettled = false;
+    }
+  }
+  return allSettled;
+}
+
 async function settleOracles(items: Array<{ st: OracleState; cap: string; spotUsd: number }>, states: Map<string, OracleState | null>): Promise<boolean> {
   if (items.length === 0) return true;
   try {
@@ -478,6 +499,11 @@ async function settleOracles(items: Array<{ st: OracleState; cap: string; spotUs
     }
     return true;
   } catch (e) {
+    // A nudge most often fails because the oracle is ALREADY settled (a co-operator beat us, or our
+    // own timed-out nudge actually landed): that is the end state we wanted, not an error. Reconcile
+    // against the chain and treat any now-settled oracle as done. Only an oracle that is still
+    // genuinely unsettled is a real failure worth logging and retrying.
+    if (await reconcileSettled(items, states)) return true;
     console.error(`[Settle] settle-nudge x${items.length} failed, will retry:`, e instanceof Error ? e.message : e);
     return false;
   }
@@ -515,24 +541,34 @@ export async function settleDuePlays(): Promise<void> {
   // Phase 1: freeze settlement on every expired-unsettled oracle in one batched nudge. Per the Predict
   // oracle model, settlement is NOT automatic: an authorized cap must push a post-expiry price via
   // update_prices, which freezes the settlement price (PENDING_SETTLEMENT -> SETTLED). Until then the
-  // oracle is not quoteable, so a redeem aborts (EOracleExpired). Whoever holds a usable cap settles it
-  // here; skip oracles with no cap we hold (a dead deployment) so we never feed a bad cap to the batch.
-  // Idempotent across hosts: an already-settled push just aborts harmlessly, so it is safe even if
-  // another operator settles the same oracle concurrently.
+  // oracle is not quoteable, so a redeem aborts (EOracleExpired).
+  //
+  // This phase is OPERATOR-ONLY. The nudge needs an oracle cap and only the leader should drive it. A
+  // follower shares the operator key (so it technically owns the caps and WOULD pass resolveOracleCap),
+  // but it is not the leader: a second writer racing the leader on the same oracle just makes the
+  // loser's push abort EOracleSettled (abort code 6) and churns the one shared gas coin, which is the
+  // storm in the logs. A follower instead lets the leader settle the oracle on the shared chain and
+  // finalizes its own DB's plays in Phase 2. (The price-pusher and oracle-roll workers gate on
+  // OPERATOR_ENABLED the same way; settle runs in both modes because a follower still needs Phase 2/3.)
   const now = Date.now();
-  const toNudge: Array<{ st: OracleState; cap: string; spotUsd: number }> = [];
-  for (const [oracleId, plays] of byOracle) {
-    const st = states.get(oracleId);
-    if (!st || st.settled || st.expiryMs > now) continue;
-    const cap = resolveOracleCap(st);
-    if (!cap) continue;
-    const spotUsd = await settleSpotUsd(plays[0].asset, st.spot1e9);
-    if (spotUsd != null) toNudge.push({ st, cap, spotUsd });
-  }
-  if (toNudge.length > 0 && !(await settleOracles(toNudge, states))) {
-    // The batch reverted (e.g. one oracle was settled out from under it): isolate, so one bad oracle
-    // can't block the rest. Each retry is idempotent (an already-settled push just aborts harmlessly).
-    for (const it of toNudge) await settleOracles([it], states);
+  if (OPERATOR_ENABLED) {
+    const toNudge: Array<{ st: OracleState; cap: string; spotUsd: number }> = [];
+    for (const [oracleId, plays] of byOracle) {
+      const st = states.get(oracleId);
+      if (!st || st.settled || st.expiryMs > now) continue;
+      const cap = resolveOracleCap(st);
+      if (!cap) continue;
+      const spotUsd = await settleSpotUsd(plays[0].asset, st.spot1e9);
+      if (spotUsd != null) toNudge.push({ st, cap, spotUsd });
+    }
+    if (toNudge.length > 0 && !(await settleOracles(toNudge, states))) {
+      // The batch reverted (e.g. one oracle settled out from under it): isolate so one bad oracle can't
+      // block the rest. Skip any the batch reconcile already marked settled, so we don't re-nudge it.
+      for (const it of toNudge) {
+        if (states.get(it.st.oracleId)?.settled) continue;
+        await settleOracles([it], states);
+      }
+    }
   }
 
   // Phase 2: resolve plays whose oracle is now settled. Losing plays cost no tx; winning plays redeem

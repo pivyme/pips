@@ -53,6 +53,11 @@ type Deployed = {
 const DEPLOYED_FILE = SUI_NETWORK === 'testnet' ? 'deployed.json' : `deployed.${SUI_NETWORK}.json`;
 const DEPLOYED_PATH = path.resolve(import.meta.dir, DEPLOYED_FILE);
 
+// True when the deployment was read from the on-disk file (not PIPS_DEPLOYED_JSON), so a runtime
+// update (oracle-cap rotation, see replaceOracleCap) can persist back to it. Env-provided
+// deployments have no file to own, so they stay in-memory only.
+let deployedFromFile = false;
+
 function loadDeployed(): Deployed {
   // Server/container builds (e.g. Dokploy from git) don't have the gitignored deploy file. Allow
   // the whole record to come from PIPS_DEPLOYED_JSON instead (raw JSON or base64), so ids still
@@ -78,6 +83,7 @@ function loadDeployed(): Deployed {
   if (d.network !== SUI_NETWORK) {
     throw new Error(`deployed.json is for "${d.network}" but SUI_NETWORK is "${SUI_NETWORK}". Re-bootstrap or fix the env.`);
   }
+  deployedFromFile = true;
   return d;
 }
 
@@ -98,6 +104,21 @@ export const DUSDC_CURRENCY_ID = deployed.dusdc.currencyId;
 
 export const ORACLE_CAP_IDS = deployed.oracleCapIds;
 export const ORACLES = deployed.oracles;
+
+// Swap a rotated oracle cap into the live set and persist it. oracle-roll calls this when a cap's
+// registry bookkeeping vector (Registry.oracle_ids[cap], an unbounded vector<ID>) fills to Sui's
+// 256KB object cap and bricks create_oracle; a fresh cap starts that vector empty so creation
+// resumes. ORACLE_CAP_IDS is mutated IN PLACE (signer's operatorCaps holds the same reference, and
+// each tick re-reads it), then written back to the deploy file so a restart keeps the fresh cap
+// instead of re-rotating off the bricked one. No file write for an env-provided deployment.
+export function replaceOracleCap(fullCapId: string, freshCapId: string): void {
+  const idx = ORACLE_CAP_IDS.indexOf(fullCapId);
+  if (idx >= 0) ORACLE_CAP_IDS[idx] = freshCapId;
+  else ORACLE_CAP_IDS.push(freshCapId);
+  if (!deployedFromFile) return;
+  deployed.oracleCapIds = ORACLE_CAP_IDS;
+  fs.writeFileSync(DEPLOYED_PATH, JSON.stringify(deployed, null, 2) + '\n');
+}
 
 // Move call targets, built once from the package id so callers never string-concat.
 export const target = (mod: string, fn: string): `${string}::${string}::${string}` =>

@@ -41,7 +41,7 @@ function SettingsScreen() {
       await refresh() // propagate to the auth user (drives reduced motion + haptics app-wide)
     } catch {
       setLocal((s) => ({ ...s, [key]: !value })) // roll back
-      toast.error('Something hiccuped. Try again.')
+      toast.error('Something hiccuped. Try again.', { id: 'settings-error' })
     } finally {
       setBusy(null)
     }
