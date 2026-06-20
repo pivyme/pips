@@ -65,7 +65,10 @@ function PrivyBridge() {
     if (!authenticated) {
       authedFor.current = null
       inFlight.current = false
-      control.setStatus('anon')
+      // Privy is unauthenticated, but the app may still be signed in by another path (a wallet-connect
+      // session, or a restored token mid-validation). Only fall back to the door when there is no app
+      // session at all, otherwise this would clobber the wallet login and bounce it back to landing.
+      if (!loadToken()) control.setStatus('anon')
       return
     }
     // Resolve our app session once per Privy session. authedFor pins it to the Privy user so we never

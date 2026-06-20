@@ -32,7 +32,7 @@ import {
 import { getMarket, removeMarket } from '../lib/sui/markets.ts';
 import { operatorCaps } from '../lib/sui/signer.ts';
 import { gameSpot } from '../lib/game-price.ts';
-import { executeForUser, executeAsOperator, userContext } from '../lib/sui/execute.ts';
+import { executeForUser, executeAsOperator, executeAsSettlement, userContext } from '../lib/sui/execute.ts';
 import {
   resolveLucky,
   resolveRange,
@@ -606,7 +606,10 @@ async function settleOnePlay(play: Play, settlement1e9: bigint): Promise<void> {
       const tx = new Transaction();
       if (key.kind === 'binary') buildRedeemPermissionless(tx, user.predictManagerId, key.params);
       else buildRedeemRangePermissionless(tx, user.predictManagerId, key.params);
-      digest = (await executeAsOperator(tx, `settle-redeem ${play.id}`, { retries: SETTLE_STALE_RETRIES, freshFirst: true })).digest;
+      // Permissionless redeem signs with the dedicated settlement wallet (its own gas coin), so a slow
+      // redeem can't head-of-line block the operator's price-push/nudge lane. Falls back to the operator
+      // wallet when no settlement wallet is configured.
+      digest = (await executeAsSettlement(tx, `settle-redeem ${play.id}`, { retries: SETTLE_STALE_RETRIES, freshFirst: true })).digest;
     } catch (e) {
       console.error(`[Settle] on-chain redeem failed for ${play.id}, will retry:`, e instanceof Error ? e.message : e);
       return; // leave status 'open' so the next settle tick retries the redeem

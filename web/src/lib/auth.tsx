@@ -4,7 +4,7 @@
 // The Privy hooks live inside PrivyProvider, so privy mode is driven by a bridge (lib/privy.tsx)
 // that talks to this context through AuthControlContext. dev + demo never touch Privy.
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { UserDTO } from '@/lib/api'
 import { env } from '@/env'
@@ -223,13 +223,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })()
   }, [apply, devLogin])
 
-  const control: AuthControl = {
-    apply,
-    setStatus,
-    registerPrivy: (c) => {
-      privyControl.current = c
-    },
-  }
+  // Stable so the Privy bridge's effects don't re-run every render (an unstable control made the
+  // bridge re-assert 'anon' right after a wallet login set 'authed', bouncing the user to the door).
+  const registerPrivy = useCallback((c: { signIn: () => Promise<void>; signOut: () => Promise<void> } | null) => {
+    privyControl.current = c
+  }, [])
+  const control = useMemo<AuthControl>(() => ({ apply, setStatus, registerPrivy }), [apply, registerPrivy])
 
   return (
     <AuthContext.Provider value={{ status, user, signIn, signInWithWallet, signOut, refresh }}>

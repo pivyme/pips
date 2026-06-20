@@ -9,7 +9,7 @@ import { Transaction, SerialTransactionExecutor, TransactionDataBuilder } from '
 import type { User } from '../../../prisma/generated/client.js';
 import { AUTH_MODE, PLAY_GAS_BUDGET } from '../../config/main-config.ts';
 import { suiClient } from './client.ts';
-import { operatorKeypair } from './signer.ts';
+import { operatorKeypair, settlementKeypair, treasuryKeypair, treasuryAddress } from './signer.ts';
 import { signSuiTxWithPrivy } from './privy.ts';
 import { loadCustodialKeypair } from './custodial.ts';
 import { SPONSOR_ENABLED, applySponsorGas, signAsSponsor } from './sponsor.ts';
@@ -35,6 +35,15 @@ const operatorExecutor = new SerialTransactionExecutor({
   signer: operatorKeypair,
   defaultGasBudget: 1_000_000_000n,
 });
+
+// Dedicated serial executor for the settle-redeem sweep, on its OWN wallet + gas coin. The redeem is
+// permissionless (no oracle cap), so it does not have to sign as the operator, and isolating it here
+// is the whole stability win: a slow or backed-up redeem can no longer head-of-line block the
+// operator's price-push + oracle-nudge lane (which share the operator's single serial gas coin). Null
+// when no settlement wallet is configured, in which case redeems fall back to the operator executor.
+const settlementExecutor = settlementKeypair
+  ? new SerialTransactionExecutor({ client: suiClient, signer: settlementKeypair, defaultGasBudget: 1_000_000_000n })
+  : null;
 
 // A hard ceiling on any single operator tx. Operator txs normally finalize in ~1-3s through the
 // serial executor, but on the remote single-validator node a submit can occasionally stall. Without
@@ -95,12 +104,12 @@ function isStaleObjectError(e: unknown): boolean {
 // gas/cap version is usually already stale by the time a settle fires, so attempt 0 is wasted on a
 // version the node has moved past. Re-reading first means the very first build carries the current
 // version and lands in the gap, instead of burning a retry to discover it is stale.
-export async function executeAsOperator(tx: Transaction, label: string, opts?: { retries?: number; freshFirst?: boolean }): Promise<ExecResult> {
+async function runViaExecutor(executor: SerialTransactionExecutor, tx: Transaction, label: string, opts?: { retries?: number; freshFirst?: boolean }): Promise<ExecResult> {
   const maxRetries = Math.max(1, opts?.retries ?? STALE_OBJECT_RETRIES);
-  if (opts?.freshFirst) await withTimeout(operatorExecutor.resetCache(), 8_000, 'resetCache').catch(() => { });
+  if (opts?.freshFirst) await withTimeout(executor.resetCache(), 8_000, 'resetCache').catch(() => { });
   for (let attempt = 0; ; attempt++) {
     try {
-      const out = await withTimeout(operatorExecutor.executeTransaction(tx, { objectTypes: true }), OPERATOR_TX_TIMEOUT_MS, `operator ${label}`);
+      const out = await withTimeout(executor.executeTransaction(tx, { objectTypes: true }), OPERATOR_TX_TIMEOUT_MS, `${label}`);
       const t = out.$kind === 'Transaction' ? out.Transaction : null;
       if (!t || t.effects?.status?.success !== true) {
         const status = t?.effects?.status ?? (out.$kind === 'FailedTransaction' ? out.FailedTransaction.status : out);
@@ -112,15 +121,27 @@ export async function executeAsOperator(tx: Transaction, label: string, opts?: {
       return { digest: t.digest ?? t.effects.transactionDigest ?? '', objectChanges };
     } catch (e) {
       if (!isStaleObjectError(e) || attempt >= maxRetries - 1) throw e;
-      console.warn(`[operator] ${label}: stale object cache, resetting and retrying (${attempt + 1}/${maxRetries - 1})`);
+      console.warn(`[exec] ${label}: stale object cache, resetting and retrying (${attempt + 1}/${maxRetries - 1})`);
       // Bounded so a wedged waitForLastTransaction can't hang the retry; failure to reset is non-fatal,
       // the next build still re-resolves against the node.
-      await withTimeout(operatorExecutor.resetCache(), 8_000, 'resetCache').catch(() => { });
+      await withTimeout(executor.resetCache(), 8_000, 'resetCache').catch(() => { });
       // Backoff grows and carries a wide jitter so retries desync from a competing operator's ~2s
       // rhythm instead of bunching inside its busy window. Capped so a patient call stays bounded.
       await new Promise((r) => setTimeout(r, Math.min(1200, 150 * (attempt + 1)) + Math.floor(Math.random() * 300)));
     }
   }
+}
+
+// Sign + submit as the operator (price pushes, oracle ops, settle-nudge, DUSDC/SUI funding/mint).
+export function executeAsOperator(tx: Transaction, label: string, opts?: { retries?: number; freshFirst?: boolean }): Promise<ExecResult> {
+  return runViaExecutor(operatorExecutor, tx, label, opts);
+}
+
+// Sign + submit the permissionless settle-redeem sweep on the dedicated settlement wallet so it runs
+// on its own gas coin and cannot block the operator's price/nudge lane. Falls back to the operator
+// executor when no settlement wallet is configured (legacy single-wallet behaviour).
+export function executeAsSettlement(tx: Transaction, label: string, opts?: { retries?: number; freshFirst?: boolean }): Promise<ExecResult> {
+  return runViaExecutor(settlementExecutor ?? operatorExecutor, tx, label, opts);
 }
 
 // Cache the network's reference gas price (per-epoch, near-constant on localnet). Setting it on the
@@ -174,6 +195,36 @@ async function submitAndConfirm(txBytes: Uint8Array, signature: string | string[
       options: { showEffects: true, showObjectChanges: true },
     });
   }
+}
+
+// DUSDC payouts (onboarding chips + the Request DUSDC faucet) sign with the treasury wallet, which
+// pays its own gas from its own SUI. We use the proven build-sign-submit path (the same one withdraw
+// uses with coinWithBalance), not the serial executor, and serialize calls through one in-process
+// chain so two concurrent payouts never select the same treasury gas/DUSDC coin and equivocate. Low
+// frequency (onboarding once per user, faucet cooldown-gated), so a per-tx build round trip is fine.
+let treasuryChain: Promise<unknown> = Promise.resolve();
+export function executeAsTreasury(tx: Transaction, label: string): Promise<ExecResult> {
+  const kp = treasuryKeypair;
+  if (!kp) throw new Error('executeAsTreasury: treasury wallet not configured');
+  const run = treasuryChain.then(async () => {
+    tx.setSender(treasuryAddress); // coinWithBalance resolves the treasury's DUSDC against this sender
+    tx.setGasPrice(await refGasPrice());
+    tx.setGasBudget(PLAY_GAS_BUDGET);
+    const txBytes = await withTimeout(tx.build({ client: suiClient }), 15_000, `treasury ${label} build`);
+    const { signature } = await kp.signTransaction(txBytes);
+    const digest = TransactionDataBuilder.getDigestFromBytes(txBytes);
+    const res = await submitAndConfirm(txBytes, signature, digest);
+    if (res.effects?.status?.status !== 'success') {
+      throw new Error(`treasury ${label} failed: ${JSON.stringify(res.effects?.status ?? res)}`);
+    }
+    const objectChanges = (res.objectChanges ?? [])
+      .filter((c) => c.type === 'created')
+      .map((c) => ({ type: 'created', objectId: 'objectId' in c ? c.objectId : undefined, objectType: 'objectType' in c ? c.objectType : undefined }));
+    return { digest: res.digest, objectChanges };
+  });
+  // Keep the chain alive regardless of this tx's outcome so one failure doesn't wedge later payouts.
+  treasuryChain = run.catch(() => { });
+  return run;
 }
 
 // What signing a user's play needs. `provider` selects the path; privy needs walletId/publicKey,

@@ -121,8 +121,16 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
 
   return (
     <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center">
-      {/* Scrim so the copy + CTA read cleanly over the floating device behind them. */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[46%] bg-gradient-to-t from-black via-black/65 to-transparent" />
+      {/* Scrim so the copy + CTA read cleanly over the floating device behind them. Only as tall as the
+          text block needs: dark behind the headline, then feathering to clear just above it so the
+          screen, PRESS START, and most of the device stay visible. */}
+      <div
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-[46%]"
+        style={{
+          background:
+            'linear-gradient(to top, #000 0%, #000 40%, rgba(0,0,0,0.85) 65%, rgba(0,0,0,0) 100%)',
+        }}
+      />
 
       {/* Wordmark up top, small so the device stays the hero. */}
       <motion.img

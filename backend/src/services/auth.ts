@@ -10,7 +10,7 @@ import { normalizeSuiAddress } from '@mysten/sui/utils';
 import type { User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
 import { AUTH_MODE, JWT_SECRET, JWT_EXPIRES_IN, STARTING_BALANCE } from '../config/main-config.ts';
-import { mintDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
+import { transferDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { ensureSuiGas } from '../lib/sui/gas.ts';
 import { SPONSOR_ENABLED } from '../lib/sui/sponsor.ts';
 import { generateCustodialWallet } from '../lib/sui/custodial.ts';
@@ -111,9 +111,10 @@ async function provisionUser(user: User): Promise<User> {
   // Empty stats row so the menu reads cleanly from the first login.
   await prismaQuery.userStats.upsert({ where: { userId: user.id }, update: {}, create: { userId: user.id } });
 
-  // Free starting chips, exactly once.
+  // Free starting chips, exactly once. Paid from the treasury reserve (transferDusdc) so chips never
+  // come off the operator key; falls back to an operator mint when no treasury is configured.
   if (!user.dusdcFunded) {
-    await mintDusdc(user.address, STARTING_BALANCE);
+    await transferDusdc(user.address, STARTING_BALANCE);
     user = await prismaQuery.user.update({ where: { id: user.id }, data: { dusdcFunded: true } });
   }
 

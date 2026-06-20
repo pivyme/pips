@@ -352,6 +352,11 @@ function nowMs(): number {
   // Date.now via a function so the linter stays happy and tests can stub if needed.
   return Date.now()
 }
+
+// Request DUSDC faucet (demo): fixed batch + per-tap cooldown, mirrors the backend defaults.
+const DEMO_FAUCET_AMOUNT = 500
+const DEMO_FAUCET_COOLDOWN_MS = 60_000
+let demoFaucetAt = 0
 function newId(): string {
   idSeq += 1
   return `demo-${nowMs().toString(36)}-${idSeq}`
@@ -725,6 +730,20 @@ export const demoApi = {
     state.balance = Math.max(0, state.balance - amount)
     save()
     return { user: userDTO(), digest: `demo-wd-${newId()}` }
+  },
+
+  // Request DUSDC faucet (demo twin): a fixed +100 chips with the same per-tap cooldown as the backend.
+  requestDusdc: async (): Promise<{ user: UserDTO; amount: string; digest: string }> => {
+    await delay(160)
+    const now = nowMs()
+    const remaining = DEMO_FAUCET_COOLDOWN_MS - (now - demoFaucetAt)
+    if (remaining > 0) {
+      throw new ApiError('FAUCET_COOLDOWN', `Faucet on cooldown. Try again in ${Math.ceil(remaining / 1000)}s.`, 429)
+    }
+    demoFaucetAt = now
+    state.balance += DEMO_FAUCET_AMOUNT
+    save()
+    return { user: userDTO(), amount: DEMO_FAUCET_AMOUNT.toFixed(2), digest: `demo-faucet-${newId()}` }
   },
 
   plays: async (q: { status?: string; limit?: number } = {}) => {

@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyReque
 
 import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { handleError } from '../utils/errorHandler.ts';
-import { withdrawDusdc, WalletError, httpStatusForWalletError } from '../services/wallet.ts';
+import { withdrawDusdc, requestDusdc, WalletError, httpStatusForWalletError } from '../services/wallet.ts';
 
 export const walletRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
   app.post('/withdraw', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -16,6 +16,17 @@ export const walletRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
     } catch (error) {
       if (error instanceof WalletError) return handleError(reply, httpStatusForWalletError(error.code), error.message, error.code);
       return handleError(reply, 500, 'Could not complete the withdrawal', 'WITHDRAW_FAILED', error as Error);
+    }
+  });
+
+  // Request DUSDC faucet: hand the user a fixed batch of test chips, rate-limited per user.
+  app.post('/request-dusdc', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const result = await requestDusdc(request.user!);
+      return reply.code(200).send({ success: true, error: null, data: result });
+    } catch (error) {
+      if (error instanceof WalletError) return handleError(reply, httpStatusForWalletError(error.code), error.message, error.code);
+      return handleError(reply, 500, 'Could not send test DUSDC', 'FAUCET_FAILED', error as Error);
     }
   });
 

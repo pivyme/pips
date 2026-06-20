@@ -11,9 +11,10 @@ import { isValidSuiAddress, normalizeSuiAddress } from '@mysten/sui/utils';
 
 import type { User } from '../../prisma/generated/client.js';
 import { DUSDC_TYPE, toDusdcRaw } from '../lib/sui/config.ts';
-import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
+import { getDusdcBalanceRaw, transferDusdc } from '../lib/sui/dusdc.ts';
 import { buildManagerWithdraw, getManagerBalanceRaw } from '../lib/sui/predict.ts';
 import { executeForUser, userContext } from '../lib/sui/execute.ts';
+import { FAUCET_AMOUNT, FAUCET_COOLDOWN_MS } from '../config/main-config.ts';
 import { withUserLock, invalidateBal } from './plays.ts';
 import { toUserDTO } from './auth.ts';
 import type { UserDTO } from '../types/api.ts';
@@ -23,7 +24,9 @@ export type WalletErrorCode =
   | 'INVALID_ADDRESS'
   | 'INVALID_AMOUNT'
   | 'INSUFFICIENT_DUSDC'
-  | 'WITHDRAW_FAILED';
+  | 'WITHDRAW_FAILED'
+  | 'FAUCET_COOLDOWN'
+  | 'FAUCET_FAILED';
 
 export class WalletError extends Error {
   code: WalletErrorCode;
@@ -35,9 +38,38 @@ export class WalletError extends Error {
 }
 
 export const httpStatusForWalletError = (code: WalletErrorCode): number =>
-  code === 'WITHDRAW_FAILED' ? 500 : 400;
+  code === 'WITHDRAW_FAILED' || code === 'FAUCET_FAILED' ? 500 : code === 'FAUCET_COOLDOWN' ? 429 : 400;
 
 export type WithdrawResult = { user: UserDTO; digest: string };
+export type FaucetResult = { user: UserDTO; amount: string; digest: string };
+
+// Request DUSDC faucet: hand the user a fixed amount of test chips, rate-limited per user. The
+// cooldown is in-memory (anti-spam only, not security-critical on a free localnet), so it resets on a
+// restart and is per-process, which is fine: a user hits one backend. Chips are paid from the treasury
+// reserve (transferDusdc), so this never signs an operator tx on a follower.
+const lastFaucetAt = new Map<string, number>();
+
+export async function requestDusdc(user: User): Promise<FaucetResult> {
+  const now = Date.now();
+  const remaining = FAUCET_COOLDOWN_MS - (now - (lastFaucetAt.get(user.id) ?? 0));
+  if (remaining > 0) {
+    throw new WalletError('FAUCET_COOLDOWN', `Faucet on cooldown. Try again in ${Math.ceil(remaining / 1000)}s.`);
+  }
+  // Reserve the slot before the on-chain call so two rapid taps can't both pass the gate.
+  lastFaucetAt.set(user.id, now);
+
+  let digest: string;
+  try {
+    digest = await transferDusdc(user.address, FAUCET_AMOUNT);
+  } catch (e) {
+    lastFaucetAt.delete(user.id); // the payout failed, let them retry immediately
+    console.error('[wallet] faucet failed:', e instanceof Error ? e.message : e);
+    throw new WalletError('FAUCET_FAILED', 'Could not send test DUSDC. Try again in a moment.');
+  }
+
+  invalidateBal(user.id); // wallet just received chips; the next play gate must re-read
+  return { user: await toUserDTO(user), amount: FAUCET_AMOUNT.toFixed(2), digest };
+}
 
 // `user.balance` is a 2dp display string, so a "Max" withdraw can land a sub-cent above the true
 // on-chain total. Treat any overshoot within one cent as "withdraw everything" and clamp to the real

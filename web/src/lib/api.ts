@@ -101,6 +101,8 @@ export interface WithdrawInput {
   recipient: string
   amount: string
 }
+// POST /wallet/request-dusdc -> the refreshed user, the amount handed out, and the tx digest.
+export type FaucetResult = { user: UserDTO; amount: string; digest: string }
 export interface PrivyVerifyInput {
   token: string
   email?: string
@@ -191,6 +193,7 @@ const realApi = {
 
   // wallet
   withdraw: (input: WithdrawInput) => request<WithdrawResult>('POST', '/wallet/withdraw', input),
+  requestDusdc: () => request<FaucetResult>('POST', '/wallet/request-dusdc', {}),
 
   // menu
   stats: () => request<{ stats: UserStatsDTO }>('GET', '/stats'),

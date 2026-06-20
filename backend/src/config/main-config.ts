@@ -90,6 +90,31 @@ export const GAS_SPONSORSHIP_WALLET_PK: string = process.env.GAS_SPONSORSHIP_WAL
 export const SPONSOR_MIN_SUI: number = Number(process.env.PIPS_SPONSOR_MIN_SUI) || 50;
 export const SPONSOR_TOPUP_SUI: number = Number(process.env.PIPS_SPONSOR_TOPUP_SUI) || 500;
 
+// Settlement wallet. The permissionless settle-redeem sweep signs with THIS wallet instead of the
+// operator, so a slow/backed-up redeem runs on its own gas coin + serial queue and can't head-of-line
+// block the operator's price-push + oracle-nudge lane (they share one serial gas coin, the root of the
+// "slow/failed spins" churn). Empty = redeems fall back to the operator wallet (legacy single-wallet).
+// Only USED on the operator (the redeem sweep is operator-gated); the operator auto-funds it with SUI.
+export const SETTLEMENT_WALLET_PK: string = process.env.SETTLEMENT_WALLET_PK || '';
+export const SETTLEMENT_MIN_SUI: number = Number(process.env.PIPS_SETTLEMENT_MIN_SUI) || 50;
+export const SETTLEMENT_TOPUP_SUI: number = Number(process.env.PIPS_SETTLEMENT_TOPUP_SUI) || 500;
+
+// Treasury wallet. Holds a big pre-minted DUSDC reserve and pays out user chips (onboarding starting
+// balance + the Request DUSDC faucet) via a plain transfer, NOT an operator mint. That keeps DUSDC
+// payouts off the operator key entirely: a follower never signs an operator tx and the operator's gas
+// coin never churns on mints. Empty = payouts fall back to an operator mint (legacy). The operator
+// auto-funds it with SUI (its own gas) and mints the DUSDC reserve into it.
+export const TREASURY_WALLET_PK: string = process.env.TREASURY_WALLET_PK || '';
+export const TREASURY_MIN_SUI: number = Number(process.env.PIPS_TREASURY_MIN_SUI) || 20;
+export const TREASURY_TOPUP_SUI: number = Number(process.env.PIPS_TREASURY_TOPUP_SUI) || 200;
+export const TREASURY_MIN_DUSDC: number = Number(process.env.PIPS_TREASURY_MIN_DUSDC) || 1_000_000;
+export const TREASURY_TOPUP_DUSDC: number = Number(process.env.PIPS_TREASURY_TOPUP_DUSDC) || 5_000_000;
+
+// Request DUSDC faucet. Each tap sends FAUCET_AMOUNT display DUSDC to the user, rate-limited to one
+// tap per FAUCET_COOLDOWN_MS per user (in-memory, anti-spam, not security-critical on free localnet).
+export const FAUCET_AMOUNT: number = Number(process.env.PIPS_FAUCET_AMOUNT) || 100;
+export const FAUCET_COOLDOWN_MS: number = Number(process.env.PIPS_FAUCET_COOLDOWN_MS) || 60_000;
+
 // Demo override, OFF by default. When set to a valid leverage bucket (2/5/10/25/100), I Feel
 // Lucky forces that bucket instead of the fair RNG draw so a rehearsed demo reliably lands a
 // mid-bucket green swing (08-DEMO-FLOW.md says never demo a 100x lotto live). Asset and side
@@ -255,6 +280,16 @@ export default {
   GAS_SPONSORSHIP_WALLET_PK,
   SPONSOR_MIN_SUI,
   SPONSOR_TOPUP_SUI,
+  SETTLEMENT_WALLET_PK,
+  SETTLEMENT_MIN_SUI,
+  SETTLEMENT_TOPUP_SUI,
+  TREASURY_WALLET_PK,
+  TREASURY_MIN_SUI,
+  TREASURY_TOPUP_SUI,
+  TREASURY_MIN_DUSDC,
+  TREASURY_TOPUP_DUSDC,
+  FAUCET_AMOUNT,
+  FAUCET_COOLDOWN_MS,
   OPERATOR_ENABLED,
   PRICE_PUSH_CRON,
   ORACLE_ROLL_CRON,

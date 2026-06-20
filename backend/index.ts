@@ -18,9 +18,11 @@ import { startPricePusher } from './src/workers/price-pusher.ts';
 import { startOracleRoll } from './src/workers/oracle-roll.ts';
 import { startSettleWorker } from './src/workers/settle.ts';
 import { startMarketSync } from './src/workers/market-sync.ts';
+import { startOpsFunding } from './src/workers/ops-funding.ts';
 
-// Gas sponsor funding (operator-driven, seeds the sponsor's SUI address balance)
-import { ensureSponsorFunded } from './src/lib/sui/gas.ts';
+// Ops-wallet funding (operator-driven): seeds/tops up the sponsor (SUI), settlement (SUI), and
+// treasury (SUI + DUSDC reserve) wallets so plays, redeems, and chip payouts never stall.
+import { ensureOpsFunded } from './src/lib/sui/gas.ts';
 
 console.log(
   '======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n'
@@ -61,14 +63,15 @@ const start = async (): Promise<void> => {
     // Start workers
     startErrorLogCleanupWorker();
 
-    // Gas sponsor: the operator seeds/tops up the sponsor's SUI address balance so every privy play
-    // is gasless for the user. Behind OPERATOR_ENABLED so only the leader funds it. Best-effort:
-    // warn and continue (a non-sponsored or already-funded backend just no-ops).
+    // Ops wallets: the operator seeds/tops up the sponsor (SUI), settlement (SUI), and treasury
+    // (SUI + DUSDC reserve) on boot so the first play, redeem, and chip payout don't stall. Behind
+    // OPERATOR_ENABLED so only the leader funds it. Best-effort: warn and continue (each step is
+    // independently guarded inside ensureOpsFunded; already-funded wallets just no-op).
     if (OPERATOR_ENABLED) {
       try {
-        await ensureSponsorFunded();
+        await ensureOpsFunded();
       } catch (e) {
-        console.warn('[sponsor] boot funding failed (plays may fail until funded):', e instanceof Error ? e.message : e);
+        console.warn('[ops-funding] boot funding failed (plays/payouts may stall until funded):', e instanceof Error ? e.message : e);
       }
     }
 
@@ -80,6 +83,8 @@ const start = async (): Promise<void> => {
     // Follower mode (operator disabled): learn the live oracle set from chain so the games are
     // playable against the deployed operator without running the operator workers here.
     startMarketSync();
+    // Ongoing top-up safety net for the sponsor + settlement + treasury wallets (operator only).
+    startOpsFunding();
 
     await fastify.listen({
       port: APP_PORT,

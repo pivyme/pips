@@ -990,9 +990,10 @@ export default function ConsoleCanvas({
       return (lo + hi) / 2
     }
     // CRT attract label: a gold bloom halo, chromatic split, a warm gold phosphor core, and scanlines
-    // baked into the texture, plus an additive gold glow plane behind it that blooms into the black
-    // screen. A real plane on the device (not HTML), so it tilts + floats with the handheld. The loop
-    // blinks + flickers it, and lights the matte screen panel so the gold reads strong over true black.
+    // baked into the texture, plus a soft gold glow plane behind it. A real plane on the device (not
+    // HTML), so it tilts + floats with the handheld. The loop blinks + flickers it. It composites over
+    // the HTML black screen backing; the recessed 3D screen panel stays hidden so it can't peek while
+    // the device floats on the landing.
     const pressStart = (() => {
       const text = 'PRESS START'
       const FS = 150
@@ -1064,7 +1065,7 @@ export default function ConsoleCanvas({
       plane.visible = false
       device.add(plane)
 
-      // Additive gold glow behind the text: a soft radial that bleeds bloom into the dark screen.
+      // Soft gold glow behind the text: a radial that bleeds a little bloom over the black screen.
       const GS = 256
       const gc = document.createElement('canvas')
       gc.width = gc.height = GS
@@ -1080,7 +1081,6 @@ export default function ConsoleCanvas({
       const glowMat = new THREE.MeshBasicMaterial({
         map: glowTex,
         transparent: true,
-        blending: THREE.AdditiveBlending,
         depthWrite: false,
       })
       const glow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), glowMat)
@@ -2474,15 +2474,14 @@ export default function ConsoleCanvas({
           device.rotation.set(0, 0, 0)
           animating = true
         }
-        // Attract text: visible only while the device floats in the hero (landing) pose. The matte
-        // screen panel lights up black behind it so the gold bloom reads strong (the HTML cutout alone
-        // is transparent and mutes additive glow). It blinks + flickers, fades with heroT on settle,
+        // Attract text: visible only while the device floats in the hero (landing) pose. It reads over
+        // the HTML black screen backing (the recessed 3D screen panel stays hidden so it can't peek
+        // past the body while the device floats). It blinks + flickers, fades with heroT on settle,
         // then hides so the games HTML screen shows through and the GPU goes idle.
         const showPress = liveStage === 'hero' && heroT > 0.001
         if (pressStart.plane.visible !== showPress) {
           pressStart.plane.visible = showPress
           pressStart.glow.visible = showPress
-          screenMesh.visible = showPress || customize
           dirty = true
         }
         if (showPress) {

@@ -7,9 +7,14 @@ import { Transaction } from '@mysten/sui/transactions';
 
 import { suiClient } from './client.ts';
 import { executeAsOperator } from './execute.ts';
-import { operatorAddress } from './signer.ts';
+import { mintDusdc, getDusdcBalanceRaw } from './dusdc.ts';
+import { operatorAddress, settlementAddress, SETTLEMENT_ENABLED, treasuryAddress, TREASURY_ENABLED } from './signer.ts';
 import { SPONSOR_ENABLED, sponsorAddress } from './sponsor.ts';
-import { GAS_FUND_SUI, GAS_MIN_SUI, SPONSOR_MIN_SUI, SPONSOR_TOPUP_SUI } from '../../config/main-config.ts';
+import {
+  GAS_FUND_SUI, GAS_MIN_SUI, SPONSOR_MIN_SUI, SPONSOR_TOPUP_SUI,
+  SETTLEMENT_MIN_SUI, SETTLEMENT_TOPUP_SUI,
+  TREASURY_MIN_SUI, TREASURY_TOPUP_SUI, TREASURY_MIN_DUSDC, TREASURY_TOPUP_DUSDC,
+} from '../../config/main-config.ts';
 
 const SUI_TYPE = '0x2::sui::SUI';
 const MIST_PER_SUI = 1_000_000_000n;
@@ -22,6 +27,10 @@ export const GAS_MIN_RAW = toMist(GAS_MIN_SUI);
 
 // The sponsor's refill floor in MIST.
 const SPONSOR_MIN_RAW = toMist(SPONSOR_MIN_SUI);
+const SETTLEMENT_MIN_RAW = toMist(SETTLEMENT_MIN_SUI);
+const TREASURY_MIN_SUI_RAW = toMist(TREASURY_MIN_SUI);
+// DUSDC is 6dp; the treasury reserve floor in base units.
+const TREASURY_MIN_DUSDC_RAW = BigInt(Math.round(TREASURY_MIN_DUSDC * 1_000_000));
 
 // Read an address's SUI balance in MIST.
 export async function getSuiBalanceRaw(owner: string): Promise<bigint> {
@@ -78,4 +87,42 @@ export async function ensureSponsorFunded(): Promise<void> {
   });
   await executeAsOperator(tx, 'fundSponsor');
   console.log(`[sponsor] deposited ${SPONSOR_TOPUP_SUI} SUI into ${sponsorAddress} address balance`);
+}
+
+// Keep the settlement wallet able to pay gas for the permissionless redeem sweep. Operator-driven,
+// idempotent, generous (free localnet SUI). No-op when no settlement wallet is set. Plain owned-coin
+// SUI (not an address balance): the settlement executor pays its own gas from these coins.
+export async function ensureSettlementFunded(): Promise<void> {
+  if (!SETTLEMENT_ENABLED) return;
+  if ((await getSuiBalanceRaw(settlementAddress)) >= SETTLEMENT_MIN_RAW) return;
+  await fundSui(settlementAddress, SETTLEMENT_TOPUP_SUI);
+  console.log(`[settlement] funded ${SETTLEMENT_TOPUP_SUI} SUI to ${settlementAddress}`);
+}
+
+// Keep the treasury stocked: SUI for its own gas, and a big DUSDC reserve it pays chips from.
+// Operator-driven (the operator owns the gas SUI + the DUSDC TreasuryCap), idempotent, generous.
+// No-op when no treasury wallet is set.
+export async function ensureTreasuryFunded(): Promise<void> {
+  if (!TREASURY_ENABLED) return;
+  if ((await getSuiBalanceRaw(treasuryAddress)) < TREASURY_MIN_SUI_RAW) {
+    await fundSui(treasuryAddress, TREASURY_TOPUP_SUI);
+    console.log(`[treasury] funded ${TREASURY_TOPUP_SUI} SUI to ${treasuryAddress}`);
+  }
+  if ((await getDusdcBalanceRaw(treasuryAddress)) < TREASURY_MIN_DUSDC_RAW) {
+    await mintDusdc(treasuryAddress, TREASURY_TOPUP_DUSDC);
+    console.log(`[treasury] minted ${TREASURY_TOPUP_DUSDC} DUSDC to ${treasuryAddress}`);
+  }
+}
+
+// One call the operator runs on boot + on a slow cron to keep all three ops wallets topped up. Each
+// step is independently best-effort; a failure in one doesn't skip the others. Operator-gated at the
+// call site (only the leader owns the SUI + TreasuryCap to fund from).
+export async function ensureOpsFunded(): Promise<void> {
+  for (const [label, fn] of [['sponsor', ensureSponsorFunded], ['settlement', ensureSettlementFunded], ['treasury', ensureTreasuryFunded]] as const) {
+    try {
+      await fn();
+    } catch (e) {
+      console.warn(`[ops-funding] ${label} topup failed:`, e instanceof Error ? e.message : e);
+    }
+  }
 }
