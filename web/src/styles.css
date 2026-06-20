@@ -641,20 +641,8 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
-/* Landing attract "press start" blink + the welcome logo pop, both in the device screen. */
-.attract-blink {
-  animation: attract-blink 1.4s steps(1, end) infinite;
-}
-@keyframes attract-blink {
-  0%,
-  60% {
-    opacity: 1;
-  }
-  61%,
-  100% {
-    opacity: 0.25;
-  }
-}
+/* The welcome logo pop in the device screen. (The landing "press start" attract blinks on the 3D
+   screen plane itself, driven by the ConsoleCanvas render loop, not CSS.) */
 .welcome-pop {
   animation: welcome-pop 600ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)) both;
 }
@@ -672,10 +660,6 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
 @media (prefers-reduced-motion: reduce) {
   .pips-surround {
     animation: none;
-  }
-  .attract-blink {
-    animation: none;
-    opacity: 1;
   }
   .welcome-pop {
     animation: none;

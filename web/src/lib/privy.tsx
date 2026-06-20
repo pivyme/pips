@@ -5,8 +5,8 @@
 // PrivyProvider, so this file owns the provider and a headless bridge that feeds the result into the
 // auth context (lib/auth.tsx) through AuthControlContext. dev + demo modes never mount any of this.
 
-import { useEffect, useRef } from 'react'
-import { PrivyProvider, usePrivy } from '@privy-io/react-auth'
+import { useCallback, useEffect, useRef } from 'react'
+import { PrivyProvider, useLogin, usePrivy } from '@privy-io/react-auth'
 
 import { env } from '@/env'
 import { api, setAuthToken } from '@/lib/api'
@@ -17,23 +17,47 @@ import { loadToken, useAuthControl } from '@/lib/auth'
 export const PRIVY_ENABLED = env.VITE_AUTH_MODE === 'privy' && Boolean(env.VITE_PRIVY_APP_ID) && !isDemo()
 
 function PrivyBridge() {
-  const { ready, authenticated, user, login, logout, getAccessToken } = usePrivy()
+  const { ready, authenticated, user, logout, getAccessToken } = usePrivy()
   const control = useAuthControl()
   const inFlight = useRef(false)
   const authedFor = useRef<string | null>(null)
 
+  // The door's CTA awaits signIn(), but Privy's login() returns void and never settles on its own, so
+  // a dismissed modal would leave the door spinning "Starting..." forever. We bridge that: signIn()
+  // returns a promise we settle from Privy's login events. Backing out fires onError('exited_auth_flow'),
+  // which rejects as a cancel (the door drops the spinner, no error toast); other errors reject as real
+  // failures; onComplete resolves it (the verify effect below then mints our session).
+  const pendingLogin = useRef<{ resolve: () => void; reject: (e: Error) => void } | null>(null)
+  const settleLogin = useCallback((err?: Error) => {
+    const p = pendingLogin.current
+    if (!p) return
+    pendingLogin.current = null
+    if (err) p.reject(err)
+    else p.resolve()
+  }, [])
+
+  const { login } = useLogin({
+    onComplete: () => settleLogin(),
+    onError: (error) =>
+      settleLogin(new Error(error === 'exited_auth_flow' ? 'login_cancelled' : String(error))),
+  })
+
   // Expose Privy's login/logout so the auth context's signIn/signOut can drive them.
   useEffect(() => {
     control.registerPrivy({
-      signIn: async () => {
-        login()
-      },
+      signIn: () =>
+        new Promise<void>((resolve, reject) => {
+          settleLogin(new Error('login_cancelled')) // drop any stale attempt before starting a fresh one
+          pendingLogin.current = { resolve, reject }
+          login()
+        }),
       signOut: async () => {
+        settleLogin(new Error('login_cancelled'))
         await logout()
       },
     })
     return () => control.registerPrivy(null)
-  }, [control, login, logout])
+  }, [control, login, logout, settleLogin])
 
   // Resolve our session from the live Privy session.
   useEffect(() => {

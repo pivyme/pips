@@ -82,6 +82,7 @@ export function CustomizeStudio({
       {ready && (
         <ConsoleCanvas
           customize
+          tuner={import.meta.env.DEV}
           active={active}
           theme={theme}
           outro={exiting}
@@ -255,7 +256,10 @@ function ThemeCard({
       onClick={onPress}
       aria-pressed={selected}
       animate={{
+        // The -5deg tilt + scale pivots off the bottom and throws the top-left corner toward the
+        // previous card, so nudge the whole chip right when it lifts to keep clear of its neighbor.
         rotate: selected ? -5 : 0,
+        x: selected ? 4 : 0,
         y: selected ? -10 : 0,
         scale: selected ? 1.05 : 1,
       }}
@@ -263,26 +267,38 @@ function ThemeCard({
       className="relative h-[116px] w-[152px] shrink-0 origin-bottom overflow-hidden rounded-[22px] text-left"
       style={{
         background: theme.cardBg,
-        // A real skeuo chip: top sheen, pressed-in base line, and a lifted drop shadow when selected.
+        // Just the cast shadow here; the molded-plastic emboss lives on the overlay below so it
+        // also reads over the full-bleed art cards.
         boxShadow: selected
-          ? 'inset 0 1px 0 rgba(255,255,255,0.4), inset 0 -2px 8px rgba(0,0,0,0.22), 0 22px 40px -16px rgba(0,0,0,0.85)'
-          : 'inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -2px 6px rgba(0,0,0,0.2), 0 8px 20px -14px rgba(0,0,0,0.8)',
-        outline: selected ? '2px solid rgba(255,255,255,0.85)' : '1px solid rgba(255,255,255,0.08)',
-        outlineOffset: selected ? '-2px' : '-1px',
+          ? '0 26px 46px -16px rgba(0,0,0,0.9)'
+          : '0 10px 22px -12px rgba(0,0,0,0.8)',
+        outline: selected ? 'none' : '1px solid rgba(255,255,255,0.08)',
+        outlineOffset: '-1px',
       }}
     >
       {theme.cardImage && (
-        <>
-          <img
-            src={theme.cardImage}
-            alt=""
-            draggable={false}
-            className="absolute inset-0 h-full w-full object-cover object-top"
-          />
-          {/* darken the lower third so the code + name read over the busy art */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/15 to-transparent" />
-        </>
+        <img
+          src={theme.cardImage}
+          alt=""
+          draggable={false}
+          decoding="async"
+          className="absolute inset-0 h-full w-full object-cover object-center"
+        />
       )}
+
+      {/* The emboss: a soft top-light sheen fading into a shaded base, built from a gradient + gently
+          blurred inset shadows (no hard bevel lines, which alias into gritty edges once the chip
+          tilts). Sits above the art, below the text, so solid and photo chips both read molded. */}
+      <div
+        className="pointer-events-none absolute inset-0 rounded-[22px]"
+        style={{
+          background:
+            'linear-gradient(to bottom, rgba(255,255,255,0.26), rgba(255,255,255,0.06) 18%, rgba(255,255,255,0) 42%, rgba(0,0,0,0) 64%, rgba(0,0,0,0.16))',
+          boxShadow: selected
+            ? 'inset 0 1px 2px rgba(255,255,255,0.45), inset 0 -12px 22px -12px rgba(0,0,0,0.3)'
+            : 'inset 0 1px 2px rgba(255,255,255,0.38), inset 0 -10px 18px -12px rgba(0,0,0,0.24)',
+        }}
+      />
 
       <div className="absolute inset-0 flex flex-col justify-end p-3.5">
         <div
@@ -298,7 +314,7 @@ function ThemeCard({
 
       {theme.badge && (
         <span
-          className="absolute right-2.5 top-2.5 rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide"
+          className="absolute right-2.5 top-2.5 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-extrabold tracking-tight"
           // Over art the card ink goes light, so anchor the badge to a fixed dark chip instead.
           style={
             theme.cardImage
@@ -347,8 +363,8 @@ function DeckGlyph() {
 
 // The workshop: a dark workbench-mat with soft, out-of-focus parts and a heavy vignette. Pure CSS so
 // it looks intentional now; drop /assets/customize/workshop.jpg in later and it takes over (graded
-// black-and-white), with this as the always-on fallback.
-function WorkshopBackdrop() {
+// black-and-white), with this as the always-on fallback. Shared with onboarding's skin step.
+export function WorkshopBackdrop() {
   const [hasPhoto, setHasPhoto] = useState(false)
 
   return (

@@ -128,6 +128,8 @@ async function main(): Promise<void> {
   pass('Privy address matches the key-derived Sui address', wallet.address === derived, wallet.address);
   if (wallet.address !== derived) die(`address mismatch: privy ${wallet.address} vs derived ${derived} (signatures would be rejected)`);
   info('walletId', wallet.walletId);
+  // The signing context executeForUser expects (privy branch).
+  const walletCtx = { provider: 'privy' as const, address: wallet.address, walletId: wallet.walletId, publicKey: wallet.publicKey };
 
   // === Fund the wallet (operator): SUI for its own gas + DUSDC chips to play with ===
   await fundSui(wallet.address, 2);
@@ -142,7 +144,7 @@ async function main(): Promise<void> {
   buildCreateManager(mgrTx);
   let managerId: string | undefined;
   try {
-    const res = await executeForUser(mgrTx, wallet);
+    const res = await executeForUser(mgrTx, walletCtx);
     pass('create_manager accepted by Sui', true, explorerTxUrl(res.digest));
     managerId = res.objectChanges.find(
       (c) => c.type === 'created' && c.objectType?.includes('::predict_manager::PredictManager'),
@@ -178,7 +180,7 @@ async function main(): Promise<void> {
   buildMint(mintTx, managerId, params);
   let mintOk = false;
   try {
-    const res = await executeForUser(mintTx, wallet);
+    const res = await executeForUser(mintTx, walletCtx);
     mintOk = true;
     pass('mint accepted by Sui', true, explorerTxUrl(res.digest));
   } catch (e) {
@@ -194,7 +196,7 @@ async function main(): Promise<void> {
     const redeemTx = new Transaction();
     buildRedeem(redeemTx, managerId, params);
     try {
-      const res = await executeForUser(redeemTx, wallet);
+      const res = await executeForUser(redeemTx, walletCtx);
       pass('redeem accepted by Sui', true, explorerTxUrl(res.digest));
       info('cashed out', `mark ${usd(mark.payout)} back into the manager`);
     } catch (e) {

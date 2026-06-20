@@ -145,7 +145,7 @@ function StatsSection() {
   return (
     <StatsCard
       stats={stats}
-      displayName={user?.displayName ?? 'Player'}
+      displayName={user?.username ?? user?.displayName ?? 'Player'}
       address={user?.address ?? ''}
     />
   )

@@ -677,6 +677,16 @@ export const demoApi = {
     await delay(120)
     return { token: 'demo-token', user: userDTO() }
   },
+  // Wallet-connect is hidden in demo (the door gates it on !demo), so these are just stubs that keep
+  // the demo client complete.
+  authWalletNonce: async (_address: string) => {
+    await delay(60)
+    return { message: 'Sign in to Pips (demo)' }
+  },
+  authWalletVerify: async (_input: unknown) => {
+    await delay(120)
+    return { token: 'demo-token', user: userDTO() }
+  },
   me: async () => ({ user: userDTO() }),
 
   setUsername: async (username: string) => {

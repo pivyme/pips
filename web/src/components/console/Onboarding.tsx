@@ -1,12 +1,15 @@
 // First-run onboarding, played out on the same persistent console: type a handle on the device
 // screen, pick a skin, then a short welcome moment. The username + welcome screens render INSIDE the
-// device (docs/SCREEN.md instrument language); the skin picker is an App-Surface overlay around it.
+// device (docs/SCREEN.md instrument language); the skin picker reuses the menu Customize studio so it
+// looks identical, the device floating pulled-back over the workbench photo, free to spin.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'motion/react'
-import { ThemeRail } from './CustomizeStudio'
-import { useConsoleTheme } from './themes'
+import ConsoleCanvas from './ConsoleCanvas'
+import { ThemeRail, WorkshopBackdrop } from './CustomizeStudio'
+import { THEMES, THEME_BY_ID } from './themes'
 import { useConsoleControls } from './controls'
 import { ApiError, api } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
 import { welcomeJingle } from '@/lib/sound'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
@@ -17,6 +20,7 @@ const HANDLE_RE = /^[a-zA-Z0-9_]{3,20}$/
 // field), auto-focused on web, tap-anywhere-to-focus so mobile reliably raises the keyboard. The
 // physical PLAY button or Enter commits.
 export function UsernameScreen({ onDone }: { onDone: (name: string) => void }) {
+  const { signOut } = useAuth()
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -52,9 +56,19 @@ export function UsernameScreen({ onDone }: { onDone: (name: string) => void }) {
     }
   }, [name, onDone])
 
-  // The PLAY button commits (so does Enter). Handlers stay fresh via the controls ref.
+  // The PLAY button commits (so does Enter). The left action button is the way out of onboarding, back
+  // to the door, since the menu doesn't exist yet at this phase. Handlers stay fresh via the controls ref.
   useConsoleControls({
     main: { label: saving ? 'SAVING' : 'CONTINUE', color: 'amber', loading: saving, onPress: () => void submit() },
+    action1: {
+      label: 'LOGOUT',
+      color: 'neutral',
+      onPress: () => {
+        if (saving) return
+        haptic('rigid')
+        signOut()
+      },
+    },
   })
 
   return (
@@ -102,44 +116,73 @@ export function UsernameScreen({ onDone }: { onDone: (name: string) => void }) {
   )
 }
 
-// Step 2: the skin picker. Reuses the studio rail; the live device repaints as you scroll. App-Surface
-// chrome anchored at the bottom so the device stays the hero above it.
-export function ThemePicker({ onDone }: { onDone: () => void }) {
-  const { id, setId } = useConsoleTheme()
+// Step 2: the skin picker, played in the same black-and-white workshop as the menu's Customize studio
+// so the two surfaces match exactly. Its own `customize` canvas floats the device pulled-back over the
+// workbench photo and repaints live as you scroll the rail; the persistent shell waits behind (screen
+// off, hidden under the backdrop) and takes over for the welcome zoom once Continue is tapped. The
+// selection is owned by the shell so the chosen skin survives into welcome + app.
+export function ThemePicker({
+  selectedId,
+  onSelect,
+  onDone,
+}: {
+  selectedId: string
+  onSelect: (id: string) => void
+  onDone: () => void
+}) {
   const reduced = useReducedMotion()
+  // Let the workshop paint one beat before the WebGL device mounts, same as the studio.
+  const [ready, setReady] = useState(reduced)
+  const theme = THEME_BY_ID[selectedId] ?? THEMES[0]
+
+  useEffect(() => {
+    if (reduced) return
+    const t = setTimeout(() => setReady(true), 90)
+    return () => clearTimeout(t)
+  }, [reduced])
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-20 flex flex-col justify-end">
-      <motion.div
-        initial={reduced ? { opacity: 0 } : { opacity: 0, y: 36 }}
-        animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
-        transition={{ duration: reduced ? 0.3 : 0.5, ease: [0.16, 1, 0.3, 1], delay: reduced ? 0 : 0.1 }}
-        className="pointer-events-auto px-4 pb-[max(30px,calc(env(safe-area-inset-bottom)+20px))]"
-      >
-        <div className="mb-1 px-1 text-center">
-          <div className="text-[22px] font-black leading-none tracking-tight text-text">Make it yours</div>
-          <div className="mt-1.5 text-[13px] font-medium text-text-2">Pick a skin. Change it anytime.</div>
-        </div>
+    <div className="absolute inset-0 z-20 overflow-hidden">
+      <WorkshopBackdrop />
 
-        <ThemeRail
-          selectedId={id}
-          onSelect={(next) => {
-            haptic('selection')
-            setId(next)
-          }}
-        />
+      {/* The floating device, repainting live from the chosen skin. Transparent canvas → the workshop
+          shows around it. Mounted a beat late so the backdrop is up first. */}
+      {ready && <ConsoleCanvas customize theme={theme} />}
 
-        <button
-          type="button"
-          onClick={() => {
-            haptic('rigid')
-            onDone()
-          }}
-          className="btn-primary mt-4 flex h-14 w-full items-center justify-center rounded-full text-base"
+      {/* Chrome on top. The device area stays click-through so drags spin it; only the controls grab. */}
+      <div className="pointer-events-none absolute inset-0 z-30 flex flex-col">
+        <div className="flex-1" />
+        <motion.div
+          initial={reduced ? { opacity: 0 } : { opacity: 0, y: 36 }}
+          animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
+          transition={{ duration: reduced ? 0.3 : 0.5, ease: [0.16, 1, 0.3, 1], delay: reduced ? 0 : 0.1 }}
+          className="pointer-events-auto relative z-10 px-4 pb-[max(30px,calc(env(safe-area-inset-bottom)+20px))]"
         >
-          Continue
-        </button>
-      </motion.div>
+          <div className="mb-1 px-1 text-center">
+            <div className="text-[22px] font-black leading-none tracking-tight text-white">Make it yours</div>
+            <div className="mt-1.5 text-[13px] font-medium text-white/55">Pick a skin. Change it anytime.</div>
+          </div>
+
+          <ThemeRail
+            selectedId={selectedId}
+            onSelect={(next) => {
+              haptic('selection')
+              onSelect(next)
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={() => {
+              haptic('rigid')
+              onDone()
+            }}
+            className="btn-primary mt-4 flex h-14 w-full items-center justify-center rounded-full text-base"
+          >
+            Continue
+          </button>
+        </motion.div>
+      </div>
     </div>
   )
 }
@@ -155,8 +198,9 @@ export function WelcomeScreen({ name }: { name: string }) {
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-black px-[var(--screen-rim,24px)] text-center">
+      {/* The 512 export of the square 3D logo: same mark, far lighter than the 1MB source. */}
       <img
-        src="/assets/logos/pips-square-logo-3d.png"
+        src="/assets/logos/pips-512.png"
         alt="Pips"
         draggable={false}
         className="welcome-pop h-24 w-24 select-none rounded-[18px] shadow-[0_18px_50px_-12px_rgba(253,176,2,0.5)]"

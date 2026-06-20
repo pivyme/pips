@@ -18,7 +18,9 @@ export interface UserDTO {
   address: string
   displayName: string
   username: string | null
-  provider: 'privy' | 'dev'
+  provider: 'privy' | 'dev' | 'wallet'
+  // wallet-connect: the connected external wallet (login + default withdraw target).
+  walletAuthAddress?: string
   balance: string
   managerReady: boolean
   settings: { sound: boolean; haptics: boolean; reducedMotion: boolean }
@@ -103,6 +105,12 @@ export interface PrivyVerifyInput {
   token: string
   email?: string
 }
+// Wallet-connect login (custodial play-wallet model): get a challenge, sign it with the connected
+// wallet, send the signature back for a session.
+export interface WalletVerifyInput {
+  address: string
+  signature: string
+}
 
 // === Core ===
 
@@ -163,6 +171,8 @@ const realApi = {
   // auth
   authDev: () => request<{ token: string; user: UserDTO }>('POST', '/auth/dev', {}),
   authPrivyVerify: (input: PrivyVerifyInput) => request<{ token: string; user: UserDTO }>('POST', '/auth/privy/verify', input),
+  authWalletNonce: (address: string) => request<{ message: string }>('POST', '/auth/wallet/nonce', { address }),
+  authWalletVerify: (input: WalletVerifyInput) => request<{ token: string; user: UserDTO }>('POST', '/auth/wallet/verify', input),
   me: () => request<{ user: UserDTO }>('GET', '/auth/me'),
   setUsername: (username: string) => request<{ user: UserDTO }>('PATCH', '/auth/me', { username }),
 

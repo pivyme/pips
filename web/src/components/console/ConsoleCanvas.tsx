@@ -55,6 +55,9 @@ interface ConsoleCanvasProps {
   // Customize studio: the device floats on a transparent backdrop, screen off, free-spin to inspect
   // front/back, and `theme` repaints the materials live. Mutually exclusive with debug.
   customize?: boolean
+  // Dev-only tuning GUI for the studio (camera distance, logo carve). Off by default so end-user
+  // surfaces (the onboarding skin pick) never show it; the menu studio opts in under import.meta.env.DEV.
+  tuner?: boolean
   theme?: ConsoleTheme
   // PNG export tool (/export): a still product shot, no idle float, the device pose driven entirely by
   // the x/y sliders (exportRot, radians). Forces preserveDrawingBuffer so the canvas reads out to PNG.
@@ -76,6 +79,9 @@ interface ConsoleCanvasProps {
   stage?: 'hero' | 'app' | 'welcome'
   onWelcomeComplete?: () => void
   reducedMotion?: boolean
+  // Hold the resting app pose with no hero -> app settle. A returning session sets this so a refresh
+  // never replays the entry zoom (that animation is for a real login only).
+  instant?: boolean
 }
 
 export default function ConsoleCanvas({
@@ -85,6 +91,7 @@ export default function ConsoleCanvas({
   children,
   debug = false,
   customize = false,
+  tuner = false,
   theme,
   exportMode = false,
   exportRot,
@@ -95,6 +102,7 @@ export default function ConsoleCanvas({
   stage = 'app',
   onWelcomeComplete,
   reducedMotion = false,
+  instant = false,
 }: ConsoleCanvasProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -112,6 +120,8 @@ export default function ConsoleCanvas({
   activeRef.current = active
   const reducedMotionRef = useRef(reducedMotion)
   reducedMotionRef.current = reducedMotion
+  const instantRef = useRef(instant)
+  instantRef.current = instant
   // The scene exposes its label/state updater here; the [view] effect calls it.
   const applyViewRef = useRef<(v?: ConsoleView) => void>(() => {})
   // Same pattern for the skin: the [theme] effect repaints the live materials, no rebuild.
@@ -967,6 +977,124 @@ export default function ConsoleCanvas({
       '#7c7870',
     )
 
+    // Landing attract text, rendered as a real plane on the screen (not a flat HTML overlay) so it
+    // tilts + floats WITH the handheld in the hero pose instead of detaching when the device angles.
+    // Centered vertically on the screen aperture; the loop blinks it and shows it only on the hero stage.
+    const screenCenterY = () => {
+      let lo = Infinity,
+        hi = -Infinity
+      for (const v of screenWorld) {
+        if (v.y < lo) lo = v.y
+        if (v.y > hi) hi = v.y
+      }
+      return (lo + hi) / 2
+    }
+    // CRT attract label: a gold bloom halo, chromatic split, a warm gold phosphor core, and scanlines
+    // baked into the texture, plus an additive gold glow plane behind it that blooms into the black
+    // screen. A real plane on the device (not HTML), so it tilts + floats with the handheld. The loop
+    // blinks + flickers it, and lights the matte screen panel so the gold reads strong over true black.
+    const pressStart = (() => {
+      const text = 'PRESS START'
+      const FS = 150
+      const PAD = 130 // room for the bloom halo so the blur never clips at the plane edge
+      const c = document.createElement('canvas')
+      const g = c.getContext('2d')!
+      const font = `800 ${FS}px -apple-system,"Segoe UI",system-ui,sans-serif`
+      g.font = font
+      const tw = Math.ceil(g.measureText(text).width)
+      c.width = tw + PAD * 2
+      c.height = FS + PAD * 2
+      const X = c.width / 2,
+        Y = c.height / 2
+      g.font = font
+      g.textAlign = 'center'
+      g.textBaseline = 'middle'
+      // 1) Bloom: a couple of tight blurred gold passes for a restrained halo around the glyphs. No white.
+      g.save()
+      g.shadowColor = '#ffb31e'
+      for (const [blur, alpha] of [
+        [26, 0.3],
+        [12, 0.6],
+        [6, 0.9],
+      ] as const) {
+        g.shadowBlur = blur
+        g.globalAlpha = alpha
+        g.fillStyle = '#ffc016'
+        g.fillText(text, X, Y)
+      }
+      g.restore()
+      // 2) Chromatic aberration: faint red/cyan ghosts split left/right, added on.
+      g.globalCompositeOperation = 'lighter'
+      g.globalAlpha = 0.4
+      g.fillStyle = '#ff2a00'
+      g.fillText(text, X - 4, Y)
+      g.fillStyle = '#00a6ff'
+      g.fillText(text, X + 4, Y)
+      // 3) Solid gold body, then a brighter-gold core (still yellow, no white blow-out).
+      g.globalCompositeOperation = 'source-over'
+      g.globalAlpha = 1
+      g.fillStyle = '#ffc016'
+      g.fillText(text, X, Y)
+      g.globalCompositeOperation = 'lighter'
+      g.globalAlpha = 0.55
+      g.fillStyle = '#ffd95e'
+      g.fillText(text, X, Y)
+      // 4) Scanlines, confined to the lit pixels (source-atop only paints over existing content).
+      g.globalCompositeOperation = 'source-atop'
+      g.globalAlpha = 1
+      g.fillStyle = 'rgba(0,0,0,0.32)'
+      for (let y = 0; y < c.height; y += 3) g.fillRect(0, y, c.width, 1.5)
+      g.globalCompositeOperation = 'source-over'
+
+      const tex = new THREE.CanvasTexture(c)
+      tex.colorSpace = THREE.SRGBColorSpace
+      tex.anisotropy = MAXANISO
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        depthWrite: false,
+      })
+      // Core glyph height in world units; the padded canvas pushes the bloom halo out past it.
+      const coreWorld = 0.4
+      const worldH = (coreWorld * c.height) / FS
+      const textW = (worldH * c.width) / c.height
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(textW, worldH), mat)
+      plane.position.set(0, screenCenterY(), 0.06)
+      plane.renderOrder = 12
+      plane.visible = false
+      device.add(plane)
+
+      // Additive gold glow behind the text: a soft radial that bleeds bloom into the dark screen.
+      const GS = 256
+      const gc = document.createElement('canvas')
+      gc.width = gc.height = GS
+      const gg = gc.getContext('2d')!
+      const grad = gg.createRadialGradient(GS / 2, GS / 2, 0, GS / 2, GS / 2, GS / 2)
+      grad.addColorStop(0, 'rgba(255,193,22,0.55)')
+      grad.addColorStop(0.3, 'rgba(255,172,12,0.22)')
+      grad.addColorStop(1, 'rgba(255,150,0,0)')
+      gg.fillStyle = grad
+      gg.fillRect(0, 0, GS, GS)
+      const glowTex = new THREE.CanvasTexture(gc)
+      glowTex.colorSpace = THREE.SRGBColorSpace
+      const glowMat = new THREE.MeshBasicMaterial({
+        map: glowTex,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+      const glow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), glowMat)
+      glow.scale.set(textW * 1.05, worldH * 1.7, 1)
+      glow.position.set(0, screenCenterY(), 0.045)
+      glow.renderOrder = 11
+      glow.visible = false
+      device.add(glow)
+
+      return { plane, mat, glow, glowMat }
+    })()
+    const pressStartMat = pressStart.mat
+    let pressBlinkT = 0
+
     // Maker's mark on the back panel, centered below the embossed logo. Parented to the panel so it
     // tracks the screen stretch, faced toward -z so it reads when the device is flipped. Tinted to the
     // theme's label color (recolored by applyTheme). placeLogoCarve seats its z on the rear face.
@@ -1569,6 +1697,9 @@ export default function ConsoleCanvas({
       screenMesh.geometry.dispose()
       screenMesh.geometry = buildScreenGeo()
       screenWorld = screenWorldPts()
+      const sc = screenCenterY()
+      pressStart.plane.position.y = sc
+      pressStart.glow.position.y = sc
     }
 
     /* customize studio — the device floats as a hero product shot you can spin. The intro eases the
@@ -1624,8 +1755,10 @@ export default function ConsoleCanvas({
     let liveExt = 0
     let viewW = 0
     let viewH = 0
-    // Hero product-shot offset, relative to rest: further back, look lifted, a gentle 3/4 tilt.
-    const HERO = { dz: 7, dLookY: 0.5, yaw: -0.12, pitch: -0.05 }
+    // Hero product-shot offset, relative to rest: pulled well back so the device floats smaller, and
+    // raised in frame (negative dLookY lifts it) so its controls clear the landing copy band below.
+    // A gentle 3/4 tilt gives it the product-shot feel.
+    const HERO = { dz: 13, dLookY: -1.6, yaw: -0.11, pitch: -0.05 }
     const HERO_MS = 900
     const WELCOME_IN_MS = 700
     const WELCOME_HOLD_MS = 1100
@@ -1710,9 +1843,14 @@ export default function ConsoleCanvas({
 
     // Project the device's L-shaped screen cutout to CSS px and glue the HTML screen layer onto it.
     // Extracted from resize() so the LIVE arc can re-run it every animating frame (the camera moves).
+    // We project the cutout's LIVE world position (device float bob/tilt + deck rotation), not the rest
+    // pose, so the screen content stays glued to the device as it drifts on the landing. screenWorld
+    // bakes in DEVICE_Z, so strip that back to device-local and re-apply the current world matrix.
+    const screenScratch = new THREE.Vector3()
     function projectScreenLayer() {
       const el = screenLayerRef.current
       if (!el || viewW === 0 || viewH === 0) return
+      device.updateWorldMatrix(true, false)
       const M = 4
       let minX = Infinity,
         minY = Infinity,
@@ -1720,7 +1858,10 @@ export default function ConsoleCanvas({
         maxY = -Infinity
       let notchTopY = Infinity
       screenWorld.forEach((v, i) => {
-        const n = v.clone().project(camera)
+        const n = screenScratch
+          .set(v.x, v.y, v.z - DEVICE_Z)
+          .applyMatrix4(device.matrixWorld)
+          .project(camera)
         const x = (n.x * 0.5 + 0.5) * viewW
         const y = (-n.y * 0.5 + 0.5) * viewH
         if (x < minX) minX = x
@@ -1802,7 +1943,7 @@ export default function ConsoleCanvas({
         welcomePhase = 'idle'
         welcomeT = 0
         welcomeFired = false
-        if (reducedMotionRef.current) snapLivePose(s)
+        if (reducedMotionRef.current || instantRef.current) snapLivePose(s)
       }
       dirty = true
     }
@@ -1855,7 +1996,7 @@ export default function ConsoleCanvas({
             dirty = true
           },
         })
-      : customize
+      : customize && tuner
         ? createCustomizeGui({
             carve: logoCarve,
             onPlaceLogo: placeLogoCarve,
@@ -1925,7 +2066,28 @@ export default function ConsoleCanvas({
       }
       toNDC(e)
       const obj = pick()
-      if (!obj) return
+      if (!obj) {
+        // No device control under the tap. The WebGL canvas sits on top of the HTML screen layer and
+        // swallows the tap, so a text field on the screen (the onboarding handle) can't be selected and
+        // the mobile keyboard never opens. Forward a tap that lands on the screen to its input: doing it
+        // here, inside the real gesture, is what lets the keyboard come up. No-op on screens with no field.
+        const layer = screenLayerRef.current
+        if (layer && !exportMode && !debug) {
+          const r = layer.getBoundingClientRect()
+          if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+            const field = layer.querySelector<HTMLElement>(
+              '[data-visible="true"] input, [data-visible="true"] textarea',
+            )
+            if (field) {
+              // Stop the native mousedown default from moving focus to the (unfocusable) canvas, which
+              // would immediately blur the field we just focused.
+              e.preventDefault()
+              field.focus()
+            }
+          }
+        }
+        return
+      }
       if (obj.userData.kind === 'numberWheel') {
         canvas.setPointerCapture(e.pointerId)
         numberWheelDrag = true
@@ -1948,6 +2110,9 @@ export default function ConsoleCanvas({
         return
       }
       const bi = bm.indexOf(obj)
+      // On the landing the device is a hero shot, not signed in: the MENU/HOME tabs lead nowhere, so
+      // they stay fully inert (no press, no sound, no nav). They wake up once you're in the app.
+      if ((bi === 3 || bi === 4) && liveStage === 'hero') return
       canvas.setPointerCapture(e.pointerId)
       obj.userData.pressed = true
       obj.userData.pressedAt = performance.now()
@@ -2265,7 +2430,7 @@ export default function ConsoleCanvas({
         // Render-on-demand otherwise (a settled app device paints nothing).
         const reduced = reducedMotionRef.current
         const heroTarget = liveStage === 'hero' ? 1 : 0
-        if (!reduced && Math.abs(heroT - heroTarget) > 0.0005) {
+        if (!reduced && !instantRef.current && Math.abs(heroT - heroTarget) > 0.0005) {
           const dir = Math.sign(heroTarget - heroT)
           heroT = clamp01(heroT + (dir * (dt * 1000)) / HERO_MS)
           animating = true
@@ -2308,6 +2473,29 @@ export default function ConsoleCanvas({
           device.position.y = 0
           device.rotation.set(0, 0, 0)
           animating = true
+        }
+        // Attract text: visible only while the device floats in the hero (landing) pose. The matte
+        // screen panel lights up black behind it so the gold bloom reads strong (the HTML cutout alone
+        // is transparent and mutes additive glow). It blinks + flickers, fades with heroT on settle,
+        // then hides so the games HTML screen shows through and the GPU goes idle.
+        const showPress = liveStage === 'hero' && heroT > 0.001
+        if (pressStart.plane.visible !== showPress) {
+          pressStart.plane.visible = showPress
+          pressStart.glow.visible = showPress
+          screenMesh.visible = showPress || customize
+          dirty = true
+        }
+        if (showPress) {
+          let op = heroT
+          if (!reduced) {
+            pressBlinkT += dt
+            const blink = (pressBlinkT % 1.4) / 1.4 < 0.6 ? 1 : 0.25
+            const flicker = 0.97 + 0.03 * Math.sin(pressBlinkT * 31.7) * Math.sin(pressBlinkT * 12.3)
+            op = blink * flicker * heroT
+            animating = true
+          }
+          pressStartMat.opacity = op
+          pressStart.glowMat.opacity = op * 0.35
         }
         if (animating) placeLiveCamera()
       }

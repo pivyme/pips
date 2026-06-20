@@ -13,7 +13,7 @@ import type { User } from '../../prisma/generated/client.js';
 import { DUSDC_TYPE, toDusdcRaw } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { buildManagerWithdraw, getManagerBalanceRaw } from '../lib/sui/predict.ts';
-import { executeForUser } from '../lib/sui/execute.ts';
+import { executeForUser, userContext } from '../lib/sui/execute.ts';
 import { withUserLock, invalidateBal } from './plays.ts';
 import { toUserDTO } from './auth.ts';
 import type { UserDTO } from '../types/api.ts';
@@ -102,11 +102,7 @@ export async function withdrawDusdc(
 
     let digest: string;
     try {
-      const exec = await executeForUser(tx, {
-        address: user.address,
-        walletId: user.privyWalletId,
-        publicKey: user.suiPublicKey,
-      });
+      const exec = await executeForUser(tx, userContext(user));
       digest = exec.digest;
     } catch (e) {
       console.error('[wallet] withdraw failed:', e instanceof Error ? e.message : e);

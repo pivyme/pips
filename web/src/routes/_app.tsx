@@ -1,5 +1,5 @@
 import { Outlet, createFileRoute, useMatchRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import type { ConsoleTheme } from '@/components/console/themes'
 import { GamesConsole } from './_app/games/index'
@@ -9,23 +9,25 @@ import { LineRiderScreen } from './_app/games/line-rider'
 import { CandleHopScreen } from './_app/games/candle-hop'
 import { AppFrame } from '@/components/console/AppFrame'
 import { ConsoleControlsProvider, useConsoleView } from '@/components/console/controls'
-import { ConsoleShell } from '@/components/console/ConsoleShell'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { MenuDrawer } from '@/components/console/MenuDrawer'
 import { CustomizeStudio } from '@/components/console/CustomizeStudio'
+import { LandingOverlay, AttractScreen } from '@/components/console/LandingOverlay'
+import { UsernameScreen, ThemePicker, WelcomeScreen } from '@/components/console/Onboarding'
 import { themeBackdrop, useConsoleTheme } from '@/components/console/themes'
-import { Illo } from '@/ui/Illo'
 import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
-import { useAuth } from '@/lib/auth'
-
-const BACKDROP_GAMES = [
-  { illo: 'dice', title: 'I Feel Lucky', sub: 'Spin. Ride it. Cash out.' },
-  { illo: 'target', title: 'Range', sub: 'Call the zone. Tighter pays more.' },
-] as const
+import { useAuth, loadToken } from '@/lib/auth'
+import { isDemo } from '@/lib/demo'
+import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 const LOADING_EXIT_DELAY_MS = 150
 const LOADING_EXIT_DURATION_MS = 520
+
+// Runs before paint on the client, no-ops on the server. Lets us read localStorage (the auth token) and
+// commit the "returning session" decision into the first painted frame, so a refresh never flashes the
+// door or the hero -> app zoom.
+const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 // The aperture games keyed by their route path. The 3D device mounts the active game's screen
 // directly from here, not through the router Outlet. That is what lets the screen survive the menu:
@@ -40,12 +42,18 @@ const DEVICE_SCREENS: Record<string, ComponentType> = {
   '/games/candle-hop': CandleHopScreen,
 }
 
-// Everything under the device (games + menu) shares one persistent shell.
-// The landing route ("/") lives outside this and gets the full viewport.
+type OnboardingStep = 'username' | 'customize' | 'welcome'
+
+// Everything lives on ONE persistent console: the landing door, the first-run onboarding, and the
+// games + menu. They are phases of this single shell (never separate route trees), so the same 3D
+// device instance survives the whole arc with no remount: it settles from a floating hero to center
+// after sign-in, hosts the username + skin + welcome beats, then becomes the live games device.
+// The landing route ("/") just redirects here.
 export const Route = createFileRoute('/_app')({ component: AppLayout })
 
 function AppLayout() {
-  const { status } = useAuth()
+  const { status, user, refresh } = useAuth()
+  const reduced = useReducedMotion()
   const [showLoadingScreen, setShowLoadingScreen] = useState(true)
   const [loadingScreenLeaving, setLoadingScreenLeaving] = useState(false)
   const [customizePrepared, setCustomizePrepared] = useState(false)
@@ -56,8 +64,6 @@ function AppLayout() {
   // The menu is a drawer over the device, not a screen inside it. When a /menu route is active we
   // render it through the drawer while the shell behind it stays put for the blur layer.
   const onMenu = Boolean(matchRoute({ to: '/menu', fuzzy: true }))
-  // The 3D handheld hosts the games hub (the selectable list) and every game laid out for the
-  // L-shaped aperture (Lucky, Range, plus the minigames).
   const onRange = Boolean(matchRoute({ to: '/games/range' }))
   const onLucky = Boolean(matchRoute({ to: '/games/lucky' }))
   const onLineRider = Boolean(matchRoute({ to: '/games/line-rider' }))
@@ -66,7 +72,7 @@ function AppLayout() {
   // Customize takes over the device: the menu drawer slides away and the device drops into the
   // workshop studio. It rides the same persistent 3D branch so the WebGL stays warm.
   const onCustomize = Boolean(matchRoute({ to: '/menu/customize' }))
-  // The saved skin. Feeds the live games device; the studio seeds from it and writes back on Done.
+  // The saved skin. Feeds the live games device; the studio + onboarding seed from it and write back.
   const savedTheme = useConsoleTheme()
   // The ambient the whole frame floats on, derived from the skin so the surround stops being flat
   // black. We paint html + body (body shows under the safe-area inset behind iOS Safari's status
@@ -107,14 +113,8 @@ function AppLayout() {
     }
   }, [backdrop])
 
-  // Remember which shell was live before the menu opened, so the drawer's blurred backdrop (and
-  // where Close returns) matches where the user came from. Pressing Menu on the 3D handheld must
-  // keep that device behind, not drop to the CSS shell.
-  const lastShell = useRef<'3d' | 'css'>('css')
-  if (!onMenu) lastShell.current = on3D ? '3d' : 'css'
-  const menuOver3D = onMenu && lastShell.current === '3d'
-
-  // Where Close returns the menu: back to the device screen the user came from (the hub by default).
+  // Where Close returns the menu and which game the device mounts: the live game while on a games
+  // route, held across the menu open so the chart never blinks. (Mounting by path, not the Outlet.)
   const last3DPath = useRef('/games')
   if (!onMenu && on3D)
     last3DPath.current = onRange
@@ -126,31 +126,74 @@ function AppLayout() {
           : onCandleHop
             ? '/games/candle-hop'
             : '/games'
-
-  // The screen the 3D device mounts. last3DPath is the live game while on a games route, and holds
-  // that same game while the menu sits over the device, so the component stays identical across the
-  // open. React keeps the one instance mounted, the chart keeps running, and the screen never flashes
-  // black behind the drawer. (Mounting by path instead of the Outlet is what makes that possible.)
   const DeviceScreen = DEVICE_SCREENS[last3DPath.current]
 
-  // Not signed in (privy logged out, or signed out): send them back to the door. dev auto-logs-in,
-  // so this only fires when there is genuinely no session.
+  // ===== Phase machine: landing (the door) -> onboarding (new account) -> app =====
+  // The door always shows first and is left by tapping the CTA, even when dev/demo auto-login has
+  // already resolved a session (a returning privy session auto-walks in). `entered` is that gate;
+  // it resets on sign-out so the door returns. "Onboarded" is server-truth: user.username is set
+  // (the same in demo, which persists it locally). onboardedRef latches the run so a flaky refresh
+  // can't bounce a finished user back into onboarding.
+  // A token already in storage means this is a refresh / returning user, not a fresh login. Those skip
+  // the door and hold the settled app pose from frame one, so the hero -> app "zoom in" only plays on a
+  // real login this session (the door CTA / privy handshake), never on every page load. Detected in a
+  // pre-paint client layout effect (localStorage is client-only), so the first painted frame is already
+  // committed to the app, no door/zoom flash. Demo keeps its door (it never persists a real token here).
+  const [entered, setEntered] = useState(false)
+  const [restoredSession, setRestoredSession] = useState(false)
+  useIsoLayoutEffect(() => {
+    if (!isDemo() && loadToken() != null) {
+      setEntered(true)
+      setRestoredSession(true)
+    }
+  }, [])
+  const onboardedRef = useRef(false)
+  const enteredAndAuthed = entered && status === 'authed'
+  const needsOnboarding = enteredAndAuthed && !!user && user.username == null && !onboardedRef.current
+  const [onboarding, setOnboarding] = useState(false)
+  const [step, setStep] = useState<OnboardingStep>('username')
+  const [chosenName, setChosenName] = useState('')
+  // Sign-out (incl. the onboarding Log out) returns to the door with a clean slate, so the gate resets
+  // and the next sign-in starts onboarding fresh, never mid-flow. A stale token that fails to restore
+  // (401 -> anon, or error) also drops the no-animation path so the door comes back normally.
   useEffect(() => {
-    if (status === 'anon') void navigate({ to: '/' })
-  }, [status, navigate])
-
+    if (status === 'anon' || status === 'error') setRestoredSession(false)
+    if (status === 'anon') {
+      setEntered(false)
+      onboardedRef.current = false
+      setOnboarding(false)
+      setStep('username')
+      setChosenName('')
+    }
+  }, [status])
   useEffect(() => {
-    if (status !== 'authed') return
+    if (needsOnboarding && !onboarding) {
+      setOnboarding(true)
+      setStep('username')
+    }
+  }, [needsOnboarding, onboarding])
 
-    const exitTimer = window.setTimeout(
-      () => setLoadingScreenLeaving(true),
-      LOADING_EXIT_DELAY_MS,
-    )
+  const phase: 'landing' | 'onboarding' | 'app' =
+    !enteredAndAuthed ? 'landing' : onboarding ? 'onboarding' : 'app'
+
+  // Welcome zoom finished: leave onboarding and refresh so the shell re-reads the new handle. We
+  // defer the refresh to here (not the username step) so the user object stays "not onboarded"
+  // through every step and the phase can't jump to the app mid-flow.
+  const finishOnboarding = useCallback(() => {
+    onboardedRef.current = true
+    setOnboarding(false)
+    void refresh()
+  }, [refresh])
+
+  // The loading veil covers the very first paint until auth resolves (anon -> door, authed -> app),
+  // then wipes up to reveal the live console underneath.
+  useEffect(() => {
+    if (status === 'loading') return
+    const exitTimer = window.setTimeout(() => setLoadingScreenLeaving(true), LOADING_EXIT_DELAY_MS)
     const removeTimer = window.setTimeout(
       () => setShowLoadingScreen(false),
       LOADING_EXIT_DELAY_MS + LOADING_EXIT_DURATION_MS,
     )
-
     return () => {
       window.clearTimeout(exitTimer)
       window.clearTimeout(removeTimer)
@@ -162,12 +205,10 @@ function AppLayout() {
   }, [onCustomize])
 
   useEffect(() => {
-    if (!menuOver3D || onCustomize || customizePrepared) return
-
-    const prepare = () => setCustomizePrepared(true)
-    const id = window.setTimeout(prepare, 0)
+    if (!onMenu || onCustomize || customizePrepared) return
+    const id = window.setTimeout(() => setCustomizePrepared(true), 0)
     return () => window.clearTimeout(id)
-  }, [customizePrepared, menuOver3D, onCustomize])
+  }, [customizePrepared, onMenu, onCustomize])
 
   useEffect(() => {
     if (!onMenu && !onCustomize && !customizeHandoff) {
@@ -175,75 +216,95 @@ function AppLayout() {
     }
   }, [customizeHandoff, onCustomize, onMenu])
 
-  if (status !== 'authed') {
-    return <AppLoadingScreen />
-  }
-
-  const loadingScreen = showLoadingScreen ? (
-    <AppLoadingScreen leaving={loadingScreenLeaving} />
-  ) : null
-  const showCustomizeStudio =
-    onCustomize || customizeOpening || customizeHandoff
+  const showCustomizeStudio = onCustomize || customizeOpening || customizeHandoff
   const mountCustomizeStudio = showCustomizeStudio || customizePrepared
 
-  // The 3D handheld is the persistent shell for the games hub + the aperture games, and for the menu
-  // opened over them. Customize overlays a second turntable view without unmounting this live canvas,
-  // so Done can hand off to an already-rendered device instead of rebuilding WebGL mid-transition.
-  if (on3D || menuOver3D || mountCustomizeStudio) {
-    return (
-      <>
-        <AppFrame bg={backdrop}>
-          <ConsoleControlsProvider>
-            <Console3DRoute
-              theme={savedTheme.theme}
-              screenContentVisible={!showCustomizeStudio}
-            >
-              {DeviceScreen ? <DeviceScreen /> : null}
-            </Console3DRoute>
+  // What pose the one device holds, and whether its HTML screen content shows. A returning session
+  // holds the settled app pose from the first frame (canvas inits heroT=0 -> no hero, so no settle).
+  const restoring = restoredSession && status !== 'anon' && status !== 'error'
+  const canvasStage: 'hero' | 'app' | 'welcome' = restoring
+    ? 'app'
+    : phase === 'landing'
+      ? 'hero'
+      : phase === 'onboarding' && step === 'welcome'
+        ? 'welcome'
+        : 'app'
+  const screenVisible =
+    phase === 'app' ? !showCustomizeStudio : phase === 'onboarding' ? step !== 'customize' : true
 
-            {mountCustomizeStudio && (
-              <CustomizeStudio
-                initialThemeId={savedTheme.id}
-                visible={showCustomizeStudio}
-                active={onCustomize || customizeHandoff}
-                onCommit={(id) => {
-                  setCustomizeHandoff(true)
-                  savedTheme.setId(id)
-                  void navigate({ to: '/games' })
-                }}
-                onOutroComplete={() => setCustomizeHandoff(false)}
-                onCancel={() => void navigate({ to: '/menu' })}
-              />
-            )}
-            {/* The drawer slides itself away (closeTo) when Customize is tapped, then the studio takes
-                over, so the device is revealed settling into the workshop. */}
-            {onMenu && !onCustomize && (
-              <MenuDrawer
-                returnTo={last3DPath.current}
-                onLaunchStart={(to) => {
-                  if (to === '/menu/customize') {
-                    setCustomizePrepared(true)
-                    setCustomizeOpening(true)
-                  }
-                }}
-              >
-                <Outlet />
-              </MenuDrawer>
-            )}
-          </ConsoleControlsProvider>
-        </AppFrame>
-        {loadingScreen}
-      </>
+  // The content mounted on the device's screen, per phase. Onboarding's username + welcome render on
+  // the screen (instrument language); the skin step turns the screen off so the body reads cleanly.
+  let deviceChild: ReactNode = null
+  if (phase === 'app') {
+    deviceChild = DeviceScreen ? <DeviceScreen /> : null
+  } else if (phase === 'landing') {
+    deviceChild = <AttractScreen />
+  } else if (step === 'username') {
+    deviceChild = (
+      <UsernameScreen
+        onDone={(name) => {
+          setChosenName(name)
+          setStep('customize')
+        }}
+      />
     )
+  } else if (step === 'welcome') {
+    deviceChild = <WelcomeScreen name={chosenName} />
   }
+
+  const loadingScreen = showLoadingScreen ? <AppLoadingScreen leaving={loadingScreenLeaving} /> : null
 
   return (
     <>
-      <AppFrame bg={backdrop}>
+      <AppFrame bg={backdrop} dimmed={phase === 'landing' && !restoring}>
         <ConsoleControlsProvider>
-          <ConsoleShell>{onMenu ? <MenuBackdropScreen /> : <Outlet />}</ConsoleShell>
-          {onMenu && (
-            <MenuDrawer>
+          <Console3DRoute
+            theme={savedTheme.theme}
+            stage={canvasStage}
+            reducedMotion={reduced}
+            instant={restoring}
+            screenContentVisible={screenVisible}
+            onWelcomeComplete={finishOnboarding}
+          >
+            {deviceChild}
+          </Console3DRoute>
+
+          {phase === 'landing' && !restoring && <LandingOverlay onEnter={() => setEntered(true)} />}
+
+          {phase === 'onboarding' && step === 'customize' && (
+            <ThemePicker
+              selectedId={savedTheme.id}
+              onSelect={savedTheme.setId}
+              onDone={() => setStep('welcome')}
+            />
+          )}
+
+          {phase === 'app' && mountCustomizeStudio && (
+            <CustomizeStudio
+              initialThemeId={savedTheme.id}
+              visible={showCustomizeStudio}
+              active={onCustomize || customizeHandoff}
+              onCommit={(id) => {
+                setCustomizeHandoff(true)
+                savedTheme.setId(id)
+                void navigate({ to: '/games' })
+              }}
+              onOutroComplete={() => setCustomizeHandoff(false)}
+              onCancel={() => void navigate({ to: '/menu' })}
+            />
+          )}
+          {/* The drawer slides itself away (closeTo) when Customize is tapped, then the studio takes
+              over, so the device is revealed settling into the workshop. */}
+          {phase === 'app' && onMenu && !onCustomize && (
+            <MenuDrawer
+              returnTo={last3DPath.current}
+              onLaunchStart={(to) => {
+                if (to === '/menu/customize') {
+                  setCustomizePrepared(true)
+                  setCustomizeOpening(true)
+                }
+              }}
+            >
               <Outlet />
             </MenuDrawer>
           )}
@@ -256,13 +317,7 @@ function AppLayout() {
 
 function AppLoadingScreen({ leaving = false }: { leaving?: boolean }) {
   return (
-    <div
-      className={
-        leaving
-          ? 'app-loading-screen app-loading-screen-leaving'
-          : 'app-loading-screen'
-      }
-    >
+    <div className={leaving ? 'app-loading-screen app-loading-screen-leaving' : 'app-loading-screen'}>
       <LoadingIcon size={72} />
     </div>
   )
@@ -270,15 +325,23 @@ function AppLoadingScreen({ leaving = false }: { leaving?: boolean }) {
 
 // The 3D handheld as the live shell. It reads the controls the screen registered and renders the
 // screen content on the device's screen; the physical knob/buttons drive the game. The screen
-// content is passed in (the active game's Outlet, or nothing while the menu sits over the device).
+// content is passed in (the active game's screen, the onboarding screens, or the landing attract).
 function Console3DRoute({
   children,
   theme,
+  stage,
+  reducedMotion,
+  instant,
   screenContentVisible = true,
+  onWelcomeComplete,
 }: {
   children?: ReactNode
   theme?: ConsoleTheme
+  stage?: 'hero' | 'app' | 'welcome'
+  reducedMotion?: boolean
+  instant?: boolean
   screenContentVisible?: boolean
+  onWelcomeComplete?: () => void
 }) {
   const { view, handlers } = useConsoleView()
   const navigate = useNavigate()
@@ -295,34 +358,13 @@ function Console3DRoute({
       handlers={handlers}
       onNav={onNav}
       theme={theme}
+      stage={stage}
+      reducedMotion={reducedMotion}
+      instant={instant}
       screenContentVisible={screenContentVisible}
+      onWelcomeComplete={onWelcomeComplete}
     >
       {children}
     </ConsoleCanvas>
-  )
-}
-
-function MenuBackdropScreen() {
-  return (
-    <div aria-hidden="true" className="pointer-events-none flex h-full flex-col gap-3 p-4 opacity-95">
-      <div className="flex items-baseline justify-between px-1 pt-2">
-        <h1 className="text-2xl font-extrabold tracking-tight">Games</h1>
-        <div className="flex items-center gap-1.5 text-xs font-semibold text-text-3">
-          <span className="h-1.5 w-1.5 rounded-full bg-up" />
-          Live now
-        </div>
-      </div>
-
-      {BACKDROP_GAMES.map((game) => (
-        <div key={game.title} className="card-neo flex items-center gap-3 p-3">
-          <Illo name={game.illo} size={56} />
-          <div className="min-w-0 flex-1">
-            <span className="text-[17px] font-bold">{game.title}</span>
-            <div className="text-sm text-text-2">{game.sub}</div>
-          </div>
-          <span className="text-lg text-text-3">›</span>
-        </div>
-      ))}
-    </div>
   )
 }

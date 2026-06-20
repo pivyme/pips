@@ -32,7 +32,7 @@ import {
 import { getMarket, removeMarket } from '../lib/sui/markets.ts';
 import { operatorCaps } from '../lib/sui/signer.ts';
 import { gameSpot } from '../lib/game-price.ts';
-import { executeForUser, executeAsOperator } from '../lib/sui/execute.ts';
+import { executeForUser, executeAsOperator, userContext } from '../lib/sui/execute.ts';
 import {
   resolveLucky,
   resolveRange,
@@ -135,8 +135,9 @@ export type CreatePlayInput =
 
 export type CreateResult = { play: PlayDTO };
 
-// What executeForUser needs to sign: the user (dev = operator-signed; privy = the user's wallet).
-const userCtx = (user: User) => ({ address: user.address, walletId: user.privyWalletId, publicKey: user.suiPublicKey });
+// What executeForUser needs to sign for this user (dev = operator, privy = embedded wallet, wallet =
+// the server-held custodial wallet). One shared builder so every signing path stays consistent.
+const userCtx = userContext;
 
 async function resolveByGame(input: CreatePlayInput, stakeRaw: bigint): Promise<Resolved> {
   if (input.game === 'lucky') return resolveLucky(stakeRaw);

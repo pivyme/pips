@@ -9,6 +9,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import type { UserDTO } from '@/lib/api'
 import { env } from '@/env'
 import { ApiError, api, setAuthToken } from '@/lib/api'
+import { connectWallet, signLoginMessage, type SuiWallet } from '@/lib/walletConnect'
 import { demoUser, isDemo } from '@/lib/demo'
 import { setHapticsEnabled } from '@/lib/haptics'
 import { setSoundEnabled } from '@/lib/sound'
@@ -40,6 +41,9 @@ interface AuthContextValue {
   status: AuthStatus
   user: UserDTO | null
   signIn: () => Promise<void>
+  // Native Sui wallet connect (custodial login): connect the wallet, sign the nonce, verify. The
+  // wallet object comes from the door's picker. Throws on cancel/failure so the caller can react.
+  signInWithWallet: (wallet: SuiWallet) => Promise<void>
   signOut: () => void
   refresh: () => Promise<void>
 }
@@ -107,6 +111,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // privy: the bridge owns the Privy login modal + the verify handshake.
     if (privyControl.current) await privyControl.current.signIn()
   }, [apply, devLogin])
+
+  // Wallet-connect: connect -> ask the backend for a nonce -> sign it with the wallet -> verify ->
+  // apply the session. Demo never uses this (the door hides it). No bridge needed, the Wallet
+  // Standard is plain async, so this lives directly in the context.
+  const signInWithWallet = useCallback(async (wallet: SuiWallet) => {
+    const account = await connectWallet(wallet)
+    const { message } = await api.authWalletNonce(account.address)
+    const signature = await signLoginMessage(wallet, account, message)
+    const { token, user: u } = await api.authWalletVerify({ address: account.address, signature })
+    apply(token, u)
+  }, [apply])
 
   const signOut = useCallback(async () => {
     // Await Privy's logout so the session is fully cleared before the door shows again. Fire-and-forget
@@ -217,7 +232,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ status, user, signIn, signOut, refresh }}>
+    <AuthContext.Provider value={{ status, user, signIn, signInWithWallet, signOut, refresh }}>
       <AuthControlContext.Provider value={control}>{children}</AuthControlContext.Provider>
     </AuthContext.Provider>
   )

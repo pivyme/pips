@@ -12,8 +12,8 @@ datasource db {
 
 model User {
   id               String    @id @default(cuid())
-  address          String    @unique          // Sui address (Privy embedded wallet or dev wallet). renamed from walletAddress
-  provider         String    @default("dev")  // 'privy' | 'dev'
+  address          String    @unique          // Sui address. privy/dev: their wallet. wallet-connect: the server-held custodial play wallet
+  provider         String    @default("dev")  // 'privy' | 'dev' | 'wallet'
   email            String?
   displayName      String                     // generated handle, e.g. "Lucky Otter"
   username         String?   @unique           // user-chosen unique handle, set once during onboarding. null = not onboarded yet
@@ -22,6 +22,12 @@ model User {
   privyUserId      String?   @unique           // Privy DID (sub claim), the stable account key
   suiPublicKey     String?                     // Privy ed25519 public key, for signature assembly
   privyWalletId    String?                     // Privy embedded-wallet id used by server rawSign
+
+  // Wallet-connect (custodial play-wallet model). The connected external Sui wallet is the login
+  // identity + default withdrawal target; playWalletSecret is the AES-256-GCM encrypted secret of
+  // the server-held custodial play wallet (`address` above), which signs this user's plays.
+  walletAuthAddress String?  @unique
+  playWalletSecret  String?
 
   predictManagerId String?                     // their PredictManager object id (lazily created)
   dusdcFunded      Boolean   @default(false)   // free starting USDC chips minted

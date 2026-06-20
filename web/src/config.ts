@@ -3,7 +3,7 @@
 
 export const config = {
   appName: 'Pips',
-  tagline: 'Trading, but a game.',
+  tagline: 'Built for fun and money.',
   description:
     'The simplest, most fun way to trade. A gamified trading console on Sui, powered by DeepBook Predict.',
 

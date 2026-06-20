@@ -5,6 +5,7 @@
 
 import jwt from 'jsonwebtoken';
 import { Transaction } from '@mysten/sui/transactions';
+import { normalizeSuiAddress } from '@mysten/sui/utils';
 
 import type { User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
@@ -12,7 +13,8 @@ import { AUTH_MODE, JWT_SECRET, JWT_EXPIRES_IN, STARTING_BALANCE } from '../conf
 import { mintDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { ensureSuiGas } from '../lib/sui/gas.ts';
 import { SPONSOR_ENABLED } from '../lib/sui/sponsor.ts';
-import { executeAsOperator, executeForUser } from '../lib/sui/execute.ts';
+import { generateCustodialWallet } from '../lib/sui/custodial.ts';
+import { executeAsOperator, executeForUser, userContext } from '../lib/sui/execute.ts';
 import { buildCreateManager, getManagerBalanceRaw } from '../lib/sui/predict.ts';
 import { fromDusdcRaw } from '../lib/sui/config.ts';
 import type { UserDTO } from '../types/api.ts';
@@ -24,15 +26,15 @@ const generateHandle = (): string =>
   `${ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]} ${ANIMALS[Math.floor(Math.random() * ANIMALS.length)]}`;
 
 // Create + share the user's PredictManager. deposit/withdraw on it assert sender == owner, so it
-// must be created by whoever signs the plays: dev = the operator, privy = the user's own wallet
-// (a session-signed tx). Returns the shared manager id read from the tx object changes.
+// must be created by whoever signs the plays: dev = the operator, privy = the user's embedded wallet,
+// wallet-connect = the server-held custodial wallet. Returns the shared manager id from object changes.
 async function createManagerForUser(user: User): Promise<string> {
   const tx = new Transaction();
   buildCreateManager(tx);
   const exec =
-    AUTH_MODE === 'dev'
+    user.provider !== 'wallet' && AUTH_MODE === 'dev'
       ? await executeAsOperator(tx, 'create_manager')
-      : await executeForUser(tx, { address: user.address, walletId: user.privyWalletId, publicKey: user.suiPublicKey });
+      : await executeForUser(tx, userContext(user));
   const created = exec.objectChanges.find(
     (c) => c.type === 'created' && c.objectType?.includes('::predict_manager::PredictManager'),
   );
@@ -49,7 +51,7 @@ export type EnsureUserParams = {
   privyWalletId?: string | null;
 };
 
-// Idempotent onboarding. Safe to call on every login.
+// Idempotent onboarding for the address-keyed modes (dev / privy). Safe to call on every login.
 export async function ensureUser(params: EnsureUserParams): Promise<User> {
   const { address, provider, email, privyUserId, suiPublicKey, privyWalletId } = params;
 
@@ -60,38 +62,78 @@ export async function ensureUser(params: EnsureUserParams): Promise<User> {
     ...(privyWalletId ? { privyWalletId } : {}),
   };
 
-  let user = await prismaQuery.user.upsert({
+  const user = await prismaQuery.user.upsert({
     where: { address },
     update: { provider, lastSignIn: new Date(), ...(email ? { email } : {}), ...privyFields },
     create: { address, provider, displayName: generateHandle(), email: email ?? null, lastSignIn: new Date(), ...privyFields },
   });
 
+  return provisionUser(user);
+}
+
+// Idempotent onboarding for wallet-connect (custodial play-wallet model). Keyed by the connected
+// external wallet (walletAuthAddress); on first sign-in we mint a server-held custodial play wallet,
+// whose Sui address becomes user.address (so chips/funding/manager all flow through the existing
+// pipeline unchanged). The connected wallet itself never signs a transaction here.
+export async function ensureWalletUser(walletAuthAddress: string): Promise<User> {
+  const authAddr = normalizeSuiAddress(walletAuthAddress);
+  let user = await prismaQuery.user.findUnique({ where: { walletAuthAddress: authAddr } });
+  if (!user) {
+    const wallet = generateCustodialWallet();
+    user = await prismaQuery.user.create({
+      data: {
+        address: wallet.address,
+        provider: 'wallet',
+        displayName: generateHandle(),
+        walletAuthAddress: authAddr,
+        playWalletSecret: wallet.encryptedSecret,
+        lastSignIn: new Date(),
+      },
+    });
+  } else {
+    user = await prismaQuery.user.update({ where: { id: user.id }, data: { lastSignIn: new Date() } });
+  }
+  return provisionUser(user);
+}
+
+// Whether the user has what createManagerForUser needs to sign: dev = the operator; privy = the
+// embedded wallet + session signer; wallet = the custodial key. If not ready, the manager is left
+// null and retried on the next login.
+function managerReadyToCreate(user: User): boolean {
+  if (user.provider === 'wallet') return Boolean(user.playWalletSecret);
+  if (user.provider === 'privy') return Boolean(user.privyWalletId && user.suiPublicKey);
+  return AUTH_MODE === 'dev'; // dev provider
+}
+
+// Shared provisioning, idempotent: empty stats row, free chips once, free gas (when unsponsored), and
+// the PredictManager. Runs for every login regardless of identity mode.
+async function provisionUser(user: User): Promise<User> {
   // Empty stats row so the menu reads cleanly from the first login.
   await prismaQuery.userStats.upsert({ where: { userId: user.id }, update: {}, create: { userId: user.id } });
 
   // Free starting chips, exactly once.
   if (!user.dusdcFunded) {
-    await mintDusdc(address, STARTING_BALANCE);
+    await mintDusdc(user.address, STARTING_BALANCE);
     user = await prismaQuery.user.update({ where: { id: user.id }, data: { dusdcFunded: true } });
   }
 
   // Free SUI for gas, ONLY when gas sponsorship is off. With a sponsor, every play is paid from the
   // sponsor's address balance, so users never hold SUI. Without one, fund each user once then top up
   // below the floor so they can pay their own play gas. Always a no-op in dev mode (operator signs).
-  if (!SPONSOR_ENABLED && (await ensureSuiGas(address, user.suiGasFunded))) {
+  if (!SPONSOR_ENABLED && (await ensureSuiGas(user.address, user.suiGasFunded))) {
     user = await prismaQuery.user.update({ where: { id: user.id }, data: { suiGasFunded: true } });
   }
 
-  // PredictManager. dev creates it eagerly (operator-owned + signed). privy needs a user-signed
-  // tx, so it requires the embedded wallet provisioned + the session signer granted (validated in
-  // the Phase 12 spike); if that is not ready yet, leave it null and retry on the next login.
-  if (!user.predictManagerId && (AUTH_MODE === 'dev' || (user.privyWalletId && user.suiPublicKey))) {
+  // PredictManager. dev creates it eagerly (operator-owned + signed). privy/wallet need a user-signed
+  // tx, so they require their signer ready (see managerReadyToCreate); if not yet, leave it null and
+  // retry on the next login.
+  if (!user.predictManagerId && managerReadyToCreate(user)) {
     try {
       const managerId = await createManagerForUser(user);
       user = await prismaQuery.user.update({ where: { id: user.id }, data: { predictManagerId: managerId } });
     } catch (e) {
-      if (AUTH_MODE === 'dev') throw e; // dev must have a manager to play
-      console.warn('[auth] privy manager creation deferred:', e instanceof Error ? e.message : e);
+      if (user.provider === 'dev') throw e; // dev must have a manager to play
+      console.warn('[auth] manager creation deferred:', e instanceof Error ? e.message : e);
     }
   }
 
@@ -127,7 +169,8 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
     address: user.address,
     displayName: user.displayName,
     username: user.username,
-    provider: user.provider === 'privy' ? 'privy' : 'dev',
+    provider: user.provider === 'privy' || user.provider === 'wallet' ? user.provider : 'dev',
+    walletAuthAddress: user.walletAuthAddress ?? undefined,
     balance: fromDusdcRaw(wallet + manager).toFixed(2),
     managerReady: Boolean(user.predictManagerId),
     settings: {

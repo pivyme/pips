@@ -98,7 +98,7 @@ export function GamesConsole() {
   })
 
   const demo = isDemo()
-  const name = user?.displayName ?? 'Player'
+  const name = user?.username ?? user?.displayName ?? 'Player'
   const balance = parseFloat(user?.balance ?? '0') || 0
 
   return (

@@ -25,7 +25,8 @@ function WithdrawScreen() {
 
   const available = serializeFormattedStringToFloat(user?.balance ?? '0')
   const [amount, setAmount] = useState('')
-  const [recipient, setRecipient] = useState('')
+  // Wallet-connect users withdraw to their own connected wallet by default; prefill it.
+  const [recipient, setRecipient] = useState(user?.walletAuthAddress ?? '')
   const [submitting, setSubmitting] = useState(false)
 
   const amountNum = serializeFormattedStringToFloat(amount)

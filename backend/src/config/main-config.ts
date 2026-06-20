@@ -51,6 +51,14 @@ export const PRIVY_AUTHORIZATION_KEY_ID: string = process.env.PRIVY_AUTHORIZATIO
 export const PRIVY_AUTHORIZATION_PRIVATE_KEY: string = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY || '';
 export const PRIVY_JWT_VERIFICATION_KEY: string = process.env.PRIVY_JWT_VERIFICATION_KEY || '';
 
+// Native Sui wallet-connect login (custodial play-wallet model), independent of AUTH_MODE. When on,
+// /auth/wallet/* is exposed: a user proves they own an external Sui wallet by signing a nonce, then
+// the server provisions a per-user custodial play wallet and signs their plays with it (the fast
+// no-popup loop, same as privy). WALLET_ENCRYPTION_KEY (32 bytes, hex64 or base64-32) encrypts those
+// custodial keys at rest, required when enabled. `openssl rand -hex 32`.
+export const WALLET_AUTH_ENABLED: boolean = process.env.PIPS_WALLET_AUTH_ENABLED === 'true';
+export const WALLET_ENCRYPTION_KEY: string = process.env.PIPS_WALLET_ENCRYPTION_KEY || '';
+
 // Free DUSDC starting balance per new user, in display units (6dp DUSDC).
 export const STARTING_BALANCE: number = Number(process.env.PIPS_STARTING_BALANCE) || 1000;
 
@@ -237,6 +245,8 @@ export default {
   PRIVY_AUTHORIZATION_KEY_ID,
   PRIVY_AUTHORIZATION_PRIVATE_KEY,
   PRIVY_JWT_VERIFICATION_KEY,
+  WALLET_AUTH_ENABLED,
+  WALLET_ENCRYPTION_KEY,
   PYTH_HERMES_URL,
   STARTING_BALANCE,
   GAS_FUND_SUI,

@@ -7,10 +7,11 @@ export type Side = 'up' | 'down'; // up = call/long, down = put/short
 
 export interface UserDTO {
   id: string;
-  address: string; // Sui address (Privy embedded wallet or dev wallet)
+  address: string; // Sui address. privy/dev = their wallet; wallet-connect = the custodial play wallet
   displayName: string; // generated handle, e.g. "Lucky Otter"
   username: string | null; // user-chosen unique handle; null until set in onboarding
-  provider: 'privy' | 'dev';
+  provider: 'privy' | 'dev' | 'wallet';
+  walletAuthAddress?: string; // wallet-connect: the connected external wallet (login + default withdraw target)
   balance: string; // DUSDC, e.g. "983.50" (wallet + manager chips)
   managerReady: boolean; // PredictManager exists
   settings: { sound: boolean; haptics: boolean; reducedMotion: boolean };

@@ -6,10 +6,12 @@
 
 import { Transaction, SerialTransactionExecutor, TransactionDataBuilder } from '@mysten/sui/transactions';
 
+import type { User } from '../../../prisma/generated/client.js';
 import { AUTH_MODE, PLAY_GAS_BUDGET } from '../../config/main-config.ts';
 import { suiClient } from './client.ts';
 import { operatorKeypair } from './signer.ts';
 import { signSuiTxWithPrivy } from './privy.ts';
+import { loadCustodialKeypair } from './custodial.ts';
 import { SPONSOR_ENABLED, applySponsorGas, signAsSponsor } from './sponsor.ts';
 
 export type ExecResult = {
@@ -174,13 +176,33 @@ async function submitAndConfirm(txBytes: Uint8Array, signature: string | string[
   }
 }
 
-// What a privy play needs to sign on the user's behalf.
-export type UserContext = { address: string; walletId?: string | null; publicKey?: string | null };
+// What signing a user's play needs. `provider` selects the path; privy needs walletId/publicKey,
+// wallet-connect needs the encrypted custodial secret.
+export type UserContext = {
+  provider: 'dev' | 'privy' | 'wallet';
+  address: string;
+  walletId?: string | null;
+  publicKey?: string | null;
+  playWalletSecret?: string | null;
+};
 
-// Execute a user's play. dev signs as the operator (same serial executor, one gas coin). privy
-// builds the PTB with the user as sender, signs the intent digest with the user's wallet via
-// Privy rawSign (session signer), and submits. Both return the finalized result.
+// The canonical context builder, so every caller (plays, cashout, withdraw, manager create) signs the
+// same way for a given user. Read straight off the user row.
+export const userContext = (user: User): UserContext => ({
+  provider: (user.provider as UserContext['provider']) ?? 'dev',
+  address: user.address,
+  walletId: user.privyWalletId,
+  publicKey: user.suiPublicKey,
+  playWalletSecret: user.playWalletSecret,
+});
+
+// Execute a user's play. wallet-connect signs with the server-held custodial key; otherwise dev signs
+// as the operator (same serial executor, one gas coin) and privy signs the intent digest with the
+// user's embedded wallet via Privy rawSign. All finalize server-side, no client round trip.
 export async function executeForUser(tx: Transaction, ctx: UserContext): Promise<ExecResult> {
+  if (ctx.provider === 'wallet') {
+    return executeAsCustodialWallet(tx, ctx);
+  }
   if (AUTH_MODE === 'dev') {
     return executeAsOperator(tx, 'play');
   }
@@ -211,6 +233,35 @@ export async function executeForUser(tx: Transaction, ctx: UserContext): Promise
   const res = await submitAndConfirm(txBytes, signature, digest);
   if (res.effects?.status?.status !== 'success') {
     throw new Error(`privy play failed: ${JSON.stringify(res.effects?.status ?? res)}`);
+  }
+  const objectChanges = (res.objectChanges ?? [])
+    .filter((c) => c.type === 'created')
+    .map((c) => ({ type: 'created', objectId: 'objectId' in c ? c.objectId : undefined, objectType: 'objectType' in c ? c.objectType : undefined }));
+  return { digest: res.digest, objectChanges };
+}
+
+// Wallet-connect (custodial) play execution. The server holds this user's play wallet, so signing is a
+// plain local ed25519 sign, no Privy round trip. Otherwise identical to the privy branch: user as
+// sender, optional gas sponsorship, pinned budget, digest-reconciled submit. Per-user owned coins are
+// serialized upstream (withUserLock), so concurrent same-user txs never equivocate; different users'
+// custodial wallets share no owned objects.
+async function executeAsCustodialWallet(tx: Transaction, ctx: UserContext): Promise<ExecResult> {
+  if (!ctx.playWalletSecret) {
+    throw new Error('wallet play: custodial key not provisioned (missing playWalletSecret)');
+  }
+  const keypair = loadCustodialKeypair(ctx.playWalletSecret);
+  tx.setSender(ctx.address);
+  tx.setGasPrice(await refGasPrice());
+  if (SPONSOR_ENABLED) applySponsorGas(tx);
+  tx.setGasBudget(PLAY_GAS_BUDGET);
+  const txBytes = await withTimeout(tx.build({ client: suiClient }), 15_000, 'tx build');
+  const { signature: userSig } = await keypair.signTransaction(txBytes);
+  const signature = SPONSOR_ENABLED ? [userSig, await signAsSponsor(txBytes)] : userSig;
+
+  const digest = TransactionDataBuilder.getDigestFromBytes(txBytes);
+  const res = await submitAndConfirm(txBytes, signature, digest);
+  if (res.effects?.status?.status !== 'success') {
+    throw new Error(`wallet play failed: ${JSON.stringify(res.effects?.status ?? res)}`);
   }
   const objectChanges = (res.objectChanges ?? [])
     .filter((c) => c.type === 'created')

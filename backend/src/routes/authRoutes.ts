@@ -1,13 +1,19 @@
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 
+import { isValidSuiAddress, normalizeSuiAddress } from '@mysten/sui/utils';
+
 import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { validateRequiredFields } from '../utils/validationUtils.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { prismaQuery } from '../lib/prisma.ts';
-import { AUTH_MODE } from '../config/main-config.ts';
+import { AUTH_MODE, WALLET_AUTH_ENABLED } from '../config/main-config.ts';
 import { operatorAddress } from '../lib/sui/signer.ts';
 import { verifyPrivyToken, provisionServerSuiWallet } from '../lib/sui/privy.ts';
-import { ensureUser, mintToken, toUserDTO } from '../services/auth.ts';
+import { issueWalletNonce, verifyWalletSignature } from '../lib/sui/walletAuth.ts';
+import { ensureUser, ensureWalletUser, mintToken, toUserDTO } from '../services/auth.ts';
+
+// A Sui address that is shaped right (0x + hex) and valid once normalized.
+const isAddress = (a: string): boolean => /^0x[0-9a-fA-F]+$/.test(a) && isValidSuiAddress(normalizeSuiAddress(a));
 
 export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
   // dev mode: auto-login the operator wallet. The backend is the user and signs its plays.
@@ -48,6 +54,38 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
         suiPublicKey: wallet.publicKey,
         privyWalletId: wallet.walletId,
       });
+      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user) } });
+    } catch (error) {
+      return handleError(reply, 500, 'Could not finish sign-in', 'AUTH_VERIFY_FAILED', error as Error);
+    }
+  });
+
+  // wallet-connect mode: issue the login challenge the external Sui wallet must sign. Off unless
+  // WALLET_AUTH_ENABLED, independent of AUTH_MODE (it coexists with privy social login).
+  app.post('/wallet/nonce', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!WALLET_AUTH_ENABLED) return handleNotFoundError(reply, 'Route');
+    const body = (request.body ?? {}) as { address?: string };
+    const address = typeof body.address === 'string' ? body.address.trim() : '';
+    if (!isAddress(address)) return handleError(reply, 400, 'Enter a valid Sui address', 'WALLET_ADDRESS_INVALID');
+    return reply.code(200).send({ success: true, error: null, data: issueWalletNonce(address) });
+  });
+
+  // wallet-connect mode: verify the signed challenge, provision (or reuse) the user's custodial play
+  // wallet keyed by the connected wallet, onboard, and mint our JWT. The connected wallet is the
+  // login identity; all on-chain play work runs through the server-held custodial wallet.
+  app.post('/wallet/verify', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!WALLET_AUTH_ENABLED) return handleNotFoundError(reply, 'Route');
+    const body = (request.body ?? {}) as { address?: string; signature?: string };
+    const valid = await validateRequiredFields(body as Record<string, unknown>, ['address', 'signature'], reply);
+    if (valid !== true) return;
+    const address = String(body.address).trim();
+    if (!isAddress(address)) return handleError(reply, 400, 'Enter a valid Sui address', 'WALLET_ADDRESS_INVALID');
+
+    const ok = await verifyWalletSignature(address, String(body.signature));
+    if (!ok) return handleError(reply, 401, 'Could not verify your wallet signature', 'WALLET_SIG_INVALID');
+
+    try {
+      const user = await ensureWalletUser(address);
       return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user) } });
     } catch (error) {
       return handleError(reply, 500, 'Could not finish sign-in', 'AUTH_VERIFY_FAILED', error as Error);
