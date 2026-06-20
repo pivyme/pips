@@ -145,7 +145,7 @@ export function CustomizeStudio({
   )
 }
 
-function ThemeRail({
+export function ThemeRail({
   selectedId,
   onSelect,
 }: {

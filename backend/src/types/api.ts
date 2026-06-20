@@ -9,6 +9,7 @@ export interface UserDTO {
   id: string;
   address: string; // Sui address (Privy embedded wallet or dev wallet)
   displayName: string; // generated handle, e.g. "Lucky Otter"
+  username: string | null; // user-chosen unique handle; null until set in onboarding
   provider: 'privy' | 'dev';
   balance: string; // DUSDC, e.g. "983.50" (wallet + manager chips)
   managerReady: boolean; // PredictManager exists

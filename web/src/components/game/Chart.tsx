@@ -636,7 +636,11 @@ function drawOverlays(
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'right'
     ctx.fillStyle = withAlpha(C.brand, 0.95 * a)
-    ctx.fillText(`TARGET ${formatPrice(tp)}`, labelX, clampLabelY(winUp ? ys - 10 : ys + 12))
+    // The move the price has to make in your direction, spelled out next to the strike, so a target a
+    // hair from entry still reads as a real directional bet (and never looks like it equals entry).
+    const mv = ov.entry != null && ov.entry > 0 ? ((tp - ov.entry) / ov.entry) * 100 : null
+    const mvStr = mv != null ? `  ${mv >= 0 ? '+' : ''}${Math.abs(mv) >= 1 ? mv.toFixed(1) : mv.toFixed(2)}%` : ''
+    ctx.fillText(`TARGET ${formatPrice(tp)}${mvStr}`, labelX, clampLabelY(winUp ? ys - 10 : ys + 12))
     ctx.restore()
   }
 

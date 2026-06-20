@@ -76,7 +76,9 @@ function refreshAnchor(asset: string, c: Cell): void {
 // toward each market-sync step so the line glides instead of stepping. Falls back to raw Pyth only on
 // a cold boot before any oracle is synced.
 const followShown = new Map<string, { price: number; at: number }>();
-const FOLLOW_TAU_MS = 1100; // smoothing time constant for the ~3s chain-spot steps
+const FOLLOW_TAU_MS = 650; // smoothing time constant for the ~2s chain-spot steps. Kept short so the
+// served line tracks the oracle closely (it is what "am I winning" and the win-zone shading read);
+// a long tau lags the oracle on a fast move and can show the line above target when it settled below.
 
 async function followerSpot(asset: string): Promise<{ price: number; ts: number } | null> {
   let target = assetSpot(asset);

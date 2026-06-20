@@ -55,9 +55,10 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
     ],
     links: [
       { rel: 'stylesheet', href: appCss },
-      // Favicon + app icons. SVG first for crisp scaling, .ico as the legacy fallback.
-      { rel: 'icon', type: 'image/svg+xml', href: '/assets/logos/pips-yellow-quare.svg' },
-      { rel: 'icon', href: '/favicon.ico', sizes: '32x32' },
+      // Favicon + app icons, all the 3D Pips mark. PNG for crisp modern rendering, .ico legacy fallback.
+      { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/assets/logos/pips-32.png' },
+      { rel: 'icon', type: 'image/png', sizes: '192x192', href: '/assets/logos/pips-192.png' },
+      { rel: 'icon', href: '/favicon.ico', sizes: '48x48 32x32 16x16' },
       { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' },
       { rel: 'manifest', href: '/manifest.json' },
     ],

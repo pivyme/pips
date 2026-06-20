@@ -17,6 +17,7 @@ export interface UserDTO {
   id: string
   address: string
   displayName: string
+  username: string | null
   provider: 'privy' | 'dev'
   balance: string
   managerReady: boolean
@@ -163,6 +164,7 @@ const realApi = {
   authDev: () => request<{ token: string; user: UserDTO }>('POST', '/auth/dev', {}),
   authPrivyVerify: (input: PrivyVerifyInput) => request<{ token: string; user: UserDTO }>('POST', '/auth/privy/verify', input),
   me: () => request<{ user: UserDTO }>('GET', '/auth/me'),
+  setUsername: (username: string) => request<{ user: UserDTO }>('PATCH', '/auth/me', { username }),
 
   // markets + plays
   markets: () => request<{ markets: MarketDTO[] }>('GET', '/markets'),

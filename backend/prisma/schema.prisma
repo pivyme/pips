@@ -16,6 +16,7 @@ model User {
   provider         String    @default("dev")  // 'privy' | 'dev'
   email            String?
   displayName      String                     // generated handle, e.g. "Lucky Otter"
+  username         String?   @unique           // user-chosen unique handle, set once during onboarding. null = not onboarded yet
   nonce            String?                     // auth challenge (legacy enoki personal-message sign, removed in the privy swap)
 
   privyUserId      String?   @unique           // Privy DID (sub claim), the stable account key

@@ -90,6 +90,12 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 // redeem, and the win/loss is decided purely by price vs TARGET (vol-independent).
 const LIVE_VOL = 0.03
 
+// The live cash-out is anchored to the backend mark and only interpolated by the chart line between
+// ticks; this is the fraction of the round (counting down) over which that chart interpolation fades to
+// zero, so the readout converges to the real on-chain redeem value at the buzzer instead of snapping to
+// a confident win/lose off a chart line that can lag the oracle (a binary settles on the price AT expiry).
+const DELTA_FADE_FRAC = 0.3
+
 // Inverse standard normal CDF (Acklam). Used to back the implied round vol out of a strike's distance
 // and odds, so the live estimate reads ~0 P/L at entry and converges to the full win / zero at the
 // buzzer no matter how the target was placed (real path prices at IMPLIED_VOL, demo a touch tighter).
@@ -698,6 +704,7 @@ export function LuckyScreen() {
                     entryCost={entryCost}
                     bet={playBet}
                     mult={play?.multiplier ?? multiplier}
+                    markValue={live ? parseFloat(live.markValue) : entryCost}
                     status={live?.status ?? 'open'}
                     finalPnl={live ? parseFloat(live.pnl) : 0}
                     openedAtMs={openedAtMs}
@@ -1003,6 +1010,7 @@ function LivePnl({
   entryCost,
   bet,
   mult,
+  markValue,
   status,
   finalPnl,
   openedAtMs,
@@ -1015,6 +1023,7 @@ function LivePnl({
   entryCost: number
   bet: number
   mult: number
+  markValue: number // backend's real oracle-priced redeem bid (what you'd actually get), $; the anchor
   status: PlayStatus
   finalPnl: number
   openedAtMs: number
@@ -1030,13 +1039,29 @@ function LivePnl({
   const posRef = useRef(true)
   const pnlSpan = useRef<HTMLSpanElement>(null)
   const cashSpan = useRef<HTMLSpanElement>(null)
+  // The displayed cash-out is ANCHORED to the backend mark (the real on-chain redeem bid, oracle-priced,
+  // exactly what a cash-out pays) and only INTERPOLATED by the chart line for 60fps liveliness between
+  // the ~2s backend ticks. The chart line (the follower feed) can lag the oracle, and the old pure-chart
+  // estimate snapped to a confident win/lose off that lagging line near expiry, which is how a play that
+  // settled a LOSS flashed a full win a second earlier. baseMark = backend value at the last tick,
+  // baseModel = the chart-model value at that same instant; we add (modelNow - baseModel), faded out as
+  // expiry nears so the readout converges to the real mark, never a chart-driven mirage.
+  const baseMarkRef = useRef(entryCost)
+  const baseModelRef = useRef(entryCost)
+  const lastModelRef = useRef(entryCost)
+
+  // Re-anchor to the backend mark whenever a fresh one arrives (SSE tick / watchdog poll).
+  useEffect(() => {
+    baseMarkRef.current = markValue
+    baseModelRef.current = lastModelRef.current
+  }, [markValue])
 
   useEffect(() => {
     if (terminal || !valid) return
     const dir = side === 'up' ? 1 : -1
-    // Back the round vol out of where the target actually sits, so the estimate reads ~0 P/L at entry
-    // and converges to the full win / zero at the buzzer. z = the tier's normal quantile; at-the-money
-    // (~2x) the distance is ~0 and the vol can't be inferred, so fall back to LIVE_VOL.
+    // Back the round vol out of where the target actually sits, so the chart-model estimate reads ~0 P/L
+    // at entry and tracks toward the win/loss. z = the tier's normal quantile; at-the-money (~2x) the
+    // distance is ~0 and the vol can't be inferred, so fall back to LIVE_VOL.
     const distFrac = Math.abs(target - entry) / entry
     const z = -invNorm(Math.min(0.5, Math.max(1e-4, 1 / mult)))
     const sigmaFull = distFrac > 1e-6 && z > 1e-3 ? distFrac / z : LIVE_VOL
@@ -1047,7 +1072,12 @@ function LivePnl({
         const gap = (dir * (price - target)) / entry // > 0 = on the winning side of TARGET
         const remaining = clamp01((expiryMs - Date.now()) / Math.max(1, expiryMs - openedAtMs))
         const sigma = sigmaFull * Math.sqrt(Math.max(remaining, 0.0015))
-        const value = entryCost * mult * clamp01(normCdf(gap / sigma)) // live fair / cash-out value
+        const model = entryCost * mult * clamp01(normCdf(gap / sigma)) // smooth chart-driven estimate
+        lastModelRef.current = model
+        // Anchor (real backend mark) + the chart's move since that anchor, faded over the final stretch
+        // so the value lands on the real redeem at the buzzer, not a confident chart snap.
+        const fade = clamp01(remaining / DELTA_FADE_FRAC)
+        const value = Math.max(0, Math.min(winTotal, baseMarkRef.current + (model - baseModelRef.current) * fade))
         const pnl = value - entryCost
         const nowPos = pnl >= -1e-9
         if (nowPos !== posRef.current) {
@@ -1055,13 +1085,13 @@ function LivePnl({
           setPos(nowPos)
         }
         if (pnlSpan.current) pnlSpan.current.textContent = `${nowPos ? '+' : '-'}$${money(Math.abs(pnl))}`
-        if (cashSpan.current) cashSpan.current.textContent = money(Math.max(0, value))
+        if (cashSpan.current) cashSpan.current.textContent = money(value)
       }
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [terminal, valid, side, target, entry, entryCost, mult, openedAtMs, expiryMs, livePriceRef])
+  }, [terminal, valid, side, target, entry, entryCost, mult, openedAtMs, expiryMs, livePriceRef, winTotal])
 
   if (terminal) {
     const won = status === 'won' || (status === 'cashed_out' && finalPnl >= 0)
@@ -1112,7 +1142,7 @@ function LivePnl({
 function HowTo({ onClose }: { onClose: () => void }) {
   const lines: Array<[string, string]> = [
     ['SPIN', 'Deals an asset, a direction (up or down), and a multiplier.'],
-    ['TARGET', 'The price to reach, in your direction. A 2x sits right at your entry, so any move your way wins. Bigger multipliers sit further out.'],
+    ['TARGET', 'The price to reach, in your direction. A 2x sits just past your entry, so a small move your way wins. Bigger multipliers sit further out.'],
     ['WIN', 'Land past the target at the buzzer to win bet x multiplier. A touch on the way does not count, only where it ends.'],
     ['CASH OUT', 'Take the live value any time before the buzzer. Ahead? Cash out to lock it in before it can turn.'],
   ]

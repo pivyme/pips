@@ -115,8 +115,10 @@ export const ORACLE_ROLL_CRON: string = process.env.PIPS_ORACLE_ROLL_CRON || '*/
 export const SETTLE_CRON: string = process.env.PIPS_SETTLE_CRON || '*/1 * * * * *';
 // Follower-mode market discovery cadence. Only runs when OPERATOR_ENABLED is false: this backend
 // then learns the live oracle set from chain (emitted by whoever IS the operator) instead of from
-// its own oracle-roll. Oracles are short-lived, so sync briskly to keep the ladder current.
-export const MARKET_SYNC_CRON: string = process.env.PIPS_MARKET_SYNC_CRON || '*/3 * * * * *';
+// its own oracle-roll. It also refreshes each oracle's on-chain spot, which the follower chart
+// serves, so sync at the push cadence (~2s): a slacker sync leaves the served line lagging the
+// oracle the strike is priced and settled against, which floats the ENTRY/TARGET off the live line.
+export const MARKET_SYNC_CRON: string = process.env.PIPS_MARKET_SYNC_CRON || '*/2 * * * * *';
 // Cap the on-chain redeems a single settle tick fires, so a backlog of expired ITM plays drains
 // gradually instead of monopolizing the one serial operator executor (which oracle-roll shares) and
 // starving the ladder. The rest carry over to the next tick (every 3s).
@@ -183,6 +185,11 @@ export const LUCKY_ROUND_MS: number = Number(process.env.PIPS_LUCKY_ROUND_MS) ||
 // back to the longest-lived live oracle instead of failing. Must comfortably exceed the mint time,
 // which spikes on the congested remote node, so this carries real headroom over a fast mint (~2.5s).
 export const LUCKY_MIN_ORACLE_LIFE_MS: number = Number(process.env.PIPS_LUCKY_MIN_ORACLE_LIFE_MS) || 13_000;
+// Smallest distance a LUCKY target may sit from entry, as a fraction of spot (the solver also floors
+// it at one grid tick). Guarantees every target, even the 2x floor, is a real directional move and
+// never renders on top of the ENTRY line. At the ~3%/round implied vol a 0.15% floor barely moves the
+// 2x odds (it stays ~2.0-2.2x) while making "the price has to go your way" visibly true on the chart.
+export const LUCKY_MIN_TARGET_FRAC: number = Number(process.env.PIPS_LUCKY_MIN_TARGET_FRAC) || 0.0015;
 // Oracles kept live per asset, spread evenly across the lifetime (~ORACLE_LIFETIME_MS / depth apart)
 // so a near-round one always exists. Higher = more buffer when the operator briefly falls behind
 // (free localnet gas), at the cost of bigger push PTBs and more settle work, both bounded.
@@ -252,6 +259,7 @@ export default {
   ORACLE_LIFETIME_MS,
   LUCKY_ROUND_MS,
   LUCKY_MIN_ORACLE_LIFE_MS,
+  LUCKY_MIN_TARGET_FRAC,
   ORACLE_LADDER_DEPTH,
   ORACLE_ROLL_MAX_PER_TICK,
   ORACLE_COMPACT_SETTLED,

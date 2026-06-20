@@ -68,6 +68,22 @@ describe('solveStrike: grid-strike selection', () => {
     const s = await solveStrike({ grid: GRID, side: 'down', tierMultiplier: 2, betRaw: BET, preview: mockPreview('down'), atm1e9: SPOT });
     expect(s.strike1e9).toBeLessThanOrEqual(SPOT); // a DOWN target sits at/below entry
   });
+
+  it('pushes the floor tier a minimum offset past spot when minOffset is set (up)', async () => {
+    // With a min offset the 2x floor must clear spot by it, so the target is always a real move, never
+    // an at-the-money strike sitting on the entry line.
+    const minOffset1e9 = TICK;
+    const s = await solveStrike({ grid: GRID, side: 'up', tierMultiplier: 2, betRaw: BET, preview: mockPreview('up'), atm1e9: SPOT, minOffset1e9 });
+    expect(s.strike1e9).toBeGreaterThanOrEqual(SPOT + minOffset1e9);
+    expect(s.multiplier).toBeGreaterThan(2); // a touch above 2x, since it sits OTM not at the money
+  });
+
+  it('pushes the floor tier a minimum offset below spot when minOffset is set (down)', async () => {
+    const minOffset1e9 = TICK;
+    const s = await solveStrike({ grid: GRID, side: 'down', tierMultiplier: 2, betRaw: BET, preview: mockPreview('down'), atm1e9: SPOT, minOffset1e9 });
+    expect(s.strike1e9).toBeLessThanOrEqual(SPOT - minOffset1e9);
+    expect(s.multiplier).toBeGreaterThan(2);
+  });
 });
 
 describe('solveStrike: quantity inversion', () => {

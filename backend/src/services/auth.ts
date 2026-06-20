@@ -126,6 +126,7 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
     id: user.id,
     address: user.address,
     displayName: user.displayName,
+    username: user.username,
     provider: user.provider === 'privy' ? 'privy' : 'dev',
     balance: fromDusdcRaw(wallet + manager).toFixed(2),
     managerReady: Boolean(user.predictManagerId),

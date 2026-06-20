@@ -10,7 +10,7 @@ This repo is simple minded - no overengineering, no code poison, no early abstra
 
 This is the **Pips** frontend: the gamified trading console. Pips makes trading simple, intuitive, and addictive, like a game, on Sui via DeepBook Predict. Read the root [`../CLAUDE.md`](../CLAUDE.md) for product context and the Sui stack, [`../docs/DESIGN.md`](../docs/DESIGN.md) for the App Surface design language, [`../docs/SCREEN.md`](../docs/SCREEN.md) for the in-device screen language (the Teenage Engineering instrument style every `/games/*` screen follows), and [`../docs/FLOW.md`](../docs/FLOW.md) for the app flow (the surfaces, the on-device Home screen, the navigation map). This was forked from a React starter, so reframe anything still labeled "starter".
 
-**v1 build:** frontend work is planned in [`../bigdev/plans/`](../bigdev/plans/). Read `06-GAMES.md` (the three games + the 60fps chart, bound to the existing console controls), `07-DESIGN-SYSTEM.md` (screen states + verbatim copy; `../docs/DESIGN.md` is canonical), `05-SUI-PREDICT.md` (the thin client Predict wrapper), `LUCKY.md` §6 (dev + Privy auth, the current source of truth), `02-API.md` (the backend contract). The console shell, Knob, `useConsoleControls`, and `Illo` are already built, do not rebuild them.
+**v1 build:** frontend work is planned in [`../bigdev/plans/`](../bigdev/plans/). Read `06-GAMES.md` (the games + the 60fps chart, bound to the existing console controls), `07-DESIGN-SYSTEM.md` (screen states + verbatim copy; `../docs/DESIGN.md` is canonical), `05-SUI-PREDICT.md` (the thin client Predict wrapper), `LUCKY.md` §6 (dev + Privy auth, the current source of truth), `02-API.md` (the backend contract). The console shell, Knob, `useConsoleControls`, and `Illo` are already built, do not rebuild them.
 
 **Predict capability box (read before inventing a game mechanic):** the on-chain vocabulary is exactly two expiry-settled instruments, **binary up/down** and **vertical range**, both with live-bid early cash-out. No barrier/touch, no path-dependent or crash-style payoff, no in-Predict leverage, no fixed odds. The games (Lucky, Range, Line Rider, Candle Hop) all compose from those two. Full source-cited box in `../bigdev/plans/05-SUI-PREDICT.md` and the root [`../CLAUDE.md`](../CLAUDE.md).
 
@@ -162,7 +162,7 @@ src/
 
 | File | Purpose |
 |------|---------|
-| `src/routes/_app.tsx` | Pathless layout: mounts the persistent shell (3D `ConsoleCanvas` for Range, CSS `ConsoleShell` otherwise), the menu drawer, and the auth gate |
+| `src/routes/_app.tsx` | Pathless layout: mounts the persistent shell (3D `ConsoleCanvas` for the whole `/games` subtree, CSS `ConsoleShell` fallback), the menu drawer, and the auth gate |
 | `src/components/console/controls.tsx` | `useConsoleControls()` (a screen registers Main / Action 1·2 / Knob / status) + provider. The console binding contract |
 | `src/components/console/ConsoleCanvas.tsx` | The 3D WebGL handheld (Three.js): device body + screen-cutout projection (`screenExt`) behind the HTML screen layer |
 | `src/components/console/ConsoleShell.tsx` | The CSS/DOM console shell |
@@ -289,8 +289,8 @@ bun test       # Run Vitest tests
 
 - Routes are file-based in `src/routes/`; use `createFileRoute`. Root layout is `__root.tsx`.
 - `_app.tsx` is a **pathless layout route**: everything "inside the device" (games + menu) renders through one persistent console shell. The landing `/` lives outside it and owns the full viewport.
-- Games: `/games/{lucky,range,tap}`. Menu: `/menu/*` renders as a **drawer over** the device, not a screen inside it.
-- Two shells today: **Range** runs on the 3D WebGL handheld (`ConsoleCanvas`), the others on the CSS `ConsoleShell` until their screens are migrated to the L-shaped aperture. One `ConsoleCanvas` stays mounted across range↔menu so the WebGL scene builds once.
+- Games: `/games/{lucky,range,line-rider,candle-hop}`. Menu: `/menu/*` renders as a **drawer over** the device, not a screen inside it.
+- Two shells: the whole `/games` subtree runs on the 3D WebGL handheld (`ConsoleCanvas`); the CSS `ConsoleShell` is the fallback. One `ConsoleCanvas` stays mounted across games↔menu so the WebGL scene builds once.
 
 ### Styling
 

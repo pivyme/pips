@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyReque
 import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { validateRequiredFields } from '../utils/validationUtils.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
+import { prismaQuery } from '../lib/prisma.ts';
 import { AUTH_MODE } from '../config/main-config.ts';
 import { operatorAddress } from '../lib/sui/signer.ts';
 import { verifyPrivyToken, provisionServerSuiWallet } from '../lib/sui/privy.ts';
@@ -59,6 +60,32 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
       return reply.code(200).send({ success: true, error: null, data: { user: await toUserDTO(request.user!) } });
     } catch (error) {
       return handleError(reply, 500, 'Could not load profile', 'AUTH_ME_FAILED', error as Error);
+    }
+  });
+
+  // Set the user's unique handle (the onboarding username step). Case-insensitive uniqueness with
+  // the @unique column as the hard backstop. Stored display-cased.
+  app.patch('/me', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = (request.body ?? {}) as { username?: string };
+    const username = typeof body.username === 'string' ? body.username.trim() : '';
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+      return handleError(reply, 400, 'Use 3 to 20 letters, numbers, or underscores', 'USERNAME_INVALID');
+    }
+    const me = request.user!;
+    try {
+      const taken = await prismaQuery.user.findFirst({
+        where: { username: { equals: username, mode: 'insensitive' }, NOT: { id: me.id } },
+        select: { id: true },
+      });
+      if (taken) return handleError(reply, 409, 'That handle is taken', 'USERNAME_TAKEN');
+      const updated = await prismaQuery.user.update({ where: { id: me.id }, data: { username } });
+      return reply.code(200).send({ success: true, error: null, data: { user: await toUserDTO(updated) } });
+    } catch (error) {
+      // Unique-violation backstop for the case-race the pre-check can't cover.
+      if ((error as { code?: string })?.code === 'P2002') {
+        return handleError(reply, 409, 'That handle is taken', 'USERNAME_TAKEN');
+      }
+      return handleError(reply, 500, 'Could not save your handle', 'USERNAME_SAVE_FAILED', error as Error);
     }
   });
 

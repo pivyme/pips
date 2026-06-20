@@ -626,6 +626,13 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   background-size: 728px 414px; /* one cell = tile + gutter; the gutter reads as the grid line */
   animation: pips-drift 60s linear infinite;
   will-change: transform;
+  /* The landing dims the field to near-black so the device reads alone; it eases back in on sign-in. */
+  opacity: 1;
+  transition: opacity 800ms ease;
+}
+
+.pips-surround-dim {
+  opacity: 0;
 }
 
 @keyframes pips-drift {
@@ -634,8 +641,43 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
+/* Landing attract "press start" blink + the welcome logo pop, both in the device screen. */
+.attract-blink {
+  animation: attract-blink 1.4s steps(1, end) infinite;
+}
+@keyframes attract-blink {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  61%,
+  100% {
+    opacity: 0.25;
+  }
+}
+.welcome-pop {
+  animation: welcome-pop 600ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+@keyframes welcome-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pips-surround {
+    animation: none;
+  }
+  .attract-blink {
+    animation: none;
+    opacity: 1;
+  }
+  .welcome-pop {
     animation: none;
   }
 }

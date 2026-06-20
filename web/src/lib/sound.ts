@@ -84,6 +84,31 @@ function bell(ac: AudioContext, freq: number, start: number, dur: number, gain =
   sh.stop(start + dur + 0.05)
 }
 
+// The onboarding welcome moment: a short, warm, rising open-major sparkle (C major, mallet voice)
+// over silence. Bright and celebratory, distinct from luckyWin's sub-heavy two-octave climb and from
+// any game bed. Fire it on a real gesture (the welcome beat lands right after the Continue tap).
+export function welcomeJingle(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  // A rising spread, each note a touch behind the last, decaying long so they ring together.
+  const climb: Array<[number, number, number]> = [
+    [523.25, 0.0, 0.6], // C5
+    [659.25, 0.09, 0.6], // E5
+    [783.99, 0.18, 0.65], // G5
+    [1046.5, 0.27, 0.8], // C6
+    [1318.51, 0.42, 0.9], // E6, the arrival
+  ]
+  for (const [f, dt, dur] of climb) bell(ac, f, t + dt, dur, 0.07)
+  // A warm low root underneath so it has body, not just sparkle.
+  bell(ac, 261.63, t, 0.9, 0.05) // C4
+  // A high shimmer tail after the arrival.
+  bell(ac, 1567.98, t + 0.6, 0.7, 0.035) // G6
+  blip(ac, 2093.0, t + 0.62, 0.25, 0.02) // C7 air
+}
+
 export function sound(kind: Sound): void {
   if (!enabled) return
   const ac = audio()
@@ -208,50 +233,75 @@ export function slotPick(): void {
   bell(ac, 1760.0, t + 0.12, 0.26, 0.055) // A6, held a touch longer
 }
 
-// --- Lucky bed + resolves. A subtle, bright bed rides the whole round (deal -> open), and the round
+// --- Lucky bed + resolves. A warm, groovy bed rides the whole round (deal -> open), and the round
 // ends on one of three warm mallet stings: a jackpot climb on a win, a confident chime on a cash-out,
-// a soft sigh on a miss. Bright and major where Range is dark and tense, so the two games feel apart.
+// a soft sigh on a miss. Cool and confident, distinct from Range's dark tension and Flappy's bright arp.
 
-// C - G - Am - F (I - V - vi - IV): the universally hopeful, bouncy progression. A low bass root +
-// three chord tones for the mallet arp. Four bars.
+// D Dorian, i - IV - i - bVII (Dm - G - Dm - C): the "cool" minor (the natural 6th keeps it confident,
+// not sad), a tight vamp. Each bar carries a low chord pad for weight. Warm-mallet, bassy, serious-but-fun,
+// nothing like Flappy's bright C-major arp or Range's resonant-saw tension.
 const LUCKY_BARS = [
-  { bass: 130.81, arp: [261.63, 329.63, 392.0] }, // C   (C E G)
-  { bass: 98.0, arp: [293.66, 392.0, 493.88] }, // G   (D G B)
-  { bass: 110.0, arp: [261.63, 329.63, 440.0] }, // Am  (C E A)
-  { bass: 87.31, arp: [261.63, 349.23, 440.0] }, // F   (C F A)
+  { bass: 73.42, pad: [146.83, 174.61, 220.0] }, // Dm  (D F A)
+  { bass: 98.0, pad: [196.0, 246.94, 293.66] }, // G   (G B D)
+  { bass: 73.42, pad: [146.83, 174.61, 220.0] }, // Dm  (D F A)
+  { bass: 65.41, pad: [130.81, 164.81, 196.0] }, // C   (C E G)
 ]
-const LUCKY_TEMPO = 104
+// A syncopated bass groove (root on the beats, an octave pop on the pushes), keyed by sixteenth step.
+// This funk, plus the sub layer in luckyBass, is the low-end weight the bed leans on.
+const LUCKY_BASS_HITS: Record<number, number> = { 0: 1, 3: 1, 6: 2, 8: 1, 11: 2, 14: 1 }
+// The hook: a spacey, mid-register mallet riff (D-minor pentatonic, lots of rest = cool, not busy), not a
+// sweet high melody. Four bars of eighth notes, null = rest. It sits low and confident, never twinkly.
+const LUCKY_MELODY: (number | null)[] = [
+  293.66, null, 349.23, 440.0, null, 440.0, null, null, // Dm: D4 .  F4 A4 .  A4 .  .
+  493.88, null, 440.0, 392.0, null, null, 392.0, null, // G : B4 .  A4 G4 .  .  G4 .
+  293.66, null, 349.23, 440.0, null, 523.25, 587.33, null, // Dm: D4 .  F4 A4 .  C5 D5 .
+  523.25, null, 493.88, 392.0, null, 440.0, null, null, // C : C5 .  B4 G4 .  A4 .  .
+]
+const LUCKY_TEMPO = 102
 const LUCKY_STEP = 60 / LUCKY_TEMPO / 4 // sixteenth-note length, seconds
 const LUCKY_STEPS = LUCKY_BARS.length * 16
+const LUCKY_SWING = LUCKY_STEP * 0.2 // a light groove swing on the offbeats (fun, not bouncy)
 
 function luckyKick(ac: AudioContext, dest: AudioNode, t: number): void {
   const o = ac.createOscillator()
   const g = ac.createGain()
   o.type = 'sine'
-  o.frequency.setValueAtTime(120, t)
-  o.frequency.exponentialRampToValueAtTime(50, t + 0.1)
+  o.frequency.setValueAtTime(130, t)
+  o.frequency.exponentialRampToValueAtTime(45, t + 0.11)
   g.gain.setValueAtTime(0.0001, t)
-  g.gain.exponentialRampToValueAtTime(0.12, t + 0.006) // soft: this is a playful bed, not a club kick
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16)
+  g.gain.exponentialRampToValueAtTime(0.16, t + 0.006) // heavier than before: the bed wants weight now
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.19)
   o.connect(g).connect(dest)
   o.start(t)
-  o.stop(t + 0.18)
+  o.stop(t + 0.21)
 }
 
+// A fat, warm bass: a sawtooth body through a low lowpass for harmonics small speakers can hear, plus a
+// unison sine sub for the felt low end. This is the "bassy" weight the bed leans on.
 function luckyBass(ac: AudioContext, dest: AudioNode, freq: number, t: number): void {
   const o = ac.createOscillator()
   const g = ac.createGain()
   const f = ac.createBiquadFilter()
-  o.type = 'triangle'
+  o.type = 'sawtooth'
   o.frequency.setValueAtTime(freq, t)
   f.type = 'lowpass'
-  f.frequency.value = 600
+  f.frequency.value = 460
   g.gain.setValueAtTime(0.0001, t)
-  g.gain.exponentialRampToValueAtTime(0.09, t + 0.02)
+  g.gain.exponentialRampToValueAtTime(0.13, t + 0.014)
   g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24)
   o.connect(f).connect(g).connect(dest)
   o.start(t)
   o.stop(t + 0.27)
+  const sub = ac.createOscillator()
+  const sg = ac.createGain()
+  sub.type = 'sine'
+  sub.frequency.setValueAtTime(freq, t)
+  sg.gain.setValueAtTime(0.0001, t)
+  sg.gain.exponentialRampToValueAtTime(0.12, t + 0.012)
+  sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.2)
+  sub.connect(sg).connect(dest)
+  sub.start(t)
+  sub.stop(t + 0.23)
 }
 
 function luckyShaker(ac: AudioContext, dest: AudioNode, t: number, accent: boolean): void {
@@ -270,20 +320,23 @@ function luckyShaker(ac: AudioContext, dest: AudioNode, t: number, accent: boole
   src.stop(t + 0.06)
 }
 
-// One sixteenth of the bed: soft kick + octave-bouncing bass on the beat, a rolling mallet arp on the
-// eighths (the `bell` voice routed to the bed bus), a light shaker on the offbeats.
+// One sixteenth of the bed. Kick on beats 1 and 3 for weight, a syncopated bass groove (the low-end
+// drive), a soft low chord pad at the top of each bar for body, the spacey mid-register mallet riff on
+// the eighths (swung), and an offbeat shaker. Cool and bassy, never the old oom-pah cheer.
 function luckyStepAt(ac: AudioContext, dest: AudioNode, step: number, t: number): void {
-  const chord = LUCKY_BARS[Math.floor(step / 16) % LUCKY_BARS.length]
+  const bar = Math.floor(step / 16) % LUCKY_BARS.length
+  const chord = LUCKY_BARS[bar]
   const s = step % 16
-  if (s % 4 === 0) {
-    luckyKick(ac, dest, t)
-    luckyBass(ac, dest, s === 8 ? chord.bass * 2 : chord.bass, t)
-  }
+  const swing = s % 4 === 2 ? LUCKY_SWING : 0 // a light groove swing on the offbeats
+  if (s === 0 || s === 8) luckyKick(ac, dest, t)
+  if (s === 0) chord.pad.forEach((f, i) => bell(ac, f, t + i * 0.006, 0.7, 0.02, dest)) // low pad = body
+  const hit = LUCKY_BASS_HITS[s]
+  if (hit) luckyBass(ac, dest, chord.bass * hit, t) // the groove (root + octave pops)
   if (s % 2 === 0) {
-    const idx = [0, 1, 2, 1][(step >> 1) & 3]
-    bell(ac, chord.arp[idx], t, 0.22, 0.05, dest)
+    const note = LUCKY_MELODY[bar * 8 + (s >> 1)]
+    if (note) bell(ac, note, t + swing, 0.26, 0.05, dest) // the riff
   }
-  if (s === 2 || s === 6 || s === 10 || s === 14) luckyShaker(ac, dest, t, s === 6 || s === 14)
+  if (s === 2 || s === 6 || s === 10 || s === 14) luckyShaker(ac, dest, t + swing, s === 6 || s === 14)
 }
 
 let luckyTimer: ReturnType<typeof setInterval> | null = null
@@ -300,7 +353,7 @@ export function startLuckyBgm(): void {
   if (ac.state === 'suspended') void ac.resume()
   const bus = ac.createGain()
   bus.gain.setValueAtTime(0.0001, ac.currentTime)
-  bus.gain.exponentialRampToValueAtTime(0.2, ac.currentTime + 0.5) // subtle bed, eased in
+  bus.gain.exponentialRampToValueAtTime(0.24, ac.currentTime + 0.5) // a touch more present, room for the bass
   bus.connect(out(ac))
   luckyBus = bus
   luckyStepIdx = 0

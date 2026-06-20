@@ -20,7 +20,8 @@ import type { TradeAmounts } from './predict.ts';
 // The nominal multiplier tiers the reel can deal (LUCKY.md §4). The solver snaps a solved
 // multiple back to the nearest nominal for logging + the achieved-tier report; the UI always
 // shows the real solved multiple, not the nominal. Starts at 2x: the strike is always OTM (in the
-// bet direction), and ~2x (ATM) is the lowest honest multiple a directional target can pay.
+// bet direction) and at least `minOffset1e9` clear of entry, so the floor tier is a small but real
+// directional move (~2.0-2.2x), never an at-the-money strike sitting on the entry line.
 export const LUCKY_TIERS = [2, 3, 5, 10, 25] as const;
 
 const nearestTier = (m: number): number =>
@@ -151,6 +152,7 @@ export async function solveStrike(args: {
   curve?: ScanCurve; // a cached scan for this (oracle, side); skips the scan round trip when fresh
   probe?: bigint;
   atm1e9?: bigint; // live oracle spot, so the scan window centers on ATM (not the stale grid midpoint)
+  minOffset1e9?: bigint; // smallest |strike - atm| allowed, so even the floor tier is a visible move
   analyticSize?: boolean; // size the quantity from the scan curve, skipping the sizing devInspect
 }): Promise<StrikeSolution> {
   const { grid, side, tierMultiplier, betRaw, preview } = args;
@@ -171,15 +173,19 @@ export async function solveStrike(args: {
   // the price must fall" always true; the lowest reachable multiple is then ~2x (ATM), which is
   // why the tier ladder starts at 2x. Skipped when no spot is supplied (the pure unit tests). ----
   const atm = args.atm1e9;
-  const isOtm = (strike: bigint): boolean =>
-    atm == null ? true : side === 'up' ? strike >= atm : strike <= atm;
-  const selectBest = (otmOnly: boolean): number => {
+  const minOff = args.minOffset1e9 ?? 0n;
+  // Directional gate: a strike must sit on the bet's OTM side of spot AND at least `off` clear of it,
+  // so an UP target is a real move above entry and a DOWN target a real move below. off=0 is the bare
+  // OTM filter (and the pure unit tests). Skipped entirely when no spot is supplied.
+  const isDirectional = (strike: bigint, off: bigint): boolean =>
+    atm == null ? true : side === 'up' ? strike >= atm + off : strike <= atm - off;
+  const selectBest = (off: bigint, directional: boolean): number => {
     let b = -1;
     let bErr = Infinity;
     for (let k = 0; k < curve.cost.length; k++) {
       const m = multAt(curve.cost[k]);
       if (!Number.isFinite(m)) continue;
-      if (otmOnly && !isOtm(curve.strikes[k])) continue;
+      if (directional && !isDirectional(curve.strikes[k], off)) continue;
       const err = Math.abs(m - tierMultiplier);
       if (err < bErr) {
         bErr = err;
@@ -188,10 +194,11 @@ export async function solveStrike(args: {
     }
     return b;
   };
-  // OTM-only first; fall back to any mintable strike only if the scan window held none (it always
-  // straddles ATM, so this is a safety net, not a normal path).
-  let best = selectBest(true);
-  if (best < 0) best = selectBest(false);
+  // Prefer a strike a real move OTM (min offset), then relax to the bare OTM side, then to any
+  // mintable strike, so a thin scan window or a coarse grid never makes a play unmintable.
+  let best = selectBest(minOff, true);
+  if (minOff > 0n && best < 0) best = selectBest(0n, true);
+  if (best < 0) best = selectBest(0n, false);
   if (best < 0) throw new Error('solveStrike: no mintable strike on this grid');
 
   const strike = curve.strikes[best];

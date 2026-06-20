@@ -69,6 +69,13 @@ interface ConsoleCanvasProps {
   screenContentVisible?: boolean
   // A prepared customize canvas renders once while hidden, then resumes its intro when revealed.
   active?: boolean
+  // Landing/onboarding arc on the LIVE shell (customize stays false). 'hero' floats the device as a
+  // pulled-back product shot with the screen showing; 'app' is the exact resting games pose (the
+  // "moves to center" settle); 'welcome' pushes the camera into the screen for a splash, holds, then
+  // returns to rest and fires onWelcomeComplete. Mirrors outro/onOutroComplete.
+  stage?: 'hero' | 'app' | 'welcome'
+  onWelcomeComplete?: () => void
+  reducedMotion?: boolean
 }
 
 export default function ConsoleCanvas({
@@ -85,6 +92,9 @@ export default function ConsoleCanvas({
   onOutroComplete,
   screenContentVisible = true,
   active = true,
+  stage = 'app',
+  onWelcomeComplete,
+  reducedMotion = false,
 }: ConsoleCanvasProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -92,14 +102,16 @@ export default function ConsoleCanvas({
   const screenLayerRef = useRef<HTMLDivElement>(null)
 
   // Fresh per render so the scene's input handlers never read a stale binding.
-  const propsRef = useRef({ handlers, onNav, onOutroComplete })
-  propsRef.current = { handlers, onNav, onOutroComplete }
+  const propsRef = useRef({ handlers, onNav, onOutroComplete, onWelcomeComplete })
+  propsRef.current = { handlers, onNav, onOutroComplete, onWelcomeComplete }
   const viewRef = useRef(view)
   viewRef.current = view
   const exportRotRef = useRef(exportRot)
   exportRotRef.current = exportRot
   const activeRef = useRef(active)
   activeRef.current = active
+  const reducedMotionRef = useRef(reducedMotion)
+  reducedMotionRef.current = reducedMotion
   // The scene exposes its label/state updater here; the [view] effect calls it.
   const applyViewRef = useRef<(v?: ConsoleView) => void>(() => {})
   // Same pattern for the skin: the [theme] effect repaints the live materials, no rebuild.
@@ -107,6 +119,8 @@ export default function ConsoleCanvas({
   // And for the Done outro: the [outro] effect arms the snap-to-screen + power-on sequence.
   const applyOutroRef = useRef<(on: boolean) => void>(() => {})
   const applyActiveRef = useRef<(on: boolean) => void>(() => {})
+  // LIVE landing/onboarding arc: the [stage] effect drives hero / app / welcome poses.
+  const applyStageRef = useRef<(s: 'hero' | 'app' | 'welcome') => void>(() => {})
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -1599,6 +1613,31 @@ export default function ConsoleCanvas({
       const aspect = Math.max(camera.aspect, 0.0001)
       return Math.max(0, Math.round((6.2 / aspect - 11.95) * 100) / 100)
     }
+    const clamp01 = (t: number) => Math.max(0, Math.min(1, t))
+
+    // ===== LIVE landing/onboarding arc (customize/debug/export keep their own camera paths) =====
+    // resize() captures the resting games pose here so the loop can re-derive it each frame and blend
+    // the hero/welcome offsets onto it. At heroT=0/welcomeT=0 the blend reproduces the rest pose
+    // bit-for-bit, so the settle from hero lands exactly where the games view sits (seamless).
+    const restCamPos = new THREE.Vector3()
+    const restLook = new THREE.Vector3()
+    let liveExt = 0
+    let viewW = 0
+    let viewH = 0
+    // Hero product-shot offset, relative to rest: further back, look lifted, a gentle 3/4 tilt.
+    const HERO = { dz: 7, dLookY: 0.5, yaw: -0.12, pitch: -0.05 }
+    const HERO_MS = 900
+    const WELCOME_IN_MS = 700
+    const WELCOME_HOLD_MS = 1100
+    const WELCOME_OUT_MS = 700
+    let liveStage: 'hero' | 'app' | 'welcome' = stage
+    let heroT = stage === 'hero' ? 1 : 0
+    let welcomeT = 0
+    let welcomePhase: 'in' | 'hold' | 'out' | 'idle' = 'idle'
+    let welcomeHold = 0
+    let welcomeFired = false
+    let liveFloatPhase = 0
+    let welcomeRmTimer: ReturnType<typeof setTimeout> | null = null
 
     // Keep zero power physically black. Non-zero values retain the optional cool LCD boot glow.
     function setScreenPower(p: number) {
@@ -1667,6 +1706,105 @@ export default function ConsoleCanvas({
       deck.rotation.set(er?.x ?? 0, er?.y ?? 0, 0)
       // Keep the solid back on so the embossed back panel reads once the device is spun around.
       backPanel.visible = true
+    }
+
+    // Project the device's L-shaped screen cutout to CSS px and glue the HTML screen layer onto it.
+    // Extracted from resize() so the LIVE arc can re-run it every animating frame (the camera moves).
+    function projectScreenLayer() {
+      const el = screenLayerRef.current
+      if (!el || viewW === 0 || viewH === 0) return
+      const M = 4
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity
+      let notchTopY = Infinity
+      screenWorld.forEach((v, i) => {
+        const n = v.clone().project(camera)
+        const x = (n.x * 0.5 + 0.5) * viewW
+        const y = (-n.y * 0.5 + 0.5) * viewH
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+        if ((i === 2 || i === 3) && y < notchTopY) notchTopY = y
+      })
+      el.style.left = `${minX - M}px`
+      el.style.top = `${minY - M}px`
+      el.style.width = `${maxX - minX + M * 2}px`
+      el.style.height = `${maxY - minY + M * 2}px`
+      const scale = (maxX - minX) / (wx(1140) - wx(30))
+      el.style.setProperty('--screen-rim', `${Math.max(16, Math.round(M + 0.33 * scale))}px`)
+      el.style.setProperty('--screen-notch', `${Math.max(0, Math.round(maxY + M - notchTopY))}px`)
+    }
+
+    // The single place the LIVE camera is written: blend the hero offset and the welcome into-screen
+    // push onto the captured resting pose, then re-glue the screen layer. heroT=0/welcomeT=0 == rest.
+    function placeLiveCamera() {
+      const he = easeOutExpo(heroT)
+      const we = easeInOutCubic(welcomeT)
+      const camZ = restCamPos.z + HERO.dz * he
+      const lookY = restLook.y + HERO.dLookY * he
+      const yaw = HERO.yaw * he
+      const pitch = HERO.pitch * he
+      // Welcome push reuses the outro into-screen math (fills the screen), front-on.
+      const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
+      const aspect = Math.max(camera.aspect, 0.0001)
+      const cyScreen = wy(1130) + liveExt / 2
+      const frontZ =
+        (liveExt > 0 ? (6.2 * 0.5) / (tanHalf * aspect) : (11.95 * 0.5) / tanHalf) + DEVICE_Z
+      camera.position.set(0, lerp(lookY, cyScreen, we), lerp(camZ, frontZ, we))
+      camera.lookAt(0, lerp(lookY, cyScreen, we), 0)
+      deck.rotation.set(lerp(pitch, 0, we), lerp(yaw, 0, we), 0)
+      camera.updateMatrixWorld()
+      projectScreenLayer()
+    }
+
+    function snapLivePose(s: 'hero' | 'app' | 'welcome') {
+      heroT = s === 'hero' ? 1 : 0
+      welcomeT = s === 'welcome' ? 1 : 0
+      welcomePhase = 'idle'
+      device.position.y = 0
+      device.rotation.set(0, 0, 0)
+      placeLiveCamera()
+      dirty = true
+    }
+
+    applyStageRef.current = (s: 'hero' | 'app' | 'welcome') => {
+      if (customize || exportMode || debug) return // the arc is the LIVE shell only
+      liveStage = s
+      if (welcomeRmTimer) {
+        clearTimeout(welcomeRmTimer)
+        welcomeRmTimer = null
+      }
+      if (s === 'welcome') {
+        heroT = 0
+        welcomeFired = false
+        if (reducedMotionRef.current) {
+          // Snap to the splash, hold, then snap back and report done (no camera travel).
+          snapLivePose('welcome')
+          welcomeRmTimer = setTimeout(() => {
+            welcomeT = 0
+            placeLiveCamera()
+            dirty = true
+            if (!welcomeFired) {
+              welcomeFired = true
+              propsRef.current.onWelcomeComplete?.()
+            }
+          }, WELCOME_HOLD_MS)
+        } else {
+          welcomePhase = 'in'
+          welcomeT = 0
+          welcomeHold = 0
+        }
+      } else {
+        // hero / app: cancel any welcome and let the loop ease heroT (or snap if reduced motion).
+        welcomePhase = 'idle'
+        welcomeT = 0
+        welcomeFired = false
+        if (reducedMotionRef.current) snapLivePose(s)
+      }
+      dirty = true
     }
 
     applyOutroRef.current = (on: boolean) => {
@@ -1985,6 +2123,8 @@ export default function ConsoleCanvas({
       const w = container.clientWidth,
         h = container.clientHeight
       if (w === 0 || h === 0) return
+      viewW = w
+      viewH = h
       renderer.setSize(w, h)
       camera.aspect = w / h
 
@@ -2012,7 +2152,8 @@ export default function ConsoleCanvas({
       } else {
         // Always fill the width. A frame taller than the device's ratio grows the screen to fill
         // the extra height (the control deck keeps its size); a wider frame falls back to
-        // contain-by-height, so the device gaps at the sides but is never cropped.
+        // contain-by-height, so the device gaps at the sides but is never cropped. The resting pose is
+        // captured (not applied) here; placeLiveCamera() applies it plus any hero/welcome blend.
         const visibleH = 6.2 / camera.aspect // world height when the device width is fit edge to edge
         const ext = Math.max(0, Math.round((visibleH - 11.95) * 100) / 100)
         relayout(ext)
@@ -2021,56 +2162,21 @@ export default function ConsoleCanvas({
           ext > 0
             ? (6.2 * 0.5) / (tanHalf * camera.aspect) // fill width
             : (11.95 * 0.5) / tanHalf // contain by height (wider frame)
-        camera.position.set(0, cy, d + DEVICE_Z)
-        camera.lookAt(0, cy, 0)
+        restCamPos.set(0, cy, d + DEVICE_Z)
+        restLook.set(0, cy, 0)
+        liveExt = ext
       }
       camera.updateProjectionMatrix()
-      camera.updateMatrixWorld()
 
-      // Screen content sits behind the device; the body's hole masks it to the L-shape and the
-      // beveled rim frames it. Oversize a touch so the chart tucks under the rim with no seam.
-      const el = screenLayerRef.current
-      if (el) {
-        const M = 4
-        let minX = Infinity,
-          minY = Infinity,
-          maxX = -Infinity,
-          maxY = -Infinity
-        // Top of the L-notch (the step from the full-width screen to the occluded bottom-right where
-        // the knob + PLAY body sit). SCREEN_PX[2]/[3] are that step (py 1325); take the topmost so a
-        // screen that hangs a readout off the bottom-left can meet the button's top, never overshoot it.
-        let notchTopY = Infinity
-        screenWorld.forEach((v, i) => {
-          const n = v.clone().project(camera)
-          const x = (n.x * 0.5 + 0.5) * w
-          const y = (-n.y * 0.5 + 0.5) * h
-          if (x < minX) minX = x
-          if (x > maxX) maxX = x
-          if (y < minY) minY = y
-          if (y > maxY) maxY = y
-          if ((i === 2 || i === 3) && y < notchTopY) notchTopY = y
-        })
-        el.style.left = `${minX - M}px`
-        el.style.top = `${minY - M}px`
-        el.style.width = `${maxX - minX + M * 2}px`
-        el.style.height = `${maxY - minY + M * 2}px`
-        // Rim-safe inset for HTML content, published as --screen-rim. The device is responsive, so
-        // a fixed px pad crops once it scales up: this tracks the projected screen and clears the
-        // rounded, beveled cutout edge (~corner radius 0.25 world + bevel). Screens inset text by
-        // var(--screen-rim); rules and charts bleed full width and tuck under the rim. This is the
-        // layout boundary every console screen lays out against.
-        const scale = (maxX - minX) / (wx(1140) - wx(30))
-        el.style.setProperty(
-          '--screen-rim',
-          `${Math.max(16, Math.round(M + 0.33 * scale))}px`,
-        )
-        // Height of the occluded bottom-right band (knob + PLAY body), projected to px each resize so
-        // it tracks the device at any scale or browser zoom (a fixed px would drift). A bottom-left
-        // readout sizes to this so its top meets the button's top instead of running past it.
-        el.style.setProperty(
-          '--screen-notch',
-          `${Math.max(0, Math.round(maxY + M - notchTopY))}px`,
-        )
+      // Screen content sits behind the device; the body's hole masks it to the L-shape and the beveled
+      // rim frames it. The debug playground sets its camera inline (no arc); the live shell applies the
+      // resting pose + arc blend via placeLiveCamera(). Both then glue the HTML screen layer onto the
+      // projected cutout (placeLiveCamera does it; debug calls projectScreenLayer directly).
+      if (debug) {
+        camera.updateMatrixWorld()
+        projectScreenLayer()
+      } else {
+        placeLiveCamera()
       }
       dirty = true // camera/geometry moved, repaint once
     }
@@ -2154,6 +2260,56 @@ export default function ConsoleCanvas({
           animating = true
         }
         if (animating) placeCustomizeCamera()
+      } else if (!debug) {
+        // LIVE landing/onboarding arc: ease hero<->app, run the welcome push, idle-float at hero.
+        // Render-on-demand otherwise (a settled app device paints nothing).
+        const reduced = reducedMotionRef.current
+        const heroTarget = liveStage === 'hero' ? 1 : 0
+        if (!reduced && Math.abs(heroT - heroTarget) > 0.0005) {
+          const dir = Math.sign(heroTarget - heroT)
+          heroT = clamp01(heroT + (dir * (dt * 1000)) / HERO_MS)
+          animating = true
+        } else {
+          heroT = heroTarget
+        }
+        if (!reduced) {
+          if (welcomePhase === 'in') {
+            welcomeT = Math.min(1, welcomeT + (dt * 1000) / WELCOME_IN_MS)
+            animating = true
+            if (welcomeT >= 1) {
+              welcomePhase = 'hold'
+              welcomeHold = 0
+            }
+          } else if (welcomePhase === 'hold') {
+            welcomeHold += dt * 1000
+            animating = true
+            if (welcomeHold >= WELCOME_HOLD_MS) welcomePhase = 'out'
+          } else if (welcomePhase === 'out') {
+            welcomeT = Math.max(0, welcomeT - (dt * 1000) / WELCOME_OUT_MS)
+            animating = true
+            if (welcomeT <= 0) {
+              welcomePhase = 'idle'
+              if (!welcomeFired) {
+                welcomeFired = true
+                propsRef.current.onWelcomeComplete?.()
+              }
+            }
+          }
+        }
+        // Idle float: alive at hero, fades to nothing at app and during the welcome push.
+        const floatFade = reduced ? 0 : heroT * (1 - easeInOutCubic(welcomeT))
+        if (floatFade > 0.0001) {
+          liveFloatPhase += dt * FLOAT.speed
+          device.position.y = Math.sin(liveFloatPhase) * FLOAT.bob * floatFade
+          device.rotation.x = Math.sin(liveFloatPhase * 0.8 + 0.6) * FLOAT.tiltX * floatFade
+          device.rotation.z = Math.cos(liveFloatPhase * 0.6) * FLOAT.tiltZ * floatFade
+          animating = true
+        } else if (device.position.y !== 0 || device.rotation.x !== 0 || device.rotation.z !== 0) {
+          device.position.y = 0
+          device.rotation.set(0, 0, 0)
+          animating = true
+        }
+        if (animating) placeLiveCamera()
       }
 
       interactive.forEach((o) => {
@@ -2294,10 +2450,12 @@ export default function ConsoleCanvas({
       window.removeEventListener('focus', onVisible)
       ro.disconnect()
       pressTimers.forEach(clearTimeout)
+      if (welcomeRmTimer) clearTimeout(welcomeRmTimer)
       applyViewRef.current = () => {}
       applyThemeRef.current = () => {}
       applyOutroRef.current = () => {}
       applyActiveRef.current = () => {}
+      applyStageRef.current = () => {}
       gui?.destroy()
       disposeActionScreens()
       backDetails.dispose()
@@ -2330,6 +2488,11 @@ export default function ConsoleCanvas({
   useEffect(() => {
     applyOutroRef.current(outro)
   }, [outro])
+
+  // Drive the LIVE landing/onboarding pose (hero / app settle / welcome zoom).
+  useEffect(() => {
+    applyStageRef.current(stage)
+  }, [stage])
 
   useEffect(() => {
     applyActiveRef.current(active)

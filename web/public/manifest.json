@@ -9,11 +9,6 @@
       "type": "image/x-icon"
     },
     {
-      "src": "/assets/logos/pips-yellow-quare.svg",
-      "type": "image/svg+xml",
-      "sizes": "any"
-    },
-    {
       "src": "/assets/logos/pips-192.png",
       "type": "image/png",
       "sizes": "192x192",
