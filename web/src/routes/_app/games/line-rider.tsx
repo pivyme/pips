@@ -7,7 +7,7 @@ import { MinigameBoard, useMinigameLeaderboard } from '@/components/game/Minigam
 import { RideEngine, type RideHud } from '@/components/game/rideEngine'
 import type { LeaderboardScoreEntry, MinigameSubmit } from '@/lib/api'
 import { haptic } from '@/lib/haptics'
-import { sound } from '@/lib/sound'
+import { rideCrash, rideStart, setRideState, startRideBgm, stopRideBgm } from '@/lib/sound'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 
@@ -22,7 +22,7 @@ const WHEEL_STEPS = 24 // knob resolution for the pip's vertical position (knob 
 const CENTER = Math.round(WHEEL_STEPS / 2)
 
 type Phase = 'title' | 'playing' | 'over'
-const EMPTY_HUD: RideHud = { score: 0, multiplier: 1, grip: 1, elapsed: 0, onLine: false }
+const EMPTY_HUD: RideHud = { score: 0, multiplier: 1, grip: 1, elapsed: 0, onLine: false, intensity: 0 }
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US')
 
 export function LineRiderScreen() {
@@ -44,7 +44,8 @@ export function LineRiderScreen() {
   // the latest closure. Show the score instantly; the rank + refreshed board land when submit resolves.
   endRef.current = (score: number) => {
     haptic('error')
-    sound('lose')
+    stopRideBgm() // cut the bed so the wipeout lands clean over silence
+    rideCrash()
     setOver({ score, result: null })
     setPhase('over')
     void submit(score)
@@ -57,10 +58,14 @@ export function LineRiderScreen() {
     const c = canvasRef.current
     if (!c) return
     const eng = new RideEngine(c, {
-      onHud: setHud,
+      onHud: (h) => {
+        setHud(h)
+        // Feed the bed: the tone filter rides intensity + onLine, the heartbeat + sparkle ride grip + combo.
+        setRideState({ intensity: h.intensity, onLine: h.onLine, gripLow: h.grip < 0.28, mult: h.multiplier })
+      },
       onEnd: (s) => endRef.current(s),
-      onMilestone: () => haptic('rigid'), // combo crossed an integer: a satisfying tick
-      onRegain: () => haptic('selection'), // snapped back onto the line
+      onMilestone: () => haptic('rigid'), // combo crossed an integer: just a tick, the bed carries the rest
+      onRegain: () => haptic('selection'), // snapped back onto the line: haptic only, no chime
       reduced,
     })
     engineRef.current = eng
@@ -83,7 +88,15 @@ export function LineRiderScreen() {
       eng.start()
     }
     haptic('rigid')
+    rideStart() // takeoff whoosh as the line flows in (the bed itself starts on the phase effect)
   }, [])
+
+  // The glide bed rides only the active run: start on play, fade out on game over or when the screen unmounts.
+  useEffect(() => {
+    if (phase !== 'playing') return
+    startRideBgm()
+    return () => stopRideBgm()
+  }, [phase])
 
   const onWheel = useCallback((v: number) => {
     setWheel(v)

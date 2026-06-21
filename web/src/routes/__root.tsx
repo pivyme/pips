@@ -16,6 +16,15 @@ interface MyRouterContext {
   queryClient: QueryClient
 }
 
+// Hardcoded prod origin. Social crawlers (Telegram especially) need absolute image
+// URLs, so og:image/twitter:image point at the live domain, never a relative path.
+const SITE_URL = 'https://playpips.fun'
+const OG_IMAGE = `${SITE_URL}/pips-og.jpg`
+const OG_TITLE = "World's First Virtual Gamified Trading Console"
+const OG_DESC =
+  "Built for fun and money. An overkill 3D virtual console to make trading fun and full of eargasm. Attention spans are shrinking, people want more out of every dollar, and trading? It's stressful with candles and order books. What if you just played?"
+const OG_IMAGE_ALT = "PIPS, the world's first virtual gamified trading console"
+
 export const Route = createRootRouteWithContext<MyRouterContext>()({
   notFoundComponent: () => <NotFoundPage />,
   errorComponent: ({ error, reset }) => <ErrorPage error={error} reset={reset} />,
@@ -27,34 +36,37 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
         content:
           'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover',
       },
-      { title: 'PIPS' },
-      {
-        name: 'description',
-        content:
-          'PIPS makes trading simple, intuitive, and addictive, like a game. A gamified trading console on Sui.',
-      },
+      { title: `PIPS · ${OG_TITLE}` },
+      { name: 'description', content: OG_DESC },
       // PIPS owns its dark palette. Extension-level recoloring can force the live Canvas/WebGL
       // game surfaces through an expensive full-page filter on every frame.
       { name: 'darkreader-lock', content: '' },
       { name: 'theme-color', content: '#000000' },
-      // Social previews
-      { property: 'og:title', content: 'PIPS' },
-      {
-        property: 'og:description',
-        content: 'Trading made simple, intuitive, and addictive, like a game.',
-      },
+
+      // Open Graph (Telegram, iMessage, Discord, Facebook, Slack)
+      { property: 'og:site_name', content: 'PIPS' },
+      { property: 'og:title', content: OG_TITLE },
+      { property: 'og:description', content: OG_DESC },
       { property: 'og:type', content: 'website' },
-      { property: 'og:image', content: '/assets/logos/pips-512.png' },
-      { name: 'twitter:card', content: 'summary' },
-      { name: 'twitter:title', content: 'PIPS' },
-      {
-        name: 'twitter:description',
-        content: 'Trading made simple, intuitive, and addictive, like a game.',
-      },
-      { name: 'twitter:image', content: '/assets/logos/pips-512.png' },
+      { property: 'og:url', content: SITE_URL },
+      { property: 'og:locale', content: 'en_US' },
+      { property: 'og:image', content: OG_IMAGE },
+      { property: 'og:image:secure_url', content: OG_IMAGE },
+      { property: 'og:image:type', content: 'image/jpeg' },
+      { property: 'og:image:width', content: '1200' },
+      { property: 'og:image:height', content: '630' },
+      { property: 'og:image:alt', content: OG_IMAGE_ALT },
+
+      // Twitter / X (large image card)
+      { name: 'twitter:card', content: 'summary_large_image' },
+      { name: 'twitter:title', content: OG_TITLE },
+      { name: 'twitter:description', content: OG_DESC },
+      { name: 'twitter:image', content: OG_IMAGE },
+      { name: 'twitter:image:alt', content: OG_IMAGE_ALT },
     ],
     links: [
       { rel: 'stylesheet', href: appCss },
+      { rel: 'canonical', href: SITE_URL },
       // Favicon + app icons, all the 3D PIPS mark. PNG for crisp modern rendering, .ico legacy fallback.
       { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/assets/logos/pips-32.png' },
       { rel: 'icon', type: 'image/png', sizes: '192x192', href: '/assets/logos/pips-192.png' },

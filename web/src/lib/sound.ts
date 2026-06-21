@@ -36,6 +36,8 @@ export function setSoundEnabled(value: boolean): void {
   if (!value) {
     stopBgm()
     stopLuckyBgm()
+    stopRangeBgm()
+    stopRideBgm()
   }
 }
 
@@ -1030,4 +1032,288 @@ export function rangeLose(): void {
     s.start(t)
     s.stop(t + 0.82)
   }
+}
+
+// --- Line Rider voices. A dreamy synthwave glide, its own world: slow 90bpm, bright E major, a soft
+// pad sky over a gliding pluck arp and a round synth bass, almost no drums. What makes it unique is
+// that the bed is *adaptive*, it listens to the run. One tone filter wraps the whole bed and opens as
+// the line speeds up (so the run audibly builds), brightens while you hug the line and goes underwater
+// when you drift off (staying on the line literally sounds better), a low heartbeat throbs in as grip
+// runs low, and the arp sparkles an octave up once your combo is hot. Nothing like Lucky's funk,
+// Range's tension, or Flappy's cheer. Non-intrusive by design: soft and muffled at rest, never a wall.
+
+const RIDE_TEMPO = 90
+const RIDE_STEP = 60 / RIDE_TEMPO / 4 // sixteenth-note length, seconds
+// vi - IV - I - V in E major (C#m9 - Amaj9 - Emaj9 - Bsus4): the nostalgic "gliding at dusk" loop, a
+// gentle two-feel that never fatigues over a long run. Each bar: a low bass root, a soft three-note
+// pad voicing, and four ascending arp tones.
+const RIDE_BARS = [
+  { bass: 69.3, pad: [164.81, 207.65, 246.94], arp: [277.18, 329.63, 415.3, 493.88] }, // C#m9
+  { bass: 110.0, pad: [220.0, 277.18, 329.63], arp: [277.18, 329.63, 440.0, 493.88] }, // Amaj9
+  { bass: 82.41, pad: [207.65, 246.94, 329.63], arp: [329.63, 415.3, 493.88, 622.25] }, // Emaj9
+  { bass: 123.47, pad: [185.0, 246.94, 329.63], arp: [369.99, 493.88, 554.37, 659.25] }, // Bsus4
+]
+const RIDE_STEPS = RIDE_BARS.length * 16
+// A rolling up-down glide with breaths (-1 = rest), so the arp reads as flowing motion, not a machine gun.
+const RIDE_ARP = [0, -1, 2, 1, -1, 3, 2, -1, 0, 1, -1, 3, 2, -1, 1, -1]
+
+// A soft, wide pad voice: a slightly detuned triangle+sine pair through a gentle lowpass, slow swell,
+// long release. Spawned as a chord at each bar to hold the "sky" under the pluck.
+function ridePad(ac: AudioContext, dest: AudioNode, freq: number, t: number, dur: number): void {
+  const o = ac.createOscillator()
+  const d = ac.createOscillator()
+  const g = ac.createGain()
+  const f = ac.createBiquadFilter()
+  o.type = 'triangle'
+  d.type = 'sine'
+  o.frequency.setValueAtTime(freq, t)
+  d.frequency.setValueAtTime(freq * 1.005, t) // a hair of detune for width
+  f.type = 'lowpass'
+  f.frequency.value = Math.min(freq * 4, 3000)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.022, t + 0.4) // slow swell in
+  g.gain.setValueAtTime(0.022, t + dur * 0.5)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur) // long release out
+  o.connect(f)
+  d.connect(f)
+  f.connect(g).connect(dest)
+  o.start(t)
+  o.stop(t + dur + 0.05)
+  d.start(t)
+  d.stop(t + dur + 0.05)
+}
+
+// A round synth bass: a saw body through a low lowpass plus a sine sub, soft and a touch longer than
+// the other beds so it sustains like synthwave rather than plucks.
+function rideBass(ac: AudioContext, dest: AudioNode, freq: number, t: number): void {
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  const f = ac.createBiquadFilter()
+  o.type = 'sawtooth'
+  o.frequency.setValueAtTime(freq, t)
+  f.type = 'lowpass'
+  f.frequency.value = 420
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.09, t + 0.016)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34)
+  o.connect(f).connect(g).connect(dest)
+  o.start(t)
+  o.stop(t + 0.36)
+  const sub = ac.createOscillator()
+  const sg = ac.createGain()
+  sub.type = 'sine'
+  sub.frequency.setValueAtTime(freq, t)
+  sg.gain.setValueAtTime(0.0001, t)
+  sg.gain.exponentialRampToValueAtTime(0.08, t + 0.014)
+  sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.3)
+  sub.connect(sg).connect(dest)
+  sub.start(t)
+  sub.stop(t + 0.32)
+}
+
+// A soft, rounded kick, lighter than the other beds: this groove stays gentle.
+function rideKick(ac: AudioContext, dest: AudioNode, t: number): void {
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(120, t)
+  o.frequency.exponentialRampToValueAtTime(46, t + 0.1)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.12, t + 0.006)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18)
+  o.connect(g).connect(dest)
+  o.start(t)
+  o.stop(t + 0.2)
+}
+
+// A brushed offbeat tick (filtered noise), kept very quiet so it's texture, not a hi-hat.
+function rideTick(ac: AudioContext, dest: AudioNode, t: number, accent: boolean): void {
+  const src = ac.createBufferSource()
+  src.buffer = noise(ac)
+  const f = ac.createBiquadFilter()
+  f.type = 'highpass'
+  f.frequency.value = 6500
+  const g = ac.createGain()
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(accent ? 0.016 : 0.009, t + 0.004)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04)
+  src.connect(f).connect(g).connect(dest)
+  src.start(t)
+  src.stop(t + 0.05)
+}
+
+// A low heartbeat that pulses in only when grip runs low: felt more than heard, it makes danger audible
+// alongside the red vignette.
+function rideThrob(ac: AudioContext, dest: AudioNode, t: number): void {
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(58, t)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.07, t + 0.04)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4)
+  o.connect(g).connect(dest)
+  o.start(t)
+  o.stop(t + 0.42)
+}
+
+// One sixteenth of the glide: a pad chord at each bar, a pulsing bass, the gliding pluck (sparkling an
+// octave up once the combo is hot), and the drums + heartbeat the adaptive state gates in.
+function rideStepAt(ac: AudioContext, dest: AudioNode, step: number, t: number): void {
+  const bar = Math.floor(step / 16) % RIDE_BARS.length
+  const chord = RIDE_BARS[bar]
+  const s = step % 16
+  if (s === 0) chord.pad.forEach((f, i) => ridePad(ac, dest, f, t + i * 0.01, 3.1)) // the sky
+  if (s === 0 || s === 4 || s === 8 || s === 12) rideBass(ac, dest, chord.bass, t)
+  if (s === 6 || s === 14) rideBass(ac, dest, chord.bass * 2, t) // octave pop for a synthwave bounce
+  const ai = RIDE_ARP[s]
+  if (ai >= 0) {
+    bell(ac, chord.arp[ai], t, 0.2, 0.035, dest) // the gliding pluck
+    if (rideMult > 3) bell(ac, chord.arp[ai] * 2, t, 0.14, 0.013, dest) // a hot combo sparkles up high
+  }
+  // Drums fade in as the run speeds up: the opening stays dreamy/ambient, then the groove arrives.
+  if (rideIntensity > 0.12 && (s === 0 || s === 8)) rideKick(ac, dest, t)
+  if (rideIntensity > 0.2 && (s === 2 || s === 6 || s === 10 || s === 14)) rideTick(ac, dest, t, s === 6 || s === 14)
+  if (rideGripLow && (s === 0 || s === 8)) rideThrob(ac, dest, t) // tension under low grip
+}
+
+let rideTimer: ReturnType<typeof setInterval> | null = null
+let rideStepIdx = 0
+let rideNext = 0
+let rideBedBus: GainNode | null = null
+let rideTone: BiquadFilterNode | null = null
+// Adaptive state, fed from the run by setRideState and read by the scheduler + the tone filter.
+let rideIntensity = 0
+let rideGripLow = false
+let rideMult = 1
+
+// Start the glide. The whole bed runs through one lowpass `rideTone` that the run drives (see
+// setRideState): it opens as the line speeds up and brightens while you hug it. Same lookahead
+// scheduler as the other beds. No-op if sound is off or it is already running.
+export function startRideBgm(): void {
+  if (!enabled || rideTimer) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const bus = ac.createGain()
+  bus.gain.setValueAtTime(0.0001, ac.currentTime)
+  bus.gain.exponentialRampToValueAtTime(0.2, ac.currentTime + 0.8) // ease in, dreamy (it's a bed)
+  const tone = ac.createBiquadFilter()
+  tone.type = 'lowpass'
+  tone.frequency.value = 700 // starts soft/underwater; setRideState opens it with the run
+  tone.Q.value = 0.7
+  bus.connect(tone).connect(out(ac))
+  rideBedBus = bus
+  rideTone = tone
+  rideIntensity = 0
+  rideGripLow = false
+  rideMult = 1
+  rideStepIdx = 0
+  rideNext = ac.currentTime + 0.1
+  rideTimer = setInterval(() => {
+    if (!ac || !rideBedBus) return
+    while (rideNext < ac.currentTime + 0.1) {
+      rideStepAt(ac, rideBedBus, rideStepIdx, rideNext)
+      rideNext += RIDE_STEP
+      rideStepIdx = (rideStepIdx + 1) % RIDE_STEPS
+    }
+  }, 25)
+}
+
+export function stopRideBgm(): void {
+  if (rideTimer) {
+    clearInterval(rideTimer)
+    rideTimer = null
+  }
+  const bus = rideBedBus
+  const tone = rideTone
+  rideBedBus = null
+  rideTone = null
+  if (bus && ctx) {
+    const now = ctx.currentTime
+    bus.gain.cancelScheduledValues(now)
+    bus.gain.setValueAtTime(Math.max(0.0001, bus.gain.value), now)
+    bus.gain.exponentialRampToValueAtTime(0.0001, now + 0.3)
+    setTimeout(() => {
+      bus.disconnect()
+      tone?.disconnect()
+    }, 420)
+  }
+}
+
+// The run feeds the bed its live state every HUD tick (~20Hz). intensity (0..1, the difficulty ramp)
+// and onLine drive the tone filter: brighter as the line speeds up, brighter still while hugging it,
+// underwater when you drift off. gripLow + mult are read by the scheduler for the heartbeat + sparkle.
+export function setRideState(s: { intensity: number; onLine: boolean; gripLow: boolean; mult: number }): void {
+  rideIntensity = s.intensity
+  rideGripLow = s.gripLow
+  rideMult = s.mult
+  if (!rideTone || !ctx) return
+  const now = ctx.currentTime
+  const base = 600 + Math.max(0, Math.min(1, s.intensity)) * 3600 // 600 -> 4200 Hz across the ramp
+  const target = Math.max(400, Math.min(6000, base * (s.onLine ? 1 : 0.5))) // off-line = underwater
+  rideTone.frequency.cancelScheduledValues(now)
+  rideTone.frequency.setValueAtTime(rideTone.frequency.value, now)
+  rideTone.frequency.linearRampToValueAtTime(target, now + 0.12)
+}
+
+// Takeoff: a rising airy whoosh under a soft Emaj bloom as the line flows in and the run begins.
+export function rideStart(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  const src = ac.createBufferSource()
+  src.buffer = noise(ac)
+  const f = ac.createBiquadFilter()
+  f.type = 'bandpass'
+  f.Q.value = 0.7
+  f.frequency.setValueAtTime(300, t)
+  f.frequency.exponentialRampToValueAtTime(2600, t + 0.45) // sweep up = the line taking off
+  const ng = ac.createGain()
+  ng.gain.setValueAtTime(0.0001, t)
+  ng.gain.exponentialRampToValueAtTime(0.05, t + 0.18)
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.6)
+  src.connect(f).connect(ng).connect(out(ac))
+  src.start(t)
+  src.stop(t + 0.65)
+  const bloom = [329.63, 415.3, 493.88, 659.25] // E G# B E, a rising open-major lift
+  bloom.forEach((fr, i) => bell(ac, fr, t + 0.05 + i * 0.06, 0.5, 0.04))
+}
+
+// Wipeout: the floor drops out (a low sub fall) under a dreamy descending E-pentatonic tumble and an
+// airy noise fall through a closing filter. Melancholy, not harsh, the dream collapsing as you fall off.
+export function rideCrash(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(180, t)
+  o.frequency.exponentialRampToValueAtTime(40, t + 0.5)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.16, t + 0.02)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6)
+  o.connect(g).connect(out(ac))
+  o.start(t)
+  o.stop(t + 0.62)
+  const tumble = [659.25, 554.37, 493.88, 415.3, 329.63] // E5 C#5 B4 G#4 E4, falling away
+  tumble.forEach((fr, i) => bell(ac, fr, t + 0.04 + i * 0.07, 0.3, 0.045))
+  const src = ac.createBufferSource()
+  src.buffer = noise(ac)
+  const f = ac.createBiquadFilter()
+  f.type = 'lowpass'
+  f.frequency.setValueAtTime(2600, t)
+  f.frequency.exponentialRampToValueAtTime(300, t + 0.5)
+  const ng = ac.createGain()
+  ng.gain.setValueAtTime(0.0001, t)
+  ng.gain.exponentialRampToValueAtTime(0.04, t + 0.05)
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.55)
+  src.connect(f).connect(ng).connect(out(ac))
+  src.start(t)
+  src.stop(t + 0.58)
 }

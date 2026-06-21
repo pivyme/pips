@@ -12,6 +12,7 @@ export interface RideHud {
   grip: number // 0..1 survival meter
   elapsed: number // seconds into the run
   onLine: boolean
+  intensity: number // 0..1 difficulty ramp, surfaced so the audio bed can build with the run
 }
 
 export interface RideCallbacks {
@@ -344,6 +345,7 @@ export class RideEngine {
       grip: this.grip,
       elapsed: this.elapsed,
       onLine: this.onLine,
+      intensity: this.difficulty(),
     })
   }
 

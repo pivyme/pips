@@ -2530,7 +2530,9 @@ export default function ConsoleCanvas({
     const clock = new THREE.Clock()
     let rafId: number
     let coinAccum = 0
+    let decorAccum = 0
     const COIN_FRAME = 1 / 30 // chunky pixels don't need 60fps; keeps the idle device cheap
+    const DECOR_FRAME = 1 / 30 // ambient light show / result pulse: 30fps is plenty, halves the GPU tax
 
     function loop() {
       rafId = requestAnimationFrame(loop)
@@ -2667,6 +2669,12 @@ export default function ConsoleCanvas({
         if (animating) placeLiveCamera()
       }
 
+      // Only camera/body motion (the idle float, the landing arc, a resize) actually changes the
+      // shadows. Capture that here, before the control + decoration sections add their own repaints:
+      // a button press, a knob turn, the ambient light show never move the body, so they must not
+      // trigger the shadow pass (a near-second full render) on top of a running game.
+      const geoMoved = animating || dirty
+
       interactive.forEach((o) => {
         const d = o.userData
         if (d.kind === 'numberWheel' || d.kind === 'knob') return
@@ -2716,12 +2724,15 @@ export default function ConsoleCanvas({
       numberWheelRoll.rotation.x = numberWheelAngle
       updateNumberWheelLighting()
 
+      // Control feedback (button glow, knob, wheel) must paint at full fps to feel responsive. The
+      // decoration below (light show, result pulse) is throttled to ~30fps, so snapshot the realtime
+      // drivers now: anything that animates past this point is pure cosmetics on the side screens.
+      const realtime = animating
+
       // Ambient light show: while a game flags it (a live run), the two unbound action screens drift
-      // slowly through the spectrum as decoration. Pure color + glow, no geometry moves, so it must not
-      // trigger the shadow pass; `lightOnly` keeps these frames cheap so it never costs the game fps.
-      let lightOnly = false
+      // slowly through the spectrum as decoration. Pure color + glow, no geometry moves, so it never
+      // triggers the shadow pass and repaints at the decoration cadence, not the game's.
       if (state.lightShow) {
-        lightOnly = !animating && !dirty
         lightT += dt
         const hueBase = (lightT / 14) % 1 // a calm ~14s lap of the color wheel
         ACTION_IDX.forEach((i, k) => {
@@ -2776,21 +2787,32 @@ export default function ConsoleCanvas({
       }
 
       // Token-mode screens animate only while a game opts in. Normal HOME/Lucky buttons stay idle.
+      let tokenDrew = false
       const tokenScreenActive = tokenScreens.some((screen) => screen.isActive())
       if (tokenScreenActive) coinAccum += dt
       if (tokenScreenActive && coinAccum >= COIN_FRAME) {
-        if (!animating && !dirty) lightOnly = true
         for (const tokenScreen of tokenScreens) tokenScreen.draw(coinAccum)
         coinAccum = 0
         animating = true
+        tokenDrew = true // the coin texture changed, so this frame must paint
       }
 
       // Only touch the GPU when something actually changed. An idle device paints nothing; the shadow
-      // pass (the heavy bit) runs only when geometry moved, never for the color-only light show.
-      if (dirty || animating) {
-        if (!lightOnly) renderer.shadowMap.needsUpdate = true
+      // pass (the heavy bit) runs only when the body actually moved. Pure decoration (the light show,
+      // a result pulse) repaints at ~30fps so it never steals a 60fps frame from a running game, while
+      // control feedback and real motion stay at full fps.
+      let doRender = dirty || animating
+      const decorOnly = animating && !dirty && !realtime && !geoMoved && !tokenDrew
+      if (decorOnly) {
+        decorAccum += dt
+        if (decorAccum >= DECOR_FRAME) decorAccum = 0
+        else doRender = false
+      }
+      if (doRender) {
+        if (geoMoved) renderer.shadowMap.needsUpdate = true
         renderer.render(scene, camera)
         dirty = false
+        if (!decorOnly) decorAccum = 0
       }
     }
     loop()
