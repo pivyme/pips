@@ -38,6 +38,8 @@ export const Route = createFileRoute('/_app/games/range')({
 
 // Stake ladder, scrubbed on the number wheel and clamped to the live balance (within MIN/MAX_STAKE).
 const STAKE_LADDER = [1, 5, 10, 25, 50, 100] as const
+// Band ladder: the ± half-band sizes the knob steps through (percent). Tighter pays more.
+const BAND_LADDER = [0.1, 0.2, 0.5, 1, 1.5] as const
 const FALLBACK_ASSETS = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
 const TOKEN_LOGOS: Record<string, string> = {
   BTC: '/assets/images/coins/btc-logo.png',
@@ -89,7 +91,7 @@ export function RangeScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
 
-  const [widthTenths, setWidthTenths] = useState(10) // knob: half-band in tenths of a percent
+  const [widthIdx, setWidthIdx] = useState(3) // knob index into BAND_LADDER (default ±1.0%)
   const [stakeIdx, setStakeIdx] = useState(2)
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null) // the player's pick, by symbol
   const [phase, setPhase] = useState<Phase>('idle')
@@ -98,6 +100,8 @@ export function RangeScreen() {
   const [spot, setSpot] = useState<number | null>(null)
   const [secsLeft, setSecsLeft] = useState<number | null>(null)
   const [overlay, setOverlay] = useState<Overlay>('none')
+  // The chart's live active price captured the instant PLAY is hit, drawn as the grey ENTRY line.
+  const [entryPrice, setEntryPrice] = useState<number | null>(null)
 
   const finalized = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -135,35 +139,66 @@ export function RangeScreen() {
   const safeBetIdx = Math.min(stakeIdx, maxBetIdx)
   const stake = STAKE_LADDER[safeBetIdx]
 
-  const halfPct = widthTenths / 10
+  const halfPct = BAND_LADDER[Math.min(widthIdx, BAND_LADDER.length - 1)]
   const canPlay = liveAssets.length > 0
+  const roundLive = phase === 'open' || phase === 'cashing' || phase === 'result'
+
+  // Multiplier quotes for the whole band ladder, off the real Predict ask. Fetched once per asset on
+  // select and cached, so every band size shows its true locked multiple the instant the knob lands on
+  // it, with no flicker to a rough estimate. One batched call prices all bands off one oracle snapshot
+  // (consistent + cheap). Refreshed as spot/vault drift; paused while a round is live (the locked mult
+  // drives then). The old client-side estimate was off by multiples on tight bands, so it is only the
+  // cold-start fallback until the cache warms.
+  const bandWidthsPct = BAND_LADDER.map((h) => h * 2)
+  const quotesQ = useQuery({
+    queryKey: ['rangeQuotes', activeAsset],
+    queryFn: () => api.rangeQuotes(activeAsset, bandWidthsPct),
+    enabled: canPlay && !!activeAsset && !roundLive,
+    placeholderData: (prev) => prev,
+    staleTime: 4_000,
+    refetchInterval: 8_000,
+    retry: false,
+  })
+  const quotedMult = quotesQ.data?.quotes[widthIdx]?.multiplier
 
   const liveMult = live?.multiplier ?? play?.multiplier
-  const mult = liveMult ?? estimateMultiplier(halfPct, NOMINAL_ROUND_SEC)
-  const idleMult = estimateMultiplier(halfPct, NOMINAL_ROUND_SEC)
+  // Idle preview reads the cached real multiple for the selected band; the rough estimate is only the
+  // cold-start fallback (and a guard against an unmintable 0 from the chain).
+  const idleMult =
+    quotedMult && quotedMult > 0 ? quotedMult : estimateMultiplier(halfPct, NOMINAL_ROUND_SEC)
+  const mult = liveMult ?? idleMult
 
-  // Band overlay: a live ±halfPct preview while idle (the chart centers it on the smoothed price),
-  // locked to the play's strike bounds once open. The chart animates the lock from a right-side zone
-  // to full width, labels the edges, and tints by whether the live price sits inside.
+  // Band overlay: a live ±halfPct preview while idle (the chart centers it on the smoothed price and
+  // it tracks the live edge), locked to the play's strike bounds only while a round is live. The lock
+  // is gated on the phase (roundLive, defined above), not just on `play`, because `play` lingers after
+  // a settle; without the gate the band would freeze at the finished round's bounds instead of
+  // resuming the live preview.
   const lower = play?.market.lower ? parseFloat(play.market.lower) : null
   const upper = play?.market.upper ? parseFloat(play.market.upper) : null
   const band: BandOverlay | undefined =
-    play && lower != null && upper != null
+    roundLive && lower != null && upper != null
       ? { lower, upper, locked: true }
       : spot != null
         ? { pct: halfPct }
         : undefined
   const showBand = phase !== 'result' || play != null
 
-  // Round-start + settle dots on the line (band center = the entry level). The now-dot rides from the
-  // start dot toward the settle dot, which lands at the buzzer. Same window the countdown uses.
+  // Entry reference = the chart's live price the instant PLAY was hit. The grey ENTRY line and the
+  // round-start dot both sit on it. Falls back to the band center if the capture is somehow missing.
+  const bandCenter = lower != null && upper != null ? (lower + upper) / 2 : null
+  const entryLevel = entryPrice ?? bandCenter
+  const showEntryLine = entryLevel != null && play != null && roundLive
+
+  // Round-start + settle dots on the line, anchored at the entry level. The now-dot rides from the
+  // start dot toward the settle dot, which lands at the buzzer. Same window the countdown uses. Gated
+  // on roundLive too, so the dots clear with the band once the round ends.
   const openedAtMs = play?.openedAt ? Date.parse(play.openedAt) : 0
   const settleMs = openedAtMs ? openedAtMs + (play?.params.duration || NOMINAL_ROUND_SEC) * 1000 : 0
   const markers =
-    play && lower != null && upper != null && openedAtMs
+    roundLive && play && entryLevel != null && openedAtMs
       ? [
-          { t: openedAtMs, p: (lower + upper) / 2 },
-          { t: settleMs, p: (lower + upper) / 2 },
+          { t: openedAtMs, p: entryLevel },
+          { t: settleMs, p: entryLevel },
         ]
       : undefined
 
@@ -267,6 +302,9 @@ export function RangeScreen() {
     finalized.current = false
     wasInside.current = null
     setOverlay('none')
+    // The chart's eased active price (the dot the player is watching) at the press. This is the entry.
+    const entryAt = livePriceRef.current > 0 ? livePriceRef.current : spot
+    setEntryPrice(entryAt && entryAt > 0 ? entryAt : null)
     setPhase('placing')
     haptic('rigid')
     try {
@@ -289,7 +327,7 @@ export function RangeScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, stake, asset, halfPct])
+  }, [phase, canPlay, stake, asset, halfPct, spot])
 
   const doCashOut = useCallback(async () => {
     if (phase !== 'open' || !play) return
@@ -362,12 +400,12 @@ export function RangeScreen() {
   useConsoleControls({
     knob: {
       label: 'RANGE',
-      min: 1,
-      max: 30,
+      min: 0,
+      max: BAND_LADDER.length - 1, // step through the ±0.1% .. ±1.5% ladder
       step: 1,
-      value: widthTenths,
-      onChange: setWidthTenths,
-      format: (v) => `±${(v / 10).toFixed(1)}%`,
+      value: widthIdx,
+      onChange: setWidthIdx,
+      format: (v) => `±${BAND_LADDER[Math.min(v, BAND_LADDER.length - 1)].toFixed(1)}%`,
     },
     numberWheel: {
       label: 'USDC',
@@ -484,10 +522,23 @@ export function RangeScreen() {
           {/* CHART — bounded between the header and the footer, so the band + line never run under
               either. The band overlay rides inside it (live ±pct preview, then locked bounds). */}
           <div className="relative min-h-0 flex-1">
+            {/* COUNTDOWN — a big faded watermark behind the chart line (the canvas clears to transparent,
+                so this shows through). Only while a round runs, tracking the real on-chain buzzer. */}
+            {showReadouts && secsLeft != null && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
+                <span className="tnum font-black leading-none text-text opacity-15 text-[clamp(64px,18vh,128px)]">
+                  {secsLeft}
+                </span>
+              </div>
+            )}
             {asset ? (
               <Chart
                 asset={asset}
-                overlays={showBand && band ? { band, markers } : undefined}
+                overlays={
+                  showBand && band
+                    ? { band, markers, entry: showEntryLine ? entryLevel : undefined }
+                    : undefined
+                }
                 livePriceRef={livePriceRef}
                 onPrice={(p) => setSpot(p)}
                 className="absolute inset-0"
@@ -608,11 +659,11 @@ export function RangeScreen() {
   )
 }
 
-// The live P/L while a band is open. Range settles binary: inside the band at the buzzer wins
-// stake x mult (spread-free), outside loses the stake. So the live number is just that outcome
-// projected onto where the chart's active dot sits right now: inside the band -> the win profit,
-// outside -> -stake. It rides the 60fps dot (livePriceRef) so it flips the instant the line crosses
-// an edge, and Stat rolls it between the two. On a terminal status it shows the real settled P/L.
+// The live P/L while a band is open. Range settles binary: inside the band at the buzzer returns
+// stake x mult (spread-free), outside loses the stake. Shown gross: inside the band -> the full
+// return (stake back + profit), outside -> -stake. It rides the 60fps dot (livePriceRef) so it flips
+// the instant the line crosses an edge, and Stat rolls it between the two. On a terminal status it
+// shows the real settled outcome, also gross (a win adds the stake back onto the net pnl).
 function RangePnl({
   livePriceRef,
   lower,
@@ -632,7 +683,7 @@ function RangePnl({
 }) {
   const terminal = RESULT_TERMINAL.has(status)
   const valid = lower > 0 && upper > lower && stake > 0
-  const profit = Math.max(0, stake * (mult - 1)) // walk-away profit if it lands in the zone
+  const gross = stake * mult // full return if it lands in the zone: stake back + profit
   const [inside, setInside] = useState(true)
   const insideRef = useRef(true)
 
@@ -654,7 +705,14 @@ function RangePnl({
     return () => cancelAnimationFrame(raf)
   }, [terminal, valid, lower, upper, livePriceRef])
 
-  const pnl = terminal ? finalPnl : inside ? profit : -stake
+  // Win shows the gross return (net pnl + stake back), a loss shows the amount lost.
+  const pnl = terminal
+    ? finalPnl >= 0
+      ? finalPnl + stake
+      : finalPnl
+    : inside
+      ? gross
+      : -stake
   const up = pnl >= 0
   return (
     <div className={cnm('tnum text-[40px] font-extrabold leading-none', up ? 'text-up' : 'text-down')}>
@@ -674,9 +732,12 @@ function RangeResult({
 }) {
   const reduced = useReducedMotion()
   const pnl = parseFloat(play.pnl ?? '0')
+  const stake = parseFloat(play.stake ?? '0')
   const won = play.status === 'won'
   const cashed = play.status === 'cashed_out'
   const positive = won || (cashed && pnl >= 0)
+  // Gross framing: a win shows the full return (stake back + profit), a loss shows the amount lost.
+  const shown = pnl >= 0 ? pnl + stake : pnl
   const head = won ? 'IN THE ZONE' : cashed ? 'CASHED OUT' : 'OUT OF RANGE'
   const lo = play.market.lower ? parseFloat(play.market.lower) : null
   const hi = play.market.upper ? parseFloat(play.market.upper) : null
@@ -710,7 +771,7 @@ function RangeResult({
           positive ? 'text-up' : 'text-down',
         )}
       >
-        {pnl >= 0 ? '+' : '-'}$<Stat value={Math.abs(pnl)} />
+        {shown >= 0 ? '+' : '-'}$<Stat value={Math.abs(shown)} />
       </motion.div>
       {lo != null && hi != null && (
         <div className="font-mono text-[12px] uppercase tracking-[0.12em] text-text-3">

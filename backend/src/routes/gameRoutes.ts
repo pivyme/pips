@@ -9,7 +9,7 @@ import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { EXPIRY_SAFETY_MS, GAME_DURATIONS } from '../config/main-config.ts';
 import { allMarkets, tradeableMarkets } from '../lib/sui/markets.ts';
 import { gameSpot } from '../lib/game-price.ts';
-import { PlayError, httpStatusForPlayError } from '../services/games.ts';
+import { PlayError, httpStatusForPlayError, quoteRangeBatch } from '../services/games.ts';
 import {
   createPlay,
   cashoutPlay,
@@ -68,6 +68,28 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
       return reply.code(200).send({ success: true, error: null, data: { markets } });
     } catch (error) {
       return handleError(reply, 500, 'Could not load markets', 'MARKETS_FAILED', error as Error);
+    }
+  });
+
+  // Pre-mint Range price previews for the whole band ladder, off the live Predict ask for each
+  // grid-snapped band, so the UI shows what it will actually mint instead of a guess. The client
+  // fetches this once on select and caches it. Cheap (one batched devInspect), read-only, no DB.
+  // `widths` is a CSV of full-band widths (percent). Static path, so no collision with the play route.
+  app.get('/games/range/quotes', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const q = request.query as { asset?: string; widths?: string };
+    const asset = (q.asset ?? '').toUpperCase();
+    const widthPcts = (q.widths ?? '')
+      .split(',')
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (!asset || widthPcts.length === 0) {
+      return fail(reply, new PlayError('INVALID_PARAMS', 'asset and widths are required'), 'QUOTE_FAILED', 'Could not price those bands');
+    }
+    try {
+      const quotes = await quoteRangeBatch(asset, widthPcts);
+      return reply.code(200).send({ success: true, error: null, data: { quotes } });
+    } catch (error) {
+      return fail(reply, error, 'QUOTE_FAILED', 'Could not price those bands');
     }
   });
 

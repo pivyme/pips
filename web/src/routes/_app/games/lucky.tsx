@@ -35,7 +35,7 @@ const STAKE_KEY = 'pips_stake_idx'
 // Preferred order for the stacked asset panel (the rest of the live markets follow, capped at 3).
 const PREFERRED = ['BTC', 'SUI', 'ETH', 'SOL']
 const DIR_POOL = ['UP', 'DOWN']
-const MULT_POOL = ['2x', '3x', '5x', '10x', '25x']
+const MULT_POOL = ['2x', '3x', '5x', '10x']
 const SPIN_STOPS = [720, 980, 1240] // staggered reel stops (ms)
 const SPIN_TOTAL = 1320
 // After the reels lock, the dealt chart holds lit + flashed (the slot "locking in" its pick) for this
@@ -72,7 +72,13 @@ type Overlay = 'none' | 'howto' | 'history'
 
 const money = (n: number): string =>
   n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const fmtMult = (n: number): string => `${Number.isInteger(n) ? n : Number(n.toFixed(1))}x`
+// The clean dealt tier (e.g. 10x), not the exact solved multiple (9.2x/10.4x). The solver prices a
+// tier to the nearest live grid strike, so the realized multiple drifts a little either way; on a
+// small stake those cents just read as noise, so the device screen shows the snapped tier. Snaps to
+// the nearest LUCKY tier, matching the backend's achievedTier rule. Keep in sync with solver.ts.
+const LUCKY_TIERS = [2, 3, 5, 10] as const
+const fmtMult = (n: number): string =>
+  `${LUCKY_TIERS.reduce((best, t) => (Math.abs(t - n) < Math.abs(best - n) ? t : best), LUCKY_TIERS[0] as number)}x`
 const sideLabel = (s: Side): string => (s === 'up' ? 'UP' : 'DOWN')
 const priceLabel = (p: number): string =>
   `$${p.toLocaleString('en-US', { maximumFractionDigits: p >= 1000 ? 0 : p >= 1 ? 2 : 4 })}`
@@ -650,7 +656,7 @@ export function LuckyScreen() {
                 runs; it tracks the real on-chain buzzer the timer counts to. */}
             {showReadouts && secsLeft != null && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
-                <span className="tnum font-black leading-none text-text opacity-20 text-[clamp(64px,18vh,128px)]">{secsLeft}</span>
+                <span className="tnum font-black leading-none text-text opacity-15 text-[clamp(64px,18vh,128px)]">{secsLeft}</span>
               </div>
             )}
             {displayAssets.length > 0 ? (
@@ -994,6 +1000,9 @@ function ChartRow({
 function LuckyResult({ play, streak }: { play: PlayDTO; streak: number }) {
   const reduced = useReducedMotion()
   const pnl = parseFloat(play.pnl ?? '0')
+  // Total cash returned (bet + P/L); the payout already folds the stake back in. A loss shows the
+  // stake lost instead.
+  const total = parseFloat(play.payout ?? play.markValue ?? '0')
   const won = play.status === 'won'
   const cashed = play.status === 'cashed_out'
   const positive = won || (cashed && pnl >= 0)
@@ -1009,7 +1018,7 @@ function LuckyResult({ play, streak }: { play: PlayDTO; streak: number }) {
         style={{ textShadow: '0 0 28px currentColor' }}
         className={cnm('tnum text-[56px] font-extrabold leading-none', positive ? 'text-up' : 'text-down')}
       >
-        {pnl >= 0 ? '+' : '-'}$<Stat value={Math.abs(pnl)} />
+        {positive ? <>$<Stat value={total} /></> : <>-$<Stat value={Math.abs(pnl)} /></>}
       </motion.div>
       {won && streak > 0 && (
         <div className="mt-1 inline-flex items-center border border-brand-500/60 px-2 py-0.5 font-mono text-[12px] font-bold uppercase tracking-[0.1em] text-brand-500">

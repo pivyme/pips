@@ -47,6 +47,17 @@ export interface RangeParams {
   duration: number
 }
 
+// Pre-mint Range price preview: the real multiple read off the live Predict ask for the grid-snapped
+// band, so the knob shows what it will actually mint, not a blind estimate.
+export interface RangeQuote {
+  multiplier: number
+  lower: string
+  upper: string
+  entrySpot: string
+  duration: number
+  widthPct: number
+}
+
 export interface PlayDTO {
   id: string
   game: Game
@@ -67,6 +78,7 @@ export interface PlayDTO {
   settledAt?: string
   txMint?: string
   txRedeem?: string
+  txSettle?: string
 }
 
 export interface UserStatsDTO {
@@ -180,6 +192,10 @@ const realApi = {
 
   // markets + plays
   markets: () => request<{ markets: MarketDTO[] }>('GET', '/markets'),
+  // Price the whole band ladder for an asset in one call (full-band widths %). Cached on select so
+  // every band size shows its real multiple instantly, no estimate fallback.
+  rangeQuotes: (asset: string, widthPcts: number[]) =>
+    request<{ quotes: RangeQuote[] }>('GET', `/games/range/quotes?asset=${encodeURIComponent(asset)}&widths=${widthPcts.join(',')}`),
   play: (game: Game, body: Record<string, unknown>) => request<PlayResult>('POST', `/games/${game}/play`, body),
   cashout: (playId: string) => request<CashoutResult>('POST', `/plays/${playId}/cashout`, {}),
   plays: (q: { status?: string; limit?: number } = {}) => {

@@ -211,13 +211,20 @@ export const ORACLE_LIFETIME_MS: number = Number(process.env.PIPS_ORACLE_LIFETIM
 // The LUCKY round target: each play routes to the live oracle expiring nearest this far out and
 // settles there, so rounds stay ~this long regardless of how long the oracles themselves live. Kept
 // short so the loop is a quick thrill: spin (reels ~2s) -> a brief watchable round -> instant settle.
-export const LUCKY_ROUND_MS: number = Number(process.env.PIPS_LUCKY_ROUND_MS) || 15_000;
+export const LUCKY_ROUND_MS: number = Number(process.env.PIPS_LUCKY_ROUND_MS) || 20_000;
 // Minimum oracle life a LUCKY play will route to. The mint runs in the background but must still land
 // before expiry (else EOracleExpired -> the play re-routes/re-racks), so a play never routes to an
 // oracle with less life than this. When the ladder is thin and nothing clears the bar, routing falls
 // back to the longest-lived live oracle instead of failing. Must comfortably exceed the mint time,
 // which spikes on the congested remote node, so this carries real headroom over a fast mint (~2.5s).
 export const LUCKY_MIN_ORACLE_LIFE_MS: number = Number(process.env.PIPS_LUCKY_MIN_ORACLE_LIFE_MS) || 13_000;
+// RANGE round bounds, the hold-the-band game. Unlike LUCKY's quick spin, Range holds longer so the
+// band has time to be tested, but bounded (the old longest-lived pick gave inconsistent ~90s rounds).
+// A play routes to a live oracle expiring inside this window and takes the longest such, so a round
+// lands ~22-30s. The window is narrower than the ladder's rung spacing so it can be momentarily empty;
+// the router just waits a beat for a rung to age into it (see rangeOracle), no ladder change needed.
+export const RANGE_MIN_ORACLE_LIFE_MS: number = Number(process.env.PIPS_RANGE_MIN_ORACLE_LIFE_MS) || 20_000;
+export const RANGE_MAX_ORACLE_LIFE_MS: number = Number(process.env.PIPS_RANGE_MAX_ORACLE_LIFE_MS) || 33_000;
 // Smallest distance a LUCKY target may sit from entry, as a fraction of spot (the solver also floors
 // it at one grid tick). Guarantees every target, even the 2x floor, is a real directional move and
 // never renders on top of the ENTRY line. At the ~3%/round implied vol a 0.15% floor barely moves the
@@ -305,6 +312,8 @@ export default {
   LUCKY_ROUND_MS,
   LUCKY_MIN_ORACLE_LIFE_MS,
   LUCKY_MIN_TARGET_FRAC,
+  RANGE_MIN_ORACLE_LIFE_MS,
+  RANGE_MAX_ORACLE_LIFE_MS,
   ORACLE_LADDER_DEPTH,
   ORACLE_ROLL_MAX_PER_TICK,
   ORACLE_COMPACT_SETTLED,

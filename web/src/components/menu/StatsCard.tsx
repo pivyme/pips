@@ -1,6 +1,8 @@
-import { Pencil } from 'lucide-react'
+import { Check, Copy, Pencil } from 'lucide-react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { UserStatsDTO } from '@/lib/api'
+import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
 
 // The shareable trader card, styled as a little Pips handheld: a bright amber bezel with a
@@ -25,6 +27,22 @@ export function StatsCard({
 }) {
   const net = parseFloat(stats.netPnl)
   const winPct = Math.round(stats.winRate * 100)
+  const [copied, setCopied] = useState(false)
+
+  // Show the truncated address, copy the full one. Brief check on success.
+  const copyAddress = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!address) return
+    haptic('selection')
+    try {
+      await navigator.clipboard.writeText(address)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1400)
+    } catch {
+      const { default: toast } = await import('react-hot-toast')
+      toast.error('Could not copy address')
+    }
+  }
 
   return (
     <div className="trader-bezel overflow-hidden rounded-[26px] p-2.5">
@@ -33,7 +51,21 @@ export function StatsCard({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="truncate text-2xl font-extrabold leading-tight text-white">{displayName}</div>
-            {address && <div className="tnum mt-1 text-xs text-white/45">{shortAddr(address)}</div>}
+            {address && (
+              <button
+                type="button"
+                onClick={copyAddress}
+                aria-label="Copy wallet address"
+                className="tnum mt-1 flex max-w-full items-center gap-1.5 text-xs text-white/45 transition hover:text-white/70 active:scale-95"
+              >
+                <span className="truncate">{shortAddr(address)}</span>
+                {copied ? (
+                  <Check className="h-3 w-3 shrink-0 text-up" strokeWidth={2.6} />
+                ) : (
+                  <Copy className="h-3 w-3 shrink-0" strokeWidth={2.2} />
+                )}
+              </button>
+            )}
           </div>
           {onEdit && (
             <button

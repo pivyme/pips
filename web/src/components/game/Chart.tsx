@@ -16,8 +16,8 @@ export interface ChartBox {
   strong?: boolean
 }
 
-// Range band. Idle: a live ±pct zone around the leading price, drawn ahead on the right.
-// Locked: fixed price bounds carried by the play, which expand to span the full width.
+// Range band. Idle: a live ±pct zone tracking the leading price. Locked: fixed price bounds carried
+// by the play. Both span the full width, so the band reads the same before and after the lock.
 export type BandOverlay =
   | { pct: number; locked?: false }
   | { lower: number; upper: number; locked: true }
@@ -140,7 +140,6 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
   const seeded = useRef(false) // first-tick guard. A ref, not state: onTick reads it live, so the
   // flat baseline is seeded exactly once (state in the effect closure would be stale and re-seed).
   const range = useRef<{ min: number; max: number }>({ min: 0, max: 1 })
-  const bandFill = useRef(0) // 0 = right-zone (idle), 1 = full width (locked)
   const entryReveal = useRef(0) // 0 -> 1 fade-in as the entry line appears on a new round
   const targetReveal = useRef(0) // 0 -> 1 fade-in as the target line appears on a new round
   const momDir = useRef<'up' | 'down' | 'flat'>('flat') // momentum-arrow state, hysteretic
@@ -192,7 +191,6 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     // demo emits one synchronously) seeds the flat baseline instead of landing as a lone dot.
     points.current = []
     seeded.current = false
-    bandFill.current = 0
     entryReveal.current = 0
     targetReveal.current = 0
     lastTickP.current = 0
@@ -355,10 +353,6 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       const top = center + half
       const y = (p: number) => TOP_PAD + (top - p) / span * plotH
 
-      // Band right-zone -> full-width ease when the play locks.
-      const fillTarget = ov?.band?.locked ? 1 : 0
-      if (continuous) bandFill.current += (fillTarget - bandFill.current) * FILL_SMOOTH
-      else bandFill.current = fillTarget
       const entryTarget = ov?.entry != null ? 1 : 0
       if (continuous) entryReveal.current += (entryTarget - entryReveal.current) * FILL_SMOOTH
       else entryReveal.current = entryTarget
@@ -380,7 +374,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       }
 
       // Overlays sit under the line.
-      drawOverlays(ctx, ov, band, { w, h, nowX, fill: bandFill.current, entryReveal: entryReveal.current, targetReveal: targetReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
+      drawOverlays(ctx, ov, band, { w, h, nowX, entryReveal: entryReveal.current, targetReveal: targetReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
 
       // Build the visible line. Continuous: x by real time. Reduced: x by index step.
       const yDisp = y(display.current)
@@ -596,9 +590,9 @@ function drawOverlays(
   ctx: CanvasRenderingContext2D,
   ov: ChartOverlays | undefined,
   band: { lower: number; upper: number } | null,
-  ctxv: { w: number; h: number; nowX: number; fill: number; entryReveal: number; targetReveal: number; rim: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
+  ctxv: { w: number; h: number; nowX: number; entryReveal: number; targetReveal: number; rim: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
 ) {
-  const { w, h, nowX, fill, entryReveal, targetReveal, rim, price, locked, y, C } = ctxv
+  const { w, h, nowX, entryReveal, targetReveal, rim, price, locked, y, C } = ctxv
 
   // TARGET label rides the RIGHT edge (the amber hero), ENTRY stays on the LEFT. Opposite corners, so
   // the two can never stack into each other the way the old both-on-the-left pair did on a small move.
@@ -608,7 +602,7 @@ function drawOverlays(
   if (band) {
     const top = y(band.upper)
     const bot = y(band.lower)
-    const left = nowX * (1 - fill) // idle: a zone ahead on the right. locked: spans full width.
+    const left = 0 // full width in both states: the band reads the same idle and locked.
     // Once locked, the band reads its own win/lose: the live price inside lifts the amber fill and
     // brightens the edges (you're in the zone); outside dims the fill and tints the crossed edge red.
     // The idle preview stays a neutral amber zone.
@@ -629,8 +623,8 @@ function drawOverlays(
     edge(bot, locked && !inside && price <= band.lower)
     ctx.setLineDash([])
     // Edge price labels, so the exact band is always readable (the etched field-guide detail). Inset
-    // off the rim like ENTRY: once locked the band spans full width (left -> 0), so a bare left+4 sits
-    // under the device's beveled edge. Clamp to the rim-safe inset so the front panel never covers it.
+    // off the rim like ENTRY: the band spans full width (left = 0), so a bare left+4 would sit under
+    // the device's beveled edge. Clamp to the rim-safe inset so the front panel never covers it.
     const labelLX = Math.max(left, rim) + 4
     ctx.save()
     ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'

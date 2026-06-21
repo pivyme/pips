@@ -22,4 +22,6 @@ export const explorerTxUrl = (digest: string): string =>
     : `https://suiscan.xyz/${NETWORK}/tx/${digest}`
 
 export const explorerObjectUrl = (id: string): string =>
-  `https://suiscan.xyz/${NETWORK}/object/${id}`
+  NETWORK === 'localnet'
+    ? `https://custom.suiscan.xyz/custom/object/${id}?network=${encodeURIComponent(PUBLIC_LOCALNET_RPC_URL)}`
+    : `https://suiscan.xyz/${NETWORK}/object/${id}`
