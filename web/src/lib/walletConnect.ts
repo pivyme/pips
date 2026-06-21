@@ -1,11 +1,53 @@
-// Native Sui wallet connect, the thin client half of the custodial login (see backend
-// services/auth.ts). We use the Wallet Standard directly (not @mysten/dapp-kit) because all we need
-// is: list installed Sui wallets, connect one, and have it sign ONE personal message (the login
-// nonce). The connected wallet never signs a transaction, the server-held custodial play wallet does
-// all on-chain work, so this stays tiny and avoids the dapp-kit lit/SSR/provider weight.
+// Native Sui wallet connect is PARKED. We ship Privy-only for now, so the live code below is
+// commented out and replaced with disabled stubs that keep the door (LandingOverlay) and the auth
+// context compiling. The "Connect Sui Wallet" CTA in LandingOverlay is already commented out to match.
 //
-// Everything here touches `window` only inside functions (getWallets dispatches a window event), so
-// the module is safe to import in the SSR tree; just never CALL these during render on the server.
+// Why parked: the real implementation imports `@mysten/wallet-standard`, which is only a transitive
+// dep of `@mysten/sui` (not a declared dependency), so the production bundler can't resolve it as a
+// bare import and the Vercel build fails. Privy needs none of it.
+//
+// To bring native wallet connect back: uncomment the real implementation block at the bottom, delete
+// the stubs above it, add `@mysten/wallet-standard` to package.json, uncomment the CTA + picker in
+// LandingOverlay, and flip VITE_WALLET_CONNECT_ENABLED to 'true'.
+
+export type SuiWallet = { name: string; icon?: string }
+
+export function listSuiWallets(): SuiWallet[] {
+  return []
+}
+
+export function onWalletsChange(_cb: () => void): () => void {
+  return () => {}
+}
+
+export async function connectWallet(_wallet: SuiWallet): Promise<{ address: string }> {
+  throw new Error('Native wallet connect is disabled (Privy-only build)')
+}
+
+export async function signLoginMessage(
+  _wallet: SuiWallet,
+  _account: { address: string },
+  _message: string,
+): Promise<string> {
+  throw new Error('Native wallet connect is disabled (Privy-only build)')
+}
+
+// Pure, no external deps. Kept live so error handling elsewhere still reads naturally.
+export function isUserRejection(e: unknown): boolean {
+  const m = (e instanceof Error ? e.message : String(e)).toLowerCase()
+  return /reject|denied|cancel|declin|user (closed|exited)/.test(m)
+}
+
+/* ---- Real implementation, parked. Uncomment to restore native Sui wallet connect. ----
+
+The thin client half of the custodial login (see backend services/auth.ts). We use the Wallet
+Standard directly (not @mysten/dapp-kit) because all we need is: list installed Sui wallets, connect
+one, and have it sign ONE personal message (the login nonce). The connected wallet never signs a
+transaction, the server-held custodial play wallet does all on-chain work, so this stays tiny and
+avoids the dapp-kit lit/SSR/provider weight.
+
+Everything here touches `window` only inside functions (getWallets dispatches a window event), so the
+module is safe to import in the SSR tree; just never CALL these during render on the server.
 
 import { getWallets, StandardConnect, SuiSignPersonalMessage } from '@mysten/wallet-standard'
 import type { Wallet, WalletAccount } from '@mysten/wallet-standard'
@@ -66,9 +108,4 @@ export async function signLoginMessage(wallet: SuiWallet, account: WalletAccount
   return signature
 }
 
-// True when the thrown error is the user dismissing the wallet popup, so the UI can stay quiet
-// instead of flashing an error toast.
-export function isUserRejection(e: unknown): boolean {
-  const m = (e instanceof Error ? e.message : String(e)).toLowerCase()
-  return /reject|denied|cancel|declin|user (closed|exited)/.test(m)
-}
+---- end parked implementation ---- */
