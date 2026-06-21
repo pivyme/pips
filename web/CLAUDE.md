@@ -365,8 +365,8 @@ function MyComponent() {
 
 ## Deployment
 
-- **Vercel**: This is a monorepo, so set the project **Root Directory to `web`** in Vercel settings. Framework preset: Vite. Build command: `bun run build`. Output: `.output`.
-- **Other platforms**: Run `bun run build` and deploy `.output/` directory.
+- **Vercel**: This is a monorepo, so set the project **Root Directory to `web`** in Vercel settings. The rest is pinned in [`web/vercel.json`](./vercel.json): **Framework preset `tanstack-start`** (NOT Vite, or Vercel serves a static dir and every SSR route 404s), build `bun run build`, install `bun install`. This is a TanStack Start (SSR) app: the build runs Nitro, which on Vercel emits `.vercel/output` (the Build Output API) with the server as a Vercel Function. Do **not** set an Output Directory override, the Build Output API is the artifact. Leave the dashboard Framework Preset to match (or let `vercel.json` win).
+- **Other platforms**: Run `bun run build`; the default Nitro node-server preset writes `.output/` (server + `public/`). Serve `.output/server/index.mjs`.
 
 ## Important Notes
 

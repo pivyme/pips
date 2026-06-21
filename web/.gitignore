@@ -4,6 +4,7 @@
 .wrangler
 .output
 .vinxi
+.vercel
 
 # Visual E2E artifacts
 e2e-screenshots/
