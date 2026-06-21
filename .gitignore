@@ -61,23 +61,10 @@ ehthumbs.db
 .temp/
 .tmp/
 
-# ── Remotion launch video (heavy asset workspace, not part of the app) ─
-# remotion/
-
-# ── BigDev autonomous build loop ───────────────────────────
-# plans/, TODO.md, the scripts, and requirements-log.md ARE tracked (project memory).
-# Only the transient runtime artifacts are ignored.
-bigdev/claude/auto-build-logs/
-bigdev/claude/auto-build.lock
-bigdev/claude/inject.md
-
-# ── BigDev autonomous review loop ──────────────────────────
-# plans/review/, REVIEW-TODO.md, the scripts, and review-requirements-log.md ARE
-# tracked (project memory). Only transient runtime artifacts are ignored.
-bigdev/claude/auto-review-logs/
-bigdev/claude/auto-review.lock
-bigdev/claude/review-inject.md
-bigdev/claude/review-state.json
-bigdev/claude/review-dirty.json
-bigdev/claude/audit-cache/
-bigdev/e2e-screenshots/
+# ── Local-only workspaces (kept on disk, intentionally untracked) ──────
+# Internal agent context, the planning/build loops, design docs, and the
+# heavy Remotion video workspace. These stay local, none belong in the repo.
+/.claude/
+/bigdev/
+/docs/
+/remotion/
