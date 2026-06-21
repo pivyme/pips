@@ -251,13 +251,29 @@ export const ORACLE_COMPACT_SETTLED: boolean = process.env.PIPS_ORACLE_COMPACT_S
 
 // Devnet faucet top-up worker. On devnet the public faucet is the ONLY SUI source, and devnet is
 // wiped ~weekly, so the crucial wallets can run dry and stall plays/redeems/payouts. This worker
-// keeps them (operator, settlement, treasury, sponsor) and any extra addresses funded: every few
-// minutes it reads each balance and faucets only the ones below the floor (so it respects the
-// per-IP rate limit and never spams a funded wallet). Devnet ONLY: no-op on localnet/mainnet/testnet.
-// DEVNET_FAUCET_EXTRA defaults to the owner's personal address; override to your own list.
+// keeps them (operator, settlement, treasury, sponsor) and any extra addresses funded: every minute
+// it reads each balance and, for any below the floor, faucets repeatedly until it reaches the target,
+// VERIFYING each drip actually landed (the public devnet faucet silently rate-limits, which used to
+// leave the operator wedged below its gas budget while we logged a false "topped up"). Devnet ONLY:
+// no-op on localnet/mainnet/testnet. DEVNET_FAUCET_EXTRA defaults to the owner's personal address.
+//
+// DEVNET_FAUCET_URL overrides the faucet host. The public faucet (getFaucetHost('devnet')) is
+// rate-limited, so for a stable operator point this at a no-rate-limit faucet; the worker speaks the
+// standard Sui faucet shape (v2 `/v2/gas`, v1 `/gas` FixedAmountRequest). TARGET must sit comfortably
+// above the operator gas budget (1 SUI) so the operator never starves between drips.
 export const DEVNET_FAUCET_ENABLED: boolean = process.env.PIPS_DEVNET_FAUCET_ENABLED !== 'false';
-export const DEVNET_FAUCET_MIN_SUI: number = Number(process.env.PIPS_DEVNET_FAUCET_MIN_SUI) || 5;
-export const DEVNET_FAUCET_CRON: string = process.env.PIPS_DEVNET_FAUCET_CRON || '*/5 * * * *';
+export const DEVNET_FAUCET_URL: string = (process.env.PIPS_DEVNET_FAUCET_URL || '').trim().replace(/\/$/, '');
+// Aggressive by default: the operator burns SUI fast (oracle storage), so keep it stacked high. Refill
+// whenever it dips below MIN, all the way back up to TARGET. These only make sense against a
+// no-rate-limit faucet (PIPS_DEVNET_FAUCET_URL); the public faucet will rate-limit long before TARGET.
+export const DEVNET_FAUCET_MIN_SUI: number = Number(process.env.PIPS_DEVNET_FAUCET_MIN_SUI) || 1000;
+export const DEVNET_FAUCET_TARGET_SUI: number = Number(process.env.PIPS_DEVNET_FAUCET_TARGET_SUI) || 5000;
+// Requests fire in parallel batches so a high TARGET fills in seconds. BATCH = concurrent requests per
+// round; MAX_REQUESTS caps total requests per wallet per tick (a cold fill from 0 to TARGET).
+export const DEVNET_FAUCET_BATCH: number = Number(process.env.PIPS_DEVNET_FAUCET_BATCH) || 20;
+export const DEVNET_FAUCET_MAX_REQUESTS: number = Number(process.env.PIPS_DEVNET_FAUCET_MAX_REQUESTS) || 2000;
+export const DEVNET_FAUCET_GAP_MS: number = Number(process.env.PIPS_DEVNET_FAUCET_GAP_MS) || 250;
+export const DEVNET_FAUCET_CRON: string = process.env.PIPS_DEVNET_FAUCET_CRON || '*/1 * * * *';
 export const DEVNET_FAUCET_EXTRA: string[] = (
   process.env.PIPS_DEVNET_FAUCET_EXTRA || '0x4eddfba6fcb9a6c5e14476299a03173fdcaf0bbc06cac505db262ee27eea4a0c'
 )
@@ -340,7 +356,12 @@ export default {
   ORACLE_ROLL_MAX_PER_TICK,
   ORACLE_COMPACT_SETTLED,
   DEVNET_FAUCET_ENABLED,
+  DEVNET_FAUCET_URL,
   DEVNET_FAUCET_MIN_SUI,
+  DEVNET_FAUCET_TARGET_SUI,
+  DEVNET_FAUCET_BATCH,
+  DEVNET_FAUCET_MAX_REQUESTS,
+  DEVNET_FAUCET_GAP_MS,
   DEVNET_FAUCET_CRON,
   DEVNET_FAUCET_EXTRA,
   PREDICT_PACKAGE_ID,

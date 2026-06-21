@@ -61,6 +61,10 @@ interface ConsoleCanvasProps {
   // the x/y sliders (exportRot, radians). Forces preserveDrawingBuffer so the canvas reads out to PNG.
   exportMode?: boolean
   exportRot?: { x: number; y: number }
+  // /export "Game screens": a snapshot of a real game screen, painted onto the 3D screen mesh as an
+  // emissive map. Lets the export tool pose the handheld holding a live game and spin it in full 3D
+  // (the HTML screen layer can't follow a spin, the textured mesh can). Customize/export path only.
+  screenTexture?: string | null
   // Done sequence: flip `outro` true and the device snaps front-on to the exact game position with
   // the screen black, then `onOutroComplete` fires (the studio commits + leaves, and the game fades
   // its own screen content in).
@@ -100,6 +104,7 @@ export default function ConsoleCanvas({
   theme,
   exportMode = false,
   exportRot,
+  screenTexture = null,
   outro = false,
   onOutroComplete,
   screenContentVisible = true,
@@ -123,6 +128,8 @@ export default function ConsoleCanvas({
   viewRef.current = view
   const exportRotRef = useRef(exportRot)
   exportRotRef.current = exportRot
+  const screenTexRef = useRef(screenTexture)
+  screenTexRef.current = screenTexture
   const activeRef = useRef(active)
   activeRef.current = active
   const reducedMotionRef = useRef(reducedMotion)
@@ -136,6 +143,8 @@ export default function ConsoleCanvas({
   const applyViewRef = useRef<(v?: ConsoleView) => void>(() => {})
   // Same pattern for the skin: the [theme] effect repaints the live materials, no rebuild.
   const applyThemeRef = useRef<(t?: ConsoleTheme) => void>(() => {})
+  // /export only: the [screenTexture] effect paints a game snapshot onto the screen mesh, no rebuild.
+  const applyScreenTextureRef = useRef<(url?: string | null) => void>(() => {})
   // And for the Done outro: the [outro] effect arms the snap-to-screen + power-on sequence.
   const applyOutroRef = useRef<(on: boolean) => void>(() => {})
   const applyActiveRef = useRef<(on: boolean) => void>(() => {})
@@ -682,6 +691,43 @@ export default function ConsoleCanvas({
     // (an HTML layer couldn't follow the spin).
     screenMesh.visible = customize
     device.add(screenMesh)
+
+    // /export: paint a game-screen snapshot onto the mesh as an emissive map, so it glows like a powered
+    // display regardless of scene lighting and spins with the body. The bare-device shot leaves it null
+    // (matte off-screen). Disposes the prior texture so the ~1s snapshot refresh never leaks GPU memory.
+    let screenTex: THREE.Texture | null = null
+    let screenTexGen = 0 // supersedes in-flight async loads, so a later clear/snapshot always wins the race
+    const screenTexLoader = new THREE.TextureLoader()
+    const applyScreenTexture = (url?: string | null) => {
+      const gen = ++screenTexGen
+      if (!url) {
+        matScreen.emissiveMap = null
+        matScreen.emissive.setHex(0x000000)
+        matScreen.needsUpdate = true
+        screenTex?.dispose()
+        screenTex = null
+        dirty = true
+        return
+      }
+      screenTexLoader.load(url, (tex) => {
+        if (gen !== screenTexGen) {
+          tex.dispose() // a newer apply (or a clear) landed while this decoded; drop this one
+          return
+        }
+        tex.colorSpace = THREE.SRGBColorSpace
+        tex.anisotropy = MAXANISO
+        screenTex?.dispose()
+        screenTex = tex
+        matScreen.emissive.setHex(0xffffff)
+        matScreen.emissiveMap = tex
+        matScreen.emissiveIntensity = 1
+        matScreen.needsUpdate = true
+        screenMesh.visible = true
+        dirty = true
+      })
+    }
+    applyScreenTextureRef.current = applyScreenTexture
+    applyScreenTexture(screenTexRef.current)
 
     // Screen cutout in world space — projected to pixels each resize to place the HTML layer.
     // Reassigned by relayout() when the screen stretches to fill a tall frame.
@@ -2845,6 +2891,7 @@ export default function ConsoleCanvas({
       skinCache.forEach((t) => t.dispose())
       matLogoDark.dispose()
       matLogoWhite.dispose()
+      screenTex?.dispose()
       renderer.dispose()
       audio.dispose()
     }
@@ -2861,6 +2908,11 @@ export default function ConsoleCanvas({
   useEffect(() => {
     applyThemeRef.current(theme)
   }, [theme])
+
+  // Repaint the screen snapshot whenever it refreshes (/export only, no rebuild).
+  useEffect(() => {
+    applyScreenTextureRef.current(screenTexture)
+  }, [screenTexture])
 
   // Arm / disarm the Done outro.
   useEffect(() => {
