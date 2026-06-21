@@ -39,6 +39,16 @@ export function setSoundEnabled(value: boolean): void {
   }
 }
 
+// Unlock the synth AudioContext on the first real user gesture. Every voice resumes the context
+// per-call, but those calls fire after an async settle, which is outside the gesture window on
+// mobile Safari and silently fails to unlock. The bed/stings then stay dead on a phone even though
+// they work on a lenient desktop. Call this from the shell's first pointerdown (next to the device
+// SFX unlock) so the context is live before any sound is asked for.
+export function unlockAudio(): void {
+  const ac = audio()
+  if (ac && ac.state === 'suspended') void ac.resume()
+}
+
 // A short percussive blip at a frequency, shaped by a quick attack + exponential decay.
 function blip(ac: AudioContext, freq: number, start: number, dur: number, gain = 0.06): void {
   const osc = ac.createOscillator()

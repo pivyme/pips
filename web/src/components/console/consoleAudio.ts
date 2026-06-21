@@ -81,24 +81,30 @@ export function createAudio() {
 
   async function loadSfx() {
     if (!actx) return
-    const load = async (path: string) => {
-      const ab = await fetch(path).then(r => r.arrayBuffer())
-      return actx!.decodeAudioData(ab)
+    // Paths are case-sensitive in production (Vercel/Linux); macOS local is not, which hid a
+    // mismatch here. Match the files on disk exactly. Each sample loads independently so one bad
+    // asset can't take the rest down (a shared Promise.all reject did exactly that), and any
+    // failure is logged instead of swallowed. The r.ok check stops an HTML 404 fallback from
+    // being fed into decodeAudioData as if it were audio.
+    const load = async (key: SfxKey, path: string) => {
+      try {
+        const r = await fetch(path)
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        sfx[key] = await actx!.decodeAudioData(await r.arrayBuffer())
+      } catch (e) {
+        console.warn(`[consoleAudio] failed to load ${path}`, e)
+      }
     }
-    const [mp, mr, ap, ar, pp, pr, kn, sr] = await Promise.all([
-      load('/sounds/MAIN_PRESS.MP3'),
-      load('/sounds/MAIN_RELEASE.MP3'),
-      load('/sounds/ACTION_PRESS.MP3'),
-      load('/sounds/ACTION_RELEASE.MP3'),
-      load('/sounds/PILL_PRESS.MP3'),
-      load('/sounds/PILL_RELEASE.MP3'),
-      load('/sounds/KNOB_RUBBER.MP3'),
-      load('/sounds/SMALL_ROLLER.MP3'),
+    await Promise.all([
+      load('mainPress', '/sounds/MAIN_PRESS.MP3'),
+      load('mainRelease', '/sounds/MAIN_RELEASE.MP3'),
+      load('actionPress', '/sounds/ACTION_PRESS.MP3'),
+      load('actionRelease', '/sounds/ACTION_RELEASE.MP3'),
+      load('pillPress', '/sounds/PILL_PRESS.MP3'),
+      load('pillRelease', '/sounds/PILL_RELEASE.MP3'),
+      load('knob', '/sounds/KNOB_RUBBER.mp3'),
+      load('roller', '/sounds/SMALL_ROLLER.MP3'),
     ])
-    sfx.mainPress = mp; sfx.mainRelease = mr
-    sfx.actionPress = ap; sfx.actionRelease = ar
-    sfx.pillPress = pp; sfx.pillRelease = pr
-    sfx.knob = kn; sfx.roller = sr
   }
 
   function nextCents(profile: ControlProfile, previous?: Variation) {

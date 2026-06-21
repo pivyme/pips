@@ -20,6 +20,7 @@ import {
   createInternals,
 } from './consoleElements'
 import { createAudio } from './consoleAudio'
+import { unlockAudio } from '@/lib/sound'
 import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
 import { themeBackdrop, type ConsoleTheme } from './themes'
 
@@ -2173,6 +2174,7 @@ export default function ConsoleCanvas({
     // Arrow consts (not hoisted declarations) so the post-guard non-null narrowing of canvas/hint holds.
     const onPointerDown = (e: PointerEvent) => {
       audio.resumeAudio()
+      unlockAudio() // unlock the synth bus (bed/stings) on the same gesture; mobile Safari needs it
       hint.style.opacity = '0'
       // In the studio the controls don't fire; the whole device is a turntable. Once the Done outro
       // is rolling, it's locked.
