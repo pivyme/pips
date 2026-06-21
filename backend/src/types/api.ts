@@ -114,12 +114,13 @@ export interface LeaderboardPnlEntryDTO {
   isYou: boolean;
 }
 
-// A per-game winners row (Lucky / Range), ranked by summed PnL for that game.
+// A per-game ranked row (Lucky / Range), by summed PnL for that game. Used for both boards: signed
+// so a gainers row reads positive and a rekt row reads negative.
 export interface LeaderboardGameEntryDTO {
   rank: number;
   username: string | null;
   displayName: string;
-  pnl: string; // summed DUSDC for this game (positive: these are the winners)
+  pnl: string; // signed summed DUSDC for this game (gainers positive, rekt negative)
   plays: number; // settled plays of this game
   isYou: boolean;
 }
@@ -145,9 +146,10 @@ export interface GlobalLeaderboardDTO {
   };
 }
 
-// GET /leaderboard/game/:game
+// GET /leaderboard/game/:game -> the two per-game boards: top gainers and top REKT.
 export interface GameLeaderboardDTO {
-  entries: LeaderboardGameEntryDTO[];
+  entries: LeaderboardGameEntryDTO[]; // top gainers, most profit first
+  rekt: LeaderboardGameEntryDTO[]; // top REKT, deepest in the red first
 }
 
 // GET /leaderboard/minigame/:game

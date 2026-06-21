@@ -5,10 +5,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
 import { Chart, type BandOverlay } from '@/components/game/Chart'
-import { Cell, GameScreen, ScreenMessage } from '@/components/game/screen'
+import { Cell, GameScreen, ScreenMessage, ScreenOverlay } from '@/components/game/screen'
 import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
 import { Stat } from '@/components/Stat'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
+import { useLocalStorage } from '@/hooks/useLocalStorage'
+import { useLiveMarkets } from '@/hooks/useLiveMarkets'
 import { haptic } from '@/lib/haptics'
 import {
   startRangeBgm,
@@ -21,7 +23,6 @@ import {
 } from '@/lib/sound'
 import { api, streamPlay, type PlayDTO, type PlayStatus } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
-import { explorerTxUrl } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
@@ -39,6 +40,9 @@ export const Route = createFileRoute('/_app/games/range')({
 
 // Stake ladder, scrubbed on the number wheel and clamped to the live balance (within MIN/MAX_STAKE).
 const STAKE_LADDER = [1, 5, 10, 25, 50, 100] as const
+// Shared persisted stake index (Lucky + the home idle wheel write the same key), so the chosen chip
+// stays put across navigation and reloads instead of resetting to a default each mount.
+const STAKE_KEY = 'pips_stake_idx'
 // Band ladder: the ± half-band sizes the knob steps through (percent). Tighter pays more.
 const BAND_LADDER = [0.1, 0.2, 0.5, 1, 1.5] as const
 const FALLBACK_ASSETS = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
@@ -93,7 +97,8 @@ export function RangeScreen() {
   const qc = useQueryClient()
 
   const [widthIdx, setWidthIdx] = useState(3) // knob index into BAND_LADDER (default ±1.0%)
-  const [stakeIdx, setStakeIdx] = useState(2)
+  // One persistent stake shared with Lucky + the home wheel (same ladder), so it stays put across nav.
+  const [stakeIdx, setStakeIdx] = useLocalStorage(STAKE_KEY, 2)
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null) // the player's pick, by symbol
   const [phase, setPhase] = useState<Phase>('idle')
   const [play, setPlay] = useState<PlayDTO | null>(null)
@@ -111,16 +116,9 @@ export function RangeScreen() {
   // reads it to track the line at 60fps instead of the laggy ~2s backend mark.
   const livePriceRef = useRef(0)
 
-  const marketsQ = useQuery({
-    queryKey: ['markets'],
-    queryFn: () => api.markets(),
-    refetchInterval: 10_000,
-  })
+  // Shared feed: fast poll + grace so a ladder roll never flashes "no markets" at the player.
+  const { liveAssets, noLiveMarket, isLoading: marketsLoading, isError: marketsError } = useLiveMarkets()
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
-  const markets = marketsQ.data?.markets ?? []
-  const liveAssets = markets.filter((m) => m.live).map((m) => m.asset)
-  const noLiveMarket =
-    !marketsQ.isLoading && !marketsQ.isError && liveAssets.length === 0
   const streak = statsQ.data?.stats.currentStreak ?? 0
 
   const assets = liveAssets.length ? liveAssets : FALLBACK_ASSETS
@@ -388,10 +386,15 @@ export function RangeScreen() {
     const i = assets.indexOf(activeAsset)
     setSelectedAsset(assets[(i + 1) % assets.length])
   }, [assets, activeAsset])
-  const toggleHowto = useCallback(() => {
+  // The left cap is a rotary through the info screens: game -> how to -> leaderboard -> game. Each
+  // press advances one step and the label names where the NEXT press lands, so it reads as a dial
+  // between the two info pages and back to the live game. Tapping an open overlay's backdrop also
+  // resets to 'none', which lands the cap back on HOW TO, so the two ways out stay in sync.
+  const rotateInfo = useCallback(() => {
     haptic('selection')
-    setOverlay((o) => (o === 'howto' ? 'none' : 'howto'))
+    setOverlay((o) => (o === 'none' ? 'howto' : o === 'howto' ? 'board' : 'none'))
   }, [])
+  const infoLabel = overlay === 'none' ? 'HOW TO' : overlay === 'howto' ? 'RANKS' : 'GAME'
 
   // The mint lands a beat after PLAY, so CASH OUT only arms once the play is confirmed 'open'
   // on-chain; until then the button reads OPENING (cashing a not-yet-minted play would revert).
@@ -417,7 +420,7 @@ export function RangeScreen() {
       onChange: setStakeIdx,
       format: (v) => `$${STAKE_LADDER[Math.min(v, maxBetIdx)]}`,
     },
-    action1: { label: 'HOW TO', color: 'neutral', onPress: toggleHowto },
+    action1: { label: infoLabel, color: 'neutral', onPress: rotateInfo },
     action2: {
       label: asset,
       color: 'neutral',
@@ -470,22 +473,14 @@ export function RangeScreen() {
   // device's occluded bottom-right (the knob + PLAY body). Rim/notch insets come from ConsoleCanvas.
   return (
     <GameScreen>
-      {marketsQ.isLoading ? (
+      {marketsLoading ? (
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="shimmer h-24 w-2/3" />
         </div>
-      ) : marketsQ.isError ? (
-        <ScreenMessage
-          title="Could not load markets"
-          action="Retry"
-          onAction={() => void marketsQ.refetch()}
-        />
+      ) : marketsError ? (
+        <ScreenMessage title="Could not load markets" />
       ) : noLiveMarket ? (
-        <ScreenMessage
-          title="No live markets right now."
-          action="Retry"
-          onAction={() => void marketsQ.refetch()}
-        />
+        <ScreenMessage title="No live markets right now." />
       ) : (
         <div className="relative flex h-full flex-col">
           {/* HEADER — solid band: market + live price (left), balance / expiry countdown (right). A
@@ -645,13 +640,6 @@ export function RangeScreen() {
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
                     Tighter range, bigger prize
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => { haptic('selection'); setOverlay('board') }}
-                    className="mt-3 inline-flex items-center gap-1 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-text-2 transition-colors active:text-brand-500"
-                  >
-                    Top 10 <span className="text-brand-500">›</span>
-                  </button>
                 </>
               )}
             </div>
@@ -660,10 +648,10 @@ export function RangeScreen() {
       )}
 
       {phase === 'result' && play && (
-        <RangeResult play={play} onDismiss={() => setPhase('idle')} />
+        <RangeResult play={play} />
       )}
-      {overlay === 'howto' && <HowTo onClose={() => setOverlay('none')} />}
-      {overlay === 'board' && <GameLeaderboardOverlay game="range" title="Range" onClose={() => setOverlay('none')} />}
+      {overlay === 'howto' && <HowTo />}
+      {overlay === 'board' && <GameLeaderboardOverlay game="range" title="Range" />}
     </GameScreen>
   )
 }
@@ -731,14 +719,9 @@ function RangePnl({
 }
 
 // The win/loss/cash-out moment. Flat full-screen wash (docs/SCREEN.md: big, flat, momentary, no blur),
-// the §10 copy, the signed amount, the band recap, and the explorer link when it is on-chain.
-function RangeResult({
-  play,
-  onDismiss,
-}: {
-  play: PlayDTO
-  onDismiss: () => void
-}) {
+// the §10 copy, the signed amount, the band recap. The device screen is not clickable, so it is a pure
+// readout: it auto-clears after a beat, and PLAY (the physical button) starts the next round.
+function RangeResult({ play }: { play: PlayDTO }) {
   const reduced = useReducedMotion()
   const pnl = parseFloat(play.pnl ?? '0')
   const stake = parseFloat(play.stake ?? '0')
@@ -750,7 +733,6 @@ function RangeResult({
   const head = won ? 'IN THE ZONE' : cashed ? 'CASHED OUT' : 'OUT OF RANGE'
   const lo = play.market.lower ? parseFloat(play.market.lower) : null
   const hi = play.market.upper ? parseFloat(play.market.upper) : null
-  const digest = play.txRedeem ?? play.txMint
   const pop = reduced
     ? {}
     : {
@@ -759,11 +741,7 @@ function RangeResult({
         transition: { type: 'spring' as const, stiffness: 440, damping: 24 },
       }
   return (
-    <button
-      type="button"
-      onClick={onDismiss}
-      className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/90 text-center"
-    >
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/90 text-center">
       <div
         className={cnm(
           'font-mono text-[13px] font-bold uppercase tracking-[0.2em]',
@@ -792,26 +770,15 @@ function RangeResult({
           Play again
         </div>
       )}
-      {digest && (
-        <a
-          href={explorerTxUrl(digest)}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="mt-1 font-mono text-[11px] uppercase tracking-[0.08em] text-text-3 underline underline-offset-4 transition-colors hover:text-text-2"
-        >
-          View on explorer
-        </a>
-      )}
       <span className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">
-        Tap to continue
+        Press PLAY to go again
       </span>
-    </button>
+    </div>
   )
 }
 
 // HOW TO: a flat in-screen card of the rules. Plain terminology only, no banned words.
-function HowTo({ onClose }: { onClose: () => void }) {
+function HowTo() {
   const lines: Array<[string, string]> = [
     ['BAND', 'Turn the knob to size your price band. Tighter pays more.'],
     ['PLAY', 'Locks the band around the live price.'],
@@ -819,27 +786,15 @@ function HowTo({ onClose }: { onClose: () => void }) {
     ['CASH OUT', 'Take the live value any time before the buzzer.'],
   ]
   return (
-    <button
-      type="button"
-      onClick={onClose}
-      className="absolute inset-0 z-20 flex flex-col justify-center gap-4 bg-black/95 p-[var(--screen-rim,24px)] text-left"
-    >
-      <div className="font-mono text-[13px] font-bold uppercase tracking-[0.2em] text-brand-500">
-        How to play
-      </div>
-      <div className="flex max-w-[80%] flex-col gap-3">
+    <ScreenOverlay title="How to play">
+      <div className="flex w-full flex-col gap-4">
         {lines.map(([k, v]) => (
           <div key={k}>
-            <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-text">
-              {k}
-            </div>
-            <div className="text-[14px] leading-snug text-text-2">{v}</div>
+            <div className="font-mono text-[16px] font-bold uppercase tracking-[0.12em] text-text">{k}</div>
+            <div className="mt-1 text-[15px] leading-snug text-text-2">{v}</div>
           </div>
         ))}
       </div>
-      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">
-        Tap to close
-      </span>
-    </button>
+    </ScreenOverlay>
   )
 }

@@ -8,26 +8,28 @@ import { handleError } from '../utils/errorHandler.ts';
 import { prismaQuery } from '../lib/prisma.ts';
 import { fromDusdcRaw } from '../lib/sui/config.ts';
 import { evaluateMetrics } from '../services/achievements.ts';
+import { computeLedgerStats } from '../services/stats.ts';
 import type { AchievementDTO, Game, UserStatsDTO } from '../types/api.ts';
 
 const money = (raw: bigint): string => fromDusdcRaw(raw).toFixed(2);
 
 export const menuRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
-  // The shareable stats card.
+  // The shareable stats card. Derived live from the Play ledger (the source of truth), never from a
+  // running counter, so the card's Net P&L always matches the sum of the user's own history.
   app.get('/stats', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const s = await prismaQuery.userStats.findUnique({ where: { userId: request.user!.id } });
+      const s = await computeLedgerStats(request.user!.id);
       const stats: UserStatsDTO = {
-        gamesPlayed: s?.gamesPlayed ?? 0,
-        wins: s?.wins ?? 0,
-        losses: s?.losses ?? 0,
-        winRate: s && s.gamesPlayed > 0 ? s.wins / s.gamesPlayed : 0,
-        currentStreak: s?.currentStreak ?? 0,
-        maxStreak: s?.maxStreak ?? 0,
-        totalVolume: money(s?.totalVolume ?? 0n),
-        netPnl: money(s?.netPnl ?? 0n),
-        firstPlayAt: s?.firstPlayAt?.toISOString(),
-        favoriteGame: (s?.favoriteGame as Game) ?? undefined,
+        gamesPlayed: s.gamesPlayed,
+        wins: s.wins,
+        losses: s.losses,
+        winRate: s.gamesPlayed > 0 ? s.wins / s.gamesPlayed : 0,
+        currentStreak: s.currentStreak,
+        maxStreak: s.maxStreak,
+        totalVolume: money(s.totalVolume),
+        netPnl: money(s.netPnl),
+        firstPlayAt: s.firstPlayAt?.toISOString(),
+        favoriteGame: (s.favoriteGame as Game) ?? undefined,
       };
       return reply.code(200).send({ success: true, error: null, data: { stats } });
     } catch (error) {
@@ -39,14 +41,13 @@ export const menuRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   app.get('/achievements', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const userId = request.user!.id;
-      const [catalog, unlocked, stats, plays] = await Promise.all([
+      const [catalog, unlocked, plays] = await Promise.all([
         prismaQuery.achievement.findMany({ orderBy: { sortOrder: 'asc' } }),
         prismaQuery.userAchievement.findMany({ where: { userId } }),
-        prismaQuery.userStats.findUnique({ where: { userId } }),
         prismaQuery.play.findMany({ where: { userId } }),
       ]);
       const unlockedAt = new Map(unlocked.map((u) => [u.achievementSlug, u.unlockedAt]));
-      const metrics = stats ? evaluateMetrics(stats, plays) : {};
+      const metrics = evaluateMetrics(await computeLedgerStats(userId, plays), plays);
 
       const achievements: AchievementDTO[] = catalog.map((a) => {
         const at = unlockedAt.get(a.slug);

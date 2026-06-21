@@ -41,7 +41,7 @@ function ActionButton({
       onPointerDown={() => !unavailable && haptic('medium')}
       onClick={() => !unavailable && onPress()}
       className={cnm(
-        'flex h-full w-full items-center justify-center rounded-md text-center text-sm font-bold uppercase tracking-wide transition-transform',
+        'flex h-full w-full items-center justify-center whitespace-pre-line rounded-md text-center text-sm font-bold uppercase leading-tight tracking-wide transition-transform',
         unavailable ? 'bg-surface/40 text-text-3 border border-line' : colorClasses(spec.color),
       )}
     >
@@ -109,7 +109,7 @@ function StatusStrip({ status, balance }: { status: ConsoleView['status']; balan
         )}
       </span>
       <span className="tnum text-text-2">
-        {balance != null ? `$${formatStringToNumericDecimals(balance)}` : (status?.right ?? 'Pips')}
+        {balance != null ? `$${formatStringToNumericDecimals(balance)}` : (status?.right ?? 'PIPS')}
       </span>
     </div>
   )

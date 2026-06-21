@@ -6,8 +6,9 @@ import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
+import { useLiveMarkets } from '@/hooks/useLiveMarkets'
 import { Chart, type ChartOverlays } from '@/components/game/Chart'
-import { GameScreen, ScreenMessage } from '@/components/game/screen'
+import { GameScreen, ScreenMessage, ScreenOverlay } from '@/components/game/screen'
 import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
 import { Stat } from '@/components/Stat'
 import { haptic } from '@/lib/haptics'
@@ -69,7 +70,7 @@ const RESULT_TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out'])
 
 type Phase = 'idle' | 'placing' | 'spinning' | 'open' | 'cashing' | 'result'
 type Live = { markValue: string; pnl: string; multiplier: number; status: PlayStatus }
-type Overlay = 'none' | 'howto' | 'history' | 'board'
+type Overlay = 'none' | 'howto' | 'board'
 
 const money = (n: number): string =>
   n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -130,24 +131,11 @@ export function LuckyScreen() {
   // can freeze on the exact number the player saw the instant they tapped CASH OUT.
   const liveValueRef = useRef({ value: 0, pnl: 0 })
 
-  const marketsQ = useQuery({ queryKey: ['markets'], queryFn: () => api.markets(), refetchInterval: 10_000 })
+  // spotByAsset feeds each chart its initial price so it paints a live line on mount; allAssets keeps
+  // the stack full when fewer than three are live this instant. Both come from the shared feed, which
+  // graces brief chain blips so a ladder roll never flashes "Market catching up".
+  const { liveAssets, allAssets, spotByAsset, noLiveMarket, isLoading: marketsLoading, isError: marketsError } = useLiveMarkets()
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
-  const markets = marketsQ.data?.markets ?? []
-  // Current spot per asset, straight off the markets query. Fed to each chart as its initial price so
-  // it paints a live line on mount instead of a blank shimmer while the price stream warms up.
-  const spotByAsset = useMemo(() => {
-    const m: Record<string, number> = {}
-    for (const mk of markets) {
-      const s = parseFloat(mk.spot)
-      if (Number.isFinite(s) && s > 0) m[mk.asset] = s
-    }
-    return m
-  }, [markets])
-  const liveAssets = markets.filter((m) => m.live).map((m) => m.asset)
-  // Every asset the backend returned (live or mid-roll); each carries a spot + feed, so any of them
-  // renders a real chart. Used to keep the stack full when fewer than three are live this instant.
-  const allAssets = markets.map((m) => m.asset)
-  const noLiveMarket = !marketsQ.isLoading && !marketsQ.isError && liveAssets.length === 0
   const canPlay = liveAssets.length > 0
   const streak = statsQ.data?.stats.currentStreak ?? 0
 
@@ -523,9 +511,9 @@ export function LuckyScreen() {
     haptic('selection')
     setOverlay((o) => (o === 'howto' ? 'none' : 'howto'))
   }, [])
-  const toggleHistory = useCallback(() => {
+  const toggleBoard = useCallback(() => {
     haptic('selection')
-    setOverlay((o) => (o === 'history' ? 'none' : 'history'))
+    setOverlay((o) => (o === 'board' ? 'none' : 'board'))
   }, [])
 
   // The mint lands a beat after the reels snap, so CASH OUT only arms once the play is confirmed
@@ -552,14 +540,14 @@ export function LuckyScreen() {
       step: 1,
       value: safeBetIdx,
       onChange: setBetIdx,
-      format: (v) => `${BET_LADDER[Math.min(v, maxBetIdx)]}`,
+      format: (v) => `$${BET_LADDER[Math.min(v, maxBetIdx)]}`,
     },
     action1: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
       : { label: 'HOW TO', color: 'neutral', onPress: toggleHowto },
     action2: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
-      : { label: 'HISTORY', color: 'neutral', onPress: toggleHistory },
+      : { label: 'RANKS', color: 'neutral', onPress: toggleBoard },
     main: isResult
       ? { label: 'CONTINUE', color: 'amber', onPress: dismissResult }
       : settling || closing
@@ -583,14 +571,14 @@ export function LuckyScreen() {
   // very bottom, and the readout hangs off the bottom-left as a flat black panel over it.
   return (
     <GameScreen>
-      {marketsQ.isLoading ? (
+      {marketsLoading ? (
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="shimmer h-24 w-2/3" />
         </div>
-      ) : marketsQ.isError ? (
-        <ScreenMessage title="Something slipped" action="Retry" onAction={() => void marketsQ.refetch()} />
+      ) : marketsError ? (
+        <ScreenMessage title="Something slipped" />
       ) : noLiveMarket ? (
-        <ScreenMessage title="Market catching up" action="Retry" onAction={() => void marketsQ.refetch()} />
+        <ScreenMessage title="Market catching up" />
       ) : (
         <div className="relative flex h-full flex-col">
           {/* HEADER — persistent context (price · balance) over the slot band. No foot hairline; the
@@ -755,13 +743,6 @@ export function LuckyScreen() {
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
                     Press the button on the right to spin
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => { haptic('selection'); setOverlay('board') }}
-                    className="mt-3 inline-flex items-center gap-1 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-text-2 transition-colors active:text-brand-500"
-                  >
-                    Top 10 <span className="text-brand-500">›</span>
-                  </button>
                 </>
               )}
             </div>
@@ -770,9 +751,8 @@ export function LuckyScreen() {
       )}
 
       {phase === 'result' && play && <LuckyResult play={play} streak={streak} />}
-      {overlay === 'howto' && <HowTo onClose={() => setOverlay('none')} />}
-      {overlay === 'history' && <History onClose={() => setOverlay('none')} />}
-      {overlay === 'board' && <GameLeaderboardOverlay game="lucky" title="Lucky" onClose={() => setOverlay('none')} />}
+      {overlay === 'howto' && <HowTo />}
+      {overlay === 'board' && <GameLeaderboardOverlay game="lucky" title="Lucky" />}
     </GameScreen>
   )
 }
@@ -1165,7 +1145,7 @@ function LivePnl({
 }
 
 // HOW TO: a flat in-screen card of the rules. Plain terminology only, no banned words.
-function HowTo({ onClose }: { onClose: () => void }) {
+function HowTo() {
   const lines: Array<[string, string]> = [
     ['SPIN', 'Deals an asset, a direction (up or down), and a multiplier.'],
     ['TARGET', 'The price to reach, in your direction. A 2x sits just past your entry, so a small move your way wins. Bigger multipliers sit further out.'],
@@ -1173,75 +1153,16 @@ function HowTo({ onClose }: { onClose: () => void }) {
     ['CASH OUT', 'Take the live value any time before the buzzer. Ahead? Cash out to lock it in before it can turn.'],
   ]
   return (
-    <button
-      type="button"
-      onClick={onClose}
-      className="absolute inset-0 z-20 flex flex-col justify-center gap-4 bg-black/95 p-[var(--screen-rim,24px)] text-left"
-    >
-      <div className="font-mono text-[13px] font-bold uppercase tracking-[0.2em] text-brand-500">How to play</div>
-      <div className="flex max-w-[80%] flex-col gap-3">
+    <ScreenOverlay title="How to play">
+      <div className="flex w-full flex-col gap-4">
         {lines.map(([k, v]) => (
           <div key={k}>
-            <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-text">{k}</div>
-            <div className="text-[14px] leading-snug text-text-2">{v}</div>
+            <div className="font-mono text-[16px] font-bold uppercase tracking-[0.12em] text-text">{k}</div>
+            <div className="mt-1 text-[15px] leading-snug text-text-2">{v}</div>
           </div>
         ))}
       </div>
-      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">Tap to close</span>
-    </button>
+    </ScreenOverlay>
   )
 }
 
-// HISTORY: the player's recent Lucky rounds, newest first. Flat rows split by hairlines.
-function History({ onClose }: { onClose: () => void }) {
-  const q = useQuery({ queryKey: ['plays'], queryFn: () => api.plays({ limit: 30 }) })
-  const plays = (q.data?.plays ?? []).filter((p) => p.game === 'lucky' && p.status !== 'open' && p.status !== 'pending').slice(0, 6)
-  return (
-    <button
-      type="button"
-      onClick={onClose}
-      className="absolute inset-0 z-20 flex flex-col gap-3 bg-black/95 p-[var(--screen-rim,24px)] text-left"
-    >
-      <div className="flex items-center justify-between">
-        <div className="font-mono text-[13px] font-bold uppercase tracking-[0.2em] text-brand-500">History</div>
-        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">Tap to close</span>
-      </div>
-      {q.isLoading ? (
-        <div className="flex flex-col gap-3 pt-1">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="shimmer h-4 w-3/4" />
-          ))}
-        </div>
-      ) : plays.length === 0 ? (
-        <div className="text-[14px] text-text-2">No plays yet. Hit SPIN to start.</div>
-      ) : (
-        <div className="flex max-w-[88%] flex-col divide-y divide-line-strong">
-          {plays.map((p) => (
-            <HistoryRow key={p.id} play={p} />
-          ))}
-        </div>
-      )}
-    </button>
-  )
-}
-
-function HistoryRow({ play }: { play: PlayDTO }) {
-  const lp = play.params as LuckyParams
-  const pnl = parseFloat(play.pnl ?? '0')
-  const won = play.status === 'won' || (play.status === 'cashed_out' && pnl >= 0)
-  const label = play.status === 'won' ? 'WON' : play.status === 'cashed_out' ? 'CASHED' : 'LOST'
-  return (
-    <div className="flex items-center justify-between py-2.5">
-      <div className="flex items-center gap-3">
-        <span className="font-mono text-[13px] font-bold uppercase tracking-[0.06em] text-text">{lp.asset}</span>
-        <span className="font-mono text-[12px] font-bold uppercase tracking-[0.06em] text-brand-500">{fmtMult(play.multiplier)}</span>
-      </div>
-      <div className="text-right">
-        <div className={cnm('font-mono text-[11px] font-bold uppercase tracking-[0.08em]', won ? 'text-up' : 'text-down')}>{label}</div>
-        <div className={cnm('tnum text-[14px] font-bold', pnl >= 0 ? 'text-up' : 'text-down')}>
-          {pnl >= 0 ? '+' : '-'}${money(Math.abs(pnl))}
-        </div>
-      </div>
-    </div>
-  )
-}

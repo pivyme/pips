@@ -139,7 +139,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
       {/* Wordmark up top, small so the device stays the hero. */}
       <motion.img
         src="/assets/logos/pips-yellow-badge-3d.png"
-        alt="Pips"
+        alt="PIPS"
         draggable={false}
         {...rise(0.05)}
         className="mt-[max(28px,calc(env(safe-area-inset-top)+16px))] h-12 w-auto select-none drop-shadow-[0_10px_30px_rgba(0,0,0,0.6)] sm:h-14"

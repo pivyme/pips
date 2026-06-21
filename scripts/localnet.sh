@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pips localnet + DeepBook Predict deploy tool.
+# PIPS localnet + DeepBook Predict deploy tool.
 #
 # Stands up / points the apps at a Sui localnet and deploys our OWN Predict instance end to
 # end: DUSDC + token + deepbook + predict, the vault seed, a live BTC oracle, the mint/redeem
@@ -152,7 +152,7 @@ run_bootstrap() { # $1 = deploy rpc, $2 = "force" | ""
 cmd_setup() {
   require sui "Install it: https://docs.sui.io/guides/developer/getting-started/sui-install"
   require bun "Install it: https://bun.sh"
-  echo "${c_bold}Pips setup${c_rst}  runtime node: $RPC"
+  echo "${c_bold}PIPS setup${c_rst}  runtime node: $RPC"
   wait_for_node
   local deploy; deploy="$(resolve_deploy_rpc || true)"
   if [ -z "$deploy" ]; then
@@ -205,7 +205,7 @@ cmd_up() {
 }
 
 cmd_status() {
-  echo "${c_bold}Pips localnet status${c_rst}"
+  echo "${c_bold}PIPS localnet status${c_rst}"
   echo "  target RPC   $RPC"
   local live; live="$(chain_id)"
   if [ -z "$live" ]; then fail "node unreachable at $RPC"; return; fi
@@ -228,7 +228,7 @@ cmd_status() {
 }
 
 cmd_doctor() {
-  echo "${c_bold}Pips doctor${c_rst}  target node: $RPC"
+  echo "${c_bold}PIPS doctor${c_rst}  target node: $RPC"
   command -v sui >/dev/null 2>&1 && ok "sui CLI $(sui --version 2>/dev/null | awk '{print $2}')" || fail "sui CLI missing"
   command -v bun >/dev/null 2>&1 && ok "bun $(bun --version 2>/dev/null)" || fail "bun missing"
 
@@ -284,7 +284,7 @@ case "${1:-help}" in
   status)   cmd_status ;;
   doctor)   cmd_doctor ;;
   *)
-    echo "Pips localnet + Predict deploy"
+    echo "PIPS localnet + Predict deploy"
     echo
     echo "Usage: scripts/localnet.sh <command>   (target node: $RPC)"
     echo "  setup        one shot: import key, deploy Predict, wire both .env files"

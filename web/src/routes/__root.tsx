@@ -27,18 +27,18 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
         content:
           'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover',
       },
-      { title: 'Pips' },
+      { title: 'PIPS' },
       {
         name: 'description',
         content:
-          'Pips makes trading simple, intuitive, and addictive, like a game. A gamified trading console on Sui.',
+          'PIPS makes trading simple, intuitive, and addictive, like a game. A gamified trading console on Sui.',
       },
-      // Pips owns its dark palette. Extension-level recoloring can force the live Canvas/WebGL
+      // PIPS owns its dark palette. Extension-level recoloring can force the live Canvas/WebGL
       // game surfaces through an expensive full-page filter on every frame.
       { name: 'darkreader-lock', content: '' },
       { name: 'theme-color', content: '#000000' },
       // Social previews
-      { property: 'og:title', content: 'Pips' },
+      { property: 'og:title', content: 'PIPS' },
       {
         property: 'og:description',
         content: 'Trading made simple, intuitive, and addictive, like a game.',
@@ -46,7 +46,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
       { property: 'og:type', content: 'website' },
       { property: 'og:image', content: '/assets/logos/pips-512.png' },
       { name: 'twitter:card', content: 'summary' },
-      { name: 'twitter:title', content: 'Pips' },
+      { name: 'twitter:title', content: 'PIPS' },
       {
         name: 'twitter:description',
         content: 'Trading made simple, intuitive, and addictive, like a game.',
@@ -55,7 +55,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
     ],
     links: [
       { rel: 'stylesheet', href: appCss },
-      // Favicon + app icons, all the 3D Pips mark. PNG for crisp modern rendering, .ico legacy fallback.
+      // Favicon + app icons, all the 3D PIPS mark. PNG for crisp modern rendering, .ico legacy fallback.
       { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/assets/logos/pips-32.png' },
       { rel: 'icon', type: 'image/png', sizes: '192x192', href: '/assets/logos/pips-192.png' },
       { rel: 'icon', href: '/favicon.ico', sizes: '48x48 32x32 16x16' },

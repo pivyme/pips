@@ -118,7 +118,7 @@ function DesignSystemPage() {
           <Link
             to="/"
             className="flex h-10 w-10 items-center justify-center rounded-full bg-surface text-text transition-transform active:scale-95"
-            aria-label="Back to Pips"
+            aria-label="Back to PIPS"
           >
             <ChevronLeft size={20} strokeWidth={2.2} />
           </Link>
@@ -127,7 +127,7 @@ function DesignSystemPage() {
               Reference
             </p>
             <h1 className="truncate text-xl font-extrabold tracking-tight sm:text-2xl">
-              Pips Design System
+              PIPS Design System
             </h1>
           </div>
           <div className="h-10 w-10" />

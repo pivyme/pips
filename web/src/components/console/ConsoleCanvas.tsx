@@ -798,7 +798,7 @@ export default function ConsoleCanvas({
     // Result-blink clock: drives the slow breathing of any action button flagged to pulse.
     let pulseT = 0
 
-    // The main button wears the first glyph of the Pips wordmark, raised proud of the cap face (built
+    // The main button wears the first glyph of the PIPS wordmark, raised proud of the cap face (built
     // once the logo SVG loads, see buildMainGlyph). The glyph is a separate mesh, so the cap stays a
     // solid full-bevel pillow and keeps its glossy, light-catching rim. Cutting the glyph through the
     // cap would force a near-flat bevel (to keep the letter crisp) and kill that gloss.
@@ -978,26 +978,45 @@ export default function ConsoleCanvas({
           curColor = col
           g.clearRect(0, 0, W, H)
           if (text) {
-            g.font = `700 ${FS}px -apple-system,"Segoe UI",system-ui,sans-serif`
             g.fillStyle = col
             g.textAlign = 'center'
-            if (opticalCenter) {
-              g.textBaseline = 'alphabetic'
-              const metrics = g.measureText(text)
-              const y =
-                H / 2 +
-                (metrics.actualBoundingBoxAscent -
-                  metrics.actualBoundingBoxDescent) /
-                  2
-              g.fillText(text, W / 2, y)
-            } else {
+            // A label can ask for two lines with a newline (e.g. a long word like LEADER\nBOARD that
+            // reads tiny on one line at the single-line size). Shrink the font so both lines fit the
+            // face, stack them centered, and size the plane to the WIDEST line so it scales to the text
+            // exactly like a single line does. Single-line labels keep the original path verbatim.
+            const lines = text.split('\n')
+            if (lines.length > 1) {
+              const fs = Math.round(FS * 0.58)
+              g.font = `700 ${fs}px -apple-system,"Segoe UI",system-ui,sans-serif`
               g.textBaseline = 'middle'
-              g.fillText(text, W / 2, H / 2)
+              const lh = fs * 1.06
+              const top = H / 2 - (lh * (lines.length - 1)) / 2
+              lines.forEach((ln, i) => g.fillText(ln, W / 2, top + i * lh))
+              const widest = Math.max(...lines.map((l) => g.measureText(l).width))
+              const tw = Math.min(W, widest + 36)
+              tex.repeat.x = tw / W
+              tex.offset.x = (1 - tw / W) / 2
+              plane.scale.set(worldH * (tw / H), worldH, 1)
+            } else {
+              g.font = `700 ${FS}px -apple-system,"Segoe UI",system-ui,sans-serif`
+              if (opticalCenter) {
+                g.textBaseline = 'alphabetic'
+                const metrics = g.measureText(text)
+                const y =
+                  H / 2 +
+                  (metrics.actualBoundingBoxAscent -
+                    metrics.actualBoundingBoxDescent) /
+                    2
+                g.fillText(text, W / 2, y)
+              } else {
+                g.textBaseline = 'middle'
+                g.fillText(text, W / 2, H / 2)
+              }
+              const tw = Math.min(W, g.measureText(text).width + 36)
+              tex.repeat.x = tw / W
+              tex.offset.x = (1 - tw / W) / 2
+              plane.scale.set(worldH * (tw / H), worldH, 1)
             }
-            const tw = Math.min(W, g.measureText(text).width + 36)
-            tex.repeat.x = tw / W
-            tex.offset.x = (1 - tw / W) / 2
-            plane.scale.set(worldH * (tw / H), worldH, 1)
           }
           tex.needsUpdate = true
         }
@@ -1175,7 +1194,7 @@ export default function ConsoleCanvas({
       }
     })()
 
-    // Live labels: action1 / action2 on their faces. The main button wears the embossed Pips glyph
+    // Live labels: action1 / action2 on their faces. The main button wears the embossed PIPS glyph
     // instead of a text label (carved once the logo SVG loads, see buildMainGlyph).
     // Sits on the screen face under the acrylic. Kept small so even a 6-char label clears the bezel
     // window (the label draws depth-test-free, so it must not overrun the metal frame).
@@ -1420,7 +1439,7 @@ export default function ConsoleCanvas({
       step: 1,
       value: idleNumberValue,
       label: 'USDC',
-      format: (value: number) => String(idleStakes[value]),
+      format: (value: number) => `$${idleStakes[value]}`,
     }
 
     // View state mirrored from the registry. Registered controls remain physically interactive;

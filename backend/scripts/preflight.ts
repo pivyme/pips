@@ -71,7 +71,7 @@ async function ensureLiveOracle(): Promise<{ oracleId: string; capId: string }> 
 
 async function main(): Promise<void> {
   const doPlay = process.argv.includes('--play');
-  console.log(`\nPips preflight (network=testnet, AUTH_MODE=${AUTH_MODE}, asset=${ASSET})\n`);
+  console.log(`\nPIPS preflight (network=testnet, AUTH_MODE=${AUTH_MODE}, asset=${ASSET})\n`);
 
   // --- Static config + funds (read-only) ---
   console.log('Config + funds');

@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { motion } from 'motion/react'
 import { Activity, CandlestickChart, Dices, Target } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
@@ -12,6 +11,7 @@ import { useAuth } from '@/lib/auth'
 import { isDemo } from '@/lib/demo'
 import { haptic } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
+import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { cnm } from '@/utils/style'
 import { displayHandle } from '@/utils/format'
 
@@ -23,8 +23,8 @@ import { displayHandle } from '@/utils/format'
 // Layout follows the L-shaped aperture. The game select (the one interactive thing) takes the
 // full width up top, where the wide rows have room to breathe and never crop. The read-only
 // readout (who you are, streak, chip balance) drops into the bottom-left, the notch-safe zone
-// that is never full width because the knob + PLAY body occludes the bottom-right. Tap a row to
-// launch, or scrub the knob and hit PLAY. The depth (full stats, history) lives in the Menu.
+// that is never full width because the knob + PLAY body occludes the bottom-right. The screen is not
+// clickable: scrub the knob to pick a cartridge and hit PLAY. The depth (full stats, history) lives in the Menu.
 //
 // Inset rule for this L-shaped aperture: the device body masks the outer ~16px, so text sits at
 // RIM (clears the bevel) while the hairlines/fills run full width (they slide under the rim, so
@@ -63,12 +63,15 @@ export function GamesConsole() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const reduced = useReducedMotion()
-  const [sel, setSel] = useState(0)
+  // Remember the last cartridge the player highlighted, so returning to the hub keeps it selected
+  // instead of snapping back to the first row. Stored by route so it survives a reorder / new game.
+  const [selTo, setSelTo] = useLocalStorage('pips_game_sel', ALL[0].to)
+  const sel = Math.max(0, ALL.findIndex((g) => g.to === selTo))
 
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const streak = statsQ.data?.stats.currentStreak ?? 0
 
-  // Live presence over SSE: the ticker moves in real time as players open and close Pips. `online`
+  // Live presence over SSE: the ticker moves in real time as players open and close PIPS. `online`
   // stays null until the first frame lands; `liveOn` tracks the connection so the pip can breathe.
   const [online, setOnline] = useState<number | null>(null)
   const [liveOn, setLiveOn] = useState(false)
@@ -83,11 +86,15 @@ export function GamesConsole() {
     return stop
   }, [user?.id])
 
-  const move = useCallback((next: number) => {
-    setSel(Math.max(0, Math.min(ALL.length - 1, next)))
-  }, [])
+  const move = useCallback(
+    (next: number) => {
+      const i = Math.max(0, Math.min(ALL.length - 1, next))
+      setSelTo(ALL[i].to)
+    },
+    [setSelTo],
+  )
 
-  // Tap a row or hit PLAY both land here. A rigid tick sells picking the cartridge up.
+  // The PLAY button lands here. A rigid tick sells picking the cartridge up.
   const launch = useCallback(
     (i: number) => {
       haptic('rigid')
@@ -143,7 +150,7 @@ export function GamesConsole() {
         {GAMES.map((g, i) => (
           <div key={g.to}>
             {i > 0 && <Rule />}
-            <GameRow index={i + 1} game={g} selected={i === sel} reduced={reduced} onSelect={() => { setSel(i); launch(i) }} />
+            <GameRow index={i + 1} game={g} selected={i === sel} />
           </div>
         ))}
       </div>
@@ -160,7 +167,7 @@ export function GamesConsole() {
           return (
             <div key={g.to}>
               {j > 0 && <Rule />}
-              <MiniRow game={g} selected={i === sel} reduced={reduced} onSelect={() => { setSel(i); launch(i) }} />
+              <MiniRow game={g} selected={i === sel} />
             </div>
           )
         })}
@@ -194,25 +201,20 @@ function GameRow({
   index,
   game,
   selected,
-  reduced,
-  onSelect,
 }: {
   index: number
   game: { icon: LucideIcon; name: string; tag: string }
   selected: boolean
-  reduced: boolean
-  onSelect: () => void
 }) {
   const Icon = game.icon
+  // Pure readout: the device screen is not clickable, so the row only paints selection state. The
+  // knob scrubs it and the PLAY button launches it.
   return (
-    <motion.button
-      type="button"
-      onClick={onSelect}
-      whileTap={reduced ? undefined : { scale: 0.99 }}
+    <div
       className={cnm(
-        'relative flex w-full items-center gap-3.5 py-3.5 text-left transition-colors',
+        'relative flex w-full items-center gap-3.5 py-3.5 text-left',
         RIM,
-        selected ? 'bg-brand-500/[0.13]' : 'hover:bg-white/[0.04]',
+        selected ? 'bg-brand-500/[0.13]' : '',
       )}
     >
       {/* left edge bar marks the selected cartridge, instrument-panel style */}
@@ -224,33 +226,26 @@ function GameRow({
         <div className="truncate font-mono text-[12px] uppercase tracking-[0.08em] text-text-3">{game.tag}</div>
       </div>
       {selected && <span className="font-mono text-lg text-brand-500">▶</span>}
-    </motion.button>
+    </div>
   )
 }
 
 // The minigame row: deliberately smaller than GameRow so the just-for-fun lane reads as secondary.
-// Compact icon, single line, no big slot number. Still knob-selectable and tappable.
+// Compact icon, single line, no big slot number. Knob-selectable, launched with PLAY (not clickable).
 function MiniRow({
   game,
   selected,
-  reduced,
-  onSelect,
 }: {
   game: GameDef
   selected: boolean
-  reduced: boolean
-  onSelect: () => void
 }) {
   const Icon = game.icon
   return (
-    <motion.button
-      type="button"
-      onClick={onSelect}
-      whileTap={reduced ? undefined : { scale: 0.99 }}
+    <div
       className={cnm(
-        'relative flex w-full items-center gap-3 py-2.5 text-left transition-colors',
+        'relative flex w-full items-center gap-3 py-2.5 text-left',
         RIM,
-        selected ? 'bg-brand-500/[0.13]' : 'hover:bg-white/[0.04]',
+        selected ? 'bg-brand-500/[0.13]' : '',
       )}
     >
       {selected && <span className="absolute inset-y-0 left-0 w-0.5 bg-brand-500" />}
@@ -258,7 +253,7 @@ function MiniRow({
       <span className={cnm('text-[15px] font-bold uppercase tracking-[0.04em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</span>
       <span className="min-w-0 flex-1 truncate font-mono text-[11px] uppercase tracking-[0.06em] text-text-3">{game.tag}</span>
       {selected && <span className="font-mono text-sm text-brand-500">▶</span>}
-    </motion.button>
+    </div>
   )
 }
 

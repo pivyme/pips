@@ -142,7 +142,7 @@ export interface LeaderboardGameEntry {
   rank: number
   username: string | null
   displayName: string
-  pnl: string // summed DUSDC for the game, positive
+  pnl: string // signed summed DUSDC for the game (gainers positive, rekt negative)
   plays: number
   isYou: boolean
 }
@@ -159,7 +159,8 @@ export interface GlobalLeaderboard {
   you: { gainerRank: number | null; rektRank: number | null; netPnl: string; gamesPlayed: number }
 }
 export interface GameLeaderboard {
-  entries: LeaderboardGameEntry[]
+  entries: LeaderboardGameEntry[] // top gainers, most profit first
+  rekt: LeaderboardGameEntry[] // top REKT, deepest in the red first
 }
 export interface MinigameLeaderboard {
   entries: LeaderboardScoreEntry[]
@@ -312,7 +313,7 @@ function stream<T>(path: string, onData: (data: T) => void, onError?: () => void
 
 export type PriceTick = { price: string; ts: number }
 export type PlayTick = { markValue: string; pnl: string; multiplier: number; status: PlayStatus; ts: number }
-// Live presence: how many players have Pips open right now. Pushed on every join/leave.
+// Live presence: how many players have PIPS open right now. Pushed on every join/leave.
 export type LiveTick = { online: number }
 
 export const streamPrices = (asset: string, onTick: (t: PriceTick) => void, onError?: () => void): (() => void) =>

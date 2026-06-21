@@ -30,7 +30,7 @@ export interface ConsoleTheme {
 }
 
 // Each skin is one body + one accent (knob + PLAY) + a quiet neutral for the small buttons. Keeps it
-// tasteful, not a toy-box rainbow. Classic is the brand: matte charcoal with the Pips yellow, so the
+// tasteful, not a toy-box rainbow. Classic is the brand: matte charcoal with the PIPS yellow, so the
 // default device reads like the logo.
 export const THEMES: ConsoleTheme[] = [
   {

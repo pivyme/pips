@@ -13,7 +13,7 @@ import { sound, startBgm, stopBgm, hopScore, hopLose, hopResetCombo } from '@/li
 import { cnm } from '@/utils/style'
 
 // Flappy Piper. A one-button flappy minigame (no Sui, no backend): tap the big button to fly the
-// Pips face through scrolling candlesticks. A hit shakes the screen, then drops the character
+// PIPS face through scrolling candlesticks. A hit shakes the screen, then drops the character
 // before the leaderboard appears. Runs on the 3D handheld's L-shaped aperture.
 export const Route = createFileRoute('/_app/games/candle-hop')({ component: CandleHopScreen })
 
@@ -176,7 +176,7 @@ function TitleOverlay({ best, board }: { best: number; board: LeaderboardScoreEn
         <h1 className="text-4xl font-extrabold leading-none tracking-tight text-text">Flappy Piper</h1>
       </div>
       <p className="mt-2 max-w-[82%] text-sm leading-snug text-text-2">
-        Tap to lift Pips, let it fall, and slip through the candle gaps. It moves calmly, but one bad line ends the run.
+        Tap to lift PIPS, let it fall, and slip through the candle gaps. It moves calmly, but one bad line ends the run.
       </p>
       <div className="mt-5 w-full">
         <MinigameBoard rows={board.slice(0, 5)} />

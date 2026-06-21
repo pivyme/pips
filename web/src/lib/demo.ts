@@ -743,8 +743,10 @@ function gameLeaderboardDTO(game: Game): GameLeaderboard {
   const split = game === 'lucky' ? 0.6 : 0.4 // a believable per-game share of each rival's net
   const rows = LB_TRADERS.map((b) => ({ username: b.username as string | null, displayName: b.username, pnl: Math.round(b.netPnl * split), plays: Math.max(1, Math.round(b.games * split)), isYou: false }))
   rows.push({ username: state.username, displayName: DEMO_HANDLE, pnl: Math.round(youPnl), plays: mine.length, isYou: true })
-  const ranked = rows.filter((r) => r.pnl > 0).sort((a, b) => b.pnl - a.pnl).slice(0, 10)
-  return { entries: ranked.map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, pnl: str(r.pnl), plays: r.plays, isYou: r.isYou })) }
+  const row = (r: (typeof rows)[number], i: number) => ({ rank: i + 1, username: r.username, displayName: r.displayName, pnl: str(r.pnl), plays: r.plays, isYou: r.isYou })
+  const gainers = rows.filter((r) => r.pnl > 0).sort((a, b) => b.pnl - a.pnl).slice(0, 10)
+  const rekt = rows.filter((r) => r.pnl < 0).sort((a, b) => a.pnl - b.pnl).slice(0, 10)
+  return { entries: gainers.map(row), rekt: rekt.map(row) }
 }
 
 type ScoreRow = { username: string | null; displayName: string; score: number; isYou: boolean }
@@ -782,7 +784,7 @@ export const demoApi = {
   // the demo client complete.
   authWalletNonce: async (_address: string) => {
     await delay(60)
-    return { message: 'Sign in to Pips (demo)' }
+    return { message: 'Sign in to PIPS (demo)' }
   },
   authWalletVerify: async (_input: unknown) => {
     await delay(120)

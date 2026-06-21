@@ -28,7 +28,7 @@ export function issueWalletNonce(address: string): { message: string } {
   const nonce = randomBytes(16).toString('hex');
   const issued = new Date().toISOString();
   const message = [
-    'Sign in to Pips',
+    'Sign in to PIPS',
     '',
     'This signature proves you own this wallet. It is free and does not move any funds.',
     '',

@@ -1,6 +1,6 @@
-# Pips Contracts (Sui Move)
+# PIPS Contracts (Sui Move)
 
-On-chain logic for Pips. This is the third pillar of the monorepo alongside `web/` and `backend/`.
+On-chain logic for PIPS. This is the third pillar of the monorepo alongside `web/` and `backend/`.
 
 ## What lives here
 

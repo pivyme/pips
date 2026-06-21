@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import { explorerTxUrl } from '@/lib/sui/config'
 import { cnm } from '@/utils/style'
 
 // Shared in-screen pieces for the games: the win/loss result moment and the markets
@@ -61,37 +60,34 @@ export function ScreenCRT() {
   )
 }
 
-export function ResultOverlay({
+// The full-screen info overlay every game shares (How to play, History). One shape so they all read
+// identically: flat black, content top-aligned under a generous top inset (sits high, clears the rim),
+// full-width rows, big readable type, header with the title + a close hint. The device screen is NOT
+// clickable (it renders behind the 3D body, taps hit the physical controls), so the overlay is a pure
+// readout: it opens and closes from the same physical button that toggled it. Scrolls if a long list
+// outgrows the screen. Keeping this chrome in one place is what keeps the overlays consistent.
+export function ScreenOverlay({
   title,
-  tone,
-  digest,
-  onDismiss,
+  subtitle,
+  children,
 }: {
   title: string
-  tone: 'up' | 'down'
-  digest?: string
-  onDismiss: () => void
+  subtitle?: string
+  children: ReactNode
 }) {
   return (
-    <button
-      type="button"
-      onClick={onDismiss}
-      className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur-sm"
-    >
-      <div className={cnm('text-3xl font-extrabold', tone === 'up' ? 'text-up' : 'text-down')}>{title}</div>
-      {digest && (
-        <a
-          href={explorerTxUrl(digest)}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="text-xs font-semibold text-text-3 underline underline-offset-4 transition-colors hover:text-text-2"
-        >
-          View on explorer
-        </a>
-      )}
-      <span className="text-[11px] uppercase tracking-[0.1em] text-text-3">Tap to continue</span>
-    </button>
+    <div className="absolute inset-0 z-20 flex flex-col gap-4 overflow-y-auto bg-black/96 px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-[calc(var(--screen-rim,24px)+2.25rem)] text-left">
+      <div className="flex shrink-0 items-start justify-between gap-3">
+        <div>
+          <div className="font-mono text-[20px] font-bold uppercase tracking-[0.16em] text-brand-500">{title}</div>
+          {subtitle && (
+            <div className="mt-1.5 font-mono text-[12px] font-bold uppercase tracking-[0.14em] text-text-3">{subtitle}</div>
+          )}
+        </div>
+        <span className="mt-1 shrink-0 text-right font-mono text-[10px] uppercase tracking-[0.12em] text-text-3">Press again to close</span>
+      </div>
+      {children}
+    </div>
   )
 }
 
@@ -105,29 +101,17 @@ export function Cell({ label, value }: { label: string; value: string }) {
   )
 }
 
-// The in-device empty/error/stale message. Teenage Engineering instrument language (docs/SCREEN.md):
-// flat black, a red status dot, mono uppercase copy, and a sharp-cornered hairline RETRY, no rounded
-// App-Surface card. Copy is passed in per game.
-export function ScreenMessage({
-  title,
-  action,
-  onAction,
-}: {
-  title: string
-  action: string
-  onAction: () => void
-}) {
+// The in-device empty/error/stale message. The device screen is NOT clickable, so there is no RETRY
+// button to press: the underlying markets query auto-polls (fast while empty) and clears this the
+// instant a market returns, so the only honest affordance is a passive "we're on it" pulse. Teenage
+// Engineering instrument language (docs/SCREEN.md): flat black, a pulsing amber status dot, mono
+// uppercase copy. Copy is passed in per game.
+export function ScreenMessage({ title, hint = 'Reconnecting' }: { title: string; hint?: string }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
-      <span className="h-1.5 w-1.5 rounded-full bg-down" />
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500" />
       <p className="font-mono text-[13px] font-bold uppercase tracking-[0.16em] text-text-2">{title}</p>
-      <button
-        type="button"
-        onClick={onAction}
-        className="border border-line-strong px-4 py-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-brand-500 transition-colors hover:bg-brand-500 hover:text-black"
-      >
-        {action}
-      </button>
+      <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-text-3">{hint}</p>
     </div>
   )
 }

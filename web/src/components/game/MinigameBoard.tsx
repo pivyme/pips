@@ -5,6 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type LeaderboardScoreEntry, type Minigame, type MinigameSubmit } from '@/lib/api'
 import { cnm } from '@/utils/style'
+import { displayHandle } from '@/utils/format'
 
 const fmt = (n: number): string => Math.round(n).toLocaleString('en-US')
 const lbKey = (game: Minigame) => ['minigame-lb', game] as const
@@ -31,10 +32,6 @@ export function useMinigameLeaderboard(game: Minigame): {
   }
 }
 
-// Retro score row name: the username (uppercased to match the silkscreen), the generated handle as
-// a fallback, and "You" for your own row.
-const rowName = (r: LeaderboardScoreEntry): string => (r.isYou ? 'You' : r.username ? r.username.toUpperCase() : r.displayName)
-
 export function MinigameBoard({ rows }: { rows: LeaderboardScoreEntry[] }) {
   if (rows.length === 0) {
     return <div className="font-mono text-[13px] uppercase tracking-[0.14em] text-text-3">No scores yet. Set the first.</div>
@@ -47,7 +44,7 @@ export function MinigameBoard({ rows }: { rows: LeaderboardScoreEntry[] }) {
           className={cnm('flex items-center gap-3 py-1.5 text-[16px] tracking-[0.04em]', r.isYou ? 'text-brand-500' : 'text-text-2')}
         >
           <span className="tnum w-6 text-text-3">{r.rank}</span>
-          <span className="flex-1 truncate font-bold uppercase">{rowName(r)}</span>
+          <span className="flex-1 truncate font-bold">{displayHandle(r)}</span>
           <span className="tnum font-bold">{fmt(r.score)}</span>
           {r.isYou && <span className="text-brand-500">◀</span>}
         </div>

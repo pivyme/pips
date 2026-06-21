@@ -13,7 +13,7 @@ import {
   serializeFormattedStringToFloat,
 } from '@/utils/format'
 
-// Send USDC to any Pips-network Sui address. The backend pulls from the wallet + manager chips and
+// Send USDC to any PIPS-network Sui address. The backend pulls from the wallet + manager chips and
 // signs for the user, so this is just a validated amount + recipient and a confirm.
 export const Route = createFileRoute('/_app/menu/withdraw')({
   component: WithdrawScreen,
@@ -140,7 +140,7 @@ function WithdrawScreen() {
         </Button>
 
         <p className="px-1 text-[13px] leading-snug text-text-3">
-          Sends USDC from your balance to any Pips-network Sui address. Check
+          Sends USDC from your balance to any PIPS-network Sui address. Check
           the address carefully, transfers cannot be undone.
         </p>
       </div>

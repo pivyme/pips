@@ -163,10 +163,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const balances = await readWalletBalances(address)
         if (!active) return
         console.info(
-          `[Pips wallet]\nAddress: ${address}\nSUI: ${balances.sui}\nUSDC: ${balances.usdc ?? 'not configured'}\nUpdated: ${new Date().toISOString()}`,
+          `[PIPS wallet]\nAddress: ${address}\nSUI: ${balances.sui}\nUSDC: ${balances.usdc ?? 'not configured'}\nUpdated: ${new Date().toISOString()}`,
         )
       } catch (error) {
-        if (active) console.warn(`[Pips wallet] Failed to read balances for ${address}`, error)
+        if (active) console.warn(`[PIPS wallet] Failed to read balances for ${address}`, error)
       } finally {
         reading = false
       }

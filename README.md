@@ -1,8 +1,8 @@
-# Pips
+# PIPS
 
 **Trading, but a game.**
 
-Pips is a gamified trading console on **Sui**, powered by **DeepBook Predict**. No charts to read, no jargon, no 180 IQ required. Just plays that are fun, fast, and addictive. The whole interface behaves like a tactile handheld console with a screen, two action buttons, a main button, and a knob. Every play is a real on-chain prediction-market position, minted and redeemed in seconds, with cash-out anytime.
+PIPS is a gamified trading console on **Sui**, powered by **DeepBook Predict**. No charts to read, no jargon, no 180 IQ required. Just plays that are fun, fast, and addictive. The whole interface behaves like a tactile handheld console with a screen, two action buttons, a main button, and a knob. Every play is a real on-chain prediction-market position, minted and redeemed in seconds, with cash-out anytime.
 
 ![hero](docs/screenshots/hero.png)
 
@@ -15,7 +15,7 @@ Sign in with Google (no wallet, no seed phrase), get a stack of free testnet chi
 
 ## How the chain part works
 
-Pips runs its **own** DeepBook Predict deployment on Sui testnet: we publish Mysten's `packages/predict`, seed the vault with free test-USDC, and run short-expiry markets via a backend price feed. So the games are genuinely fast (10s/30s/60s rounds) and every play is a real `mint`/`redeem` on the real Predict contract, with native early cash-out. You never provide real liquidity. On mainnet later, the same app re-points to Predict's shared liquidity (one config change). Details in [`bigdev/plans/05-SUI-PREDICT.md`](bigdev/plans/05-SUI-PREDICT.md).
+PIPS runs its **own** DeepBook Predict deployment on Sui testnet: we publish Mysten's `packages/predict`, seed the vault with free test-USDC, and run short-expiry markets via a backend price feed. So the games are genuinely fast (10s/30s/60s rounds) and every play is a real `mint`/`redeem` on the real Predict contract, with native early cash-out. You never provide real liquidity. On mainnet later, the same app re-points to Predict's shared liquidity (one config change). Details in [`bigdev/plans/05-SUI-PREDICT.md`](bigdev/plans/05-SUI-PREDICT.md).
 
 ## Stack
 

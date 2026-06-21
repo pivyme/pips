@@ -71,11 +71,11 @@ model Play {
   entryCost    BigInt    @default(0)           // mint cost base units
   markValue    BigInt?                         // last known live mark
   payout       BigInt?                         // set on settle / cashout
-  pnl          BigInt?                         // signed: payout - stake
+  pnl          BigInt?                         // signed realized PnL: payout - entryCost (the real mint cost, not the requested stake)
   multiplier   Float?                          // potential payout multiple at mint
 
-  entrySpot    String?                         // spot at entry (display units), debug/audit
-  settlePrice  String?                         // frozen settlement price at expiry (display units), debug/audit
+  entrySpot    String?                         // asset spot at entry (display units), debug/audit
+  settlePrice  String?                         // asset price when the position closed: settlement price at expiry, or live spot at cash-out (display units)
 
   txMint       String?
   txRedeem     String?

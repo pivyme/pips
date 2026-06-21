@@ -2,7 +2,7 @@
 @import '@heroui/styles';
 @import '@fontsource-variable/gabarito';
 
-/* Pips is always pure black. Dark is the only theme. */
+/* PIPS is always pure black. Dark is the only theme. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ── Design tokens (docs/DESIGN.md) ─────────────────────────────────────
@@ -612,7 +612,7 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
-/* Desktop ambient: the device floats on a slow diagonal grid of Pips-logo tiles. The tiles carry the
+/* Desktop ambient: the device floats on a slow diagonal grid of PIPS-logo tiles. The tiles carry the
    native #222222 pattern; a slightly darker base shows through each tile's transparent gutter (~8px),
    which reads as the grid lines. The field translates by exactly one cell, so the loop is seamless. */
 .pips-surround {

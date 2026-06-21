@@ -69,7 +69,7 @@ function SettingsScreen() {
         ))}
 
         <div className="surface-skeuo rounded-card p-4">
-          <div className="text-[15px] font-bold">About Pips</div>
+          <div className="text-[15px] font-bold">About PIPS</div>
           <div className="mt-0.5 text-sm text-text-3">
             Built on Sui, powered by DeepBook Predict.
           </div>

@@ -282,7 +282,7 @@ export async function shareStatsCard(
   const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean }
   if (typeof nav.share === 'function' && nav.canShare?.({ files: [file] })) {
     try {
-      await nav.share({ files: [file], title: 'My Pips card' })
+      await nav.share({ files: [file], title: 'My PIPS card' })
       return
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return // user dismissed the sheet

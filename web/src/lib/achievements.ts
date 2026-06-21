@@ -37,7 +37,7 @@ export const ACHIEVEMENTS: Array<CatalogAchievement> = [
   { slug: 'dollar_rookie', legacySlug: 'volume_1000', name: 'Dollar Rookie', description: 'Play a total of $25.' },
   { slug: 'bigger_move', legacySlug: 'big_multiplier', name: 'Bigger Move', description: 'Make one play above $25.' },
   { slug: 'comeback', name: 'Comeback', description: 'Win after your previous play was a loss.' },
-  { slug: 'pips_regular', name: 'Pips Regular', description: 'Complete 10 total plays.' },
+  { slug: 'pips_regular', name: 'PIPS Regular', description: 'Complete 10 total plays.' },
 ]
 
 // Sticker art lives at /assets/achievements, named by the canonical slug.

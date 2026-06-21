@@ -29,7 +29,7 @@ export const env = createEnv({
     // delegates to so the server can sign plays without a per-spin popup.
     VITE_PRIVY_APP_ID: z.string().optional(),
     VITE_PRIVY_SESSION_SIGNER_ID: z.string().optional(),
-    VITE_APP_NAME: z.string().min(1).default('Pips'),
+    VITE_APP_NAME: z.string().min(1).default('PIPS'),
     VITE_APP_URL: z.string().url().optional(),
   },
 

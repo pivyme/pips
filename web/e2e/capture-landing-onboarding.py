@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Visual QA + animation-smoothness probe for the Pips landing -> onboarding -> welcome arc.
+# Visual QA + animation-smoothness probe for the PIPS landing -> onboarding -> welcome arc.
 # Runs fully offline via demo mode (no backend, no chain). Walks the whole phase machine, captures
 # stills at each beat across three viewports, and samples rAF frame cadence during every transition
 # so we have objective evidence of smoothness (long frames = stutter), not just screenshots.

@@ -251,7 +251,7 @@ export function WelcomeScreen({
           {/* The 512 export of the square 3D logo: same mark, far lighter than the 1MB source. */}
           <img
             src="/assets/logos/pips-512.png"
-            alt="Pips"
+            alt="PIPS"
             draggable={false}
             className="welcome-pop h-24 w-24 select-none rounded-[18px] shadow-[0_18px_50px_-12px_rgba(253,176,2,0.5)]"
           />

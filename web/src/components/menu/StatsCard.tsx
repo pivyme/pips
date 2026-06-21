@@ -5,7 +5,7 @@ import type { UserStatsDTO } from '@/lib/api'
 import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
 
-// The shareable trader card, styled as a little Pips handheld: a bright amber bezel with a
+// The shareable trader card, styled as a little PIPS handheld: a bright amber bezel with a
 // branded screen window sunk into it. Shown on the menu home (tap to open the share detail) and
 // on the Stats screen (where Share renders the same card to a PNG via shareCard.ts). Keep this and
 // the canvas renderer in sync. Presentational, no data fetching.
@@ -105,7 +105,7 @@ export function StatsCard({
 function CardHeader() {
   return (
     <div className="flex items-center justify-between px-1.5 pb-2.5 pt-1">
-      <img src="/assets/logos/pips-horizontal-black.svg" alt="Pips" className="h-6 w-auto" />
+      <img src="/assets/logos/pips-horizontal-black.svg" alt="PIPS" className="h-6 w-auto" />
       <span
         className="text-[10px] font-extrabold uppercase tracking-[0.18em]"
         style={{ color: 'rgba(46,30,0,0.58)', textShadow: '0 1px 0 rgba(255,255,255,0.28)' }}

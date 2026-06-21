@@ -6,9 +6,9 @@
 
 ---
 
-## Pips context
+## PIPS context
 
-This is the **Pips** backend (gamified trading on Sui via DeepBook Predict). Read the root [`../CLAUDE.md`](../CLAUDE.md) for product and Sui stack context. Its job: auth (Privy + a dev auto-login), game engine, the Predict operator (price-pusher, oracle ladder, settle), indexing, and server-signing the user's plays (`@privy-io/node` `rawSign` under a session signer; dev = the operator key).
+This is the **PIPS** backend (gamified trading on Sui via DeepBook Predict). Read the root [`../CLAUDE.md`](../CLAUDE.md) for product and Sui stack context. Its job: auth (Privy + a dev auto-login), game engine, the Predict operator (price-pusher, oracle ladder, settle), indexing, and server-signing the user's plays (`@privy-io/node` `rawSign` under a session signer; dev = the operator key).
 
 **The chain is our own Sui localnet, not testnet.** It is deployed and live at `https://rpc.playpips.fun`. `scripts/bootstrap.ts` is network-aware via `SUI_NETWORK` and is driven by the repo-root `scripts/localnet.sh` (`setup` once, `redeploy` after any `contracts/` change). It writes the deployed ids into `src/lib/sui/deployed.localnet.json` (gitignored, read via `src/lib/sui/config.ts`) and the headline ids into `.env`. Runtime RPC is `SUI_FULLNODE_URL` (the proxied url); `PIPS_DEPLOY_RPC` is the gRPC origin the CLI publishes through. See "The chain" in the root CLAUDE.md for the gRPC-origin gotcha. Never hardcode ids.
 

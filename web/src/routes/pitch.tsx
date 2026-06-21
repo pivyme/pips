@@ -13,7 +13,7 @@ import {
   Users,
 } from 'lucide-react'
 
-// A focused pitch deck for Pips: hook, problem, solution. Standalone full-bleed scroll surface,
+// A focused pitch deck for PIPS: hook, problem, solution. Standalone full-bleed scroll surface,
 // outside the console shell. Classic brand yellow (#FFC016) carries the attention; black is the
 // base. The "act break" slides flip to full yellow so problem and solution land like punches.
 export const Route = createFileRoute('/pitch')({ component: Pitch })
@@ -68,7 +68,7 @@ function Hook() {
       />
       <motion.img
         src="/assets/logos/pips-yellow-badge.svg"
-        alt="Pips"
+        alt="PIPS"
         className="relative w-[min(78vw,440px)] drop-shadow-[0_24px_60px_rgba(255,192,22,0.25)]"
         initial={{ opacity: 0, scale: 0.92, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -213,7 +213,7 @@ function SolutionBreak() {
       </Reveal>
       <Reveal delay={0.25}>
         <p className="mt-9 max-w-2xl text-lg font-medium leading-relaxed sm:text-2xl">
-          Pips is a handheld console you actually want to hold. A tactile device with a screen, a
+          PIPS is a handheld console you actually want to hold. A tactile device with a screen, a
           knob, and buttons. Pick a game, make a play, cash out. Fast, social, addictive.
         </p>
       </Reveal>
@@ -290,7 +290,7 @@ function Closing() {
       <Reveal>
         <img
           src="/assets/logos/pips-horizontal-black.svg"
-          alt="Pips"
+          alt="PIPS"
           className="w-[min(70vw,360px)]"
         />
       </Reveal>
@@ -304,7 +304,7 @@ function Closing() {
           to="/"
           className="mt-10 inline-flex h-14 items-center justify-center rounded-full bg-black px-10 text-base font-bold text-white transition-transform active:scale-95"
         >
-          Enter Pips
+          Enter PIPS
         </Link>
       </Reveal>
       <Reveal delay={0.4}>

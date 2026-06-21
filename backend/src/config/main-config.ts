@@ -207,7 +207,11 @@ export const ORACLE_ASSETS: string[] = (process.env.PIPS_ORACLE_ASSETS || 'BTC,S
 // never races expiry; the ladder ages these down to fill the near-round bucket. Generous on free
 // localnet: a longer life means the ladder always carries oracles with enough headroom that a slow
 // background mint lands before its routed oracle expires (the old 60s starved this under congestion).
-export const ORACLE_LIFETIME_MS: number = Number(process.env.PIPS_ORACLE_LIFETIME_MS) || 90_000;
+// It is ALSO the bridge across an operator restart: any oracle with more than the downtime left when
+// the operator drops stays live on chain through the gap, so the games never see a blackout. Keep this
+// well above realistic operator downtime (deploy/restart) and raise ORACLE_LADDER_DEPTH with it so the
+// per-rung spacing (LIFETIME/DEPTH) and the create rate stay put.
+export const ORACLE_LIFETIME_MS: number = Number(process.env.PIPS_ORACLE_LIFETIME_MS) || 180_000;
 // The LUCKY round target: each play routes to the live oracle expiring nearest this far out and
 // settles there, so rounds stay ~this long regardless of how long the oracles themselves live. Kept
 // short so the loop is a quick thrill: spin (reels ~2s) -> a brief watchable round -> instant settle.
@@ -231,9 +235,11 @@ export const RANGE_MAX_ORACLE_LIFE_MS: number = Number(process.env.PIPS_RANGE_MA
 // 2x odds (it stays ~2.0-2.2x) while making "the price has to go your way" visibly true on the chart.
 export const LUCKY_MIN_TARGET_FRAC: number = Number(process.env.PIPS_LUCKY_MIN_TARGET_FRAC) || 0.0015;
 // Oracles kept live per asset, spread evenly across the lifetime (~ORACLE_LIFETIME_MS / depth apart)
-// so a near-round one always exists. Higher = more buffer when the operator briefly falls behind
-// (free localnet gas), at the cost of bigger push PTBs and more settle work, both bounded.
-export const ORACLE_LADDER_DEPTH: number = Number(process.env.PIPS_ORACLE_LADDER_DEPTH) || 8;
+// so a near-round one always exists. Higher = more buffer when the operator briefly falls behind or
+// restarts (free localnet gas). Cost is only bigger push PTBs (still ONE tx per cap, gotcha #5, so the
+// serial-lane tx count does not grow with depth) and a little more settle work, both bounded. Scaled
+// with ORACLE_LIFETIME_MS to hold the rung spacing at ~11s, so the create rate (depth/lifetime) is flat.
+export const ORACLE_LADDER_DEPTH: number = Number(process.env.PIPS_ORACLE_LADDER_DEPTH) || 16;
 // Max oracles oracle-roll creates per asset in a single tick. Steady state needs only 1 (gentle,
 // spacing-gated). But after a reload/dry spell the ladder is empty and a 1-per-tick refill leaves
 // minutes of "No markets are live"; when an asset is below low-water the roller bursts up to this

@@ -1,12 +1,12 @@
-# Pips
+# PIPS
 
 **Makes trading simple, intuitive, and addictive, like a game.**
 
-Pips is a gamified trading platform on **Sui**, powered by **DeepBook Predict**. It is web based and mobile optimized, a collection of gamified trading games that make trading feel like play instead of work.
+PIPS is a gamified trading platform on **Sui**, powered by **DeepBook Predict**. It is web based and mobile optimized, a collection of gamified trading games that make trading feel like play instead of work.
 
-The thesis: trading terminals all look and feel the same, and traders are bored. Every terminal is a wall of candles, order books, and numbers that demands a 180 IQ to even start. Pips is built from the ground up to be the simplest and most fun way to trade. No complexity, no jargon, just plays that are fun, social, and addictive. We want to change how people think about trading by making it feel like a game they want to come back to.
+The thesis: trading terminals all look and feel the same, and traders are bored. Every terminal is a wall of candles, order books, and numbers that demands a 180 IQ to even start. PIPS is built from the ground up to be the simplest and most fun way to trade. No complexity, no jargon, just plays that are fun, social, and addictive. We want to change how people think about trading by making it feel like a game they want to come back to.
 
-The twist that makes Pips Pips: the whole interface looks and behaves like a **physical handheld console**, a tactile 3D device with a screen, knobs, and buttons. Think the "Camera" app from Not Boring Software. The product is the device. See [`docs/DESIGN.md`](./docs/DESIGN.md) for the full design language.
+The twist that makes PIPS PIPS: the whole interface looks and behaves like a **physical handheld console**, a tactile 3D device with a screen, knobs, and buttons. Think the "Camera" app from Not Boring Software. The product is the device. See [`docs/DESIGN.md`](./docs/DESIGN.md) for the full design language.
 
 ---
 
@@ -82,7 +82,7 @@ These are the packages and patterns we standardize on. The Mysten SDK had a 2.0 
 
 DeepBook Predict is a real, official Sui primitive: an **expiry based on-chain prediction-market protocol**, the third composable layer of DeepBook v3 (alongside Spot, the CLOB, and Margin). Users mint and redeem binary or range positions against oracle driven prices. Liquidity providers supply quote assets into a shared vault and receive PLP vault-share tokens.
 
-This is what every Pips game settles against. The fun, game-like front layer translates into Predict positions underneath.
+This is what every PIPS game settles against. The fun, game-like front layer translates into Predict positions underneath.
 
 **Critical constraints:**
 - **We run our own deployment on our own localnet.** Mysten's Predict is testnet only as of mid 2026 (launched ~May 2026), but we never depend on it. We publish our **own** copy of `packages/predict` (plus DUSDC, token, deepbook) onto our localnet (live at `rpc.playpips.fun`), seed the vault with free DUSDC, and run the oracles ourselves. Gas is effectively infinite there, which is why we moved off the gas-starved testnet. Mainnet is a clean re-point later.
@@ -103,7 +103,7 @@ Both support **hold + early cash-out**: pre-expiry `redeem` pays the live bid (m
 
 ## The chain: our own Sui localnet
 
-Pips does **not** run on Sui testnet. It runs on **our own Sui localnet**, deployed and live at `https://rpc.playpips.fun` (Cloudflare in front, valid cert, chain `325c13db`). The whole Predict stack (our copy of `predict` + DUSDC + token + deepbook) is published there, the vault is seeded with free DUSDC, and we run the oracles. This is the chain every play settles against now.
+PIPS does **not** run on Sui testnet. It runs on **our own Sui localnet**, deployed and live at `https://rpc.playpips.fun` (Cloudflare in front, valid cert, chain `325c13db`). The whole Predict stack (our copy of `predict` + DUSDC + token + deepbook) is published there, the vault is seeded with free DUSDC, and we run the oracles. This is the chain every play settles against now.
 
 **One command drives it: `scripts/localnet.sh`.**
 - `setup` — one shot: import the operator key into the sui CLI, publish the Predict stack, wire both `.env`s. Run once.
@@ -143,7 +143,7 @@ Demo mode (`VITE_DEMO_MODE`) stays the one sanctioned no-backend sim. Suiet wall
 - **Ports:** backend `:3780`, web `:3200`.
 - Frontend talks to backend via `VITE_API_URL` (validated in `web/src/env.ts`). Backend CORS is locked to `ALLOWED_ORIGIN` in production.
 - **Sui IDs and package addresses live in config, never inline.** This applies to DeepBook Predict, our own published Move packages, and any pool/object IDs.
-- **Sui only:** Pips is Sui only. The EVM (`ethers`) and Solana (`@solana/web3.js`, `bs58`) starter deps have been removed from the backend. If any `ethers` / `@solana/*` reference survives, it is dead, do not build on it.
+- **Sui only:** PIPS is Sui only. The EVM (`ethers`) and Solana (`@solana/web3.js`, `bs58`) starter deps have been removed from the backend. If any `ethers` / `@solana/*` reference survives, it is dead, do not build on it.
 
 ---
 
@@ -160,7 +160,7 @@ Demo mode (`VITE_DEMO_MODE`) stays the one sanctioned no-backend sim. Suiet wall
 
 The full v1 build (auth, the games, menu, backend, indexer, the Predict integration) is planned under [`bigdev/`](./bigdev/) and built by an autonomous loop (`./bigdev/autobuild`). Durable steering lives in [`bigdev/claude/requirements-log.md`](./bigdev/claude/requirements-log.md) (committed, read every iteration); one-shot corrections go to `bigdev/claude/inject.md` (gitignored). Use `./bigdev/autobuild say "rule"` for durable, `./bigdev/autobuild fix "msg"` for transient.
 
-**The spine (decided):** Pips runs its **own** DeepBook Predict deployment on its **own Sui localnet** (live at `rpc.playpips.fun`, no longer testnet: we publish `packages/predict` ourselves, seed the vault with free DUSDC, run short-expiry oracles via a backend price-pusher). Every play is a real `mint`/`redeem`. No sim. Plays are server-signed (privy mode = the user's embedded wallet via Privy `rawSign` under a session signer; dev mode = the operator key), gas is free localnet SUI. Fast paced is the priority. The why and how: `bigdev/plans/01-ARCHITECTURE.md` and `05-SUI-PREDICT.md`; the deploy mechanics live in "The chain" above.
+**The spine (decided):** PIPS runs its **own** DeepBook Predict deployment on its **own Sui localnet** (live at `rpc.playpips.fun`, no longer testnet: we publish `packages/predict` ourselves, seed the vault with free DUSDC, run short-expiry oracles via a backend price-pusher). Every play is a real `mint`/`redeem`. No sim. Plays are server-signed (privy mode = the user's embedded wallet via Privy `rawSign` under a session signer; dev mode = the operator key), gas is free localnet SUI. Fast paced is the priority. The why and how: `bigdev/plans/01-ARCHITECTURE.md` and `05-SUI-PREDICT.md`; the deploy mechanics live in "The chain" above.
 
 **Plans (source of truth, read the relevant one before each phase):**
 

@@ -1,52 +1,79 @@
-// In-device leaderboard for the trading games (Lucky, Range): the top 10 players by banked profit
-// for this game. Teenage Engineering language (docs/SCREEN.md): flat black, mono, one amber accent,
-// green for the money. Rows show username (or the generated handle), never an address. Tap to close.
+// In-device leaderboard for the trading games (Lucky, Range): two boards in one screen, the top
+// GAINERS (most banked profit) over the top REKT (deepest in the red). Teenage Engineering language
+// (docs/SCREEN.md): flat black, mono, hairline-split rows, green for the money and red for the
+// damage, one amber accent for your own row. Rows show a username (or the generated handle), never
+// an address. The device screen is not clickable, so this is a pure readout: it opens and closes
+// from the physical button that toggled it (LEADERS).
 
 import { useQuery } from '@tanstack/react-query'
 import { api, type Game, type LeaderboardGameEntry } from '@/lib/api'
 import { cnm } from '@/utils/style'
+import { displayHandle } from '@/utils/format'
 
-const money = (s: string): string =>
-  `+$${Math.abs(parseFloat(s) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-const rowName = (r: LeaderboardGameEntry): string => (r.isYou ? 'You' : r.username ? r.username.toUpperCase() : r.displayName)
+// The screen can't be scrolled by touch, so both boards have to fit at once: cap each side so the
+// gainers and the rekt always read together without spilling off the device.
+const PER_BOARD = 4
 
-export function GameLeaderboardOverlay({ game, title, onClose }: { game: Game; title: string; onClose: () => void }) {
+const signedMoney = (s: string): string => {
+  const n = parseFloat(s) || 0
+  return `${n < 0 ? '-' : '+'}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+export function GameLeaderboardOverlay({ game, title }: { game: Game; title: string }) {
   const q = useQuery({ queryKey: ['game-lb', game], queryFn: () => api.gameLeaderboard(game) })
-  const entries = q.data?.leaderboard.entries ?? []
+  const board = q.data?.leaderboard
+  const gainers = (board?.entries ?? []).slice(0, PER_BOARD)
+  const rekt = (board?.rekt ?? []).slice(0, PER_BOARD)
+
   return (
-    <button
-      type="button"
-      onClick={onClose}
-      className="absolute inset-0 z-20 flex flex-col gap-2.5 bg-black/95 p-[var(--screen-rim,24px)] text-left"
-    >
-      <div className="flex items-center justify-between">
-        <div className="font-mono text-[13px] font-bold uppercase tracking-[0.2em] text-brand-500">{title} · Top 10</div>
-        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">Tap to close</span>
+    <div className="absolute inset-0 z-20 flex flex-col gap-4 bg-black/95 px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-[calc(var(--screen-rim,24px)+2.25rem)] text-left">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-mono text-[20px] font-bold uppercase tracking-[0.16em] text-brand-500">{title}</div>
+          <div className="mt-1.5 font-mono text-[12px] font-bold uppercase tracking-[0.14em] text-text-3">Leaderboard</div>
+        </div>
+        <span className="mt-1 shrink-0 text-right font-mono text-[10px] uppercase tracking-[0.12em] text-text-3">Press again to close</span>
       </div>
-      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Top winners by profit</div>
       {q.isLoading ? (
-        <div className="flex flex-col gap-3 pt-2">
+        <div className="flex flex-col gap-3 pt-1">
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className="shimmer h-4 w-3/4" />
           ))}
         </div>
-      ) : entries.length === 0 ? (
-        <div className="pt-2 text-[14px] text-text-2">No winners yet. Be the first to bank a profit.</div>
       ) : (
-        <div className="flex max-w-[92%] flex-col font-mono">
-          {entries.map((r) => (
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+          <Board label="Top Gainers" tone="up" rows={gainers} empty="No winners yet. Bank a profit to take #1." />
+          <Board label="Top Rekt" tone="down" rows={rekt} empty="Nobody's down yet. Keep it that way." />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Board({ label, tone, rows, empty }: { label: string; tone: 'up' | 'down'; rows: LeaderboardGameEntry[]; empty: string }) {
+  const amount = tone === 'up' ? 'text-up' : 'text-down'
+  return (
+    <div className="flex max-w-[92%] flex-col">
+      <div className="mb-2 flex items-center gap-2 border-b border-line-strong pb-2">
+        <span className={cnm('h-2.5 w-2.5', tone === 'up' ? 'bg-up' : 'bg-down')} />
+        <span className="font-mono text-[14px] font-bold uppercase tracking-[0.16em] text-text-2">{label}</span>
+      </div>
+      {rows.length === 0 ? (
+        <div className="py-1.5 text-[13px] leading-snug text-text-3">{empty}</div>
+      ) : (
+        <div className="flex flex-col font-mono">
+          {rows.map((r) => (
             <div
               key={r.rank}
               className={cnm('flex items-center gap-3 py-1.5 text-[15px] tracking-[0.04em]', r.isYou ? 'text-brand-500' : 'text-text-2')}
             >
               <span className="tnum w-6 text-text-3">{r.rank}</span>
-              <span className="flex-1 truncate font-bold uppercase">{rowName(r)}</span>
-              <span className="tnum font-bold text-up">{money(r.pnl)}</span>
+              <span className="flex-1 truncate font-bold">{displayHandle(r)}</span>
+              <span className={cnm('tnum font-bold', r.isYou ? 'text-brand-500' : amount)}>{signedMoney(r.pnl)}</span>
               {r.isYou && <span className="text-brand-500">◀</span>}
             </div>
           ))}
         </div>
       )}
-    </button>
+    </div>
   )
 }

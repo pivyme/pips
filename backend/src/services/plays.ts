@@ -366,7 +366,12 @@ async function cashoutPlayLocked(user: User, playId: string): Promise<CashoutRes
 
   try {
     const exec = await executeForUser(tx, userCtx(user));
-    return finalizeCashout(play, amounts.payout, exec.digest);
+    // The exit price: the live spot the position closed against, the cash-out mirror of the
+    // settlement price an expiry gets. gameSpot is the same in-memory feed the chart and oracle read,
+    // so it agrees with the entry/settle prices. Best-effort: a feed miss just leaves it blank.
+    const spot = await gameSpot(play.asset).catch(() => null);
+    const exitPrice = spot && spot.price > 0 ? String(spot.price) : null;
+    return finalizeCashout(play, amounts.payout, exec.digest, exitPrice);
   } catch (e) {
     // The buzzer beat the cash-out: once the round crosses expiry the oracle is no longer quoteable
     // (assert_quoteable_oracle aborts EOracleExpired), so the live sell is gone and the position will
@@ -385,14 +390,14 @@ const isOracleExpiredAbort = (e: unknown): boolean => {
   return /assert_quoteable_oracle|EOracleExpired|EOracleSettled/i.test(m);
 };
 
-async function finalizeCashout(play: Play, payoutRaw: bigint, digest: string): Promise<{ play: PlayDTO; unlocked: string[] }> {
+async function finalizeCashout(play: Play, payoutRaw: bigint, digest: string, exitPrice: string | null): Promise<{ play: PlayDTO; unlocked: string[] }> {
   const pnl = payoutRaw - play.entryCost;
   const updated = await prismaQuery.play.update({
     where: { id: play.id },
-    data: { status: 'cashed_out', payout: payoutRaw, markValue: payoutRaw, pnl, txRedeem: digest, settledAt: new Date() },
+    data: { status: 'cashed_out', payout: payoutRaw, markValue: payoutRaw, pnl, txRedeem: digest, settledAt: new Date(), ...(exitPrice ? { settlePrice: exitPrice } : {}) },
   });
   invalidateBal(play.userId); // the redeem credited the manager; the next gate must re-read
-  await recordSettlement(play.userId, { game: play.game, stakeRaw: play.stake, pnlRaw: pnl, won: pnl > 0n });
+  await recordSettlement(play.userId);
   const unlocked = await evaluateAndUnlock(play.userId);
   return { play: await toPlayDTO(updated), unlocked };
 }
@@ -679,7 +684,7 @@ async function settleOnePlay(play: Play, settlement1e9: bigint, settleTx?: strin
     },
   });
   if (itm) invalidateBal(play.userId); // the settle redeem credited the manager; the next gate re-reads
-  await recordSettlement(play.userId, { game: play.game, stakeRaw: play.stake, pnlRaw: pnl, won: itm });
+  await recordSettlement(play.userId);
   await evaluateAndUnlock(play.userId);
 }
 

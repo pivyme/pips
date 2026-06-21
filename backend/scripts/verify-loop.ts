@@ -256,7 +256,7 @@ async function gasSui(): Promise<number> {
 }
 
 async function main(): Promise<void> {
-  console.log(`\nPips LUCKY loop verification (network=localnet, AUTH_MODE=${AUTH_MODE})\n`);
+  console.log(`\nPIPS LUCKY loop verification (network=localnet, AUTH_MODE=${AUTH_MODE})\n`);
   if (AUTH_MODE !== 'dev') throw new Error('verify-loop expects AUTH_MODE=dev (operator-signed plays)');
 
   // --- Funds + onboarding ---

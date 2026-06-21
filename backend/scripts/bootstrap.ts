@@ -1,4 +1,4 @@
-// Pips Predict bootstrap (the Phase 2 spike, and the production bootstrap).
+// PIPS Predict bootstrap (the Phase 2 spike, and the production bootstrap).
 //
 // Publishes our OWN DeepBook Predict instance and proves it end to end:
 //   1. publish our own DUSDC (so we own a freely mintable treasury for free chips)
@@ -363,7 +363,7 @@ async function alreadyDeployed(): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
-  console.log(`=== Pips Predict bootstrap (${NETWORK}) ===`);
+  console.log(`=== PIPS Predict bootstrap (${NETWORK}) ===`);
   if (await alreadyDeployed()) return;
   await preflight();
 

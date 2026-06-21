@@ -4,12 +4,17 @@
 
 import { prismaQuery } from '../lib/prisma.ts';
 import { fromDusdcRaw } from '../lib/sui/math.ts';
+import { computeLedgerStats } from './stats.ts';
 import type { Play, UserStats } from '../../prisma/generated/client.js';
 
 const SETTLED = new Set(['won', 'lost', 'cashed_out']);
 
+// The aggregate counts a metric reads off. Both the stored UserStats row and a fresh ledger recompute
+// satisfy this, so callers pass whichever they have without coupling to the full row.
+type StatCounts = Pick<UserStats, 'gamesPlayed' | 'wins' | 'maxStreak' | 'totalVolume'>;
+
 // Map every achievement metric to the user's current value. Keys match Achievement.metric.
-export function evaluateMetrics(stats: UserStats, plays: Play[]): Record<string, number> {
+export function evaluateMetrics(stats: StatCounts, plays: Play[]): Record<string, number> {
   const settled = plays.filter((p) => SETTLED.has(p.status));
   const chrono = [...settled].sort((a, b) => (a.settledAt?.getTime() ?? 0) - (b.settledAt?.getTime() ?? 0));
 
@@ -46,15 +51,13 @@ export function evaluateMetrics(stats: UserStats, plays: Play[]): Record<string,
 // Evaluate and persist newly unlocked achievements. Returns the slugs unlocked this call so
 // the caller can fire the unlock toast.
 export async function evaluateAndUnlock(userId: string): Promise<string[]> {
-  const [stats, plays, catalog, existing] = await Promise.all([
-    prismaQuery.userStats.findUnique({ where: { userId } }),
+  const [plays, catalog, existing] = await Promise.all([
     prismaQuery.play.findMany({ where: { userId } }),
     prismaQuery.achievement.findMany(),
     prismaQuery.userAchievement.findMany({ where: { userId } }),
   ]);
-  if (!stats) return [];
 
-  const metrics = evaluateMetrics(stats, plays);
+  const metrics = evaluateMetrics(await computeLedgerStats(userId, plays), plays);
   const have = new Set(existing.map((e) => e.achievementSlug));
   const toUnlock = catalog.filter((a) => !have.has(a.slug) && (metrics[a.metric] ?? 0) >= a.threshold);
   if (toUnlock.length === 0) return [];
