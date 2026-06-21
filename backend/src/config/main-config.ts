@@ -249,6 +249,22 @@ export const ORACLE_ROLL_MAX_PER_TICK: number = Number(process.env.PIPS_ORACLE_R
 // gas-scarce chain; on free localnet it is pure extra load on the serial operator queue, so off.
 export const ORACLE_COMPACT_SETTLED: boolean = process.env.PIPS_ORACLE_COMPACT_SETTLED === 'true';
 
+// Devnet faucet top-up worker. On devnet the public faucet is the ONLY SUI source, and devnet is
+// wiped ~weekly, so the crucial wallets can run dry and stall plays/redeems/payouts. This worker
+// keeps them (operator, settlement, treasury, sponsor) and any extra addresses funded: every few
+// minutes it reads each balance and faucets only the ones below the floor (so it respects the
+// per-IP rate limit and never spams a funded wallet). Devnet ONLY: no-op on localnet/mainnet/testnet.
+// DEVNET_FAUCET_EXTRA defaults to the owner's personal address; override to your own list.
+export const DEVNET_FAUCET_ENABLED: boolean = process.env.PIPS_DEVNET_FAUCET_ENABLED !== 'false';
+export const DEVNET_FAUCET_MIN_SUI: number = Number(process.env.PIPS_DEVNET_FAUCET_MIN_SUI) || 5;
+export const DEVNET_FAUCET_CRON: string = process.env.PIPS_DEVNET_FAUCET_CRON || '*/5 * * * *';
+export const DEVNET_FAUCET_EXTRA: string[] = (
+  process.env.PIPS_DEVNET_FAUCET_EXTRA || '0x4eddfba6fcb9a6c5e14476299a03173fdcaf0bbc06cac505db262ee27eea4a0c'
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 // Predict instance ids. Written by the bootstrap, never hardcoded. Unstable pre-mainnet.
 export const PREDICT_PACKAGE_ID: string = process.env.PREDICT_PACKAGE_ID || '';
 export const PREDICT_REGISTRY_ID: string = process.env.PREDICT_REGISTRY_ID || '';
@@ -323,6 +339,10 @@ export default {
   ORACLE_LADDER_DEPTH,
   ORACLE_ROLL_MAX_PER_TICK,
   ORACLE_COMPACT_SETTLED,
+  DEVNET_FAUCET_ENABLED,
+  DEVNET_FAUCET_MIN_SUI,
+  DEVNET_FAUCET_CRON,
+  DEVNET_FAUCET_EXTRA,
   PREDICT_PACKAGE_ID,
   PREDICT_REGISTRY_ID,
   PREDICT_OBJECT_ID,

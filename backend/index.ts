@@ -20,6 +20,7 @@ import { startOracleRoll } from './src/workers/oracle-roll.ts';
 import { startSettleWorker } from './src/workers/settle.ts';
 import { startMarketSync } from './src/workers/market-sync.ts';
 import { startOpsFunding } from './src/workers/ops-funding.ts';
+import { startDevnetFaucet } from './src/workers/devnet-faucet.ts';
 
 // Ops-wallet funding (operator-driven): seeds/tops up the sponsor (SUI), settlement (SUI), and
 // treasury (SUI + DUSDC reserve) wallets so plays, redeems, and chip payouts never stall.
@@ -87,6 +88,9 @@ const start = async (): Promise<void> => {
     startMarketSync();
     // Ongoing top-up safety net for the sponsor + settlement + treasury wallets (operator only).
     startOpsFunding();
+    // Devnet only: keep the crucial wallets (+ extra addresses) funded from the public faucet, so a
+    // low balance or a devnet wipe self-heals instead of stalling plays. No-op off devnet.
+    startDevnetFaucet();
 
     await fastify.listen({
       port: APP_PORT,

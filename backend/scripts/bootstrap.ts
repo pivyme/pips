@@ -45,6 +45,13 @@ if (!VALID_NETWORKS.includes(NETWORK)) {
   throw new Error(`Unsupported SUI_NETWORK "${SUI_NETWORK}". Use one of: ${VALID_NETWORKS.join(', ')}.`);
 }
 const IS_LOCAL = NETWORK === 'localnet';
+// Networks we publish to with `test-publish` (ephemeral dep addresses) rather than `client publish`.
+// localnet AND devnet qualify: both are throwaway chains (localnet regenesis, devnet ~weekly wipe),
+// our homebrew CLI's protocol version lags theirs so a real publish fails dep-verification, and a
+// persistent [environments] publication buys nothing on a chain that vanishes. test-publish sidesteps
+// all of it. The localnet-only CLI-env auto-management (resolveCliEnv) stays on IS_LOCAL: on devnet we
+// use the real `devnet` CLI env, we just publish ephemerally into it.
+const EPHEMERAL = IS_LOCAL || NETWORK === 'devnet';
 // The sui CLI env alias whose RPC matches our network. Resolved in preflight; used to
 // strip the right [published.<alias>] table before each republish.
 let CLI_ALIAS = NETWORK as string;
@@ -64,9 +71,9 @@ const CONTRACTS = path.resolve(import.meta.dir, '../../contracts');
 // (localnet's is gitignored, ids change every regenesis). config.ts resolves the same way.
 const DEPLOYED_FILE = NETWORK === 'testnet' ? 'deployed.json' : `deployed.${NETWORK}.json`;
 const DEPLOYED_PATH = path.resolve(import.meta.dir, `../src/lib/sui/${DEPLOYED_FILE}`);
-// localnet only: test-publish records ephemeral publication addresses in this file (one
-// shared across the leaf-first publishes so deepbook/predict resolve their deps). It must
-// start empty each run, else test-publish refuses ("already published"). Gitignored.
+// Ephemeral networks (localnet + devnet): test-publish records ephemeral publication addresses in
+// this file (one shared across the leaf-first publishes so deepbook/predict resolve their deps). It
+// must start empty each run, else test-publish refuses ("already published"). Gitignored.
 const LOCAL_PUBFILE = path.resolve(import.meta.dir, '../Pub.localnet.toml');
 const ENV_PATH = path.resolve(import.meta.dir, '../.env');
 const WEB_ENV_PATH = path.resolve(import.meta.dir, '../../web/.env');
@@ -145,11 +152,12 @@ function publish(pkgDir: string, withUnpublishedDeps: boolean): ObjectChange[] {
   // drop our own package's entry for the active alias first. Only touches the package we
   // publish, never its deps (deepbook keeps its canonical published entries).
   clearPublication(pkgDir);
-  const args = IS_LOCAL
+  const args = EPHEMERAL
     ? ['client', 'test-publish', '-e', CLI_ALIAS, '--pubfile-path', LOCAL_PUBFILE, '--json', '--skip-dependency-verification', '--gas-budget', String(PUBLISH_GAS)]
     : ['client', 'publish', '--json', '--skip-dependency-verification', '--gas-budget', String(PUBLISH_GAS)];
-  // Real networks bundle unpublished deps; localnet publishes them leaf-first instead.
-  if (withUnpublishedDeps && !IS_LOCAL) args.push('--with-unpublished-dependencies');
+  // A persistent publish bundles unpublished deps in one tx; the ephemeral path publishes them
+  // leaf-first instead (all-at-0x0 would collide, e.g. deepbook + deepbook_predict).
+  if (withUnpublishedDeps && !EPHEMERAL) args.push('--with-unpublished-dependencies');
   args.push(path.join(CONTRACTS, pkgDir));
   const out = sui(args);
   const parsed = JSON.parse(out) as { objectChanges?: ObjectChange[]; effects?: { status?: { status?: string } } };
@@ -315,18 +323,18 @@ async function preflight(): Promise<void> {
 
   await ensureFunded();
 
-  // Start each localnet publish from an empty ephemeral pubfile (test-publish refuses to
-  // republish an existing entry). Fresh chain every --force-regenesis, so this is expected.
-  if (IS_LOCAL) fs.rmSync(LOCAL_PUBFILE, { force: true });
+  // Start each ephemeral publish from an empty pubfile (test-publish refuses to republish an
+  // existing entry). Fresh chain every regenesis/devnet-wipe, so this is expected.
+  if (EPHEMERAL) fs.rmSync(LOCAL_PUBFILE, { force: true });
 
   console.log(`Preflight ok. Network ${NETWORK} (cli env "${CLI_ALIAS}", chain ${chainId}).`);
 }
 
-// localnet only: test-publish dirties the vendored Move.lock files (ephemeral local pins),
-// may create a stray token/Published.toml, and leaves the pubfile behind. None of it should
-// be committed, so restore/drop it once the on-chain instance is fully stood up. Best-effort.
+// Ephemeral networks (localnet + devnet): test-publish dirties the vendored Move.lock files
+// (ephemeral pins), may create a stray token/Published.toml, and leaves the pubfile behind. None of
+// it should be committed, so restore/drop it once the on-chain instance is fully stood up. Best-effort.
 function cleanupLocalArtifacts(): void {
-  if (!IS_LOCAL) return;
+  if (!EPHEMERAL) return;
   fs.rmSync(LOCAL_PUBFILE, { force: true });
   const git = (args: string[]): void => {
     try {
@@ -397,12 +405,12 @@ async function main(): Promise<void> {
   // localnet links unpublished deps by address, so they cannot all share 0x0: publish
   // leaf-first (token -> deepbook) so each is on-chain before predict builds against it.
   // Real networks bundle them in predict's publish via --with-unpublished-dependencies.
-  if (IS_LOCAL) {
-    console.log('\n[2/6] Publishing token + deepbook (leaf-first for localnet)...');
+  if (EPHEMERAL) {
+    console.log('\n[2/6] Publishing token + deepbook (leaf-first, ephemeral deps)...');
     publish('token', false);
     publish('deepbook', false);
   }
-  console.log(IS_LOCAL ? '       Publishing predict...' : '\n[2/6] Publishing predict (with deepbook + token)...');
+  console.log(EPHEMERAL ? '       Publishing predict...' : '\n[2/6] Publishing predict (with deepbook + token)...');
   const predictChanges = publish('predict', true);
   const packageId = findPublished(predictChanges, 'registry');
   const adminCapId = findCreated(predictChanges, (t) => t.includes('::registry::AdminCap'));
@@ -477,7 +485,10 @@ async function main(): Promise<void> {
         const tx = new Transaction();
         tx.moveCall({
           target: `${packageId}::registry::create_oracle`,
+          // Signature: (registry, predict, admin_cap, cap, underlying, expiry, min_strike, tick_size).
+          // Must mirror src/lib/sui/predict.ts buildCreateOracle (the live oracle-roll caller).
           arguments: [
+            tx.object(registryId),
             tx.object(predictId),
             tx.object(adminCapId),
             tx.object(capId),
