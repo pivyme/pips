@@ -284,7 +284,7 @@ function Inner() {
           label="RPC URL"
           value={rpcUrl}
           onChange={applyRpc}
-          placeholder="https://rpc.playpips.fun"
+          placeholder="https://fullnode.devnet.sui.io:443"
           type="url"
         />
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">

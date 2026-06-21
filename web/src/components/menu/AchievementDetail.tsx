@@ -76,9 +76,12 @@ function Detail({ sel, onClose }: { sel: Selected; onClose: () => void }) {
     }
   }, [rect])
 
+  // Locked in this fullscreen bloom only: a flat dark-grey silhouette. brightness(0) crushes the art
+  // to black, then invert(0.3) lifts it just enough to read against the near-black backdrop (pure
+  // black would vanish here). The small card silhouettes stay pure black, they sit on lighter cards.
   const stickerFilter = a.unlocked
     ? 'drop-shadow(0 18px 30px rgba(0,0,0,0.5)) drop-shadow(0 0 26px rgba(255,192,22,0.3))'
-    : 'brightness(0) contrast(2) drop-shadow(0 1px 0 rgba(255,255,255,0.04))'
+    : 'brightness(0) invert(0.3) drop-shadow(0 1px 0 rgba(255,255,255,0.04))'
 
   // One calm easing for the whole morph. A tween (not a spring) keeps it smooth, no bounce, and is
   // guaranteed to complete, so AnimatePresence always tears the overlay down (an infinite-repeat

@@ -29,7 +29,7 @@ import { formatStringToNumericDecimals } from '@/utils/format'
 // mono labels, one amber accent, green/red for facts.
 export const Route = createFileRoute('/_app/games/lucky')({ component: LuckyScreen })
 
-// BET ladder, scrubbed on the number wheel and clamped to the live USDC balance.
+// BET ladder, scrubbed on the number wheel and clamped to the live DUSDC balance.
 const BET_LADDER = [1, 5, 10, 25, 50, 100] as const
 // Shared persisted stake index (home idle wheel writes the same key, see ConsoleCanvas).
 const STAKE_KEY = 'pips_stake_idx'

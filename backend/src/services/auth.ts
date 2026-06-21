@@ -178,6 +178,7 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
       sound: user.soundEnabled,
       haptics: user.hapticsEnabled,
       reducedMotion: user.reducedMotion,
+      theme: user.theme,
     },
   };
 }

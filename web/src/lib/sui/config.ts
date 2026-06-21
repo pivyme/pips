@@ -10,18 +10,15 @@ export const PREDICT_ID = env.VITE_PREDICT_OBJECT_ID ?? ''
 export const DUSDC_TYPE = env.VITE_DUSDC_TYPE ?? ''
 
 export const DUSDC_DECIMALS = 1_000_000
-const PUBLIC_LOCALNET_RPC_URL = 'https://rpc.playpips.fun'
 
 // 6dp raw DUSDC -> display number
 export const fromDusdcRaw = (raw: bigint | string | number): number =>
   Number(BigInt(raw)) / DUSDC_DECIMALS
 
-export const explorerTxUrl = (digest: string): string =>
-  NETWORK === 'localnet'
-    ? `https://custom.suiscan.xyz/custom/tx/${digest}?network=${encodeURIComponent(PUBLIC_LOCALNET_RPC_URL)}`
-    : `https://suiscan.xyz/${NETWORK}/tx/${digest}`
+// Suiscan explorer links. The network comes from env (devnet now, mainnet later), so these always
+// resolve to the right chain. Suiscan natively indexes mainnet, testnet, and devnet.
+const EXPLORER_BASE = `https://suiscan.xyz/${NETWORK}`
 
-export const explorerObjectUrl = (id: string): string =>
-  NETWORK === 'localnet'
-    ? `https://custom.suiscan.xyz/custom/object/${id}?network=${encodeURIComponent(PUBLIC_LOCALNET_RPC_URL)}`
-    : `https://suiscan.xyz/${NETWORK}/object/${id}`
+export const explorerTxUrl = (digest: string): string => `${EXPLORER_BASE}/tx/${digest}`
+export const explorerObjectUrl = (id: string): string => `${EXPLORER_BASE}/object/${id}`
+export const explorerAddressUrl = (address: string): string => `${EXPLORER_BASE}/account/${address}`

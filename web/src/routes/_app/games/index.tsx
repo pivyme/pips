@@ -128,7 +128,7 @@ export function GamesConsole() {
       <div className={cnm('flex items-center justify-between pb-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-text-2', RIM_T, RIM)}>
         <span className="flex min-w-0 items-center gap-2">
           <span className={cnm('h-2 w-2 shrink-0', demo ? 'bg-brand-500' : 'bg-up')} />
-          <span className="truncate">{demo ? 'Demo' : "PIPS's Localnet"}</span>
+          <span className="truncate">{demo ? 'Demo' : 'Sui Devnet'}</span>
         </span>
         <span className="flex shrink-0 items-center gap-2 pl-3">
           {online == null ? (
@@ -190,7 +190,7 @@ export function GamesConsole() {
         <div className="mt-3 font-mono text-[11px] uppercase tracking-[0.14em] text-text-2">Balance</div>
         <div className="mt-0.5 leading-none">
           <Stat value={balance} prefix="$" className="text-[26px] font-extrabold tracking-tight text-text" />
-          <span className="ml-1 font-mono text-[11px] uppercase tracking-[0.1em] text-text-2">USDC</span>
+          <span className="ml-1 font-mono text-[11px] uppercase tracking-[0.1em] text-text-2">DUSDC</span>
         </div>
       </div>
     </GameScreen>

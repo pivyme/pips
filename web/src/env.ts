@@ -10,6 +10,11 @@ export const env = createEnv({
     // Demo mode: the whole app runs on an in-memory mock (no backend, no Sui, play money).
     // Lets anyone poke at the full UI with zero setup. A localStorage flag can override it.
     VITE_DEMO_MODE: z.enum(['true', 'false']).default('false'),
+    // Soft access gate for a private test deploy: when 'true', tapping START on the door asks for
+    // VITE_ACCESS_CODE before letting anyone in, and remembers a correct code per-device. Not real
+    // security (the code ships in the client bundle), just enough to keep the public out. Default off.
+    VITE_ACCESS_GUARD: z.enum(['true', 'false']).default('false'),
+    VITE_ACCESS_CODE: z.string().optional(),
     // Mirrors the backend PIPS_AUTH_MODE so the UI shows the right door.
     VITE_AUTH_MODE: z.enum(['dev', 'privy']).default('dev'),
     // Debug switch: force every sign-in (and reload) through the full onboarding arc
@@ -36,6 +41,8 @@ export const env = createEnv({
   runtimeEnv: {
     VITE_API_URL: import.meta.env.VITE_API_URL,
     VITE_DEMO_MODE: import.meta.env.VITE_DEMO_MODE,
+    VITE_ACCESS_GUARD: import.meta.env.VITE_ACCESS_GUARD,
+    VITE_ACCESS_CODE: import.meta.env.VITE_ACCESS_CODE,
     VITE_AUTH_MODE: import.meta.env.VITE_AUTH_MODE,
     VITE_ONBOARDING_DEBUG: import.meta.env.VITE_ONBOARDING_DEBUG,
     VITE_WALLET_CONNECT_ENABLED: import.meta.env.VITE_WALLET_CONNECT_ENABLED,

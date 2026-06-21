@@ -264,7 +264,7 @@ export function WelcomeScreen({
               Welcome{name ? `, @${name.toLowerCase()}` : ''}
             </div>
             <p className="mx-auto mt-2 max-w-[260px] text-[13px] font-medium leading-snug text-text-2">
-              We've sent you <span className="font-bold text-brand-500">1,000 USDC</span> to play around. Have fun!
+              We've sent you <span className="font-bold text-brand-500">1,000 DUSDC</span> to play around. Have fun!
             </p>
           </motion.div>
           <motion.div

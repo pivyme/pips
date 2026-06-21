@@ -14,7 +14,7 @@ export interface UserDTO {
   walletAuthAddress?: string; // wallet-connect: the connected external wallet (login + default withdraw target)
   balance: string; // DUSDC, e.g. "983.50" (wallet + manager chips)
   managerReady: boolean; // PredictManager exists
-  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean };
+  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; theme: string };
 }
 
 export interface MarketDTO {

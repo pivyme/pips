@@ -72,11 +72,14 @@ export const menuRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     const u = request.user!;
     return reply
       .code(200)
-      .send({ success: true, error: null, data: { settings: { sound: u.soundEnabled, haptics: u.hapticsEnabled, reducedMotion: u.reducedMotion } } });
+      .send({ success: true, error: null, data: { settings: { sound: u.soundEnabled, haptics: u.hapticsEnabled, reducedMotion: u.reducedMotion, theme: u.theme } } });
   });
 
   app.patch('/settings', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = (request.body ?? {}) as { sound?: boolean; haptics?: boolean; reducedMotion?: boolean };
+    const body = (request.body ?? {}) as { sound?: boolean; haptics?: boolean; reducedMotion?: boolean; theme?: string };
+    // theme is a free-form skin id (validated client-side against the catalog); cap the length so a
+    // junk value can't bloat the row, but don't hardcode the id list here.
+    const theme = typeof body.theme === 'string' && body.theme.length > 0 && body.theme.length <= 40 ? body.theme : undefined;
     try {
       const updated = await prismaQuery.user.update({
         where: { id: request.user!.id },
@@ -84,11 +87,12 @@ export const menuRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
           ...(typeof body.sound === 'boolean' ? { soundEnabled: body.sound } : {}),
           ...(typeof body.haptics === 'boolean' ? { hapticsEnabled: body.haptics } : {}),
           ...(typeof body.reducedMotion === 'boolean' ? { reducedMotion: body.reducedMotion } : {}),
+          ...(theme ? { theme } : {}),
         },
       });
       return reply
         .code(200)
-        .send({ success: true, error: null, data: { settings: { sound: updated.soundEnabled, haptics: updated.hapticsEnabled, reducedMotion: updated.reducedMotion } } });
+        .send({ success: true, error: null, data: { settings: { sound: updated.soundEnabled, haptics: updated.hapticsEnabled, reducedMotion: updated.reducedMotion, theme: updated.theme } } });
     } catch (error) {
       return handleError(reply, 500, 'Could not save settings', 'SETTINGS_FAILED', error as Error);
     }

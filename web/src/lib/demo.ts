@@ -35,7 +35,7 @@ import type {
 
 const OVERRIDE_KEY = 'pips_demo' // '1' force on, '0' force off, unset = env default
 const STATE_KEY = 'pips_demo_state'
-const STATE_VERSION = 4 // bumped: minigame high scores for the leaderboards
+const STATE_VERSION = 5 // bumped: theme synced through settings
 
 export function isDemo(): boolean {
   if (typeof window !== 'undefined') {
@@ -62,7 +62,8 @@ export function setDemoOverride(on: boolean | null): void {
 
 // === Constants ===
 
-const DEMO_ADDRESS = '0x' + 'de70'.repeat(16) // looks like a real Sui address, reads "de70" (demo)
+// A realistic-looking Sui address so demo reads as the real thing on screen recordings.
+const DEMO_ADDRESS = '0xa3f08c7e5b1d49260e8a3f7c6d20b9e41f5c8a037e94d2b60a3c5f81e9b27d4c'
 const DEMO_HANDLE = '@pips'
 // Fallback seed levels (real mid-2026 oracle levels). Used until the live Pyth feed connects and any
 // time the network is blocked, so demo mode still runs fully offline, just on a frozen-but-correct base.
@@ -260,7 +261,7 @@ interface DemoState {
   v: number
   balance: number
   username: string | null // null = first run, show onboarding (mirrors the live user.username signal)
-  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean }
+  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; theme: string }
   counters: Counters
   unlocked: Record<string, string> // slug -> unlockedAt ISO
   history: PlayDTO[] // settled plays only, newest first
@@ -318,7 +319,7 @@ function freshState(): DemoState {
   for (const c of CATALOG) if (meets(c.metric, c.threshold, counters)) unlocked[c.slug] = past(60 * 24)
   // Seed the demo account's minigame bests so the arcade boards look played-in (mid-table, beatable).
   const minigameScores: Record<string, number> = { 'line-rider': 1240, 'candle-hop': 14 }
-  return { v: STATE_VERSION, balance: 2847.5, username: 'pips', settings: { sound: true, haptics: true, reducedMotion: false }, counters, unlocked, history, minigameScores }
+  return { v: STATE_VERSION, balance: 2847.5, username: 'pips', settings: { sound: true, haptics: true, reducedMotion: false, theme: 'classic' }, counters, unlocked, history, minigameScores }
 }
 
 function load(): DemoState {
@@ -691,23 +692,23 @@ function achievementsDTO(): AchievementDTO[] {
 // A fixed roster of rival traders so the boards look alive offline. The demo account ('pips') is
 // mixed in and ranked against them, so its own row highlights like a real player's would.
 const LB_TRADERS: Array<{ username: string; netPnl: number; games: number }> = [
-  { username: 'satoshi', netPnl: 5820, games: 318 },
-  { username: 'mooncat', netPnl: 4210, games: 256 },
-  { username: 'degenduck', netPnl: 2890, games: 174 },
-  { username: 'pipqueen', netPnl: 1640, games: 121 },
-  { username: 'hodlr', netPnl: 980, games: 88 },
-  { username: 'rugslayer', netPnl: 410, games: 52 },
-  { username: 'paperhands', netPnl: -260, games: 61 },
-  { username: 'liquidated', netPnl: -740, games: 95 },
-  { username: 'fomofred', netPnl: -1320, games: 143 },
-  { username: 'maxpain', netPnl: -2480, games: 207 },
-  { username: 'apein', netPnl: -3960, games: 289 },
+  { username: 'pivyme', netPnl: 5820, games: 318 },
+  { username: 'kweklabs', netPnl: 4210, games: 256 },
+  { username: 'kelpin', netPnl: 2890, games: 174 },
+  { username: 'febi', netPnl: 1640, games: 121 },
+  { username: 'moonlee', netPnl: 980, games: 88 },
+  { username: 'suimaxi', netPnl: 410, games: 52 },
+  { username: 'chartcat', netPnl: -260, games: 61 },
+  { username: 'devkai', netPnl: -740, games: 95 },
+  { username: 'ricepaper', netPnl: -1320, games: 143 },
+  { username: 'ngmibro', netPnl: -2480, games: 207 },
+  { username: 'lunarey', netPnl: -3960, games: 289 },
 ]
 
 // Seed scores for the arcade boards (the demo account is mixed in via its own best).
 const MINIGAME_BOTS: Record<string, Array<[string, number]>> = {
-  'line-rider': [['kz', 3800], ['axel', 2650], ['void', 1850], ['neo', 1240], ['pip', 820], ['lux', 520], ['ray', 310], ['moe', 160]],
-  'candle-hop': [['kz', 52], ['axel', 38], ['void', 27], ['neo', 19], ['pip', 13], ['lux', 8], ['ray', 5], ['moe', 2]],
+  'line-rider': [['kweklabs', 3800], ['pivyme', 2650], ['axelrod', 1850], ['voidkat', 1240], ['kelpin', 820], ['moonlee', 520], ['febi', 310], ['devkai', 160]],
+  'candle-hop': [['kweklabs', 52], ['pivyme', 38], ['axelrod', 27], ['voidkat', 19], ['kelpin', 13], ['moonlee', 8], ['febi', 5], ['devkai', 2]],
 }
 
 type Trader = { username: string | null; displayName: string; netPnl: number; games: number; isYou: boolean }

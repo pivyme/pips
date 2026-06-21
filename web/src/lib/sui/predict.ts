@@ -43,7 +43,7 @@ const formatRawBalance = (raw: string, decimals: number): string => {
   return fraction ? `${whole}.${fraction}` : whole.toString()
 }
 
-// Direct wallet balances for browser-console debugging. USDC here is only the coin balance
+// Direct wallet balances for browser-console debugging. DUSDC here is only the coin balance
 // owned by the address, not chips currently deposited in its PredictManager.
 export async function readWalletBalances(address: string): Promise<WalletBalances> {
   const [sui, usdc] = await Promise.all([

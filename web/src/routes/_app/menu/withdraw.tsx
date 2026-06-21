@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { ArrowUpFromLine } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { isValidSuiAddress, normalizeSuiAddress } from '@mysten/sui/utils'
-import { MenuScreen, prepareMenuTransition } from '@/components/menu/shared'
+import { DusdcMark, MenuScreen, prepareMenuTransition } from '@/components/menu/shared'
 import { Button } from '@/ui/Button'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -13,7 +13,7 @@ import {
   serializeFormattedStringToFloat,
 } from '@/utils/format'
 
-// Send USDC to any PIPS-network Sui address. The backend pulls from the wallet + manager chips and
+// Send DUSDC to any PIPS-network Sui address. The backend pulls from the wallet + manager chips and
 // signs for the user, so this is just a validated amount + recipient and a confirm.
 export const Route = createFileRoute('/_app/menu/withdraw')({
   component: WithdrawScreen,
@@ -93,11 +93,11 @@ function WithdrawScreen() {
               className="tnum w-full min-w-0 bg-transparent text-[42px] font-black leading-none text-text outline-none placeholder:text-text-3"
             />
           </div>
-          <div className="mt-3 text-[13px] text-text-2">
+          <div className="mt-3 flex items-center gap-1.5 text-[13px] text-text-2">
             <span className="tnum">
               {formatStringToNumericDecimals(user?.balance ?? '0', 2)}
-            </span>{' '}
-            USDC available
+            </span>
+            <DusdcMark size={14} /> available
           </div>
           {amount !== '' && amountNum > available + 0.005 && (
             <div className="mt-1 text-[13px] font-semibold text-down">
@@ -140,7 +140,7 @@ function WithdrawScreen() {
         </Button>
 
         <p className="px-1 text-[13px] leading-snug text-text-3">
-          Sends USDC from your balance to any PIPS-network Sui address. Check
+          Sends DUSDC from your balance to any PIPS-network Sui address. Check
           the address carefully, transfers cannot be undone.
         </p>
       </div>

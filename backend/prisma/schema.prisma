@@ -36,6 +36,7 @@ model User {
   soundEnabled     Boolean   @default(true)
   hapticsEnabled   Boolean   @default(true)
   reducedMotion    Boolean   @default(false)
+  theme            String    @default("classic")   // selected device skin id, synced cross-device
 
   lastSignIn       DateTime?
   createdAt        DateTime  @default(now())

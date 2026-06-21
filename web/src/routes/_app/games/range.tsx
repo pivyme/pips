@@ -412,7 +412,7 @@ export function RangeScreen() {
       format: (v) => `±${BAND_LADDER[Math.min(v, BAND_LADDER.length - 1)].toFixed(1)}%`,
     },
     numberWheel: {
-      label: 'USDC',
+      label: 'DUSDC',
       min: 0,
       max: maxBetIdx,
       step: 1,

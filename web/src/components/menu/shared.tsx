@@ -4,10 +4,41 @@ import type { ReactNode } from 'react'
 import { Illo } from '@/ui/Illo'
 import { Button } from '@/ui/Button'
 import { haptic } from '@/lib/haptics'
+import { cnm } from '@/utils/style'
 
 export function prepareMenuTransition(direction: 'forward' | 'back') {
   if (typeof document === 'undefined') return
   document.documentElement.dataset.menuTransition = direction
+}
+
+// The DUSDC token mark: the coin logo, optionally with the ticker. Menu surfaces only (balance,
+// deposit, withdraw). Never on the device screen, that stays the flat TE instrument language.
+export function DusdcMark({
+  size = 16,
+  showTicker = true,
+  className,
+  children,
+}: {
+  size?: number
+  showTicker?: boolean
+  className?: string
+  children?: ReactNode
+}) {
+  return (
+    <span className={cnm('inline-flex items-center gap-1.5', className)}>
+      <img
+        src="/assets/icons/dusdc-logo.png"
+        alt="DUSDC"
+        width={size}
+        height={size}
+        style={{ width: size, height: size }}
+        draggable={false}
+        className="shrink-0 rounded-full"
+      />
+      {showTicker && 'DUSDC'}
+      {children}
+    </span>
+  )
 }
 
 // Shared chrome for the menu sub-screens (Stats, Achievements, Settings, Customize). Each is a

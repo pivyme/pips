@@ -23,7 +23,7 @@ export interface UserDTO {
   walletAuthAddress?: string
   balance: string
   managerReady: boolean
-  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean }
+  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; theme: string }
 }
 
 export interface MarketDTO {

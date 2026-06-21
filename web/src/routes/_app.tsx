@@ -16,9 +16,10 @@ import { MenuDrawer } from '@/components/console/MenuDrawer'
 import { CustomizeStudio } from '@/components/console/CustomizeStudio'
 import { LandingOverlay, AttractScreen } from '@/components/console/LandingOverlay'
 import { UsernameScreen, ThemePicker, WelcomeScreen } from '@/components/console/Onboarding'
-import { themeBackdrop, useConsoleTheme } from '@/components/console/themes'
+import { DEFAULT_THEME_ID, THEME_BY_ID, themeBackdrop, useConsoleTheme } from '@/components/console/themes'
 import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
+import { api } from '@/lib/api'
 import { useAuth, loadToken } from '@/lib/auth'
 import { isDemo } from '@/lib/demo'
 import { env } from '@/env'
@@ -80,6 +81,32 @@ function AppLayout() {
   const onCustomize = Boolean(matchRoute({ to: '/menu/customize' }))
   // The saved skin. Feeds the live games device; the studio + onboarding seed from it and write back.
   const savedTheme = useConsoleTheme()
+  // Theme is a synced setting: localStorage paints it instantly (pre-auth, no flash), but the server is
+  // the cross-device source of truth. On the first authenticated frame per account, adopt the server's
+  // saved skin so a new device matches the one you customized. We only adopt a NON-default pick: when the
+  // server is still on the default we leave the local skin alone, so a pre-sync local choice (or the
+  // shared-key demo user) is never clobbered back to Classic. Same-device logins already match (every
+  // pick writes both), so there's no recolor. setId is unstable (it closes over the stored value), so
+  // reach it through a ref.
+  const savedThemeRef = useRef(savedTheme)
+  savedThemeRef.current = savedTheme
+  const themeHydratedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (!user) {
+      themeHydratedFor.current = null
+      return
+    }
+    if (themeHydratedFor.current === user.id) return
+    themeHydratedFor.current = user.id
+    const serverTheme = user.settings.theme
+    const st = savedThemeRef.current
+    // own-property check: the server theme is a free-form string, so ignore anything not in the
+    // catalog (and never let a prototype key like "constructor" slip through into the skin lookup).
+    const known = serverTheme ? Object.prototype.hasOwnProperty.call(THEME_BY_ID, serverTheme) : false
+    if (known && serverTheme !== DEFAULT_THEME_ID && serverTheme !== st.id) {
+      st.setId(serverTheme)
+    }
+  }, [user])
   // The ambient the whole frame floats on, derived from the skin so the surround stops being flat
   // black. We paint html + body (body shows under the safe-area inset behind iOS Safari's status
   // bar) and retint the theme-color meta, which is what Safari uses to color the notch/status strip.
@@ -275,20 +302,20 @@ function AppLayout() {
   // device into the app pose for the welcome beat, so the persistent shell never runs its own zoom.
   const restoring = restoredSession && !onboarding && status !== 'anon' && status !== 'error'
   const canvasStage: 'hero' | 'app' = restoring ? 'app' : phase === 'landing' ? 'hero' : 'app'
-  const screenVisible =
-    phase === 'app' ? !showCustomizeStudio : phase === 'onboarding' ? step !== 'customize' : true
 
-  // The device plays a hero -> app settle the first time the app view appears (e.g. opening a game
-  // URL directly: the device drops in before the screen content). Track when that settle is done so
-  // screens can hold their content until the device is at rest. A restored session / reduced motion
-  // has no settle, so it's done immediately; a later game <-> game nav stays in 'app', so it never
+  // The device plays a hero -> app settle on a real login (the door -> games walk-in: the handheld
+  // flies in from the floating hero pose to center). Track when that move is done so the screen can
+  // stay black through it and only power its content on once the device is at rest. Only the
+  // landing -> app jump moves the device; onboarding -> app already sits at the app pose (the skin
+  // step's Done snap landed it there), and a restored session / reduced motion has no settle at all,
+  // so those resolve to settled immediately. A later game <-> game nav stays in 'app', so it never
   // re-fires and content reveals right away.
   const [deviceSettled, setDeviceSettled] = useState(true)
   const prevPhaseRef = useRef(phase)
   useEffect(() => {
     const prev = prevPhaseRef.current
     prevPhaseRef.current = phase
-    if (phase !== 'app' || prev === 'app') return
+    if (phase !== 'app' || prev !== 'landing') return
     if (restoring || reduced) {
       setDeviceSettled(true)
       return
@@ -297,6 +324,17 @@ function AppLayout() {
     const t = window.setTimeout(() => setDeviceSettled(true), DEVICE_SETTLE_MS)
     return () => window.clearTimeout(t)
   }, [phase, restoring, reduced])
+
+  // Keep the screen black while the device flies into place on login, then fade the content in once
+  // it has settled. The layer's backing is always black, so the screen reads as a powered-off display
+  // that turns on when the handheld arrives, not content sliding around mid-move. Other transitions
+  // (in-app nav, onboarding steps) are unaffected: deviceSettled stays true for them.
+  const screenVisible =
+    phase === 'app'
+      ? !showCustomizeStudio && deviceSettled
+      : phase === 'onboarding'
+        ? step !== 'customize'
+        : true
 
   // The content mounted on the device's screen, per phase. Onboarding's username + welcome render on
   // the screen (instrument language); the skin step turns the screen off so the body reads cleanly.
@@ -346,6 +384,8 @@ function AppLayout() {
               onSelect={savedTheme.setId}
               active={step === 'customize'}
               onDone={() => {
+                // onSelect already previewed the pick locally; persist the final one to the server.
+                void api.patchSettings({ theme: savedTheme.id }).catch(() => {})
                 setWelcomeRevealed(false)
                 setStep('welcome')
               }}
@@ -360,6 +400,8 @@ function AppLayout() {
               onCommit={(id) => {
                 setCustomizeHandoff(true)
                 savedTheme.setId(id)
+                // Persist the pick so it follows the user to any device. Fire-and-forget, local wins.
+                void api.patchSettings({ theme: id }).catch(() => {})
                 void navigate({ to: '/games' })
               }}
               onOutroComplete={() => setCustomizeHandoff(false)}

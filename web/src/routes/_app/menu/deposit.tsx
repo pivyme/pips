@@ -1,14 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { Check, Copy, Coins } from 'lucide-react'
+import { Check, Copy, Coins, ExternalLink } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { MenuScreen } from '@/components/menu/shared'
 import { useAuth } from '@/lib/auth'
 import { api, ApiError } from '@/lib/api'
+import { explorerAddressUrl } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 
-// Receive USDC. Pure address screen, no chain call: anything sent to this address lands in the
+// Receive DUSDC. Pure address screen, no chain call: anything sent to this address lands in the
 // balance. We poll /auth/me lightly while it's open so an incoming deposit shows up on its own.
 export const Route = createFileRoute('/_app/menu/deposit')({
   component: DepositScreen,
@@ -35,10 +36,10 @@ function DepositScreen() {
       const res = await api.requestDusdc()
       await refresh()
       haptic('success')
-      toast.success(`Received ${Number(res.amount)} test USDC`, { id: 'faucet' })
+      toast.success(`Received ${Number(res.amount)} test DUSDC`, { id: 'faucet' })
     } catch (e) {
       haptic('error')
-      toast.error(e instanceof ApiError ? e.message : 'Could not get test USDC', { id: 'faucet' })
+      toast.error(e instanceof ApiError ? e.message : 'Could not get test DUSDC', { id: 'faucet' })
     } finally {
       setClaiming(false)
     }
@@ -61,9 +62,24 @@ function DepositScreen() {
     <MenuScreen title="Deposit">
       <div className="flex flex-col gap-5">
         <p className="px-1 text-[15px] leading-snug text-text-2">
-          Send USDC to your address to top up your balance. Scan the code, or
+          Send DUSDC to your address to top up your balance. Scan the code, or
           copy the address below.
         </p>
+
+        {/* What DUSDC is, up front: a test token we mint, not the real thing. */}
+        <div className="surface-skeuo flex items-start gap-3 rounded-card p-4">
+          <img
+            src="/assets/icons/dusdc-logo.png"
+            alt=""
+            className="h-9 w-9 shrink-0 rounded-full"
+            draggable={false}
+          />
+          <p className="text-[13px] leading-snug text-text-2">
+            <span className="font-bold text-text">DUSDC</span> is a test token
+            deployed by the PIPS team on Sui Devnet. It is free play money with
+            no real value, use it to try every game.
+          </p>
+        </div>
 
         {/* QR on a white panel so any camera reads it cleanly. */}
         <div className="card-neo flex flex-col items-center gap-4 rounded-card p-6">
@@ -75,7 +91,7 @@ function DepositScreen() {
             )}
           </div>
           <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">
-            Your USDC address
+            Your address QR code
           </span>
         </div>
 
@@ -96,8 +112,22 @@ function DepositScreen() {
           </span>
         </button>
 
+        {/* Open the address on the Sui devnet explorer in a new tab. */}
+        {address && (
+          <a
+            href={explorerAddressUrl(address)}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => haptic('selection')}
+            className="surface-skeuo flex items-center justify-center gap-2 rounded-card p-4 text-[14px] font-semibold text-text transition-transform active:scale-[0.99]"
+          >
+            <ExternalLink className="h-[18px] w-[18px] text-text-2" strokeWidth={2.4} />
+            Check on explorer
+          </a>
+        )}
+
         <p className="px-1 text-[13px] leading-snug text-text-3">
-          PIPS's Sui Localnet USDC only. Funds appear in your balance once the transfer
+          Sui Devnet DUSDC only. Funds appear in your balance once the transfer
           confirms.
         </p>
 
@@ -116,10 +146,10 @@ function DepositScreen() {
           className="btn-primary flex h-12 items-center justify-center gap-2 rounded-card text-[15px] font-semibold disabled:opacity-60"
         >
           <Coins className="h-[18px] w-[18px]" strokeWidth={2.4} />
-          {claiming ? 'Sending…' : 'Get 500 test USDC'}
+          {claiming ? 'Sending…' : 'Get 500 test DUSDC'}
         </button>
         <p className="px-1 text-[13px] leading-snug text-text-3">
-          Instant play money on the PIPS's Sui Localnet. One batch per minute.
+          Instant test DUSDC on Sui Devnet. One batch per minute.
         </p>
       </div>
     </MenuScreen>

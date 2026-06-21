@@ -8,6 +8,8 @@ import { config } from '@/config'
 import { env } from '@/env'
 import { haptic } from '@/lib/haptics'
 import { isDemo, setDemoOverride } from '@/lib/demo'
+import { accessGuardEnabled, isUnlocked, tryUnlock } from '@/lib/accessGuard'
+import { cnm } from '@/utils/style'
 import { useAuth, toAuthError, type AuthError } from '@/lib/auth'
 import { listSuiWallets, onWalletsChange, isUserRejection, type SuiWallet } from '@/lib/walletConnect'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
@@ -28,6 +30,9 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   // The sign-in failure currently on screen. Fed by the privy bridge (via status='error') and by the
   // direct throw paths below. Null hides the sheet.
   const [signInError, setSignInError] = useState<AuthError | null>(null)
+  // Private test deploy: the access-code sheet (VITE_ACCESS_GUARD). Shown when START is tapped before
+  // this device has entered the code.
+  const [codeOpen, setCodeOpen] = useState(false)
 
   // Track installed Sui wallets (extensions register asynchronously, often after first paint).
   // Client-only: getWallets touches window, and effects never run on the server.
@@ -46,8 +51,10 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
 
   // A session landed while we are on the door: a returning real privy session auto-walks in; dev and
   // demo always show the door and walk in only once the CTA was tapped (connecting). Demo never
-  // auto-enters even under a privy env, so the door is always part of the demo showcase.
+  // auto-enters even under a privy env, so the door is always part of the demo showcase. The access
+  // gate holds even an authed session at the door until the code is entered.
   useEffect(() => {
+    if (accessGuardEnabled() && !isUnlocked()) return
     if (status === 'authed' && (connecting || (isPrivy && !demo))) onEnter()
   }, [status, connecting, isPrivy, demo, onEnter])
 
@@ -61,8 +68,8 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
     }
   }, [status, authError])
 
-  const onCta = useCallback(async () => {
-    haptic('rigid')
+  // The real entry: walk an already-authed session in, else kick off sign-in.
+  const proceed = useCallback(async () => {
     if (status === 'authed') {
       onEnter()
       return
@@ -83,6 +90,23 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
       }
     }
   }, [status, signIn, onEnter])
+
+  const onCta = useCallback(() => {
+    haptic('rigid')
+    // Private test deploy: hold at the door until this device enters the access code.
+    if (accessGuardEnabled() && !isUnlocked()) {
+      setCodeOpen(true)
+      return
+    }
+    void proceed()
+  }, [proceed])
+
+  // Code accepted: drop the sheet and continue into the app (sign-in or straight in).
+  const onUnlocked = useCallback(() => {
+    setCodeOpen(false)
+    haptic('rigid')
+    void proceed()
+  }, [proceed])
 
   // Run the connect + sign + verify for one wallet. Reuses `connecting`, so the success effect above
   // walks the user in once the session lands. A dismissed wallet popup is silent; other failures toast.
@@ -211,6 +235,8 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
         <p className="mt-5 text-[11px] font-medium text-text-3">Powered by DeepBook Predict</p>
       </motion.div>
 
+      <AccessCodeSheet open={codeOpen} onUnlocked={onUnlocked} onClose={() => setCodeOpen(false)} />
+
       <WalletPicker
         open={pickerOpen}
         wallets={wallets}
@@ -338,6 +364,95 @@ function SignInErrorSheet({
             )}
           </motion.div>
         </>
+      )}
+    </AnimatePresence>
+  )
+}
+
+// The access gate for a private test deploy (VITE_ACCESS_GUARD). A centered blur overlay that asks
+// for the code. A correct one is remembered per-device by tryUnlock, so the door never asks again.
+function AccessCodeSheet({
+  open,
+  onUnlocked,
+  onClose,
+}: {
+  open: boolean
+  onUnlocked: () => void
+  onClose: () => void
+}) {
+  const [code, setCode] = useState('')
+  const [error, setError] = useState(false)
+
+  const submit = () => {
+    if (tryUnlock(code)) {
+      onUnlocked()
+    } else {
+      setError(true)
+      haptic('error')
+    }
+  }
+
+  return (
+    <AnimatePresence
+      onExitComplete={() => {
+        setCode('')
+        setError(false)
+      }}
+    >
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          className="pointer-events-auto absolute inset-0 z-40 flex items-center justify-center bg-black/70 px-6 backdrop-blur-md"
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.97 }}
+            transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-xs rounded-3xl border border-line-strong bg-surface p-6"
+          >
+            <h2 className="text-center text-lg font-extrabold tracking-tight text-text">Private testing</h2>
+            <p className="mx-auto mt-1.5 max-w-[15rem] text-center text-[13.5px] leading-snug text-text-2">
+              PIPS is not open yet. Enter the access code to continue.
+            </p>
+
+            <input
+              autoFocus
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value)
+                setError(false)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submit()
+              }}
+              placeholder="Access code"
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              className={cnm(
+                'mt-5 h-12 w-full rounded-2xl border bg-canvas px-4 text-center text-[15px] font-semibold tracking-wide text-text outline-none transition-colors placeholder:font-medium placeholder:text-text-3',
+                error ? 'border-down' : 'border-line-strong focus:border-brand-500',
+              )}
+            />
+            {error && (
+              <p className="mt-2 text-center text-[12.5px] font-semibold text-down">That code didn't work.</p>
+            )}
+
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!code.trim()}
+              className="btn-primary mt-4 flex h-12 w-full items-center justify-center rounded-full text-[15px] disabled:opacity-50"
+            >
+              Unlock
+            </button>
+          </motion.div>
+        </motion.div>
       )}
     </AnimatePresence>
   )

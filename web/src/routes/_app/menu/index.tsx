@@ -90,12 +90,20 @@ function BalanceHero() {
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">Balance</span>
         <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-text-2">
-          USDC
+          DUSDC
         </span>
       </div>
-      <div className="mt-2 flex items-baseline gap-1">
-        <span className="text-2xl font-black text-text-3">$</span>
-        <span className="tnum text-[42px] font-black leading-none text-text">{balance}</span>
+      <div className="mt-2 flex items-center gap-2.5">
+        <img
+          src="/assets/icons/dusdc-logo.png"
+          alt=""
+          className="h-9 w-9 shrink-0 rounded-full"
+          draggable={false}
+        />
+        <div className="flex items-baseline gap-1">
+          <span className="text-2xl font-black text-text-3">$</span>
+          <span className="tnum text-[42px] font-black leading-none text-text">{balance}</span>
+        </div>
       </div>
       <div className="mt-5 grid grid-cols-2 gap-3">
         <Link

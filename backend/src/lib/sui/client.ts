@@ -7,14 +7,13 @@ import { SUI_FULLNODE_URL } from '../../config/main-config.ts';
 import { NETWORK } from './config.ts';
 
 const url = SUI_FULLNODE_URL || getJsonRpcFullnodeUrl(NETWORK as 'testnet' | 'mainnet' | 'devnet' | 'localnet');
-const PUBLIC_LOCALNET_RPC_URL = 'https://rpc.playpips.fun';
 
 export const suiClient = new SuiJsonRpcClient({ url, network: NETWORK });
 
-export const explorerTxUrl = (digest: string): string =>
-  NETWORK === 'localnet'
-    ? `https://custom.suiscan.xyz/custom/tx/${digest}?network=${encodeURIComponent(PUBLIC_LOCALNET_RPC_URL)}`
-    : `https://suiscan.xyz/${NETWORK}/tx/${digest}`;
+// Suiscan explorer links. Network comes from config (devnet now, mainnet later); Suiscan natively
+// indexes mainnet, testnet, and devnet.
+const EXPLORER_BASE = `https://suiscan.xyz/${NETWORK}`;
 
-export const explorerObjectUrl = (id: string): string =>
-  `https://suiscan.xyz/${NETWORK}/object/${id}`;
+export const explorerTxUrl = (digest: string): string => `${EXPLORER_BASE}/tx/${digest}`;
+export const explorerObjectUrl = (id: string): string => `${EXPLORER_BASE}/object/${id}`;
+export const explorerAddressUrl = (address: string): string => `${EXPLORER_BASE}/account/${address}`;

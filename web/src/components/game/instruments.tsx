@@ -795,7 +795,7 @@ export function StatusStrip({ frozen, className }: VizProps) {
   return (
     <Svg className={className} fill>
       <Tag x={14} y={42} hue="up">
-        ◆ LOCALNET
+        ◆ DEVNET
       </Tag>
       <Num x={120} y={52} anchor="middle" size={26} hue="amber">
         $24.80

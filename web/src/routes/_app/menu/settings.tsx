@@ -17,7 +17,8 @@ export const Route = createFileRoute('/_app/menu/settings')({
 })
 
 type Settings = UserDTO['settings']
-type Key = keyof Settings
+// Only the boolean toggles live here; the skin (settings.theme) is set in the Customize studio.
+type Key = 'sound' | 'haptics' | 'reducedMotion'
 
 const ROWS: Array<{ key: Key; label: string; desc: string }> = [
   { key: 'sound', label: 'Sound', desc: 'Beeps and wins' },
@@ -28,7 +29,7 @@ const ROWS: Array<{ key: Key; label: string; desc: string }> = [
 function SettingsScreen() {
   const { user, refresh } = useAuth()
   const [local, setLocal] = useState<Settings>(
-    user?.settings ?? { sound: true, haptics: true, reducedMotion: false },
+    user?.settings ?? { sound: true, haptics: true, reducedMotion: false, theme: 'classic' },
   )
   const [busy, setBusy] = useState<Key | null>(null)
 

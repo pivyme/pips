@@ -1419,7 +1419,7 @@ export default function ConsoleCanvas({
       max: 9,
       step: 1,
       value: debugNumberValue,
-      label: 'USDC',
+      label: 'DUSDC',
       format: (value: number) => String(value),
     }
     // In the studio no game binds the wheel, so it would read as an empty black drum. Park a sample
@@ -1438,7 +1438,7 @@ export default function ConsoleCanvas({
       max: idleStakes.length - 1,
       step: 1,
       value: idleNumberValue,
-      label: 'USDC',
+      label: 'DUSDC',
       format: (value: number) => `$${idleStakes[value]}`,
     }
 
