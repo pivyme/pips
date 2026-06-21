@@ -206,7 +206,7 @@ phase_deploy() {
 # Phase: wire (point BOTH apps at devnet)
 # ===========================================================================
 phase_wire() {
-  step "Wire  point backend/.env + web/.env at devnet"
+  step "Wire  point backend/.env + web/.env + backend/.env.production at devnet"
   [ -f "$DEPLOYED" ] || { fail "no deployed.devnet.json yet. Run 'deploy' first."; return 1; }
 
   # The bootstrap already wrote SUI_NETWORK + the PREDICT_*/VITE_PREDICT_* ids. We add the runtime
@@ -224,6 +224,33 @@ phase_wire() {
     "VITE_SUI_FULLNODE_URL=$RPC"
   ok "web/.env -> devnet"
   info "frontend reads VITE_* at build time, so rebuild/restart the dev server to pick these up."
+
+  # Keep the production reference (backend/.env.production) in sync so the deployed box gets the devnet
+  # ids too. It is the OPERATOR (OPERATOR_ENABLED=true), unlike the local follower above, and carries
+  # the whole deploy record in PIPS_DEPLOYED_JSON (deployed.devnet.json is gitignored + not in the image,
+  # so the box reads it from this env var, see config.ts loadDeployed). Without this the box would still
+  # point at the dead localnet package after a refresh. The file is gitignored, so this never commits ids.
+  local prod="$BACKEND/.env.production"
+  if [ -f "$prod" ]; then
+    local prod_pairs=(
+      "SUI_NETWORK=devnet"
+      "SUI_FULLNODE_URL=$RPC"
+      "PIPS_OPERATOR_ENABLED=true"
+      "PREDICT_PACKAGE_ID=$(dfield packageId)"
+      "PREDICT_REGISTRY_ID=$(dfield registryId)"
+      "PREDICT_OBJECT_ID=$(dfield predictId)"
+      "PREDICT_ADMIN_CAP_ID=$(dfield adminCapId)"
+      "${FUND_KNOBS[@]}"
+    )
+    # Minify deployed.devnet.json onto one line for the env value (config.ts accepts raw JSON or base64).
+    local djson
+    djson="$(DEPLOYED_FILE_PATH="$DEPLOYED" bun -e 'import fs from "fs"; process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync(process.env.DEPLOYED_FILE_PATH, "utf8"))))' 2>/dev/null)"
+    [ -n "$djson" ] && prod_pairs+=("PIPS_DEPLOYED_JSON=$djson") || warn "could not minify $DEPLOYED for PIPS_DEPLOYED_JSON (left as-is)"
+    set_env "$prod" "${prod_pairs[@]}"
+    ok "backend/.env.production -> devnet (operator). Paste it (or just PIPS_DEPLOYED_JSON) into Dokploy + redeploy."
+  else
+    info "no backend/.env.production to sync (skipping)"
+  fi
 }
 
 # ===========================================================================
@@ -330,8 +357,9 @@ guided_all() {
   cat <<EOF
   [x] Predict stack published to devnet, package $(dfield packageId)
   [x] backend/.env + web/.env wired to devnet (this machine = follower)
+  [x] backend/.env.production synced to devnet (the operator box reference: ids + PIPS_DEPLOYED_JSON)
   [x] users re-armed for re-provision
-  [ ] paste PIPS_DEPLOYED_JSON + the operator env on the deployed box, redeploy it   (dokploy phase)
+  [ ] paste backend/.env.production (or just PIPS_DEPLOYED_JSON + operator env) on the box, redeploy it   (dokploy phase)
   [ ] rebuild the frontend with the new VITE_* values
   Then locally: cd backend && bun dev   and   cd web && bun dev
 EOF
