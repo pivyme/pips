@@ -34,7 +34,8 @@ set -uo pipefail   # NOT -e: this is a wizard, it handles its own failures and k
 # ---- config (override via env) ---------------------------------------------
 RPC="${PIPS_DEVNET_RPC:-https://fullnode.devnet.sui.io:443}"
 FAUCET="${PIPS_DEVNET_FAUCET:-https://faucet.devnet.sui.io/v2/gas}"
-FUND_SUI="${PIPS_DEVNET_FUND_SUI:-60}"        # operator target: covers deploy + seeding the 3 ops wallets
+FUND_SUI="${PIPS_DEVNET_FUND_SUI:-60}"        # operator target: deploy (~2 SUI) + a working buffer. The
+                                              # devnet-faucet worker sustains it after, so this stays small.
 CLI_ENV="devnet"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,17 +44,26 @@ WEB="$ROOT/web"
 CONTRACTS="$ROOT/contracts"
 DEPLOYED="$BACKEND/src/lib/sui/deployed.devnet.json"
 
-# Funding knobs the operator (deployed box) uses to seed sponsor/settlement/treasury from its own
-# SUI. Sized for a richly funded operator (you send it a few hundred+ SUI, see the address below);
-# the devnet-faucet worker is the backstop if it ever runs low. The localnet defaults (topups of
-# 500) are dialled to ~200 so they're comfortable but still faucet-recoverable after a devnet wipe.
+# Devnet funding profile, tuned so you NEVER hand-fund a fukton of SUI: the public faucet (free,
+# 10 SUI/hit) is the primary source and the operator's own balance barely moves.
+#
+# The trick is the floor ordering. The devnet-faucet worker keeps the operator + all three ops wallets
+# at/above PIPS_DEVNET_FAUCET_MIN_SUI. That floor sits ABOVE the operator->ops-wallet topup MINs below,
+# so the faucet always refills a wallet before it dips low enough for the operator to step in. So the
+# operator->ops deposits become a rare backstop, and the operator only ever spends SUI on its own gas
+# (price-push / oracle-roll / settle), which the faucet replenishes the same way. Start it with a few
+# faucet hits and it sustains itself; no manual top-ups, no operator hoarding hundreds of SUI.
 FUND_KNOBS=(
-  "PIPS_SPONSOR_MIN_SUI=50"
-  "PIPS_SPONSOR_TOPUP_SUI=200"
-  "PIPS_SETTLEMENT_MIN_SUI=50"
-  "PIPS_SETTLEMENT_TOPUP_SUI=200"
-  "PIPS_TREASURY_MIN_SUI=20"
-  "PIPS_TREASURY_TOPUP_SUI=100"
+  # PRIMARY: faucet floor for the operator + sponsor + settlement + treasury (+ the personal extra).
+  "PIPS_DEVNET_FAUCET_MIN_SUI=20"
+  # BACKSTOP: operator -> ops wallets. MINs are below the faucet floor (so the faucet wins), and the
+  # deposits are small, so a backstop hit only nudges, it never drains the operator.
+  "PIPS_SPONSOR_MIN_SUI=10"
+  "PIPS_SPONSOR_TOPUP_SUI=25"
+  "PIPS_SETTLEMENT_MIN_SUI=10"
+  "PIPS_SETTLEMENT_TOPUP_SUI=25"
+  "PIPS_TREASURY_MIN_SUI=6"
+  "PIPS_TREASURY_TOPUP_SUI=20"
   "PIPS_GAS_FUND_SUI=2"
   "PIPS_GAS_MIN_SUI=0.6"
 )
