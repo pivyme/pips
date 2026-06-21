@@ -34,8 +34,19 @@ const fastify = Fastify({
   logger: false,
 });
 
+// Production CORS locks to an explicit allow-list. ALLOWED_ORIGIN is comma-separated so the apex and
+// www (and any preview/staging origin) all pass. Dev stays open. Auth is a Bearer token, and SSE uses
+// a ?t= query (EventSource can't set headers), not cookies, so we don't enable credentials.
+const corsOrigins = ALLOWED_ORIGIN.split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+if (IS_PROD && corsOrigins.length === 0) {
+  console.warn(
+    '[cors] NODE_ENV=production but ALLOWED_ORIGIN is empty: every cross-origin request will be blocked. Set ALLOWED_ORIGIN to your frontend origin(s).',
+  );
+}
 fastify.register(FastifyCors, {
-  origin: IS_PROD ? ALLOWED_ORIGIN : '*',
+  origin: IS_PROD ? corsOrigins : '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'token'],
 });
