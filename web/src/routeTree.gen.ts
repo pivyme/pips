@@ -15,7 +15,7 @@ import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as ConsoleTransparentRouteImport } from './routes/console-transparent'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppRouteImport } from './routes/_app'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as ToolsWalletRouteImport } from './routes/tools/wallet'
 import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
 import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
@@ -62,10 +62,10 @@ const AppRoute = AppRouteImport.update({
   id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
+const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
 const ToolsWalletRoute = ToolsWalletRouteImport.update({
   id: '/tools/wallet',
@@ -149,7 +149,7 @@ const AppGamesCandleHopRoute = AppGamesCandleHopRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
   '/console': typeof ConsoleRoute
   '/console-transparent': typeof ConsoleTransparentRoute
   '/design-system': typeof DesignSystemRoute
@@ -173,13 +173,13 @@ export interface FileRoutesByFullPath {
   '/menu/': typeof AppMenuIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
   '/console': typeof ConsoleRoute
   '/console-transparent': typeof ConsoleTransparentRoute
   '/design-system': typeof DesignSystemRoute
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
   '/tools/wallet': typeof ToolsWalletRoute
+  '/': typeof AppIndexRoute
   '/games/candle-hop': typeof AppGamesCandleHopRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
@@ -198,7 +198,6 @@ export interface FileRoutesByTo {
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/console': typeof ConsoleRoute
   '/console-transparent': typeof ConsoleTransparentRoute
@@ -206,6 +205,7 @@ export interface FileRoutesById {
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
   '/tools/wallet': typeof ToolsWalletRoute
+  '/_app/': typeof AppIndexRoute
   '/_app/games/candle-hop': typeof AppGamesCandleHopRoute
   '/_app/games/line-rider': typeof AppGamesLineRiderRoute
   '/_app/games/lucky': typeof AppGamesLuckyRoute
@@ -249,13 +249,13 @@ export interface FileRouteTypes {
     | '/menu/'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/'
     | '/console'
     | '/console-transparent'
     | '/design-system'
     | '/export'
     | '/pitch'
     | '/tools/wallet'
+    | '/'
     | '/games/candle-hop'
     | '/games/line-rider'
     | '/games/lucky'
@@ -273,7 +273,6 @@ export interface FileRouteTypes {
     | '/menu'
   id:
     | '__root__'
-    | '/'
     | '/_app'
     | '/console'
     | '/console-transparent'
@@ -281,6 +280,7 @@ export interface FileRouteTypes {
     | '/export'
     | '/pitch'
     | '/tools/wallet'
+    | '/_app/'
     | '/_app/games/candle-hop'
     | '/_app/games/line-rider'
     | '/_app/games/lucky'
@@ -299,7 +299,6 @@ export interface FileRouteTypes {
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
   ConsoleRoute: typeof ConsoleRoute
   ConsoleTransparentRoute: typeof ConsoleTransparentRoute
@@ -353,12 +352,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
+    '/_app/': {
+      id: '/_app/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
     }
     '/tools/wallet': {
       id: '/tools/wallet'
@@ -476,6 +475,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppIndexRoute: typeof AppIndexRoute
   AppGamesCandleHopRoute: typeof AppGamesCandleHopRoute
   AppGamesLineRiderRoute: typeof AppGamesLineRiderRoute
   AppGamesLuckyRoute: typeof AppGamesLuckyRoute
@@ -494,6 +494,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppIndexRoute: AppIndexRoute,
   AppGamesCandleHopRoute: AppGamesCandleHopRoute,
   AppGamesLineRiderRoute: AppGamesLineRiderRoute,
   AppGamesLuckyRoute: AppGamesLuckyRoute,
@@ -514,7 +515,6 @@ const AppRouteChildren: AppRouteChildren = {
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
   ConsoleRoute: ConsoleRoute,
   ConsoleTransparentRoute: ConsoleTransparentRoute,

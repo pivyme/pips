@@ -222,13 +222,21 @@ function AppLayout() {
   const phase: 'landing' | 'onboarding' | 'app' =
     !enteredAndAuthed ? 'landing' : onboarding ? 'onboarding' : 'app'
 
-  // The menu is only ever a drawer over the live app, never a standalone page. If we sit on a /menu
-  // route while the app phase isn't active (the door is up, or mid-onboarding), strip the URL back to
-  // home. Without this, signing out at /menu leaves the URL parked there, so the next sign-in reopens
-  // the drawer (and eats its mount cost) instead of landing on Home.
+  // Keep the URL honest with the phase, on the one persistent shell. Signed out -> the door at the
+  // root, so logging out never leaves a stale /games or /menu path behind the door. Signed in -> the
+  // canonical /games hub (the menu is only ever a drawer over it, never a standalone page). Mid
+  // onboarding we just strip a stray /menu. Skipped while auth is still resolving so a returning
+  // session isn't bounced off /games during the loading veil.
   useEffect(() => {
-    if (phase !== 'app' && onMenu) void navigate({ to: '/games', replace: true })
-  }, [phase, onMenu, navigate])
+    if (status === 'loading') return
+    if (phase === 'landing') {
+      if (!matchRoute({ to: '/' })) void navigate({ to: '/', replace: true })
+    } else if (phase === 'app') {
+      if (matchRoute({ to: '/' })) void navigate({ to: '/games', replace: true })
+    } else if (phase === 'onboarding' && onMenu) {
+      void navigate({ to: '/games', replace: true })
+    }
+  }, [status, phase, onMenu, navigate, matchRoute])
 
   // Welcome dismissed: leave onboarding and refresh so the shell re-reads the new handle. We defer the
   // refresh to here (not the username step) so the user object stays "not onboarded" through every step
