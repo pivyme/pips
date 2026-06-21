@@ -289,9 +289,8 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
   // Reuse the original seed on a re-route so the dealt asset/side/tier stay identical (fairness, and
   // the reels already snapped to them); only the oracle is re-picked + re-priced. Fresh seed otherwise.
   const seed = existingSeed ?? newSeed();
-  // TEMP (testing): pin the dealt asset to BTC instead of dealing it randomly. Falls back to the random
-  // pick if BTC has no live market. Revert to `assets[Math.floor(seedFloat(seed, 0) * assets.length)]`.
-  const asset = assets.includes('BTC') ? 'BTC' : assets[Math.floor(seedFloat(seed, 0) * assets.length)];
+
+  const asset = assets[Math.floor(seedFloat(seed, 0) * assets.length)];
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
   const tier = pickTier(seedFloat(seed, 2)); // slot-weighted reel deal (LUCKY.md §4)
 
