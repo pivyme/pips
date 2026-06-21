@@ -21,6 +21,7 @@ import type {
   MinigameSubmit,
   PlayDTO,
   PlayResult,
+  RangeQuote,
   PlayStatus,
   PlayTick,
   PriceTick,
@@ -518,6 +519,9 @@ function closePlay(id: string, mode: 'cashout' | 'settle'): { play: PlayDTO; unl
   p.multiplier = m.multiplier
   p.settledAt = new Date(nowMs()).toISOString()
   p.settlePrice = pxStr(settlePx)
+  // A settle freezes the price via a post-expiry push; mirror that tx so demo history shows the
+  // settlement link. A cash-out is a pre-expiry redeem, so it has no settlement push.
+  if (mode === 'settle') p.txSettle = demoDigest()
 
   // Record + balance.
   const k = state.counters
@@ -801,6 +805,25 @@ export const demoApi = {
     return { markets: ASSETS.map((a) => ({ asset: a, spot: String(currentPrice(a)), durations: DURATIONS, live: true })) }
   },
 
+  // Demo has no chain, so each "quote" reuses the same model createRange mints against: the band +
+  // multiple are exactly what a demo PLAY would lock, so the preview and the locked value still agree.
+  rangeQuotes: async (asset: string, widthPcts: number[]): Promise<{ quotes: RangeQuote[] }> => {
+    await delay(80)
+    const entry = currentPrice(asset)
+    const quotes = widthPcts.map((widthPct) => {
+      const halfPct = widthPct / 2
+      return {
+        multiplier: estimateMultiplier(halfPct, RANGE_ROUND_SEC),
+        lower: str(entry * (1 - halfPct / 100)),
+        upper: str(entry * (1 + halfPct / 100)),
+        entrySpot: str(entry),
+        duration: RANGE_ROUND_SEC,
+        widthPct,
+      }
+    })
+    return { quotes }
+  },
+
   play: async (game: Game, body: Record<string, unknown>): Promise<PlayResult> => {
     await delay(140)
     const play = game === 'lucky' ? createLucky(body) : createRange(body)
@@ -1063,6 +1086,7 @@ function buildSeedPlay(s: SeedSpec, i: number, past: (mins: number) => string): 
     settledAt,
     txMint: demoDigest(),
     txRedeem: won ? demoDigest() : undefined,
+    txSettle: demoDigest(),
   }
 }
 

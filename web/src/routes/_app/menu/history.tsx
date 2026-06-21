@@ -1,10 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ExternalLink } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
 import { api, type Game, type LuckyParams, type PlayDTO, type RangeParams } from '@/lib/api'
-import { explorerTxUrl } from '@/lib/sui/config'
+import { explorerObjectUrl, explorerTxUrl } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
 
@@ -113,8 +113,8 @@ function headOf(play: PlayDTO): { asset: string; line: string } {
 }
 
 // The labelled debug rows for the expanded panel. Lucky shows its target strike; range shows its band.
-function detailRows(play: PlayDTO): Array<[string, string]> {
-  const rows: Array<[string, string]> = [
+function detailRows(play: PlayDTO): Array<[string, ReactNode]> {
+  const rows: Array<[string, ReactNode]> = [
     ['Duration', `${play.params.duration}s`],
     ['Multiplier', fmtMult(play.multiplier)],
   ]
@@ -130,7 +130,6 @@ function detailRows(play: PlayDTO): Array<[string, string]> {
     ['Payout', play.payout ? `$${money(parseFloat(play.payout))}` : '—'],
     ['Opened', fmtTime(play.openedAt)],
     ['Settled', fmtTime(play.settledAt)],
-    ['Oracle', shortId(play.market.oracleId)],
   )
   return rows
 }
@@ -185,22 +184,28 @@ function HistoryRow({ play }: { play: PlayDTO }) {
               </div>
             ))}
           </div>
-          {(play.txMint || play.txRedeem) && (
-            <div className="mt-3 flex flex-col gap-2 border-t border-white/[0.06] pt-3">
-              {play.txMint && <TxLink label="Mint tx" digest={play.txMint} />}
-              {play.txRedeem && <TxLink label="Redeem tx" digest={play.txRedeem} />}
-            </div>
-          )}
+          <div className="mt-3 flex flex-col gap-2 border-t border-white/[0.06] pt-3">
+            {play.txMint && <LinkRow label="Mint tx" id={play.txMint} href={explorerTxUrl(play.txMint)} />}
+            {/* The tx that froze the settlement price this round resolved against. Falls back to the
+                oracle object when this play settled on a chain push we didn't author (follower mode). */}
+            {play.txSettle ? (
+              <LinkRow label="Settle tx" id={play.txSettle} href={explorerTxUrl(play.txSettle)} />
+            ) : (
+              play.market.oracleId && <LinkRow label="Oracle" id={play.market.oracleId} href={explorerObjectUrl(play.market.oracleId)} />
+            )}
+            {play.txRedeem && <LinkRow label="Redeem tx" id={play.txRedeem} href={explorerTxUrl(play.txRedeem)} />}
+          </div>
         </div>
       )}
     </div>
   )
 }
 
-function TxLink({ label, digest }: { label: string; digest: string }) {
+// One labelled explorer link row (a tx digest or an object id), styled like the readout rows.
+function LinkRow({ label, id, href }: { label: string; id: string; href: string }) {
   return (
     <a
-      href={explorerTxUrl(digest)}
+      href={href}
       target="_blank"
       rel="noreferrer"
       onClick={() => haptic('selection')}
@@ -208,7 +213,7 @@ function TxLink({ label, digest }: { label: string; digest: string }) {
     >
       <span className="font-mono text-[11px] uppercase tracking-wide text-text-3">{label}</span>
       <span className="flex items-center gap-1.5 font-mono text-[12px] text-text">
-        {shortId(digest)}
+        {shortId(id)}
         <ExternalLink className="h-3.5 w-3.5 text-text-3" strokeWidth={2.4} />
       </span>
     </a>

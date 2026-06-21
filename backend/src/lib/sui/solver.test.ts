@@ -118,7 +118,7 @@ describe('solveStrike: fallback when the tier is past the ask bounds', () => {
 });
 
 describe('LUCKY_TIERS', () => {
-  it('is the locked §4 tier ladder (directional, 2x floor)', () => {
-    expect([...LUCKY_TIERS]).toEqual([2, 3, 5, 10, 25]);
+  it('is the locked §4 tier ladder (directional, 2x floor, 10x cap)', () => {
+    expect([...LUCKY_TIERS]).toEqual([2, 3, 5, 10]);
   });
 });

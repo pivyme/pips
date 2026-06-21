@@ -38,6 +38,17 @@ export interface RangeParams {
   duration: number;
 }
 
+// A pre-mint Range price preview: the real multiple read off the live Predict ask (1 / ask) for the
+// grid-snapped band, so the knob shows what it will actually mint, not a guess. No DB, no mint.
+export interface RangeQuoteDTO {
+  multiplier: number; // payout multiple at mint (grid-snapped band, live vault ask)
+  lower: string; // grid-snapped band bounds, display units
+  upper: string;
+  entrySpot: string; // spot the band is centered on, display
+  duration: number; // seconds to the routed oracle's expiry
+  widthPct: number; // the requested full band width (echoed back)
+}
+
 export interface PlayDTO {
   id: string;
   game: Game;
@@ -56,6 +67,7 @@ export interface PlayDTO {
   settledAt?: string;
   txMint?: string;
   txRedeem?: string;
+  txSettle?: string; // post-expiry price push that froze the settlement price
 }
 
 export interface UserStatsDTO {

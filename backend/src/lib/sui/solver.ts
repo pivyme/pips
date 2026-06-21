@@ -17,12 +17,13 @@
 import { DUSDC_DECIMALS, multiplier as multiplierOf } from './math.ts';
 import type { TradeAmounts } from './predict.ts';
 
-// The nominal multiplier tiers the reel can deal (LUCKY.md §4). The solver snaps a solved
-// multiple back to the nearest nominal for logging + the achieved-tier report; the UI always
-// shows the real solved multiple, not the nominal. Starts at 2x: the strike is always OTM (in the
-// bet direction) and at least `minOffset1e9` clear of entry, so the floor tier is a small but real
+// The nominal multiplier tiers the reel can deal (LUCKY.md §4). Capped at 10x so the top tier stays
+// reachable on the live grid and pays a sane amount. The solver snaps a solved multiple back to the
+// nearest nominal for logging + the achieved-tier report; the live UI shows that clean nominal tier
+// (the cents of solver drift read as noise). Starts at 2x: the strike is always OTM (in the bet
+// direction) and at least `minOffset1e9` clear of entry, so the floor tier is a small but real
 // directional move (~2.0-2.2x), never an at-the-money strike sitting on the entry line.
-export const LUCKY_TIERS = [2, 3, 5, 10, 25] as const;
+export const LUCKY_TIERS = [2, 3, 5, 10] as const;
 
 const nearestTier = (m: number): number =>
   LUCKY_TIERS.reduce((best, t) => (Math.abs(t - m) < Math.abs(best - m) ? t : best), LUCKY_TIERS[0] as number);
@@ -207,13 +208,13 @@ export async function solveStrike(args: {
   const clamped = Math.abs(bestMul - tierMultiplier) > tierMultiplier * CLAMP_TOLERANCE;
 
   // ---- Round 2 (analytic): size from the chosen strike's per-unit cost, no sizing devInspect. Cost
-  // is near-linear in quantity for small size, so q = target/perUnit lands the entry near the bet,
-  // and entryCost/multiple come straight off the (fresh or <=3s cached) curve. The real mint prices
-  // post-trade (a touch higher); the manager is funded above the bet to absorb it, and a rare
-  // overshoot aborts the mint and the caller re-resolves. This deletes a ~1.2s node round trip; the
-  // reported multiple omits the position's own slippage (<0.1% at small stakes). ----
+  // is near-linear in quantity for small size, so q = bet/perUnit lands the entry at the bet, and
+  // entryCost/multiple come straight off the (fresh or <=3s cached) curve. The real mint prices
+  // post-trade (a touch higher); the manager is funded above the bet (FUND_BUFFER_PCT) to absorb it,
+  // and a rare overshoot aborts the mint and the caller re-resolves. This deletes a ~1.2s node round
+  // trip; the reported multiple omits the position's own slippage (<0.1% at small stakes). ----
   if (args.analyticSize) {
-    const targetA = (betRaw * 98n) / 100n; // aim just under the bet; the manager's funding buffer absorbs the rest
+    const targetA = betRaw; // deploy the full stake; the manager's funding buffer absorbs post-trade drift
     let q = (probe * targetA) / bestPerUnit;
     if (q <= 0n) q = 1n;
     const entryCost = (bestPerUnit * q) / probe;

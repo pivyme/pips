@@ -46,10 +46,10 @@ function UsernameScreen() {
   }
 
   return (
-    <MenuScreen title="Handle">
+    <MenuScreen title="Username">
       <div className="flex flex-col gap-5">
         <p className="px-1 text-[15px] leading-snug text-text-2">
-          This is how you show up across Pips. 3 to 20 letters, numbers, or underscores.
+          This is how you show up across PIPS. 3 to 20 letters, numbers, or underscores.
         </p>
 
         <div className="card-neo rounded-card p-5">
@@ -82,7 +82,7 @@ function UsernameScreen() {
             ) : valid && dirty ? (
               <span className="text-up">Looks good</span>
             ) : (
-              <span className="text-text-3">Pick a handle</span>
+              <span className="text-text-3">Type your username</span>
             )}
           </div>
         </div>

@@ -317,6 +317,38 @@ export async function previewBinaryBatch(
 export const previewRange = (p: RangeParams): Promise<TradeAmounts> =>
   tradeAmounts((tx) => rangeKey(tx, p), 'get_range_trade_amounts', p.oracleId, p.quantity);
 
+// Batch many range previews into ONE devInspect. Every probe shares the oracle/expiry; each carries
+// its own (lower, higher, quantity). Mirrors previewBinaryBatch: the whole band ladder is priced in
+// a single round trip against one oracle snapshot, so the multiples are consistent across band sizes
+// and cost ~1 devInspect total instead of one per band. Throws on a non-success devInspect (expired
+// oracle), the signal to re-route. cost == 0 on a probe means that band is unmintable.
+export async function previewRangeBatch(
+  oracleId: string,
+  expiryMs: number,
+  bands: Array<{ lower1e9: bigint; higher1e9: bigint; quantity: bigint }>,
+): Promise<TradeAmounts[]> {
+  if (bands.length === 0) return [];
+  const tx = new Transaction();
+  // Each probe is two commands: build the range key, then read the trade amounts. Command pairs are
+  // interleaved [key0, getter0, key1, getter1, ...], so getter result i lands at result index 2*i+1.
+  for (const b of bands) {
+    const key = rangeKey(tx, { oracleId, expiryMs, lower1e9: b.lower1e9, higher1e9: b.higher1e9, quantity: b.quantity });
+    tx.moveCall({
+      target: target('predict', 'get_range_trade_amounts'),
+      arguments: [tx.object(PREDICT_ID), tx.object(oracleId), key, tx.pure.u64(b.quantity), tx.object(CLOCK)],
+    });
+  }
+  const res = await suiClient.devInspectTransactionBlock({ sender: operatorAddress, transactionBlock: tx });
+  if (res.effects?.status?.status !== 'success') {
+    throw new Error(`batch range preview failed: ${res.effects?.status?.error ?? 'devInspect error'}`);
+  }
+  return bands.map((_, i) => {
+    const rv = res.results?.[2 * i + 1]?.returnValues;
+    if (!rv || rv.length < 2) throw new Error('batch range preview returned no amounts');
+    return { cost: decodeU64(rv[0][0] as number[]), payout: decodeU64(rv[1][0] as number[]) };
+  });
+}
+
 // Create a per-user PredictManager (shared, once per user). Id read from effects on confirm.
 export const buildCreateManager = (tx: Transaction): void => {
   tx.moveCall({ target: target('predict', 'create_manager') });

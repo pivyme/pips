@@ -444,13 +444,17 @@ function resolveOracleCap(st: OracleState): string | undefined {
   return st.authorizedCapIds.find((id) => operatorCaps.oracleCapIds.includes(id));
 }
 
-// The price to freeze an oracle at: the live game feed (the same synthetic vol the chart + pusher
-// used, so a round settles where the player watched it land), falling back to the oracle's last
-// on-chain spot if the feed is briefly down. Null if neither is usable.
+// The price to freeze an oracle at: the oracle's last on-chain spot, which is the price pushed right
+// before expiry (update_prices stops recording live prices once past expiry, oracle.move). It is
+// already frozen on-chain, identical for every play on the oracle, and independent of how late the
+// settle tx lands, so a round sitting on the strike resolves deterministically at its buzzer value
+// instead of at whatever the synthetic walk drifted to by the time the settle worker fires. Falls
+// back to the live feed only if the oracle somehow never recorded a spot. Null if neither is usable.
 async function settleSpotUsd(asset: string, lastSpot1e9: bigint): Promise<number | null> {
+  const last = Number(lastSpot1e9) / 1e9;
+  if (last > 0) return last;
   const fresh = await gameSpot(asset).catch(() => null);
-  const px = fresh ? fresh.price : Number(lastSpot1e9) / 1e9;
-  return px > 0 ? px : null;
+  return fresh && fresh.price > 0 ? fresh.price : null;
 }
 
 // Drive a batch of expired-unsettled oracles to settlement in ONE operator tx: a post-expiry price
@@ -466,13 +470,18 @@ async function settleSpotUsd(asset: string, lastSpot1e9: bigint): Promise<number
 // tick instead of spilling noise and deferring to the next one.
 const SETTLE_STALE_RETRIES = 12;
 
+// An oracle's read state plus the settle-nudge tx digest that froze its settlement price (when this
+// process is the one that pushed it). Carried so each settled play can record which tx set the price
+// it resolved against, for the history explorer link. Undefined when a co-operator/leader settled it.
+type SettleState = OracleState & { settleTx?: string };
+
 // After a failed nudge, reconcile against the chain. A push aborts EOracleSettled (oracle.move abort
 // code 6) precisely when the oracle is ALREADY settled, which is the state the nudge wanted: a
 // co-operator beat us to it, or our own earlier nudge timed out on the wait yet actually landed. So
 // re-read each oracle; any that now reads settled is a SUCCESS, marked here with the chain's frozen
 // settlement price (the real value, which may differ from what we were about to push) so Phase 2
 // resolves its play THIS tick. Returns true iff every oracle in the batch is now settled.
-async function reconcileSettled(items: Array<{ st: OracleState; cap: string; spotUsd: number }>, states: Map<string, OracleState | null>): Promise<boolean> {
+async function reconcileSettled(items: Array<{ st: OracleState; cap: string; spotUsd: number }>, states: Map<string, SettleState | null>): Promise<boolean> {
   const fresh = await Promise.all(items.map((it) => readOracle(it.st.oracleId).catch(() => null)));
   let allSettled = true;
   for (let i = 0; i < items.length; i++) {
@@ -487,15 +496,15 @@ async function reconcileSettled(items: Array<{ st: OracleState; cap: string; spo
   return allSettled;
 }
 
-async function settleOracles(items: Array<{ st: OracleState; cap: string; spotUsd: number }>, states: Map<string, OracleState | null>): Promise<boolean> {
+async function settleOracles(items: Array<{ st: OracleState; cap: string; spotUsd: number }>, states: Map<string, SettleState | null>): Promise<boolean> {
   if (items.length === 0) return true;
   try {
     const tx = new Transaction();
     for (const it of items) appendPriceUpdate(tx, it.st.oracleId, it.cap, it.spotUsd);
-    await executeAsOperator(tx, `settle-nudge x${items.length}`, { retries: SETTLE_STALE_RETRIES, freshFirst: true });
+    const { digest } = await executeAsOperator(tx, `settle-nudge x${items.length}`, { retries: SETTLE_STALE_RETRIES, freshFirst: true });
     for (const it of items) {
       removeMarket(it.st.oracleId);
-      states.set(it.st.oracleId, { ...it.st, settled: true, active: false, settlementPrice1e9: usd1e9(it.spotUsd) });
+      states.set(it.st.oracleId, { ...it.st, settled: true, active: false, settlementPrice1e9: usd1e9(it.spotUsd), settleTx: digest });
     }
     return true;
   } catch (e) {
@@ -527,7 +536,7 @@ export async function settleDuePlays(): Promise<void> {
     else byOracle.set(p.oracleId, [p]);
   }
 
-  const states = new Map<string, OracleState | null>();
+  const states = new Map<string, SettleState | null>();
   await Promise.all(
     [...byOracle.keys()].map(async (id) => {
       try {
@@ -581,7 +590,7 @@ export async function settleDuePlays(): Promise<void> {
       const itm = isItm(deserializeKey(play), st.settlementPrice1e9);
       if (itm && redeems >= SETTLE_MAX_REDEEMS_PER_TICK) continue; // over the per-tick redeem budget
       try {
-        await settleOnePlay(play, st.settlementPrice1e9);
+        await settleOnePlay(play, st.settlementPrice1e9, st.settleTx);
         if (itm) redeems++;
       } catch (e) {
         console.error(`[Settle] play ${play.id} settle failed:`, e instanceof Error ? e.message : e);
@@ -611,7 +620,7 @@ export async function settleDuePlays(): Promise<void> {
   }
 }
 
-async function settleOnePlay(play: Play, settlement1e9: bigint): Promise<void> {
+async function settleOnePlay(play: Play, settlement1e9: bigint, settleTx?: string): Promise<void> {
   const key = deserializeKey(play);
   const itm = isItm(key, settlement1e9);
 
@@ -664,6 +673,8 @@ async function settleOnePlay(play: Play, settlement1e9: bigint): Promise<void> {
       // The frozen settlement price (display): what the round actually settled at, for debug/audit.
       settlePrice: String(Number(settlement1e9) / 1e9),
       txRedeem: digest ?? play.txRedeem,
+      // The post-expiry price push that froze the settlement price, for the history explorer link.
+      txSettle: settleTx ?? play.txSettle,
       settledAt: new Date(),
     },
   });
@@ -744,6 +755,7 @@ export async function toPlayDTO(play: Play, liveMark?: bigint): Promise<PlayDTO>
     settledAt: play.settledAt?.toISOString(),
     txMint: play.txMint ?? undefined,
     txRedeem: play.txRedeem ?? undefined,
+    txSettle: play.txSettle ?? undefined,
   };
 }
 

@@ -7,6 +7,8 @@ import {
   EXPIRY_SAFETY_MS,
   LUCKY_ROUND_MS,
   LUCKY_MIN_ORACLE_LIFE_MS,
+  RANGE_MIN_ORACLE_LIFE_MS,
+  RANGE_MAX_ORACLE_LIFE_MS,
   MIN_STAKE,
   MAX_STAKE,
 } from '../config/main-config.ts';
@@ -18,9 +20,11 @@ import {
   multiplier as multiplierOf,
 } from '../lib/sui/config.ts';
 import { liveByAsset, tradeableMarkets, type Market } from '../lib/sui/markets.ts';
+import { sleep } from '../utils/miscUtils.ts';
 import {
   previewBinaryBatch,
   previewRange,
+  previewRangeBatch,
   readOracle,
   type BinaryParams,
   type RangeParams,
@@ -29,6 +33,7 @@ import {
 } from '../lib/sui/predict.ts';
 import { solveStrike, type BatchPreviewFn, type ScanCurve } from '../lib/sui/solver.ts';
 import { newSeed, seedFloat, pickTier } from './rng.ts';
+import type { RangeQuoteDTO as RangeQuote } from '../types/api.ts';
 
 // Cache the dense strike-price curve per (oracle, side) for a short TTL. The curve only drifts as
 // spot moves (price-pusher every ~2s), so within the TTL a play reuses it and skips the scan round
@@ -93,11 +98,33 @@ export const httpStatusForPlayError = (code: PlayErrorCode): number => {
 
 const now = (): number => Date.now();
 
-function pickMarket(asset: string): Market {
-  const live = liveByAsset(asset, now(), EXPIRY_SAFETY_MS).sort((a, b) => b.expiryMs - a.expiryMs);
-  const m = live[0];
-  if (!m) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
-  return m;
+// The live oracle a RANGE play routes to. Range wants a bounded hold (the old longest-lived pick gave
+// inconsistent ~90s rounds), so it routes to a rung expiring inside [MIN, MAX] and takes the longest
+// such, landing the round as close to the 30s cap as the ladder offers (~22-30s). That window is
+// narrower than the rung spacing, so it can be momentarily empty; rather than restructure the ladder
+// we wait a beat. Rungs age down into the window continuously (a 31s rung is 29s two seconds later),
+// so within ~3s one always drops in. If a degraded ladder exhausts the wait, fall back to the rung
+// nearest the cap so a play still lands close to the band rather than failing outright.
+async function rangeOracle(asset: string): Promise<Market> {
+  const inWindow = (m: Market, t: number): boolean => {
+    const life = m.expiryMs - t;
+    return life >= RANGE_MIN_ORACLE_LIFE_MS && life <= RANGE_MAX_ORACLE_LIFE_MS;
+  };
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const t = now();
+    const live = liveByAsset(asset, t, EXPIRY_SAFETY_MS);
+    if (live.length === 0) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
+    const inBand = live.filter((m) => inWindow(m, t));
+    if (inBand.length) return inBand.reduce((best, m) => (m.expiryMs > best.expiryMs ? m : best));
+    if (attempt < 7) await sleep(500); // a rung ages into the window within ~3s
+  }
+  // Wait exhausted (degraded ladder): route to the rung nearest the cap so the round still lands close
+  // to the band rather than failing the play.
+  const t = now();
+  const live = liveByAsset(asset, t, EXPIRY_SAFETY_MS);
+  if (live.length === 0) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
+  const target = t + RANGE_MAX_ORACLE_LIFE_MS;
+  return live.reduce((best, m) => (Math.abs(m.expiryMs - target) < Math.abs(best.expiryMs - target) ? m : best));
 }
 
 // The live oracle a LUCKY play routes to. Two-stage pick so a play never lands on an oracle that
@@ -163,8 +190,8 @@ const fmt1e9 = (v: bigint): string => String(Number(v) / 1e9);
 
 // === Quantity solver ===
 
-// Invert the curve-priced mint cost: find the quantity whose real preview cost lands just
-// under the stake (a little headroom against price drift between preview and mint). A short
+// Invert the curve-priced mint cost: find the quantity whose real preview cost lands at the
+// stake, capped just under it by the hard guard below so the mint never overdraws. A short
 // proportional search converges fast because cost is near-linear in quantity for small size.
 async function solveQuantity(
   preview: (q: bigint) => Promise<TradeAmounts>,
@@ -179,7 +206,7 @@ async function solveQuantity(
   }
   if (a.cost <= 0n) throw new PlayError('MINT_FAILED', 'Market returned a zero price');
 
-  const target = (stakeRaw * 98n) / 100n; // 2% headroom
+  const target = stakeRaw; // aim at the full stake; the hard guard below caps cost so it never exceeds it
   let q = (probe * target) / a.cost;
   if (q <= 0n) q = 1n;
 
@@ -262,9 +289,8 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
   // Reuse the original seed on a re-route so the dealt asset/side/tier stay identical (fairness, and
   // the reels already snapped to them); only the oracle is re-picked + re-priced. Fresh seed otherwise.
   const seed = existingSeed ?? newSeed();
-  // TEMP (testing): pin the dealt asset to BTC instead of dealing it randomly. Falls back to the random
-  // pick if BTC has no live market. Revert to `assets[Math.floor(seedFloat(seed, 0) * assets.length)]`.
-  const asset = assets.includes('BTC') ? 'BTC' : assets[Math.floor(seedFloat(seed, 0) * assets.length)];
+
+  const asset = assets[Math.floor(seedFloat(seed, 0) * assets.length)];
   const side: Side = seedFloat(seed, 1) < 0.5 ? 'up' : 'down';
   const tier = pickTier(seedFloat(seed, 2)); // slot-weighted reel deal (LUCKY.md §4)
 
@@ -339,7 +365,7 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
 export async function resolveRange(stakeRaw: bigint, asset: string, widthPct: number): Promise<ResolvedRange> {
   if (!(widthPct > 0) || widthPct > 10) throw new PlayError('INVALID_PARAMS', 'Band width out of range');
 
-  const market = pickMarket(asset);
+  const market = await rangeOracle(asset);
   const spot = await freshSpot(market);
   const g = gridOf(market);
   const { lower, higher } = rangeBand(spot, widthPct, g);
@@ -363,4 +389,43 @@ export async function resolveRange(stakeRaw: bigint, asset: string, widthPct: nu
     maxPayout: quantity,
     multiplier: multiplierOf(amounts.cost, quantity),
   };
+}
+
+// Cheap, mint-faithful multiplier previews for the whole Range band ladder in ONE shot. Same routing
+// + grid snap as resolveRange, but a single batched devInspect at a nominal 1.0-contract probe per
+// band instead of the stake-sizing solve: the multiple is payout/cost = 1/ask, ~quantity-independent,
+// so a fixed probe reads the real number the player would mint at any stake. Pricing every band off
+// ONE oracle snapshot keeps the ladder consistent (tighter always pays more) and costs ~1 devInspect
+// total. The UI fetches this once on select and caches it, so the pre-PLAY "Pays" is the real locked
+// multiple for every band size, never a blind estimate. No solver loop, no DB, no mint.
+export async function quoteRangeBatch(asset: string, widthPcts: number[]): Promise<RangeQuote[]> {
+  const widths = widthPcts.filter((w) => w > 0 && w <= 10);
+  if (widths.length === 0) throw new PlayError('INVALID_PARAMS', 'No valid band widths');
+
+  const market = await rangeOracle(asset);
+  const spot = await freshSpot(market);
+  const g = gridOf(market);
+  const duration = Math.max(1, Math.round((market.expiryMs - now()) / 1000));
+  const probe = DUSDC_DECIMALS; // 1.0 contract; payout at settle ITM = $1 * qty = probe (6dp)
+
+  const bands = widths.map((w) => ({ widthPct: w, ...rangeBand(spot, w, g) }));
+  let amounts: TradeAmounts[];
+  try {
+    amounts = await previewRangeBatch(
+      market.oracleId,
+      market.expiryMs,
+      bands.map((b) => ({ lower1e9: b.lower, higher1e9: b.higher, quantity: probe })),
+    );
+  } catch (e) {
+    throw new PlayError('MARKET_UNAVAILABLE', `Could not price these bands: ${e instanceof Error ? e.message : e}`);
+  }
+
+  return bands.map((b, i) => ({
+    multiplier: multiplierOf(amounts[i].cost, probe), // payout / cost = 1 / ask (0 if unmintable)
+    lower: fmt1e9(b.lower),
+    upper: fmt1e9(b.higher),
+    entrySpot: fmt1e9(spot),
+    duration,
+    widthPct: b.widthPct,
+  }));
 }

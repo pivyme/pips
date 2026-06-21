@@ -79,6 +79,7 @@ model Play {
 
   txMint       String?
   txRedeem     String?
+  txSettle     String?                         // post-expiry price push that froze the settlement price
   rngSeed      String?                         // lucky: server RNG seed, for fairness audit
 
   openedAt     DateTime?
