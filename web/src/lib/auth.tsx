@@ -37,9 +37,26 @@ const saveToken = (token: string | null): void => {
 
 type AuthStatus = 'loading' | 'authed' | 'anon' | 'error'
 
+// What blew up during sign-in, kept around so the door can show a real reason (and a contact link)
+// instead of a generic toast. `details` is the backend's underlying cause (dev only).
+export interface AuthError {
+  code?: string
+  message: string
+  details?: string
+}
+
+// Normalize anything thrown during a sign-in into a displayable AuthError.
+export function toAuthError(e: unknown): AuthError {
+  if (e instanceof ApiError) return { code: e.code, message: e.message, details: e.details }
+  if (e instanceof Error) return { message: e.message }
+  return { message: 'Something went wrong' }
+}
+
 interface AuthContextValue {
   status: AuthStatus
   user: UserDTO | null
+  // Set when status is 'error': the reason sign-in failed. Null otherwise.
+  error: AuthError | null
   signIn: () => Promise<void>
   // Native Sui wallet connect (custodial login): connect the wallet, sign the nonce, verify. The
   // wallet object comes from the door's picker. Throws on cancel/failure so the caller can react.
@@ -54,7 +71,8 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 // login/logout so signIn/signOut can drive them. Not part of the public auth surface.
 interface AuthControl {
   apply: (token: string, user: UserDTO) => void
-  setStatus: (s: AuthStatus) => void
+  // Second arg carries the failure reason when moving to 'error'; cleared on any other status.
+  setStatus: (s: AuthStatus, error?: AuthError | null) => void
   registerPrivy: (c: { signIn: () => Promise<void>; signOut: () => Promise<void> } | null) => void
 }
 const AuthControlContext = createContext<AuthControl | null>(null)
@@ -69,15 +87,25 @@ const isPrivy = env.VITE_AUTH_MODE === 'privy'
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading')
   const [user, setUser] = useState<UserDTO | null>(null)
+  const [error, setError] = useState<AuthError | null>(null)
   const started = useRef(false)
   const privyControl = useRef<{ signIn: () => Promise<void>; signOut: () => Promise<void> } | null>(null)
+
+  // Single entry point for status + error so the two never drift: an error carries a reason and
+  // clears on any healthy transition.
+  const move = useCallback((s: AuthStatus, err?: AuthError | null) => {
+    setError(s === 'error' ? err ?? { message: 'Could not sign you in. Please try again.' } : null)
+    setStatus(s)
+  }, [])
+
+  const fail = useCallback((e: unknown) => move('error', toAuthError(e)), [move])
 
   const apply = useCallback((token: string, u: UserDTO) => {
     saveToken(token)
     setAuthToken(token)
     setUser(u)
-    setStatus('authed')
-  }, [])
+    move('authed')
+  }, [move])
 
   const devLogin = useCallback(async () => {
     const { token, user: u } = await api.authDev()
@@ -88,18 +116,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { user: u } = await api.me()
       setUser(u)
-      setStatus('authed')
+      move('authed')
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         saveToken(null)
         setAuthToken(null)
         setUser(null)
-        setStatus('anon')
+        move('anon')
       }
     }
-  }, [])
+  }, [move])
 
   const signIn = useCallback(async () => {
+    setError(null) // a fresh attempt clears the last failure so the error sheet drops
     if (isDemo()) {
       apply('demo-token', demoUser())
       return
@@ -137,8 +166,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     saveToken(null)
     setAuthToken(null)
     setUser(null)
-    setStatus('anon')
-  }, [])
+    move('anon')
+  }, [move])
 
   // Keep haptics + sound in step with the user's settings, app-wide, from the moment they load.
   useEffect(() => {
@@ -197,11 +226,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           const { user: u } = await api.me()
           setUser(u)
-          setStatus('authed')
+          move('authed')
           return
         } catch (e) {
           if (!(e instanceof ApiError && e.status === 401)) {
-            setStatus('error')
+            fail(e)
             return
           }
           saveToken(null)
@@ -212,8 +241,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (env.VITE_AUTH_MODE === 'dev') {
         try {
           await devLogin()
-        } catch {
-          setStatus('error')
+        } catch (e) {
+          fail(e)
         }
         return
       }
@@ -221,17 +250,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // privy: the bridge resolves status from the live Privy session (anon, or run the verify
       // handshake once Privy is ready). Stay 'loading' until it does.
     })()
-  }, [apply, devLogin])
+  }, [apply, devLogin, move, fail])
 
   // Stable so the Privy bridge's effects don't re-run every render (an unstable control made the
   // bridge re-assert 'anon' right after a wallet login set 'authed', bouncing the user to the door).
   const registerPrivy = useCallback((c: { signIn: () => Promise<void>; signOut: () => Promise<void> } | null) => {
     privyControl.current = c
   }, [])
-  const control = useMemo<AuthControl>(() => ({ apply, setStatus, registerPrivy }), [apply, registerPrivy])
+  const control = useMemo<AuthControl>(() => ({ apply, setStatus: move, registerPrivy }), [apply, move, registerPrivy])
 
   return (
-    <AuthContext.Provider value={{ status, user, signIn, signInWithWallet, signOut, refresh }}>
+    <AuthContext.Provider value={{ status, user, error, signIn, signInWithWallet, signOut, refresh }}>
       <AuthControlContext.Provider value={control}>{children}</AuthControlContext.Provider>
     </AuthContext.Provider>
   )

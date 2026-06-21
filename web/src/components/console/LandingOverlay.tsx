@@ -4,12 +4,11 @@
 // device to center and fades the drifting background in. App-Surface language (docs/DESIGN.md).
 import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
-import toast from 'react-hot-toast'
 import { config } from '@/config'
 import { env } from '@/env'
 import { haptic } from '@/lib/haptics'
 import { isDemo, setDemoOverride } from '@/lib/demo'
-import { useAuth } from '@/lib/auth'
+import { useAuth, toAuthError, type AuthError } from '@/lib/auth'
 import { listSuiWallets, onWalletsChange, isUserRejection, type SuiWallet } from '@/lib/walletConnect'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
@@ -17,7 +16,7 @@ import { useReducedMotion } from '@/hooks/useReducedMotion'
 // is ready: immediately for an already-authed session when the CTA is tapped (dev/demo auto-login, or
 // a returning privy session), or after the privy modal resolves.
 export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
-  const { status, signIn, signInWithWallet } = useAuth()
+  const { status, error: authError, signIn, signInWithWallet } = useAuth()
   const reduced = useReducedMotion()
   const [connecting, setConnecting] = useState(false)
   const demo = isDemo()
@@ -26,6 +25,9 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   const walletEnabled = env.VITE_WALLET_CONNECT_ENABLED === 'true' && !demo
   const [wallets, setWallets] = useState<SuiWallet[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
+  // The sign-in failure currently on screen. Fed by the privy bridge (via status='error') and by the
+  // direct throw paths below. Null hides the sheet.
+  const [signInError, setSignInError] = useState<AuthError | null>(null)
 
   // Track installed Sui wallets (extensions register asynchronously, often after first paint).
   // Client-only: getWallets touches window, and effects never run on the server.
@@ -49,13 +51,15 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
     if (status === 'authed' && (connecting || (isPrivy && !demo))) onEnter()
   }, [status, connecting, isPrivy, demo, onEnter])
 
-  // A failed sign-in (e.g. the verify handshake errored) drops the spinner so the door stays usable.
+  // A failed sign-in (e.g. the verify handshake errored) drops the spinner and raises the error sheet
+  // with the real reason, so the door stays usable and a reviewer can see what broke + reach us.
   useEffect(() => {
     if (status === 'error') {
       setConnecting(false)
-      toast.error('Could not sign you in. Try again.', { id: 'signin-error' })
+      setSignInError(authError ?? { message: 'Could not sign you in. Please try again.' })
+      haptic('error')
     }
-  }, [status])
+  }, [status, authError])
 
   const onCta = useCallback(async () => {
     haptic('rigid')
@@ -63,6 +67,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
       onEnter()
       return
     }
+    setSignInError(null) // a fresh attempt drops the last failure sheet
     setConnecting(true)
     try {
       // dev/demo resolve a session immediately (the effect walks us in); privy opens the modal and
@@ -70,10 +75,11 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
       await signIn()
     } catch (e) {
       // Backing out of the sign-in modal is not an error, just drop the spinner. Anything else is a
-      // real failure worth flagging.
+      // real failure worth surfacing.
       setConnecting(false)
       if (!(e instanceof Error && e.message === 'login_cancelled')) {
-        toast.error('Could not sign you in. Try again.', { id: 'signin-error' })
+        setSignInError(toAuthError(e))
+        haptic('error')
       }
     }
   }, [status, signIn, onEnter])
@@ -83,36 +89,40 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   const signInWith = useCallback(
     async (wallet: SuiWallet) => {
       setPickerOpen(false)
+      setSignInError(null)
       setConnecting(true)
       try {
         await signInWithWallet(wallet)
       } catch (e) {
         setConnecting(false)
-        if (!isUserRejection(e))
-          toast.error('Could not connect that wallet. Try again.', { id: 'wallet-connect-error' })
+        if (!isUserRejection(e)) {
+          setSignInError(toAuthError(e))
+          haptic('error')
+        }
       }
     },
     [signInWithWallet],
   )
 
   // The "Connect Sui Wallet" CTA: no wallet -> hint, one -> straight in, several -> the picker.
-  const onWalletCta = useCallback(() => {
-    haptic('rigid')
-    const found = listSuiWallets()
-    setWallets(found)
-    if (found.length === 0) {
-      toast('No Sui wallet found. Install Slush, Sui Wallet, or Suiet.', {
-        id: 'no-wallet',
-        icon: '👛',
-      })
-      return
-    }
-    if (found.length === 1) {
-      void signInWith(found[0])
-      return
-    }
-    setPickerOpen(true)
-  }, [signInWith])
+  // Hidden for now alongside the button below. Uncomment both to bring native wallet connect back.
+  // const onWalletCta = useCallback(() => {
+  //   haptic('rigid')
+  //   const found = listSuiWallets()
+  //   setWallets(found)
+  //   if (found.length === 0) {
+  //     toast('No Sui wallet found. Install Slush, Sui Wallet, or Suiet.', {
+  //       id: 'no-wallet',
+  //       icon: '👛',
+  //     })
+  //     return
+  //   }
+  //   if (found.length === 1) {
+  //     void signInWith(found[0])
+  //     return
+  //   }
+  //   setPickerOpen(true)
+  // }, [signInWith])
 
   const busy = connecting || status === 'loading'
   const label = busy ? 'Starting...' : 'START'
@@ -176,6 +186,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
           {label}
         </button>
 
+        {/* Connect Sui Wallet button hidden for now. Uncomment to bring native wallet connect back.
         {walletEnabled && (
           <button
             type="button"
@@ -187,6 +198,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
             {connecting ? 'Connecting...' : 'Connect Sui Wallet'}
           </button>
         )}
+        */}
 
         <button
           type="button"
@@ -205,7 +217,151 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
         onPick={(w) => void signInWith(w)}
         onClose={() => setPickerOpen(false)}
       />
+
+      <SignInErrorSheet
+        error={signInError}
+        onRetry={() => {
+          setSignInError(null)
+          void onCta()
+        }}
+        onClose={() => setSignInError(null)}
+      />
     </div>
+  )
+}
+
+// Shown when sign-in fails. App-Surface bottom sheet (same language as the wallet picker). It names
+// what broke and, for the case that matters most during a live demo, hands a reviewer a direct line
+// to us instead of a dead end. The raw cause sits in a collapsible block so it stays out of the way.
+function SignInErrorSheet({
+  error,
+  onRetry,
+  onClose,
+}: {
+  error: AuthError | null
+  onRetry: () => void
+  onClose: () => void
+}) {
+  const [showDetails, setShowDetails] = useState(false)
+  // The technical line worth showing: the backend's underlying cause if present, else the message.
+  const detail = error?.details || error?.message
+
+  return (
+    <AnimatePresence onExitComplete={() => setShowDetails(false)}>
+      {error && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="pointer-events-auto absolute inset-0 z-30 bg-black/75"
+          />
+          <motion.div
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
+            className="pointer-events-auto absolute inset-x-0 bottom-0 z-40 mx-auto w-full max-w-sm rounded-t-3xl border border-line-strong bg-surface p-5 pb-[max(24px,calc(env(safe-area-inset-bottom)+18px))]"
+          >
+            <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-line-strong" />
+
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-down/15 text-down">
+              <AlertGlyph className="h-6 w-6" />
+            </div>
+
+            <h2 className="text-center text-lg font-extrabold tracking-tight text-text">Sign-in hit a snag</h2>
+            <p className="mx-auto mt-1.5 max-w-xs text-center text-[13.5px] leading-snug text-text-2">
+              Something on our end is misbehaving, so we could not finish signing you in. If you are
+              reviewing PIPS, message us and we will fix it on the spot.
+            </p>
+
+            {error.code && (
+              <div className="mt-3 flex justify-center">
+                <span className="rounded-full border border-line-strong bg-canvas px-2.5 py-1 font-mono text-[10.5px] font-bold uppercase tracking-[0.06em] text-text-3">
+                  {error.code}
+                </span>
+              </div>
+            )}
+
+            <a
+              href={config.links.support}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => haptic('rigid')}
+              className="btn-primary mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-full text-[15px]"
+            >
+              <TelegramGlyph className="size-4.5" />
+              Message us on Telegram
+            </a>
+
+            <div className="mt-2.5 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onRetry}
+                className="flex h-11 flex-1 items-center justify-center rounded-full border border-line-strong bg-canvas text-[14px] font-bold text-text transition-colors hover:bg-surface-2"
+              >
+                Try again
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex h-11 flex-1 items-center justify-center rounded-full text-[14px] font-bold text-text-3 transition-colors hover:text-text-2"
+              >
+                Dismiss
+              </button>
+            </div>
+
+            {detail && (
+              <div className="mt-3 border-t border-line pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowDetails((v) => !v)}
+                  className="mx-auto flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-text-3 transition-colors hover:text-text-2"
+                >
+                  {showDetails ? 'Hide' : 'Show'} technical details
+                </button>
+                <AnimatePresence initial={false}>
+                  {showDetails && (
+                    <motion.pre
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                      className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap wrap-break-word rounded-xl border border-line bg-canvas p-3 font-mono text-[11px] leading-relaxed text-text-3 select-text"
+                    >
+                      {detail}
+                    </motion.pre>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  )
+}
+
+function AlertGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M12 9v4m0 4h.01M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.42 0Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function TelegramGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M21.94 4.51 18.9 19.2c-.23 1.02-.84 1.27-1.7.79l-4.7-3.46-2.27 2.18c-.25.25-.46.46-.95.46l.34-4.78L18.3 6.6c.38-.34-.08-.53-.59-.19L6.96 13.4l-4.65-1.45c-1.01-.32-1.03-1.01.21-1.5l18.18-7c.85-.3 1.59.2 1.24 1.06Z" />
+    </svg>
   )
 }
 

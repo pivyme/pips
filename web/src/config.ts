@@ -11,6 +11,8 @@ export const config = {
     twitter: '',
     github: 'https://github.com/kelvinkn17/pips',
     docs: 'https://docs.sui.io/onchain-finance/deepbook-predict/',
+    // Direct line for reviewers/judges when something breaks mid-demo.
+    support: 'https://t.me/KelvinAdithya',
   },
 } as const
 

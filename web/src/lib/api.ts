@@ -185,11 +185,15 @@ export interface FullLeaderboard {
 export class ApiError extends Error {
   code: string
   status: number
-  constructor(code: string, message: string, status: number) {
+  // The backend's underlying cause (dev only: server sends it under IS_DEV). Surfaced in the
+  // sign-in error sheet so a reviewer sees the real reason, not just "something went wrong".
+  details?: string
+  constructor(code: string, message: string, status: number, details?: string) {
     super(message)
     this.name = 'ApiError'
     this.code = code
     this.status = status
+    this.details = details
   }
 }
 
@@ -201,7 +205,7 @@ export const getAuthToken = (): string | null => authToken
 
 interface Envelope<T> {
   success: boolean
-  error: { code: string; message: string } | null
+  error: { code: string; message: string; details?: string } | null
   data: T
 }
 
@@ -228,7 +232,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
 
   if (!res.ok || !json.success) {
-    throw new ApiError(json.error?.code ?? 'UNKNOWN', json.error?.message ?? 'Something went wrong', res.status)
+    throw new ApiError(
+      json.error?.code ?? 'UNKNOWN',
+      json.error?.message ?? 'Something went wrong',
+      res.status,
+      json.error?.details,
+    )
   }
   return json.data
 }

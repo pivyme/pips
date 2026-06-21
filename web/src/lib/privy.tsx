@@ -11,7 +11,7 @@ import { PrivyProvider, useLogin, usePrivy } from '@privy-io/react-auth'
 import { env } from '@/env'
 import { api, setAuthToken } from '@/lib/api'
 import { isDemo } from '@/lib/demo'
-import { loadToken, useAuthControl } from '@/lib/auth'
+import { loadToken, toAuthError, useAuthControl } from '@/lib/auth'
 
 // Privy is active only in privy mode with an app id configured, and never in demo mode.
 export const PRIVY_ENABLED = env.VITE_AUTH_MODE === 'privy' && Boolean(env.VITE_PRIVY_APP_ID) && !isDemo()
@@ -105,7 +105,7 @@ function PrivyBridge() {
         control.apply(appToken, u)
       } catch (e) {
         console.error('[privy] sign-in failed', e)
-        control.setStatus('error')
+        control.setStatus('error', toAuthError(e))
       } finally {
         inFlight.current = false
       }
@@ -119,7 +119,14 @@ function PrivyBridge() {
 export function AppPrivyProvider({ children }: { children: React.ReactNode }) {
   if (!PRIVY_ENABLED) return <>{children}</>
   return (
-    <PrivyProvider appId={env.VITE_PRIVY_APP_ID as string} config={{ loginMethods: ['google', 'email'] }}>
+    <PrivyProvider
+      appId={env.VITE_PRIVY_APP_ID as string}
+      config={{
+        loginMethods: ['google', 'email'],
+        // Match the app: dark modal with the PIPS amber accent, not Privy's default light theme.
+        appearance: { theme: 'dark', accentColor: '#ffc016' },
+      }}
+    >
       <PrivyBridge />
       {children}
     </PrivyProvider>
