@@ -69,6 +69,9 @@ const DEMO_HANDLE = '@pips'
 // time the network is blocked, so demo mode still runs fully offline, just on a frozen-but-correct base.
 const SEED_PRICES: Record<string, number> = { BTC: 63_575, ETH: 1_725, SOL: 71.45, SUI: 0.71, DEEP: 0.0166 }
 const ASSETS = Object.keys(SEED_PRICES)
+// The tradeable set the games see, matching the real backend (ORACLE_ASSETS = BTC,SUI,ETH). The price
+// model still walks all of SEED_PRICES (history rows reference SOL etc.), but markets only lists these.
+const MARKET_ASSETS = ['BTC', 'ETH', 'SUI']
 // Pyth Hermes price-feed ids (the real oracle). The live SSE stream sets each asset's anchor to the
 // true market price; the synthetic walk rides on top so a 30s round still has motion to settle against.
 const PYTH_IDS: Record<string, string> = {
@@ -805,7 +808,7 @@ export const demoApi = {
 
   markets: async (): Promise<{ markets: MarketDTO[] }> => {
     await delay(120)
-    return { markets: ASSETS.map((a) => ({ asset: a, spot: String(currentPrice(a)), durations: DURATIONS, live: true })) }
+    return { markets: MARKET_ASSETS.map((a) => ({ asset: a, spot: String(currentPrice(a)), durations: DURATIONS, live: true })) }
   },
 
   // Demo has no chain, so each "quote" reuses the same model createRange mints against: the band +

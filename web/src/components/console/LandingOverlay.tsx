@@ -232,7 +232,17 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
           {demo ? 'Connect for real instead' : 'Just exploring? Try demo mode'}
         </button>
 
-        <p className="mt-5 text-[11px] font-medium text-text-3">Powered by DeepBook Predict</p>
+        <div className="mt-5 flex flex-col items-center gap-1.5">
+          <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-3">
+            Powered by
+          </span>
+          <img
+            src="/assets/db-predict-horizontal-logo.svg"
+            alt="DeepBook Predict"
+            draggable={false}
+            className="h-[18px] w-auto select-none opacity-90"
+          />
+        </div>
       </motion.div>
 
       <AccessCodeSheet open={codeOpen} onUnlocked={onUnlocked} onClose={() => setCodeOpen(false)} />

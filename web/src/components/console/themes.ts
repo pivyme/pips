@@ -108,7 +108,7 @@ export const THEMES: ConsoleTheme[] = [
   {
     id: 'pivy',
     code: '110',
-    name: 'PIVY IT UP!',
+    name: 'PIVY IT UP',
     badge: 'pivy.me',
     body: '#00ce2b', // the skin's green frame: under-skin fallback + the ambient surround
     back: '#6bcd83', // back panel isn't skinned; kept lighter so the embossed logo stays legible
