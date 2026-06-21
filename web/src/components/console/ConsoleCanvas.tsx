@@ -723,19 +723,40 @@ export default function ConsoleCanvas({
     const { dispose: disposeActionScreens, glow: actionGlow } =
       createActionScreens(device, bm, ACTION_IDX, buttons, BTN_PX, wx, wy, spinView)
 
-    // The binding's color lights the screen (LONG → green, SHORT → red, …); off-binding the cap idles
-    // dim at the theme's action tone, so it still reads as a powered screen. The loop adds the press
-    // flash onto baseEmissive.
+    // The binding's color lights the screen (LONG → green, SHORT → red, …); a plain secondary cap
+    // (PREV/NEXT/HOW TO/HISTORY, color 'neutral' or unset) lights at the theme's own action tone, so it
+    // reads as a powered, themed screen instead of a dead grey one, matching the Customize preview.
+    // The loop adds the press flash onto baseEmissive. Only the loud semantic states (win/loss/buy) get a
+    // fixed hue here; everything else falls through to actionThemeColor below.
     // Pure-ish hues so the screen's own emissive glow keeps the color true instead of washing toward
-    // white (a red with green/blue in it goes pink once it self-lights). Neutral is a dark LCD, not a
-    // grey one, so the white label reads with full contrast (the references' black ENTER/SCAN screens).
+    // white (a red with green/blue in it goes pink once it self-lights).
     const SCREEN_COLORS: Record<string, string> = {
       up: '#15db6e',
       down: '#ff2a20',
       amber: '#f7b417',
-      neutral: '#171a21',
     }
     let actionThemeColor = '#3568c9'
+    // What color a cap lights up in: the loud semantic states (win/loss/buy) get a fixed hue, a plain
+    // secondary cap (or unset) idles at the theme's action tone. Token screens stay black.
+    function actionHex(
+      color: ButtonColor | undefined,
+      display: ActionDisplay | undefined,
+    ): string {
+      if (display?.mode === 'token') return '#000000'
+      return (color && SCREEN_COLORS[color]) || actionThemeColor
+    }
+    // Ink for the cap's label: near-black on a bright/light screen (amber, mint, Sui blue, greens),
+    // white on a saturated/dark one, so PREV / HOW TO / CASH OUT stay legible whatever the theme paints
+    // the cap. Perceived luminance; the emissive glow lifts mid tones, so the threshold leans bright.
+    function actionInk(hex: string): string {
+      const h = hex.replace('#', '')
+      if (h.length !== 6) return '#ffffff'
+      const r = parseInt(h.slice(0, 2), 16) / 255
+      const g = parseInt(h.slice(2, 4), 16) / 255
+      const b = parseInt(h.slice(4, 6), 16) / 255
+      const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+      return lum > 0.58 ? '#0b0d12' : '#ffffff'
+    }
     function lightActionScreen(i: number, color: string, baseEmissive: number) {
       const mat = bm[i].material as THREE.MeshStandardMaterial
       mat.color.set(color)
@@ -752,20 +773,23 @@ export default function ConsoleCanvas({
     function relightActionScreens() {
       const one = (
         i: number,
+        lbl: { recolor: (c: string) => void },
         color: ButtonColor | undefined,
         available: boolean,
         display: ActionDisplay | undefined,
       ) => {
+        const hex = actionHex(color, display)
         if (display?.mode === 'token') {
           lightActionScreen(i, '#000000', 0)
           actionGlow[i].opacity = 0
-          return
+        } else {
+          lightActionScreen(i, hex, available ? 0.62 : 0.14)
         }
-        const hex = (color && SCREEN_COLORS[color]) || actionThemeColor
-        lightActionScreen(i, hex, available ? 0.62 : 0.14)
+        // Flip the label ink for contrast against whatever the cap lit up in.
+        lbl.recolor(actionInk(hex))
       }
-      one(1, state.a1Color, state.a1Available, state.a1Display)
-      one(2, state.a2Color, state.a2Available, state.a2Display)
+      one(1, a1Lbl, state.a1Color, state.a1Available, state.a1Display)
+      one(2, a2Lbl, state.a2Color, state.a2Available, state.a2Display)
       dirty = true
     }
     // Ambient light-show clock + a scratch color, used by the loop while state.lightShow is on.
@@ -979,8 +1003,13 @@ export default function ConsoleCanvas({
         }
         mat.opacity = text ? opacity : 0
       }
+      // Repaint the current text in a new ink (same text/opacity), so a lit cap can flip its label
+      // to dark/white for contrast without the caller re-passing the text.
+      function recolor(color2: string) {
+        if (color2 !== curColor) set(cur === '\0' ? '' : cur, mat.opacity, color2)
+      }
       set('', 0)
-      return { plane, set, mat }
+      return { plane, set, mat, recolor }
     }
 
     const LABEL_DY = -0.45
