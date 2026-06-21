@@ -312,7 +312,9 @@ function AppLayout() {
   // re-fires and content reveals right away.
   const [deviceSettled, setDeviceSettled] = useState(true)
   const prevPhaseRef = useRef(phase)
-  useEffect(() => {
+  // Pre-paint so the first app frame is already committed to "settling" (screen dark) before the
+  // browser paints, otherwise the hub would flash for a frame before the reset lands.
+  useIsoLayoutEffect(() => {
     const prev = prevPhaseRef.current
     prevPhaseRef.current = phase
     if (phase !== 'app' || prev !== 'landing') return
@@ -340,7 +342,11 @@ function AppLayout() {
   // the screen (instrument language); the skin step turns the screen off so the body reads cleanly.
   let deviceChild: ReactNode = null
   if (phase === 'app') {
-    deviceChild = DeviceScreen ? <DeviceScreen /> : null
+    // Hold the screen dark while the device flies in from the hero pose on login: mount the live
+    // screen only once it has settled, so its content fades in cleanly as the device lands instead of
+    // flickering through the fade-out as the door's attract screen hands off. deviceSettled is true for
+    // every other path (in-app nav, restored session, onboarding -> app), so this only gates the login.
+    deviceChild = deviceSettled && DeviceScreen ? <DeviceScreen /> : null
   } else if (phase === 'landing') {
     deviceChild = <AttractScreen />
   } else if (step === 'username') {
