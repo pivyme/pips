@@ -17,6 +17,7 @@ import { SPONSOR_ENABLED, applySponsorGas, signAsSponsor } from './sponsor.ts';
 export type ExecResult = {
   digest: string;
   objectChanges: Array<{ type: string; objectId?: string; objectType?: string }>;
+  events: Array<{ type: string; parsedJson: Record<string, unknown> | null }>;
 };
 
 // One serial executor for EVERY operator-signed tx: the cron workers (push, roll, settle), the
@@ -109,7 +110,11 @@ async function runViaExecutor(executor: SerialTransactionExecutor, tx: Transacti
   if (opts?.freshFirst) await withTimeout(executor.resetCache(), 8_000, 'resetCache').catch(() => { });
   for (let attempt = 0; ; attempt++) {
     try {
-      const out = await withTimeout(executor.executeTransaction(tx, { objectTypes: true }), OPERATOR_TX_TIMEOUT_MS, `${label}`);
+      const out = await withTimeout(
+        executor.executeTransaction(tx, { objectTypes: true, events: true }),
+        OPERATOR_TX_TIMEOUT_MS,
+        `${label}`,
+      );
       const t = out.$kind === 'Transaction' ? out.Transaction : null;
       if (!t || t.effects?.status?.success !== true) {
         const status = t?.effects?.status ?? (out.$kind === 'FailedTransaction' ? out.FailedTransaction.status : out);
@@ -118,7 +123,11 @@ async function runViaExecutor(executor: SerialTransactionExecutor, tx: Transacti
       const objectChanges = (t.effects.changedObjects ?? [])
         .filter((o) => o.idOperation === 'Created')
         .map((o) => ({ type: 'created', objectId: o.objectId, objectType: t.objectTypes?.[o.objectId] }));
-      return { digest: t.digest ?? t.effects.transactionDigest ?? '', objectChanges };
+      const events = (t.events ?? []).map((event) => ({
+        type: event.eventType,
+        parsedJson: event.json,
+      }));
+      return { digest: t.digest ?? t.effects.transactionDigest ?? '', objectChanges, events };
     } catch (e) {
       if (!isStaleObjectError(e) || attempt >= maxRetries - 1) throw e;
       console.warn(`[exec] ${label}: stale object cache, resetting and retrying (${attempt + 1}/${maxRetries - 1})`);
@@ -180,7 +189,11 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 async function submitAndConfirm(txBytes: Uint8Array, signature: string | string[], digest: string) {
   try {
     return await withTimeout(
-      suiClient.executeTransactionBlock({ transactionBlock: txBytes, signature, options: { showEffects: true, showObjectChanges: true } }),
+      suiClient.executeTransactionBlock({
+        transactionBlock: txBytes,
+        signature,
+        options: { showEffects: true, showObjectChanges: true, showEvents: true },
+      }),
       SUBMIT_TIMEOUT_MS,
       'submit',
     );
@@ -192,7 +205,7 @@ async function submitAndConfirm(txBytes: Uint8Array, signature: string | string[
       digest,
       timeout: SUBMIT_RECONCILE_MS,
       pollInterval: 1500,
-      options: { showEffects: true, showObjectChanges: true },
+      options: { showEffects: true, showObjectChanges: true, showEvents: true },
     });
   }
 }
@@ -220,7 +233,11 @@ export function executeAsTreasury(tx: Transaction, label: string): Promise<ExecR
     const objectChanges = (res.objectChanges ?? [])
       .filter((c) => c.type === 'created')
       .map((c) => ({ type: 'created', objectId: 'objectId' in c ? c.objectId : undefined, objectType: 'objectType' in c ? c.objectType : undefined }));
-    return { digest: res.digest, objectChanges };
+    const events = (res.events ?? []).map((event) => ({
+      type: event.type,
+      parsedJson: (event.parsedJson as Record<string, unknown> | undefined) ?? null,
+    }));
+    return { digest: res.digest, objectChanges, events };
   });
   // Keep the chain alive regardless of this tx's outcome so one failure doesn't wedge later payouts.
   treasuryChain = run.catch(() => { });
@@ -288,7 +305,11 @@ export async function executeForUser(tx: Transaction, ctx: UserContext): Promise
   const objectChanges = (res.objectChanges ?? [])
     .filter((c) => c.type === 'created')
     .map((c) => ({ type: 'created', objectId: 'objectId' in c ? c.objectId : undefined, objectType: 'objectType' in c ? c.objectType : undefined }));
-  return { digest: res.digest, objectChanges };
+  const events = (res.events ?? []).map((event) => ({
+    type: event.type,
+    parsedJson: (event.parsedJson as Record<string, unknown> | undefined) ?? null,
+  }));
+  return { digest: res.digest, objectChanges, events };
 }
 
 // Wallet-connect (custodial) play execution. The server holds this user's play wallet, so signing is a
@@ -317,5 +338,9 @@ async function executeAsCustodialWallet(tx: Transaction, ctx: UserContext): Prom
   const objectChanges = (res.objectChanges ?? [])
     .filter((c) => c.type === 'created')
     .map((c) => ({ type: 'created', objectId: 'objectId' in c ? c.objectId : undefined, objectType: 'objectType' in c ? c.objectType : undefined }));
-  return { digest: res.digest, objectChanges };
+  const events = (res.events ?? []).map((event) => ({
+    type: event.type,
+    parsedJson: (event.parsedJson as Record<string, unknown> | undefined) ?? null,
+  }));
+  return { digest: res.digest, objectChanges, events };
 }

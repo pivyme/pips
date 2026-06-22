@@ -34,11 +34,11 @@ function WithdrawScreen() {
   const addrOk =
     /^0x[0-9a-fA-F]+$/.test(recipientTrim) &&
     isValidSuiAddress(normalizeSuiAddress(recipientTrim))
-  const amountOk = amountNum > 0 && amountNum <= available + 0.005 // tolerate a Max that rounds a hair high
+  const amountOk = amountNum > 0 && amountNum <= available
   const canSubmit = addrOk && amountOk && !submitting
 
   const setMax = () => {
-    setAmount(formatStringToNumericDecimals(String(available), 6))
+    setAmount(formatStringToNumericDecimals(user?.balance ?? '0', 2))
     haptic('selection')
   }
 
@@ -49,7 +49,7 @@ function WithdrawScreen() {
     try {
       await api.withdraw({
         recipient: normalizeSuiAddress(recipientTrim),
-        amount: String(amountNum),
+        amount,
       })
       await refresh()
       haptic('success')
@@ -99,7 +99,7 @@ function WithdrawScreen() {
             </span>
             <DusdcMark size={14} /> available
           </div>
-          {amount !== '' && amountNum > available + 0.005 && (
+          {amount !== '' && amountNum > available && (
             <div className="mt-1 text-[13px] font-semibold text-down">
               More than your balance
             </div>

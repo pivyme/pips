@@ -7,6 +7,7 @@ import {
   EXPIRY_SAFETY_MS,
   LUCKY_ROUND_MS,
   LUCKY_MIN_ORACLE_LIFE_MS,
+  LUCKY_MIN_TARGET_FRAC,
   RANGE_MIN_ORACLE_LIFE_MS,
   RANGE_MAX_ORACLE_LIFE_MS,
   MIN_STAKE,
@@ -118,10 +119,15 @@ async function rangeOracle(asset: string): Promise<Market> {
     if (inBand.length) return inBand.reduce((best, m) => (m.expiryMs > best.expiryMs ? m : best));
     if (attempt < 7) await sleep(500); // a rung ages into the window within ~3s
   }
-  // Wait exhausted (degraded ladder): route to the rung nearest the cap so the round still lands close
-  // to the band rather than failing the play.
+  // Wait exhausted (degraded ladder): route to the rung nearest the cap, but still require enough life
+  // that the round OPENS with a real cash-out window after the background mint. EXPIRY_SAFETY_MS (the
+  // settlement freeze) + the client's lock-in window (~5s) + mint latency means a sub-~13s rung would
+  // land the player straight in the sealed/settling window with CASH OUT never offered for a position
+  // they paid for. Below that floor, fail cleanly (the client re-racks with a toast) rather than open a
+  // cash-out-less round. Mirrors LUCKY_MIN_ORACLE_LIFE_MS, which exists for the same reason.
+  const FALLBACK_MIN_LIFE_MS = 13_000;
   const t = now();
-  const live = liveByAsset(asset, t, EXPIRY_SAFETY_MS);
+  const live = liveByAsset(asset, t, FALLBACK_MIN_LIFE_MS);
   if (live.length === 0) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
   const target = t + RANGE_MAX_ORACLE_LIFE_MS;
   return live.reduce((best, m) => (Math.abs(m.expiryMs - target) < Math.abs(best.expiryMs - target) ? m : best));
@@ -315,9 +321,13 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
       const cacheKey = `${market.oracleId}:${side}`;
       const t0 = now();
       const curve = getFreshCurve(cacheKey, t0);
-      // The live spot centers the scan window on ATM (the cached spot1e9 is pusher-fresh, ~2s old).
+      // The live spot centers the scan window on ATM (the cached spot1e9 is pusher-fresh, ~1s old).
       const atm1e9 = market.spot1e9 ? BigInt(market.spot1e9) : undefined;
-      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve, atm1e9, analyticSize: true });
+      // Floor the strike a minimum fraction off spot (LUCKY_MIN_TARGET_FRAC) so even the 2x tier is a
+      // real, visible move and the TARGET line never lands on top of ENTRY. Without it the directional
+      // gate allowed a strike one tick off spot (the "entry and target basically equal" report).
+      const minOffset1e9 = atm1e9 ? (atm1e9 * BigInt(Math.round(LUCKY_MIN_TARGET_FRAC * 1e9))) / FLOAT_SCALING : undefined;
+      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve, atm1e9, minOffset1e9, analyticSize: true });
       if (!curve) putCurve(cacheKey, solution.curve, t0);
       if (solution.clamped) {
         // Dealt tier was past the live ask bounds; we minted the closest achievable one and report it.

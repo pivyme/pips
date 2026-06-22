@@ -11,7 +11,7 @@ import { usd1e9 } from '../lib/sui/config.ts';
 import { executeAsOperator } from '../lib/sui/execute.ts';
 import { appendPriceUpdate } from '../lib/sui/predict.ts';
 import { getMarket, tradeableMarkets } from '../lib/sui/markets.ts';
-import { gameSpot } from '../lib/game-price.ts';
+import { engineSpot } from '../lib/game-price.ts';
 import { Transaction } from '@mysten/sui/transactions';
 
 let isRunning = false;
@@ -25,12 +25,13 @@ const pushPrices = async (): Promise<void> => {
     if (due.length === 0) return;
 
     const assets = [...new Set(due.map((m) => m.underlying))];
-    // The synthetic game price (real Pyth anchor + vol), the same value the chart streams, so the
-    // oracle the play settles against carries exactly what the player watched.
+    // The synthetic walk (real Pyth anchor + vol): the value we write on-chain. The chart streams the
+    // eased version of THIS pushed price (gameSpot), so the line always tracks what the play settles
+    // against, never a second walk.
     const spots: Record<string, number> = {};
     await Promise.all(
       assets.map(async (a) => {
-        const s = await gameSpot(a);
+        const s = await engineSpot(a);
         if (s) spots[a] = s.price;
       }),
     );

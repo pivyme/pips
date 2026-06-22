@@ -39,6 +39,23 @@ export const serializeFormattedStringToFloat = (val: string): number => {
   }
 }
 
+// Money formatter for the DUSDC strings the API returns. Renders 2 decimals by default (clean for the
+// UI) without ever going through a JS float, so the comma grouping and sign stay exact. Pass a higher
+// maxDecimals only where sub-cent precision genuinely needs to show.
+export const formatExactDecimal = (
+  value: string,
+  options: { minDecimals?: number; maxDecimals?: number; absolute?: boolean } = {},
+): string => {
+  const { minDecimals = 2, maxDecimals = 2, absolute = false } = options
+  const match = value.trim().replace(/,/g, '').match(/^([+-]?)(\d+)(?:\.(\d+))?$/)
+  if (!match) return '0.00'
+  const sign = absolute ? '' : match[1] === '-' ? '-' : ''
+  const whole = match[2].replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  const rawFraction = (match[3] ?? '').slice(0, Math.max(0, maxDecimals))
+  const fraction = rawFraction.replace(/0+$/, '').padEnd(Math.max(0, minDecimals), '0')
+  return `${sign}${whole}${fraction ? `.${fraction}` : ''}`
+}
+
 export const formatNumberToKMB = (num: number): string => {
   try {
     if (num >= 1_000_000_000) {

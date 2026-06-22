@@ -1,19 +1,23 @@
-// The game price feed. Real Pyth spot is the honest anchor; on top of it we run a smooth, bounded,
-// mean-reverting volatility walk per asset so a 30-60s round actually MOVES. Real markets are too
-// quiet over half a minute for a game: BTC barely twitches, so a tight range band would always win
-// and the chart would sit flat. This is the one synthetic layer that makes a play feel like a play,
-// and it is the SINGLE source for every game price, the chart stream, the oracle push, the settle
-// nudge, and the /markets spot all read it, so what the player watches is exactly what settles.
+// The game price layer. Two prices, one source of motion:
 //
-// It never drifts from reality: every tick the offset is pulled back toward the live Pyth anchor and
-// hard-clamped to a few percent, so the price tracks real BTC, just with enough life to be fun.
+//  - engineSpot: the real Pyth anchor times a smooth, bounded, mean-reverting volatility walk, so a
+//    30-60s round actually MOVES (real markets barely twitch over half a minute, a tight band would
+//    always win and the chart would sit flat). OPERATOR ONLY. This is the value the price-pusher writes
+//    on-chain and oracle-roll stands oracles up at, so it BECOMES the oracle price. The offset is pulled
+//    back toward the live anchor and hard-clamped every tick, so it tracks real BTC with enough life.
 //
-// One in-process engine. The operator backend both runs the workers AND serves the price stream, so
-// a single shared walk keeps the chart and the chain identical by construction. If the API is ever
-// scaled horizontally, run the operator (and thus this engine) on exactly ONE instance, the same
-// single-leader rule the workers already follow (OPERATOR_ENABLED).
+//  - gameSpot: the DISPLAY price (the chart stream, the /markets spot, the cash-out exit). It is the
+//    on-chain oracle spot, eased. This is the single price the player ever sees, in BOTH modes. The
+//    operator used to chart engineSpot raw while only ~1-2s snapshots of it hit the oracle, so the live
+//    line drifted off the entry (the pushed spot) and the strike (solved against it), and settlement read
+//    a price the chart never showed (the misleading entry/target bug). Charting the PUSHED spot instead
+//    makes the line exactly what prices and settles the round: entry and target sit on its real path.
+//
+// One in-process engine. The operator runs the walk AND serves the stream; charting the pushed spot
+// (not the raw walk) is what keeps the line and the chain identical. Scaling horizontally? Run the
+// operator (and this engine) on exactly ONE instance, the OPERATOR_ENABLED single-leader rule.
 
-import { GAME_VOL, OPERATOR_ENABLED } from '../config/main-config.ts';
+import { GAME_VOL } from '../config/main-config.ts';
 import { getSpot } from './price-cache.ts';
 import { assetSpot } from './sui/markets.ts';
 
@@ -69,12 +73,12 @@ function refreshAnchor(asset: string, c: Cell): void {
   });
 }
 
-// Follower mode (this backend is NOT the operator): the operator owns the synthetic walk and pushes
-// it on-chain, and market-sync mirrors that pushed price into the live market set. We serve THAT here,
-// so the chart, the Lucky solve, and the on-chain settlement all read one price and there is no second
-// walk to diverge from (the bug that floated the entry/target a few percent off the live line). Ease
-// toward each market-sync step so the line glides instead of stepping. Falls back to raw Pyth only on
-// a cold boot before any oracle is synced.
+// The display feed (gameSpot uses this in BOTH modes now): the on-chain oracle spot, eased so the
+// ~1-2s push/sync steps glide instead of stepping. assetSpot is the operator's freshly pushed price
+// (the pusher writes it each tick) or, on a follower, the price market-sync mirrors off chain. Serving
+// THIS as the chart means the line, the entry (the pushed spot), the strike (solved against it), and
+// the settlement all read one price, with no second walk to drift from (the bug that floated the
+// entry/target off the live line). Falls back to raw Pyth only on a cold boot before any oracle spot.
 const followShown = new Map<string, { price: number; at: number }>();
 const FOLLOW_TAU_MS = 650; // smoothing time constant for the ~2s chain-spot steps. Kept short so the
 // served line tracks the oracle closely (it is what "am I winning" and the win-zone shading read);
@@ -99,13 +103,12 @@ async function followerSpot(asset: string): Promise<{ price: number; ts: number 
   return { price: cur.price > 0 ? cur.price : target, ts: now };
 }
 
-// The live game price for an asset: the real Pyth anchor times the synthetic offset. Returns null
-// only on a cold start where Pyth has never answered for this asset, so callers fall back to raw.
-// With GAME_VOL <= 0 it is a pure pass-through of real Pyth (the kill switch). In follower mode the
-// operator's on-chain price is the single source (followerSpot), so we never run our own walk.
-export async function gameSpot(asset: string): Promise<{ price: number; ts: number } | null> {
+// The synthetic walk: the real Pyth anchor times the bounded vol offset. OPERATOR ONLY, and the value
+// the price-pusher writes on-chain + oracle-roll stands oracles up at, so it BECOMES the oracle price
+// (it is never charted raw, gameSpot charts the pushed-and-eased version). Returns null only on a cold
+// start where Pyth has never answered. With GAME_VOL <= 0 it is pure Pyth pass-through (kill switch).
+export async function engineSpot(asset: string): Promise<{ price: number; ts: number } | null> {
   if (GAME_VOL <= 0) return getSpot(asset);
-  if (!OPERATOR_ENABLED) return followerSpot(asset);
   let c = cells.get(asset);
   if (!c) {
     const s = await getSpot(asset);
@@ -118,4 +121,13 @@ export async function gameSpot(asset: string): Promise<{ price: number; ts: numb
   }
   const price = c.anchor * (1 + c.off + c.tr);
   return { price: price > 0 ? price : c.anchor, ts: Date.now() };
+}
+
+// The display price every game screen shows: the on-chain oracle spot, eased (followerSpot). The same
+// in both modes now, so the chart line IS the price the round prices and settles against, and the
+// entry/target lines drawn on it can never sit where the line never went. With GAME_VOL <= 0 it is pure
+// Pyth pass-through (kill switch). Null only on a cold boot before any oracle has a spot.
+export async function gameSpot(asset: string): Promise<{ price: number; ts: number } | null> {
+  if (GAME_VOL <= 0) return getSpot(asset);
+  return followerSpot(asset);
 }

@@ -8,7 +8,7 @@ import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { prismaQuery } from '../lib/prisma.ts';
 import { AUTH_MODE, WALLET_AUTH_ENABLED } from '../config/main-config.ts';
 import { operatorAddress } from '../lib/sui/signer.ts';
-import { verifyPrivyToken, provisionServerSuiWallet } from '../lib/sui/privy.ts';
+import { verifyPrivyToken, provisionServerSuiWallet, fetchPrivyEmail } from '../lib/sui/privy.ts';
 import { issueWalletNonce, verifyWalletSignature } from '../lib/sui/walletAuth.ts';
 import { ensureUser, ensureWalletUser, mintToken, toUserDTO } from '../services/auth.ts';
 
@@ -46,10 +46,13 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
 
     try {
       const wallet = await provisionServerSuiWallet(privyUserId);
+      // Read the email from Privy by user id (covers Google sign-in, which the client can't report).
+      // Fall back to whatever the client sent so we never regress an email we'd otherwise have.
+      const email = (await fetchPrivyEmail(privyUserId)) ?? body.email ?? null;
       const user = await ensureUser({
         address: wallet.address,
         provider: 'privy',
-        email: body.email ?? null,
+        email,
         privyUserId,
         suiPublicKey: wallet.publicKey,
         privyWalletId: wallet.walletId,

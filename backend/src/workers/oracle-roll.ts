@@ -29,7 +29,7 @@ import { operatorCaps } from '../lib/sui/signer.ts';
 import { executeAsOperator } from '../lib/sui/execute.ts';
 import { buildActivateOracle, buildCreateOracle, buildCreateOracleCap } from '../lib/sui/predict.ts';
 import { liveByAsset, upsertMarket } from '../lib/sui/markets.ts';
-import { gameSpot } from '../lib/game-price.ts';
+import { engineSpot } from '../lib/game-price.ts';
 import { fetchSpot } from '../lib/pyth.ts';
 import { Transaction } from '@mysten/sui/transactions';
 
@@ -173,12 +173,13 @@ const rollLadder = async (): Promise<void> => {
       `[OracleRoll] ladders ${plan.map((p) => `${p.asset}:${p.liveCount}`).join(' ')} | filling ${work.map((p) => `${p.asset}x${p.lives.length}`).join(' ')}`,
     );
 
-    // One spot read per asset, up front. Stand oracles up at the live game price (real Pyth anchor +
-    // vol) so the first on-chain spot already matches the feed; fall back to raw Pyth on a cold start.
+    // One spot read per asset, up front. Stand oracles up at the live walk price (engineSpot, the value
+    // we push) so the first on-chain spot is already a real moving value the chart then follows; fall
+    // back to raw Pyth on a cold start.
     const spots = new Map<string, number>();
     for (const p of work) {
       try {
-        spots.set(p.asset, (await gameSpot(p.asset))?.price ?? (await fetchSpot(p.asset)));
+        spots.set(p.asset, (await engineSpot(p.asset))?.price ?? (await fetchSpot(p.asset)));
       } catch (err) {
         console.error(`[OracleRoll] no Pyth spot for ${p.asset}, skipping:`, err instanceof Error ? err.message : err);
       }

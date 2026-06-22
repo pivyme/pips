@@ -113,6 +113,10 @@ const TRANSIENT_DECAY = 0.3 // how fast a wick snaps back, sharp and gone within
 // Demo-only latency beats, so a play feels like it really hits the chain (but ~1s, not the real 3s+).
 const OPEN_PENDING_MS = 850 // the OPENING beat: hold 'pending' ~1s after the deal before it goes live
 const SETTLE_HOLD_MS = 900 // the SETTLING beat: hold at the buzzer ~1s before the result lands
+// The lock-in lead, mirroring the real backend's EXPIRY_SAFETY_MS: the settlement price freezes this far
+// before the buzzer (the price-pusher stops then), so demo snapshots the result here too and serves it as
+// lockPrice. Keeps the demo's RESULT line honest, the value shown at lock is exactly what settles.
+const LOCK_LEAD_MS = 5000
 
 const CATALOG = [
   { slug: 'first_play', name: 'First Play', description: 'Make your first play.', illo: 'bolt', metric: 'games_played', threshold: 1 },
@@ -602,6 +606,7 @@ function createLucky(body: Record<string, unknown>): PlayDTO {
     markValue: str(stake),
     pnl: '0.00',
     multiplier: tier.mult,
+    maxPayout: str(stake * tier.mult),
     entrySpot: String(entry),
     openedAt: new Date(openedMs).toISOString(),
   }
@@ -634,6 +639,7 @@ function createRange(body: Record<string, unknown>): PlayDTO {
     markValue: str(stake),
     pnl: '0.00',
     multiplier: lockedMult,
+    maxPayout: str(stake * lockedMult),
     entrySpot: String(entry),
     openedAt: new Date(openedMs).toISOString(),
   }
@@ -976,24 +982,28 @@ export function demoStreamPlay(playId: string, onTick: (t: PlayTick) => void, on
       return false
     }
     if (p.status === 'pending') p.status = 'open'
-    // SETTLING beat: at the buzzer, snapshot the close price and hold ~1s before the result lands, like
-    // the on-chain settle. Win/loss is decided by that snapshot, not where the price drifts in the hold.
+    // Lock-in: LOCK_LEAD_MS before the buzzer the settlement price freezes (mirrors the backend), so
+    // snapshot it ONCE here and serve it as lockPrice. The RESULT line drawn from this is exactly what
+    // settles. Win/loss is decided by this snapshot, not where the price drifts afterward.
+    if (c.settlePrice == null && t >= c.expiryMs - LOCK_LEAD_MS) c.settlePrice = currentPrice(c.asset)
+    const lockPrice = c.settlePrice != null ? pxStr(c.settlePrice) : undefined
+    // SETTLING beat: at the buzzer, hold ~1s before the result lands, like the on-chain settle.
     if (t >= c.expiryMs) {
-      if (c.settleAtMs == null) {
-        c.settleAtMs = t + SETTLE_HOLD_MS
-        c.settlePrice = currentPrice(c.asset)
-      }
+      if (c.settlePrice == null) c.settlePrice = currentPrice(c.asset) // defensive; lock-start sets it first
+      if (c.settleAtMs == null) c.settleAtMs = t + SETTLE_HOLD_MS
       if (t < c.settleAtMs) {
-        const m = mark(c, c.settlePrice as number)
-        onTick({ markValue: str(m.markValue), pnl: str(m.pnl), multiplier: m.multiplier, status: 'open', ts: t })
+        const m = mark(c, c.settlePrice)
+        onTick({ markValue: str(m.markValue), pnl: str(m.pnl), multiplier: m.multiplier, status: 'open', lockPrice, ts: t })
         return false
       }
       const { play } = closePlay(playId, 'settle')
       onTick({ markValue: play.markValue, pnl: play.pnl, multiplier: play.multiplier, status: play.status, ts: t })
       return true
     }
-    const m = mark(c, currentPrice(c.asset))
-    onTick({ markValue: str(m.markValue), pnl: str(m.pnl), multiplier: m.multiplier, status: 'open', ts: t })
+    // Once locked, mark against the frozen price (the live read no longer matters); before the lock, mark
+    // against the live price as usual.
+    const m = mark(c, c.settlePrice ?? currentPrice(c.asset))
+    onTick({ markValue: str(m.markValue), pnl: str(m.pnl), multiplier: m.multiplier, status: 'open', lockPrice, ts: t })
     return false
   }
   const iv = setInterval(() => {
@@ -1085,6 +1095,7 @@ function buildSeedPlay(s: SeedSpec, i: number, past: (mins: number) => string): 
     markValue: str(payout),
     pnl: str(s.pnl),
     multiplier: s.mult || 1,
+    maxPayout: str(s.stake * (s.mult || 1)),
     payout: str(payout),
     entrySpot: pxStr(entry),
     settlePrice: pxStr(settlePrice),

@@ -2,6 +2,7 @@
 // falling back to a download when the Web Share API cannot take files. One canvas renderer so
 // the share image stays on-brand without pulling in a DOM-to-image dependency.
 import type { UserStatsDTO } from '@/lib/api'
+import { formatExactDecimal } from '@/utils/format'
 
 const W = 1080
 const H = 960
@@ -224,7 +225,11 @@ async function renderCard(
   ctx.textAlign = 'right'
   ctx.fillStyle = net >= 0 ? C.up : C.down
   ctx.font = `800 70px ${FONT}`
-  ctx.fillText(`${net >= 0 ? '+' : '-'}$${commas(Math.abs(net))}`, cr, y)
+  ctx.fillText(
+    `${net >= 0 ? '+' : '-'}$${formatExactDecimal(stats.netPnl, { absolute: true })}`,
+    cr,
+    y,
+  )
 
   // Stat row: one merged pill split into four segments by hairlines.
   const pillW = sw - sp * 2
@@ -239,7 +244,7 @@ async function renderCard(
   ctx.stroke()
   const cells: Array<[string, string]> = [
     ['PLAYS', commas(stats.gamesPlayed)],
-    ['VOLUME', `$${commas(parseFloat(stats.totalVolume))}`],
+    ['VOLUME', `$${formatExactDecimal(stats.totalVolume)}`],
     ['STREAK', commas(Math.max(0, stats.currentStreak))],
   ]
   cells.forEach(([label, value], i) => {

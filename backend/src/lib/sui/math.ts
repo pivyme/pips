@@ -13,6 +13,17 @@ export const usd1e9 = (n: number): bigint => BigInt(Math.round(n * 1e9));
 export const toDusdcRaw = (n: number): bigint => BigInt(Math.round(n * 1_000_000));
 // 6dp raw DUSDC -> display number
 export const fromDusdcRaw = (raw: bigint): number => Number(raw) / 1_000_000;
+// 6dp raw DUSDC -> exact decimal string. Financial API values use this instead of Number/toFixed,
+// which rounded away on-chain sub-cent amounts and made balance/PnL reconciliation impossible.
+export const formatDusdcRaw = (raw: bigint, minDecimals = 2): string => {
+  const negative = raw < 0n;
+  const abs = negative ? -raw : raw;
+  const whole = abs / DUSDC_DECIMALS;
+  const fraction = (abs % DUSDC_DECIMALS).toString().padStart(6, '0');
+  const keep = Math.max(0, Math.min(6, minDecimals));
+  const decimals = fraction.replace(/0+$/, '').padEnd(keep, '0');
+  return `${negative ? '-' : ''}${whole}${decimals ? `.${decimals}` : ''}`;
+};
 
 // deepbook::math::mul: floor((a * b) / 1e9). Used for cost = ask(1e9) * quantity(6dp).
 export const mulScaled = (a1e9: bigint, b: bigint): bigint => (a1e9 * b) / FLOAT_SCALING;

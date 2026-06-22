@@ -88,7 +88,7 @@ function BalanceHero() {
   return (
     <div className="card-neo rounded-card p-5">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">Balance</span>
+        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">Available balance</span>
         <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-text-2">
           DUSDC
         </span>

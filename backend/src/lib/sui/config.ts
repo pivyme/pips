@@ -16,6 +16,7 @@ export {
   usd1e9,
   toDusdcRaw,
   fromDusdcRaw,
+  formatDusdcRaw,
   mulScaled,
   quantityForStake,
   multiplier,

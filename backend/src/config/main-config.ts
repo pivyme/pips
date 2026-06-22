@@ -138,12 +138,13 @@ export const GAME_DURATIONS: number[] = (process.env.PIPS_GAME_DURATIONS || '10,
 // default because it IS the single-leader switch: if the backend runs as several instances,
 // set it true on exactly ONE (the operator/leader) so oracles are not double-pushed, and
 // keep it false on the rest, which just serve the API. For the LUCKY 30s tier the cadence is
-// tight: push spot every ~2s (well inside the 30s freshness gate), roll the oracle ladder
-// every ~5s, and settle every ~1s. The settle tick is cheap now (it resolves won/lost from the
+// tight: push spot every ~1s (the chart follows the pushed spot now, so this also sets how lively the
+// line is; still well inside the 30s freshness gate), roll the oracle ladder every ~5s, and settle
+// every ~1s. The settle tick is cheap now (it resolves won/lost from the
 // frozen price with no tx, and decouples the win redeem), so a fast cadence makes the result land
 // within ~1s of the buzzer instead of waiting out a 3s scan gap. The isRunning guard skips overlaps.
 export const OPERATOR_ENABLED: boolean = process.env.PIPS_OPERATOR_ENABLED === 'true';
-export const PRICE_PUSH_CRON: string = process.env.PIPS_PRICE_PUSH_CRON || '*/2 * * * * *';
+export const PRICE_PUSH_CRON: string = process.env.PIPS_PRICE_PUSH_CRON || '*/1 * * * * *';
 export const ORACLE_ROLL_CRON: string = process.env.PIPS_ORACLE_ROLL_CRON || '*/5 * * * * *';
 export const SETTLE_CRON: string = process.env.PIPS_SETTLE_CRON || '*/1 * * * * *';
 // Follower-mode market discovery cadence. Only runs when OPERATOR_ENABLED is false: this backend

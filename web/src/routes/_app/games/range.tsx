@@ -14,7 +14,6 @@ import {
   ScreenOverlay,
 } from '@/components/game/screen'
 import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
-import { Stat } from '@/components/Stat'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
@@ -30,10 +29,11 @@ import {
 } from '@/lib/sound'
 import { api, streamPlay } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
+import { rangeDebug, type RangeEntryIntent } from '@/lib/rangeDebug'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
-import { formatStringToNumericDecimals } from '@/utils/format'
+import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
 // RANGE. Size a band around the live price with the knob (tighter = higher multiple), hit PLAY to lock
 // it, then hold to the buzzer: a real mint_range that settles IN THE ZONE (spread-free $1·qty) or OUT
@@ -62,12 +62,9 @@ const NOMINAL_ROUND_SEC = 30 // the idle multiplier preview's reference; the rea
 // The result is dismissed with CONTINUE, so this is only a safety auto-advance for an idle player.
 // Generous, so it never yanks the result away mid-read but still recovers an AFK screen (Lucky parity).
 const RESULT_MS = 6500
-// The settlement price freezes ~EXPIRY_SAFETY_MS (backend, 5000) before the buzzer: the price-pusher
-// stops pushing an oracle once it is within that window of expiry, so the on-chain settle value is
-// locked seconds before the countdown hits zero while the chart keeps walking. From this lead in we
-// stop showing a live "am I winning" (it no longer reflects what settles) and disarm cash-out, then
-// reveal the real settle price at the end. Matches PIPS_EXPIRY_SAFETY_MS; if they drift the reveal is
-// still exact (it reads play.settlePrice), only the lock label timing shifts a touch.
+// Cash-out safety window. The backend stops normal pushes near expiry and a redeem submitted this late
+// may land after the oracle expires, so we disarm cash-out. This is NOT a settled result: only an
+// on-chain settlement_price or the finalized play may claim the outcome.
 const SETTLE_LOCK_MS = 5000
 // The settle progress bar eases toward (never to) full over this window once past the buzzer.
 const SETTLE_EXPECT_MS = 12000
@@ -85,6 +82,8 @@ type Live = {
   markValue: string
   pnl: string
   multiplier: number
+  entryValue?: string
+  maxPayout?: string
   status: PlayStatus
 }
 type Overlay = 'none' | 'howto' | 'board'
@@ -94,13 +93,6 @@ const compact = (n: number): string =>
   n >= 1000
     ? `${(n / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k`
     : n.toLocaleString('en-US', { maximumFractionDigits: n >= 1 ? 2 : 4 })
-
-// Two-decimal money for the readout cells (payout, stake).
-const money = (n: number): string =>
-  n.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
 
 // Live price for the header, fewer decimals as the magnitude grows.
 const priceLabel = (p: number): string =>
@@ -112,6 +104,18 @@ function estimateMultiplier(halfPct: number, durationSec: number): number {
   const ratio = halfPct / sigma
   const prob = 1 - Math.exp(-ratio)
   return Math.max(1.05, Math.min(0.97 / Math.max(prob, 0.03), 99))
+}
+
+// Whether the chain's frozen settlement (lock) price lands in the raw band, matching the on-chain
+// (lower, upper] settlement. Console-audit only: lets the early-locked verdict be checked against the
+// final won/lost result. Null until a real lock price exists.
+function predictedInZone(play: PlayDTO, lockPrice: string | null): boolean | null {
+  if (!lockPrice) return null
+  const ln = parseFloat(lockPrice)
+  const lo = play.market.lower ? parseFloat(play.market.lower) : NaN
+  const hi = play.market.upper ? parseFloat(play.market.upper) : NaN
+  if (!Number.isFinite(ln) || !Number.isFinite(lo) || !Number.isFinite(hi)) return null
+  return ln > lo && ln <= hi
 }
 
 export function RangeScreen() {
@@ -130,21 +134,33 @@ export function RangeScreen() {
   const [remainingMs, setRemainingMs] = useState<number | null>(null) // ms to the real buzzer, drives the lock/settle states
   const [settleMs, setSettleMs] = useState(0) // time past the buzzer, drives the SETTLING progress bar
   const [overlay, setOverlay] = useState<Overlay>('none')
-  // The chart's live active price captured the instant PLAY is hit, drawn as the grey ENTRY line while
-  // the band is still locking. Once the play opens the ENTRY line switches to play.entrySpot (the oracle
-  // spot the band was actually solved around), so entry, band, and settlement share one price space.
-  const [entryPrice, setEntryPrice] = useState<number | null>(null)
+  // In/out of the band is visual context from the same eased price the chart paints. Money values are
+  // independent and come from the on-chain redeem quote.
+  const [zoneLive, setZoneLive] = useState<boolean | null>(null)
+  // Exact oracle settlement_price, sent only after the settlement transaction lands. It may arrive
+  // briefly before the play's redeem/DB finalization.
+  const [lockPrice, setLockPrice] = useState<string | null>(null)
 
   const finalized = useRef(false)
   const watchdogRun = useRef(0)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const balanceSyncedPlayId = useRef<string | null>(null)
   const wasInside = useRef<boolean | null>(null) // last in/out band state, for the crossing tick
-  // The chart price captured at the press, used to paint a "locking" band instantly while the backend
-  // resolves the real bounds (the reels-equivalent that makes PLAY feel immediate).
-  const pressSpot = useRef<number | null>(null)
+  const zoneRef = useRef<boolean | null>(null) // mirrors zoneLive so the rAF only re-renders on a real flip
+  // Chart<->oracle feed alignment. The chart line and the oracle (band/entry/settlement) are slightly
+  // different samples of the same price, so the oracle values sit ~0.1% off the line and a tight band's
+  // ENTRY/edges visibly float away from it. We capture the gap ONCE at open (chart price - oracle entry)
+  // and shift every oracle-space overlay by it, so they sit exactly on the line. It is a uniform shift,
+  // so inside/outside (and the real win/lose, which comes from the chain) are unchanged.
+  const feedOffsetRef = useRef(0)
+  const offsetPlayId = useRef<string | null>(null)
   // The chart's eased leading price (the active dot), written every frame by the Chart. The live P/L
   // reads it to track the line at 60fps instead of the laggy ~2s backend mark.
   const livePriceRef = useRef(0)
+  // RANGE console audit (lib/rangeDebug.ts): the UI numbers snapshotted at the press, plus a per-round
+  // flag set so each lifecycle line (open / lock / result) logs exactly once.
+  const entryIntentRef = useRef<RangeEntryIntent | null>(null)
+  const dbgStage = useRef({ open: false, lock: false, result: false })
 
   // Shared feed: fast poll + grace so a ladder roll never flashes "no markets" at the player.
   const {
@@ -210,72 +226,55 @@ export function RangeScreen() {
   // is gated on the phase (roundLive, defined above), not just on `play`, because `play` lingers after
   // a settle; without the gate the band would freeze at the finished round's bounds instead of
   // resuming the live preview.
-  const lower = play?.market.lower ? parseFloat(play.market.lower) : null
-  const upper = play?.market.upper ? parseFloat(play.market.upper) : null
-  // The instant PLAY is pressed the backend still has to resolve the real oracle bounds (~a few sec).
-  // Paint a "locking" band frozen at the press spot right away, then snap to the real strike bounds when
-  // the play opens. That, plus the LOCKING readout, is what makes the press feel immediate instead of
-  // dead while the resolve runs.
-  const placingBand: BandOverlay | null =
-    phase === 'placing' && pressSpot.current != null
-      ? {
-          lower: pressSpot.current * (1 - halfPct / 100),
-          upper: pressSpot.current * (1 + halfPct / 100),
-          locked: true,
-        }
-      : null
+  // Capture the chart<->oracle feed offset ONCE per round, the first open render where both the chart
+  // price and the oracle entry are known. Done in render (guarded + idempotent per play id) so the shift
+  // is applied on the same frame the band appears, with no flash of the unaligned position.
+  const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
+  if (play && phase === 'open' && offsetPlayId.current !== play.id) {
+    const ec = livePriceRef.current
+    if (Number.isFinite(entrySpotNum) && entrySpotNum > 0 && ec > 0) {
+      offsetPlayId.current = play.id
+      feedOffsetRef.current = ec - entrySpotNum
+    }
+  }
+  const feedOffset = play && phase !== 'idle' ? feedOffsetRef.current : 0
+
+  // Band bounds, shifted onto the chart by the feed offset so the band sits on the live line. The raw
+  // oracle bounds still drive the real settlement; this is purely the on-screen alignment.
+  const lower =
+    play?.market.lower != null ? parseFloat(play.market.lower) + feedOffset : null
+  const upper =
+    play?.market.upper != null ? parseFloat(play.market.upper) + feedOffset : null
+  // While PLAY is resolving (placing) we do NOT paint a guessed band: the chart keeps the live ±halfPct
+  // preview (which simply tracks the line, never claims a fixed level), then snaps to the real bounds
+  // when the play opens. The LOCKING IN readout + the press haptic/sound carry the "it registered"
+  // feedback, so there is no fabricated number to correct later.
+  // Inside the cash-out safety / settling window, seal the live band lighting. The result is still
+  // pending until the oracle settlement transaction lands.
+  const bandSealed =
+    phase === 'open' && remainingMs != null && remainingMs <= SETTLE_LOCK_MS
   const band: BandOverlay | undefined =
     roundLive && lower != null && upper != null
-      ? { lower, upper, locked: true }
-      : placingBand
-        ? placingBand
-        : spot != null
-          ? { pct: halfPct }
-          : undefined
+      ? { lower, upper, locked: true, sealed: bandSealed }
+      : spot != null
+        ? { pct: halfPct }
+        : undefined
   const showBand = phase !== 'result' || play != null
 
-  // Entry reference: play.entrySpot, the oracle spot the band was solved around, so the ENTRY line, the
-  // band, and the on-chain settlement all sit in one price space. The old client capture floated in the
-  // chart's feed (a different sample of the same walk), which is part of why the line could read inside
-  // while the round settled outside. Falls back to the press capture while the band is still locking.
-  const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
+  // ENTRY line at the chart price the round opened on (oracle entry + the feed offset), so it sits ON the
+  // live line instead of floating ~0.1% off it. Falls back to the band center if entry is somehow missing.
   const bandCenter = lower != null && upper != null ? (lower + upper) / 2 : null
   const entryLevel =
     Number.isFinite(entrySpotNum) && entrySpotNum > 0
-      ? entrySpotNum
-      : (entryPrice ?? bandCenter)
-  const showEntryLine = entryLevel != null && (roundLive || phase === 'placing')
-
-  // Round-start + settle dots on the line, anchored at the entry level. The settle dot lands at the real
-  // on-chain buzzer (play.market.expiry), not openedAt+duration, which overshoots past the real settle by
-  // the mint latency. Gated on roundLive so the dots clear with the band once the round ends.
-  const openedAtMs = play?.openedAt ? Date.parse(play.openedAt) : 0
-  const buzzerMs =
-    play?.market.expiry ||
-    (openedAtMs
-      ? openedAtMs + (play?.params.duration || NOMINAL_ROUND_SEC) * 1000
-      : 0)
-  const markers =
-    roundLive && play && entryLevel != null && openedAtMs
-      ? [
-          { t: openedAtMs, p: entryLevel },
-          { t: buzzerMs, p: entryLevel },
-        ]
-      : undefined
-
-  // Is the live price inside the locked band right now? Drives the open-state IN ZONE / OUT pill and
-  // the tactile crossing tick. (lower, upper] matches the on-chain settlement rule.
-  const inZone =
-    lower != null && upper != null && spot != null
-      ? spot > lower && spot <= upper
-      : null
+      ? entrySpotNum + feedOffset
+      : bandCenter
+  const showEntryLine = entryLevel != null && roundLive
 
   // Phase machine, derived from the live status + the countdown. The settlement price freezes
   // SETTLE_LOCK_MS before the buzzer, so the round has a clear lock-in window:
   //   opening  - the mint is still landing (band locked, not open on-chain yet)
-  //   liveHold - open and far enough from expiry that the live line still reflects what will settle
-  //   sealing  - inside the lock window: the outcome is already frozen on-chain, so we stop the live
-  //              read and disarm cash-out, the result is just being sealed
+  //   liveHold - open and far enough from expiry to submit a cash-out
+  //   sealing  - cash-out safety window before expiry, result not settled yet
   //   settling - past the buzzer, waiting on the on-chain settle frame
   const confirmed = live?.status === 'open'
   const opening =
@@ -294,6 +293,12 @@ export function RangeScreen() {
     remainingMs > SETTLE_LOCK_MS
   const cashing = phase === 'cashing'
 
+  // Exact on-chain settlement price, available only after the settlement transaction has populated
+  // oracle.settlement_price. Shift it into the chart feed's display space.
+  const lockNum = lockPrice ? parseFloat(lockPrice) : null
+  const lockDisp = lockNum != null && lockNum > 0 ? lockNum + feedOffset : null
+  const settleLine = settling && lockDisp != null ? lockDisp : undefined
+
   const clearResetTimer = () => {
     if (resetTimer.current) clearTimeout(resetTimer.current)
     resetTimer.current = null
@@ -309,6 +314,8 @@ export function RangeScreen() {
         markValue: final.markValue,
         pnl: final.pnl,
         multiplier: final.multiplier,
+        entryValue: final.entryValue,
+        maxPayout: final.maxPayout,
         status: final.status,
       })
       setPhase('result')
@@ -340,7 +347,6 @@ export function RangeScreen() {
           { id: 'range-play-error' },
         )
         clearResetTimer()
-        pressSpot.current = null
         setPlay(null)
         setLive(null)
         setPhase('idle')
@@ -371,8 +377,16 @@ export function RangeScreen() {
           markValue: tick.markValue,
           pnl: tick.pnl,
           multiplier: tick.multiplier,
+          entryValue: tick.entryValue,
+          maxPayout: tick.maxPayout,
           status: tick.status,
         })
+        if (tick.status === 'open' && balanceSyncedPlayId.current !== id) {
+          balanceSyncedPlayId.current = id
+          void refresh()
+        }
+        // Present only after the oracle settlement transaction has set a real settlement_price.
+        setLockPrice(tick.lockPrice ?? null)
         resolveTerminal(tick.status, id)
       },
       () => {
@@ -398,8 +412,14 @@ export function RangeScreen() {
           markValue: cur.markValue,
           pnl: cur.pnl,
           multiplier: cur.multiplier,
+          entryValue: cur.entryValue,
+          maxPayout: cur.maxPayout,
           status: cur.status,
         })
+        if (cur.status === 'open' && balanceSyncedPlayId.current !== id) {
+          balanceSyncedPlayId.current = id
+          void refresh()
+        }
         resolveTerminal(cur.status, id)
       } catch {
         // transient; the next tick retries
@@ -439,16 +459,28 @@ export function RangeScreen() {
     clearResetTimer()
     finalized.current = false
     wasInside.current = null
+    setLockPrice(null)
+    feedOffsetRef.current = 0
+    offsetPlayId.current = null
     setOverlay('none')
-    // The chart's eased active price (the dot the player is watching) at the press. The band locks here
-    // visually (placingBand) and the grey ENTRY line sits on it until the real entrySpot arrives.
-    const entryAt = livePriceRef.current > 0 ? livePriceRef.current : spot
-    const px = entryAt && entryAt > 0 ? entryAt : null
-    pressSpot.current = px
-    setEntryPrice(px)
     setPhase('placing')
-    // Fire the committal confirm AT the press, not after the await: this is what makes PLAY feel
-    // immediate instead of dead for the few seconds the backend takes to resolve the band.
+    // Snapshot the UI numbers at the press so the console audit can diff them against the chain on open.
+    dbgStage.current = { open: false, lock: false, result: false }
+    const intent: RangeEntryIntent = {
+      asset,
+      stake,
+      halfPct,
+      uiSpot: spot ?? livePriceRef.current,
+      chartPrice: livePriceRef.current,
+      previewMult: idleMult,
+      quoted: quotedMult,
+    }
+    entryIntentRef.current = intent
+    rangeDebug.entry(intent)
+    // Fire the committal confirm AT the press, not after the await: this (plus the LOCKING IN readout) is
+    // what makes PLAY feel immediate instead of dead for the few seconds the backend takes to resolve the
+    // band. We deliberately capture NO entry price here: the only entry we ever show is the real oracle
+    // entrySpot that comes back on open, so there is no guessed number to correct later.
     haptic('heavy')
     rangeLock()
     try {
@@ -462,16 +494,17 @@ export function RangeScreen() {
         markValue: p.markValue,
         pnl: p.pnl,
         multiplier: p.multiplier,
+        entryValue: p.entryValue,
+        maxPayout: p.maxPayout,
         status: p.status,
       })
       setPhase('open')
       haptic('selection') // a light tick as the position lands; the heavy confirm already fired on press
     } catch (e) {
       toastError(e)
-      pressSpot.current = null
       setPhase('idle')
     }
-  }, [phase, canPlay, stake, asset, halfPct, spot])
+  }, [phase, canPlay, stake, asset, halfPct, spot, idleMult, quotedMult])
 
   const doCashOut = useCallback(async () => {
     // Armed only during the live hold (the button is hidden once the round is sealing/settling).
@@ -502,7 +535,6 @@ export function RangeScreen() {
   const dismissResult = useCallback(() => {
     clearResetTimer()
     haptic('selection')
-    pressSpot.current = null
     setPhase('idle')
   }, [])
 
@@ -532,16 +564,72 @@ export function RangeScreen() {
     return () => clearInterval(iv)
   }, [phase, play])
 
+  // Track in/out off the 60fps eased chart price. Only re-render on a real flip. This is visual context,
+  // not PnL. Once cash-out closes near expiry, the pill is hidden.
+  useEffect(() => {
+    if (!liveHold || lower == null || upper == null) {
+      zoneRef.current = null
+      setZoneLive(null)
+      return
+    }
+    let raf = 0
+    const loop = () => {
+      const p = livePriceRef.current
+      const now = p > 0 ? p > lower && p <= upper : null // (lower, upper] matches on-chain settlement
+      if (now !== zoneRef.current) {
+        zoneRef.current = now
+        setZoneLive(now)
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [liveHold, lower, upper])
+
   // A tactile tick whenever the live price crosses into or out of your band, only during the live hold
   // (not once the outcome is sealing, where a late chart wiggle no longer changes the result).
   useEffect(() => {
-    if (!liveHold || inZone == null) return
-    if (wasInside.current != null && wasInside.current !== inZone) {
+    if (!liveHold || zoneLive == null) return
+    if (wasInside.current != null && wasInside.current !== zoneLive) {
       haptic('selection')
-      rangeCross(inZone)
+      rangeCross(zoneLive)
     }
-    wasInside.current = inZone
-  }, [inZone, liveHold])
+    wasInside.current = zoneLive
+  }, [zoneLive, liveHold])
+
+  // === RANGE console audit (lib/rangeDebug.ts) ===
+  // OPEN: once the mint confirms on-chain, diff the promised entry / mult / cost against what minted.
+  useEffect(() => {
+    if (!play || live?.status !== 'open' || dbgStage.current.open) return
+    dbgStage.current.open = true
+    rangeDebug.open(play, entryIntentRef.current, feedOffsetRef.current, livePriceRef.current)
+  }, [play, live?.status])
+
+  // LOCK: once the chain freezes the settlement price (the round entered the expiry window). The lock
+  // price implies a verdict; we log whether it lands in the raw band so it can be checked vs the result.
+  useEffect(() => {
+    if (!play || !lockPrice || dbgStage.current.lock) return
+    dbgStage.current.lock = true
+    rangeDebug.lock(play, {
+      feedOffset: feedOffsetRef.current,
+      uiLivePrice: livePriceRef.current,
+      predictedInZone: predictedInZone(play, lockPrice),
+    })
+  }, [play, lockPrice])
+
+  // SETTLE / CASH OUT: the terminal frame. Validate the predicted verdict, lock vs final settle, payout.
+  useEffect(() => {
+    if (phase !== 'result' || !play || dbgStage.current.result) return
+    dbgStage.current.result = true
+    const intent = entryIntentRef.current
+    rangeDebug.result(play, {
+      feedOffset: feedOffsetRef.current,
+      predictedInZone: predictedInZone(play, lockPrice),
+      previewMult: intent?.previewMult,
+      stake: intent?.stake ?? parseFloat(play.stake),
+      lastLockPrice: lockPrice,
+    })
+  }, [phase, play])
 
   const cycleAsset = useCallback(() => {
     haptic('selection')
@@ -615,7 +703,7 @@ export function RangeScreen() {
           }
         : sealing
           ? {
-              label: 'LOCKING IN',
+              label: 'FINAL',
               color: 'amber',
               onPress: () => {},
               loading: true,
@@ -654,20 +742,19 @@ export function RangeScreen() {
                     },
   })
 
-  const pnlNum = live ? parseFloat(live.pnl) : 0
-  const showReadouts =
-    play != null &&
-    (phase === 'open' || phase === 'cashing' || phase === 'result')
-  const showZonePill = liveHold && inZone != null
+  // The live P/L footer shows only while a round is in flight, NOT on the result (the RangeResult overlay
+  // owns the terminal display. Mirrors Lucky.
+  const showReadouts = play != null && (phase === 'open' || phase === 'cashing')
+  const showZonePill = liveHold && zoneLive != null
   const settleSecs = Math.floor(settleMs / 1000)
   const firstRun =
     !statsQ.isLoading && (statsQ.data?.stats.gamesPlayed ?? 0) === 0
-  const playStake = play ? parseFloat(play.stake) : stake
+  const playCost = live?.entryValue ?? play?.entryValue ?? String(stake)
   // The locked play, read back under OPENING / SETTLING so the round always shows what's in flight.
   const recap =
     lower != null && upper != null
-      ? `${asset} · ${compact(lower)}–${compact(upper)} · $${playStake}`
-      : `${asset} · ±${halfPct.toFixed(1)}% · $${playStake}`
+      ? `${asset} · ${compact(lower)}–${compact(upper)} · Cost $${formatExactDecimal(playCost)}`
+      : `${asset} · ±${halfPct.toFixed(1)}% · Cost $${formatExactDecimal(playCost)}`
 
   // A one-shot riser at the buzzer, the last seconds before the oracle settles, to spike the tension.
   useEffect(() => {
@@ -704,7 +791,11 @@ export function RangeScreen() {
               </div>
               <div className="shrink-0 text-right">
                 <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                  {showReadouts && secsLeft != null ? 'Ends in' : 'Balance'}
+                  {sealing || settling
+                    ? 'Final'
+                    : showReadouts && secsLeft != null
+                      ? 'Ends in'
+                      : 'Available'}
                 </div>
                 <div className="tnum text-xl font-bold leading-none text-text-2">
                   {showReadouts && secsLeft != null
@@ -741,8 +832,8 @@ export function RangeScreen() {
                   showBand && band
                     ? {
                         band,
-                        markers,
                         entry: showEntryLine ? entryLevel : undefined,
+                        settle: settleLine,
                       }
                     : undefined
                 }
@@ -812,10 +903,10 @@ export function RangeScreen() {
               ) : sealing ? (
                 <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                    Price locked · {secsLeft ?? 0}s
+                    Cash out closed · settles in {secsLeft ?? 0}s
                   </div>
                   <div className="text-[30px] font-extrabold leading-none text-brand-500">
-                    LOCKING IN
+                    FINAL SECONDS
                   </div>
                   <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
                     {recap}
@@ -852,34 +943,33 @@ export function RangeScreen() {
                 <>
                   <div className="flex items-center gap-2">
                     <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                      Live PnL
+                      If it ends now
                     </div>
                     {showZonePill && (
                       <span
                         className={cnm(
                           'inline-flex items-center border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.1em]',
-                          inZone
+                          zoneLive
                             ? 'border-brand-500/60 text-brand-500'
                             : 'border-down/60 text-down',
                         )}
                       >
-                        {inZone ? 'In zone' : 'Out'}
+                        {zoneLive ? 'In zone' : 'Out'}
                       </span>
                     )}
                   </div>
                   <RangePnl
-                    livePriceRef={livePriceRef}
-                    lower={lower ?? 0}
-                    upper={upper ?? 0}
-                    stake={playStake}
-                    mult={mult}
-                    status={live?.status ?? 'open'}
-                    finalPnl={pnlNum}
+                    inside={zoneLive}
+                    payout={live?.maxPayout ?? play?.maxPayout ?? '0'}
+                    cashoutPnl={live?.pnl ?? play?.pnl ?? '0'}
                   />
                   <div className="mt-2.5 grid grid-cols-3 gap-x-3">
-                    <Cell label="Mult" value={`${mult.toFixed(2)}x`} />
-                    <Cell label="Stake" value={`$${playStake}`} />
-                    <Cell label="Win" value={`$${money(playStake * mult)}`} />
+                    <Cell label="Mult" value={`${mult.toFixed(2).replace(/\.?0+$/, '')}x`} />
+                    <Cell label="Cost" value={`$${formatExactDecimal(playCost)}`} />
+                    <Cell
+                      label="Win"
+                      value={`$${formatExactDecimal(live?.maxPayout ?? play?.maxPayout ?? '0')}`}
+                    />
                   </div>
                 </>
               ) : firstRun ? (
@@ -917,7 +1007,9 @@ export function RangeScreen() {
         </div>
       )}
 
-      {phase === 'result' && play && <RangeResult play={play} />}
+      {phase === 'result' && play && (
+        <RangeResult play={play} feedOffset={feedOffset} />
+      )}
       {overlay === 'howto' && <HowTo />}
       {overlay === 'board' && (
         <GameLeaderboardOverlay game="range" title="Range" />
@@ -926,89 +1018,56 @@ export function RangeScreen() {
   )
 }
 
-// The live P/L while a band is open. Range settles binary: inside the band at the buzzer returns
-// stake x mult (spread-free), outside loses the stake. Shown gross: inside the band -> the full
-// return (stake back + profit), outside -> -stake. It rides the 60fps dot (livePriceRef) so it flips
-// the instant the line crosses an edge, and Stat rolls it between the two. On a terminal status it
-// shows the real settled outcome, also gross (a win adds the stake back onto the net pnl).
+// Payout-forward live readout. The big number is the prize you'd collect if the round settled right
+// now: the full payout while the live price sits in the band (green), $0 while it's out (red). The
+// caption carries the early-exit value, the real net you'd lock in by cashing out this instant, from
+// the on-chain redeem quote (markValue - cost), so it reads minus when you're underwater. The in/out
+// call rides `inside` (the same 60fps chart-synced zone the pill + band use), so the headline flips
+// the instant the line crosses an edge; the payout itself comes from the chain.
 function RangePnl({
-  livePriceRef,
-  lower,
-  upper,
-  stake,
-  mult,
-  status,
-  finalPnl,
+  inside,
+  payout,
+  cashoutPnl,
 }: {
-  livePriceRef: { current: number }
-  lower: number
-  upper: number
-  stake: number
-  mult: number
-  status: PlayStatus
-  finalPnl: number
+  inside: boolean | null
+  payout: string
+  cashoutPnl: string
 }) {
-  const terminal = RESULT_TERMINAL.has(status)
-  const valid = lower > 0 && upper > lower && stake > 0
-  const gross = stake * mult // full return if it lands in the zone: stake back + profit
-  const [inside, setInside] = useState(true)
-  const insideRef = useRef(true)
-
-  useEffect(() => {
-    if (terminal || !valid) return
-    let raf = 0
-    const loop = () => {
-      const p = livePriceRef.current
-      if (p > 0) {
-        const now = p > lower && p <= upper // (lower, upper] matches on-chain settlement
-        if (now !== insideRef.current) {
-          insideRef.current = now
-          setInside(now)
-        }
-      }
-      raf = requestAnimationFrame(loop)
-    }
-    raf = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(raf)
-  }, [terminal, valid, lower, upper, livePriceRef])
-
-  // Win shows the gross return (net pnl + stake back), a loss shows the amount lost.
-  const pnl = terminal
-    ? finalPnl >= 0
-      ? finalPnl + stake
-      : finalPnl
-    : inside
-      ? gross
-      : -stake
-  const up = pnl >= 0
+  const up = inside !== false // null (pre-first-sample, at the band center) and true read as in-zone
+  const neg = cashoutPnl.trim().startsWith('-')
   return (
-    <div
-      className={cnm(
-        'tnum text-[40px] font-extrabold leading-none',
-        up ? 'text-up' : 'text-down',
-      )}
-    >
-      {up ? '+' : '-'}$<Stat value={Math.abs(pnl)} />
-    </div>
+    <>
+      <div
+        className={cnm(
+          'tnum text-[40px] font-extrabold leading-none',
+          up ? 'text-up' : 'text-down',
+        )}
+      >
+        {up ? `+$${formatExactDecimal(payout, { absolute: true })}` : '$0.00'}
+      </div>
+      <div className="mt-1 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-text-3">
+        If you cash out now {neg ? '-' : '+'}${formatExactDecimal(cashoutPnl, { absolute: true })}
+      </div>
+    </>
   )
 }
 
 // The win/loss/cash-out moment. The verdict comes from the settled play status. The gauge only explains
 // where the backend's frozen settlement price landed relative to the actual on-chain band.
-function RangeResult({ play }: { play: PlayDTO }) {
+function RangeResult({ play, feedOffset }: { play: PlayDTO; feedOffset: number }) {
   const reduced = useReducedMotion()
   const pnl = parseFloat(play.pnl)
-  const stake = parseFloat(play.stake)
   const won = play.status === 'won'
   const cashed = play.status === 'cashed_out'
-  const positive = won || (cashed && pnl >= 0)
-  // Gross framing: a win shows the full return (stake back + profit), a loss shows the amount lost.
-  const shown = pnl >= 0 ? pnl + stake : pnl
+  const positive = won || (cashed && pnl > 0)
   const head = won ? 'IN THE ZONE' : cashed ? 'CASHED OUT' : 'OUT OF RANGE'
-  const lo = play.market.lower ? parseFloat(play.market.lower) : null
-  const hi = play.market.upper ? parseFloat(play.market.upper) : null
-  const settled = play.settlePrice ? parseFloat(play.settlePrice) : null
+  // Shift the gauge by the same feed offset the chart used, so the band + settle price the player sees
+  // here match the line and the RESULT marker they just watched (a uniform shift, verdict unchanged).
+  const lo = play.market.lower ? parseFloat(play.market.lower) + feedOffset : null
+  const hi = play.market.upper ? parseFloat(play.market.upper) + feedOffset : null
+  const settled = play.settlePrice ? parseFloat(play.settlePrice) + feedOffset : null
   const hasGauge =
+    !cashed &&
     lo != null &&
     hi != null &&
     settled != null &&
@@ -1058,15 +1117,17 @@ function RangeResult({ play }: { play: PlayDTO }) {
           positive ? 'text-up' : 'text-down',
         )}
       >
-        {shown >= 0 ? '+' : '-'}$<Stat value={Math.abs(shown)} />
+        {pnl >= 0 ? '+' : '-'}${formatExactDecimal(play.pnl, { absolute: true })}
       </motion.div>
+      <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
+        Payout ${formatExactDecimal(play.payout ?? '0')} · Cost ${formatExactDecimal(play.entryValue)}
+      </div>
       {hasGauge ? (
         <SettlementGauge
           lower={lo}
           upper={hi}
           price={settled}
           relation={relation}
-          win={positive}
           label={cashed ? 'Exit' : 'Settled'}
         />
       ) : (
@@ -1089,27 +1150,26 @@ function SettlementGauge({
   upper,
   price,
   relation,
-  win,
   label,
 }: {
   lower: number
   upper: number
   price: number
   relation: 'below' | 'inside' | 'above'
-  win: boolean
   label: 'Exit' | 'Settled'
 }) {
   const span = upper - lower
   // The band owns the middle half of the gauge. Far misses clamp to an edge, while the exact price
   // remains visible in the label below.
   const pricePct = Math.max(4, Math.min(96, 25 + ((price - lower) / span) * 50))
-  const relationCopy =
-    relation === 'inside'
-      ? `${label} inside your band`
-      : `${label} ${relation} your band`
+  const inside = relation === 'inside'
+  const relationCopy = inside
+    ? `${label} inside your band`
+    : `${label} ${relation} your band`
 
-  // Colored by the settled verdict, never the raw relation, so the marker can never contradict the
-  // headline at a band edge (a loss whose price rounds onto the band still reads red).
+  // Colored by `relation` so the marker's color, its position, and the copy always agree. For a settled
+  // win/loss `relation` is the verdict (won -> inside, lost -> a side), so this matches the headline; for
+  // a cash-out it reflects where the exit price actually sat (a green dot can never float in the red zone).
   return (
     <div className="mt-3 w-[280px] max-w-[72%]">
       <div className="relative h-5 border-y border-line-strong">
@@ -1119,7 +1179,7 @@ function SettlementGauge({
         <div
           className={cnm(
             'absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 border-2 border-black',
-            win ? 'bg-up' : 'bg-down',
+            inside ? 'bg-up' : 'bg-down',
           )}
           style={{ left: `${pricePct}%` }}
         />
@@ -1131,7 +1191,7 @@ function SettlementGauge({
       <div
         className={cnm(
           'mt-2 font-mono text-[11px] font-bold uppercase tracking-[0.1em]',
-          win ? 'text-up' : 'text-down',
+          inside ? 'text-up' : 'text-down',
         )}
       >
         {relationCopy} · {priceLabel(price)}

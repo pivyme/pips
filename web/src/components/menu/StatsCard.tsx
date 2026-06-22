@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import type { UserStatsDTO } from '@/lib/api'
 import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
+import { formatExactDecimal } from '@/utils/format'
 
 // The shareable trader card, styled as a little PIPS handheld: a bright amber bezel with a
 // branded screen window sunk into it. Shown on the menu home (tap to open the share detail) and
@@ -87,14 +88,14 @@ export function StatsCard({
           <div className="text-right">
             <Label>Net P&L</Label>
             <div className={cnm('tnum text-3xl font-extrabold leading-none', net >= 0 ? 'text-up' : 'text-down')}>
-              {net >= 0 ? '+' : '-'}${commas(Math.abs(net))}
+              {net >= 0 ? '+' : '-'}${formatExactDecimal(stats.netPnl, { absolute: true })}
             </div>
           </div>
         </div>
 
         <div className="mt-4 grid grid-cols-3 divide-x divide-white/[0.08] overflow-hidden rounded-xl border border-white/[0.07] bg-black/40">
           <Cell label="Plays" value={commas(stats.gamesPlayed)} />
-          <Cell label="Volume" value={`$${commas(parseFloat(stats.totalVolume))}`} />
+          <Cell label="Volume" value={`$${formatExactDecimal(stats.totalVolume)}`} />
           <Cell label="Streak" value={commas(Math.max(0, stats.currentStreak))} />
         </div>
       </div>

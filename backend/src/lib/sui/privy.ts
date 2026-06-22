@@ -52,6 +52,25 @@ export async function verifyPrivyToken(accessToken: string): Promise<{ privyUser
   return { privyUserId: claims.user_id };
 }
 
+// Pull the user's email straight from Privy by user id. The access token claims don't carry it, and
+// the client only knows it for the email login method (Google sign-in keeps it under the google_oauth
+// account, not user.email), which is why client-reported emails came through blank. We read every
+// login method that surfaces an email. Best-effort: returns null and never throws, so a Privy hiccup
+// can't block sign-in.
+export async function fetchPrivyEmail(privyUserId: string): Promise<string | null> {
+  try {
+    const user = await privy().users()._get(privyUserId);
+    for (const acct of user.linked_accounts) {
+      if (acct.type === 'email' && acct.address) return acct.address;
+      if ((acct.type === 'google_oauth' || acct.type === 'apple_oauth') && acct.email) return acct.email;
+    }
+    return null;
+  } catch (e) {
+    console.warn('[privy] could not fetch email:', e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
 // Normalize Privy's ed25519 public key to the raw 32 bytes Ed25519PublicKey wants. Privy returns
 // the Sui-flagged form: 33 bytes = the 0x00 ed25519 scheme flag + the 32-byte key, hex-encoded (66
 // chars), and sometimes base64. Accept hex or base64, then strip the leading flag byte.

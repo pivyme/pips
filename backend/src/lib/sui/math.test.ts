@@ -6,6 +6,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   DUSDC_DECIMALS,
   FLOAT_SCALING,
+  formatDusdcRaw,
   fromDusdcRaw,
   mulScaled,
   multiplier,
@@ -31,6 +32,12 @@ describe('scaling helpers', () => {
     expect(toDusdcRaw(25.3)).toBe(25_300_000n);
     expect(fromDusdcRaw(25_300_000n)).toBe(25.3);
     expect(fromDusdcRaw(toDusdcRaw(1000))).toBe(1000);
+  });
+
+  it('formats all six on-chain decimals without floating-point rounding', () => {
+    expect(formatDusdcRaw(25_300_000n)).toBe('25.30');
+    expect(formatDusdcRaw(98_562_719n)).toBe('98.562719');
+    expect(formatDusdcRaw(-107n)).toBe('-0.000107');
   });
 });
 

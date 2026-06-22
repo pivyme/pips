@@ -20,7 +20,9 @@ export interface ChartBox {
 // by the play. Both span the full width, so the band reads the same before and after the lock.
 export type BandOverlay =
   | { pct: number; locked?: false }
-  | { lower: number; upper: number; locked: true }
+  // `sealed` freezes the band's live in/out lighting during the cash-out safety / settling window.
+  // It is a neutral pending state, not a settlement verdict.
+  | { lower: number; upper: number; locked: true; sealed?: boolean }
 
 export interface ChartOverlays {
   // Entry: a clean reference line at the price you got in, faded in when a round opens.
@@ -29,6 +31,8 @@ export interface ChartOverlays {
   // bold amber line with the winning half shaded green (brighter when the live price is in it).
   target?: { price: number; side: 'up' | 'down' }
   band?: BandOverlay
+  // Exact settled RESULT price after oracle.settlement_price exists.
+  settle?: number
   boxes?: ChartBox[]
   // Time-anchored dots on the line (round start, settle): each maps by its timestamp on the same axis
   // as the price line, so they scroll with it. Dimmer than the live "now" dot. The now-dot rides between.
@@ -92,6 +96,15 @@ const SEED_N = 32 // pre-roll points, matched to the ~1s tick cadence over the w
 const SEED_STEP_VOL = 0.0024 // per-step move size of the warm-up walk (fraction of price)
 const SEED_MOMENTUM = 0.62 // walk persistence, so it forms natural runs instead of pure jitter
 const SEED_MAX_DEV = 0.012 // clamp the warm-up's drift from the live price (never wanders far)
+// Cosmetic micro-life on the leading edge so the line is never dead-flat in the gaps between the ~1s
+// oracle ticks. A zero-mean, mean-reverting wiggle, hard-clamped far under the min target offset
+// (~0.15%), applied ONLY to the drawn dot + line tip, never to display.current (the 60fps P/L source),
+// onPrice, the win-zone read, or the frame fit. So the line feels fluid while the readouts and the
+// oracle stay exact, and it can never drift (the offset is pulled back to 0 every frame).
+const SHIM_MOMENTUM = 0.9 // velocity persistence: a smooth drifting wiggle, not per-frame jitter
+const SHIM_VOL = 0.0000016 // per-frame velocity impulse
+const SHIM_REVERT = 0.05 // pull the offset back toward 0 each frame, so it never accumulates into drift
+const SHIM_MAX = 0.005 // hard clamp: ±0.035% of price (about a quarter of the 2x target distance)
 
 type Point = { t: number; p: number }
 
@@ -148,6 +161,8 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
   const shake = useRef(0) // 0..1 chart-shake intensity, decays each frame
   const particles = useRef<Particle[]>([]) // live spark bursts
   const burst = useRef<string | null>(null) // pending burst color, spawned at the dot next paint
+  const shimOff = useRef(0) // cosmetic micro-life offset (fraction of price), zero-mean + clamped
+  const shimVel = useRef(0)
   const overlaysRef = useRef<ChartOverlays | undefined>(overlays)
   const reducedRef = useRef(reduced)
   const degenRef = useRef(degen)
@@ -295,6 +310,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       consider(target.current)
       if (ov?.entry != null) consider(ov.entry)
       if (ov?.target != null) consider(ov.target.price)
+      if (ov?.settle != null) consider(ov.settle)
       if (band) {
         consider(band.lower)
         consider(band.upper)
@@ -376,8 +392,21 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       // Overlays sit under the line.
       drawOverlays(ctx, ov, band, { w, h, nowX, entryReveal: entryReveal.current, targetReveal: targetReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
 
+      // Advance the cosmetic micro-life and apply it to the DRAWN leading edge only. Continuous mode
+      // only; reduced motion stays perfectly still. display.current itself is untouched, so the P/L,
+      // the header price, the win-zone read, and the frame fit never see this wiggle.
+      if (continuous) {
+        shimVel.current = shimVel.current * SHIM_MOMENTUM + (Math.random() * 2 - 1) * SHIM_VOL
+        shimOff.current += shimVel.current
+        shimOff.current -= shimOff.current * SHIM_REVERT
+        if (shimOff.current > SHIM_MAX) shimOff.current = SHIM_MAX
+        else if (shimOff.current < -SHIM_MAX) shimOff.current = -SHIM_MAX
+      } else {
+        shimOff.current = 0
+      }
+
       // Build the visible line. Continuous: x by real time. Reduced: x by index step.
-      const yDisp = y(display.current)
+      const yDisp = y(display.current * (1 + shimOff.current))
       const path: Array<{ x: number; y: number }> = []
       if (continuous) {
         const pxPerMs = nowX / WINDOW_MS
@@ -605,8 +634,10 @@ function drawOverlays(
     const left = 0 // full width in both states: the band reads the same idle and locked.
     // Once locked, the band reads its own win/lose: the live price inside lifts the amber fill and
     // brightens the edges (you're in the zone); outside dims the fill and tints the crossed edge red.
-    // The idle preview stays a neutral amber zone.
-    const inside = price > band.lower && price <= band.upper
+    // The idle preview stays a neutral amber zone. While SEALED (cash-out safety / settling), suppress
+    // the live verdict and show one neutral pending zone.
+    const sealed = ov?.band?.locked === true && ov.band.sealed === true
+    const inside = !sealed && price > band.lower && price <= band.upper
     const lit = locked && inside
     ctx.fillStyle = withAlpha(C.brand, lit ? 0.16 : locked ? 0.06 : 0.1)
     ctx.fillRect(left, top, w - left, bot - top)
@@ -619,8 +650,8 @@ function drawOverlays(
       ctx.lineTo(w, yy)
       ctx.stroke()
     }
-    edge(top, locked && !inside && price > band.upper)
-    edge(bot, locked && !inside && price <= band.lower)
+    edge(top, !sealed && locked && !inside && price > band.upper)
+    edge(bot, !sealed && locked && !inside && price <= band.lower)
     ctx.setLineDash([])
     // Edge price labels, so the exact band is always readable (the etched field-guide detail). Inset
     // off the rim like ENTRY: the band spans full width (left = 0), so a bare left+4 would sit under
@@ -705,6 +736,30 @@ function drawOverlays(
       ctx.lineWidth = b.strong ? 1.5 : 1
       ctx.strokeRect(nowX + 0.5, top + 0.5, w - nowX - 1, bot - top - 1)
     }
+  }
+
+  // RESULT line: the exact oracle settlement_price after the settlement transaction lands. Green
+  // inside the band, red outside.
+  if (ov?.settle != null && Number.isFinite(ov.settle)) {
+    const ys = y(ov.settle)
+    const inWin = band ? ov.settle > band.lower && ov.settle <= band.upper : true
+    const col = inWin ? C.up : C.down
+    ctx.save()
+    ctx.strokeStyle = col
+    ctx.lineWidth = 2.5
+    ctx.shadowColor = col
+    ctx.shadowBlur = 10
+    ctx.beginPath()
+    ctx.moveTo(0, ys)
+    ctx.lineTo(w, ys)
+    ctx.stroke()
+    ctx.shadowBlur = 0
+    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, monospace'
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'right'
+    ctx.fillStyle = col
+    ctx.fillText(`RESULT ${formatPrice(ov.settle)}`, labelX, clampLabelY(ys - 11))
+    ctx.restore()
   }
 }
 

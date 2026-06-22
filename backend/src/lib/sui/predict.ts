@@ -213,6 +213,59 @@ export type RangeParams = {
 };
 
 export type TradeAmounts = { cost: bigint; payout: bigint };
+export type TradeEvent = {
+  type: string;
+  parsedJson: Record<string, unknown> | null;
+};
+
+export type MintEventAmounts = {
+  cost: bigint;
+  quantity: bigint;
+  managerId: string;
+  oracleId: string;
+};
+
+export type RedeemEventAmounts = {
+  payout: bigint;
+  quantity: bigint;
+  managerId: string;
+  oracleId: string;
+  settled: boolean;
+};
+
+const eventString = (json: Record<string, unknown>, key: string): string => {
+  const value = json[key];
+  if (typeof value !== 'string') throw new Error(`Predict event missing ${key}`);
+  return value;
+};
+
+// The emitted Predict event is the accounting receipt. Preview calls are estimates against the
+// pre-trade state; mint/redeem reprices after applying the trade's own position change, so only the
+// event contains the exact amount that moved on-chain.
+export function mintEventAmounts(events: TradeEvent[], kind: 'binary' | 'range'): MintEventAmounts {
+  const suffix = kind === 'range' ? '::predict::RangeMinted' : '::predict::PositionMinted';
+  const event = events.find((item) => item.type.endsWith(suffix));
+  if (!event?.parsedJson) throw new Error(`Missing ${suffix.slice(2)} event`);
+  return {
+    cost: BigInt(eventString(event.parsedJson, 'cost')),
+    quantity: BigInt(eventString(event.parsedJson, 'quantity')),
+    managerId: eventString(event.parsedJson, 'manager_id'),
+    oracleId: eventString(event.parsedJson, 'oracle_id'),
+  };
+}
+
+export function redeemEventAmounts(events: TradeEvent[], kind: 'binary' | 'range'): RedeemEventAmounts {
+  const suffix = kind === 'range' ? '::predict::RangeRedeemed' : '::predict::PositionRedeemed';
+  const event = events.find((item) => item.type.endsWith(suffix));
+  if (!event?.parsedJson) throw new Error(`Missing ${suffix.slice(2)} event`);
+  return {
+    payout: BigInt(eventString(event.parsedJson, 'payout')),
+    quantity: BigInt(eventString(event.parsedJson, 'quantity')),
+    managerId: eventString(event.parsedJson, 'manager_id'),
+    oracleId: eventString(event.parsedJson, 'oracle_id'),
+    settled: event.parsedJson.is_settled === true,
+  };
+}
 
 const binaryKey = (tx: Transaction, p: BinaryParams): TransactionObjectArgument =>
   tx.moveCall({
@@ -265,9 +318,11 @@ export async function getManagerBalanceRaw(managerId: string): Promise<bigint> {
     arguments: [tx.object(managerId)],
   });
   const res = await suiClient.devInspectTransactionBlock({ sender: operatorAddress, transactionBlock: tx });
-  if (res.effects?.status?.status !== 'success') return 0n;
+  if (res.effects?.status?.status !== 'success') {
+    throw new Error(`manager balance read failed: ${res.effects?.status?.error ?? 'devInspect error'}`);
+  }
   const rv = res.results?.[res.results.length - 1]?.returnValues;
-  if (!rv || rv.length < 1) return 0n;
+  if (!rv || rv.length < 1) throw new Error('manager balance read returned no value');
   return decodeU64(rv[0][0] as number[]);
 }
 
@@ -422,3 +477,25 @@ export const buildRedeemRangePermissionless = (tx: Transaction, managerId: strin
     arguments: [tx.object(PREDICT_ID), tx.object(managerId), tx.object(p.oracleId), rangeKey(tx, p), tx.pure.u64(p.quantity), tx.object(CLOCK)],
   });
 };
+
+// Simulate the actual owner redeem transaction. This is the executable cash-out quote: unlike
+// get_trade_amounts, redeem first removes the position's own exposure and then computes the bid.
+// devInspect runs that exact Move path without committing state and returns the emitted payout.
+export async function previewExecutableRedeem(
+  managerId: string,
+  owner: string,
+  key: { kind: 'binary'; params: BinaryParams } | { kind: 'range'; params: RangeParams },
+): Promise<bigint> {
+  const tx = new Transaction();
+  if (key.kind === 'binary') buildRedeem(tx, managerId, key.params);
+  else buildRedeemRange(tx, managerId, key.params);
+  const res = await suiClient.devInspectTransactionBlock({ sender: owner, transactionBlock: tx });
+  if (res.effects?.status?.status !== 'success') {
+    throw new Error(`redeem simulation failed: ${res.effects?.status?.error ?? 'devInspect error'}`);
+  }
+  const events: TradeEvent[] = (res.events ?? []).map((event) => ({
+    type: event.type,
+    parsedJson: (event.parsedJson as Record<string, unknown> | undefined) ?? null,
+  }));
+  return redeemEventAmounts(events, key.kind).payout;
+}

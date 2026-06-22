@@ -7,6 +7,7 @@ import { api, type Game, type LuckyParams, type PlayDTO, type RangeParams } from
 import { explorerObjectUrl, explorerTxUrl } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
+import { formatExactDecimal } from '@/utils/format'
 
 // The full play history across every game, the canonical record (the in-game overlays are just a
 // quick glance). App Surface language: rounded cards on black. Tap a row to expand the full debug
@@ -25,10 +26,10 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
 // minted (no result, no tx), so they would just be noise in a results log.
 const SHOWN = new Set(['won', 'lost', 'cashed_out'])
 
-const money = (n: number): string =>
-  Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const money = (value: string, absolute = false): string =>
+  formatExactDecimal(value, { absolute })
 
-const fmtMult = (n: number): string => `${Number.isInteger(n) ? n : Number(n.toFixed(1))}x`
+const fmtMult = (n: number): string => `${n.toFixed(2).replace(/\.?0+$/, '')}x`
 const shortId = (d: string): string => `${d.slice(0, 6)}…${d.slice(-4)}`
 
 const fmtPrice = (s?: string): string => {
@@ -125,9 +126,14 @@ function detailRows(play: PlayDTO): Array<[string, ReactNode]> {
   }
   rows.push(
     ['Entry price', fmtPrice(play.entrySpot)],
-    ['Exit price', fmtPrice(play.settlePrice)],
-    ['Entry cost', `$${money(parseFloat(play.entryValue))}`],
-    ['Payout', play.payout ? `$${money(parseFloat(play.payout))}` : '—'],
+    ['Settlement price', play.status === 'cashed_out' ? 'Not applicable' : fmtPrice(play.settlePrice)],
+    ['Selected stake', `$${money(play.stake)}`],
+    ['Actual cost', `$${money(play.entryValue)}`],
+    ['Payout', play.payout ? `$${money(play.payout)}` : '—'],
+    [
+      'Realized P&L',
+      `${parseFloat(play.pnl) >= 0 ? '+' : '-'}$${money(play.pnl, true)}`,
+    ],
     ['Opened', fmtTime(play.openedAt)],
     ['Settled', fmtTime(play.settledAt)],
   )
@@ -137,7 +143,7 @@ function detailRows(play: PlayDTO): Array<[string, ReactNode]> {
 function HistoryRow({ play }: { play: PlayDTO }) {
   const [open, setOpen] = useState(false)
   const pnl = parseFloat(play.pnl ?? '0')
-  const positive = play.status === 'won' || (play.status === 'cashed_out' && pnl >= 0)
+  const positive = play.status === 'won' || (play.status === 'cashed_out' && pnl > 0)
   const label = play.status === 'won' ? 'Won' : play.status === 'cashed_out' ? 'Cashed' : 'Lost'
   const { asset, line } = headOf(play)
 
@@ -159,14 +165,14 @@ function HistoryRow({ play }: { play: PlayDTO }) {
           <div className="mt-1 flex items-center gap-2 text-[13px] text-text-2">
             <span>{line}</span>
             <span className="text-text-3">·</span>
-            <span>Bet ${money(parseFloat(play.stake))}</span>
+            <span>Cost ${money(play.entryValue)}</span>
           </div>
         </div>
         <div className="flex shrink-0 items-start gap-2">
           <div className="text-right">
             <div className={cnm('text-[11px] font-bold uppercase tracking-wide', positive ? 'text-up' : 'text-down')}>{label}</div>
             <div className={cnm('tnum text-[17px] font-extrabold leading-tight', pnl >= 0 ? 'text-up' : 'text-down')}>
-              {pnl >= 0 ? '+' : '-'}${money(pnl)}
+              {pnl >= 0 ? '+' : '-'}${money(play.pnl, true)}
             </div>
             <div className="mt-0.5 text-[11px] text-text-3">{timeAgo(play.settledAt ?? play.openedAt)}</div>
           </div>

@@ -12,7 +12,7 @@ export interface UserDTO {
   username: string | null; // user-chosen unique handle; null until set in onboarding
   provider: 'privy' | 'dev' | 'wallet';
   walletAuthAddress?: string; // wallet-connect: the connected external wallet (login + default withdraw target)
-  balance: string; // DUSDC, e.g. "983.50" (wallet + manager chips)
+  balance: string; // available DUSDC (wallet + manager cash), 2dp display, e.g. "983.50"
   managerReady: boolean; // PredictManager exists
   settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; theme: string };
 }
@@ -60,9 +60,13 @@ export interface PlayDTO {
   markValue: string; // current redeem value in DUSDC (live)
   pnl: string; // signed, markValue - entryValue
   multiplier: number; // potential payout multiple at mint
+  maxPayout: string; // exact on-chain position quantity, paid in full on a settled win
   payout?: string; // set on settle/cashout
   entrySpot?: string; // spot at entry (display), debug/audit
-  settlePrice?: string; // frozen settlement price at expiry (display), debug/audit
+  settlePrice?: string; // exact oracle settlement_price at expiry; absent for cash-outs
+  // Exact oracle settlement_price after the settlement transaction lands, while the play may still be
+  // open briefly awaiting redeem/DB finalization.
+  lockPrice?: string;
   openedAt?: string;
   settledAt?: string;
   txMint?: string;

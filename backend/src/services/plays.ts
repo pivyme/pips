@@ -10,7 +10,7 @@ import { coinWithBalance } from '@mysten/sui/transactions';
 import type { Play, User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
 import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS, OPERATOR_ENABLED } from '../config/main-config.ts';
-import { DUSDC_TYPE, usd1e9 } from '../lib/sui/config.ts';
+import { DUSDC_TYPE, fromDusdcRaw, multiplier as multiplierOf, usd1e9 } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import {
   appendPriceUpdate,
@@ -22,9 +22,10 @@ import {
   buildRedeemPermissionless,
   buildRedeemRangePermissionless,
   getManagerBalanceRaw,
-  previewRange,
-  previewRedeem,
+  mintEventAmounts,
+  previewExecutableRedeem,
   readOracle,
+  redeemEventAmounts,
   type BinaryParams,
   type OracleState,
   type RangeParams,
@@ -267,18 +268,33 @@ async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, pla
       else buildMintRange(tx, managerId, cur.params);
       try {
         const exec = await executeForUser(tx, userCtx(user));
+        const receipt = mintEventAmounts(exec.events, cur.kind);
+        if (
+          receipt.managerId !== managerId ||
+          receipt.oracleId !== cur.params.oracleId ||
+          receipt.quantity !== cur.params.quantity
+        ) {
+          console.error(`[plays] mint receipt identity mismatch for ${playId}`);
+        }
+        const actualMultiplier = multiplierOf(receipt.cost, receipt.quantity);
         roundLog(
           `[Round OPEN]   ${cur.game.padEnd(5)} ${cur.asset.padEnd(4)} ` +
           (cur.kind === 'binary'
             ? `${cur.side.toUpperCase().padEnd(4)} strike=${px1e9(cur.params.strike1e9)}`
             : `band=(${px1e9(cur.params.lower1e9)}, ${px1e9(cur.params.higher1e9)}]`) +
-          `  x${cur.multiplier.toFixed(2)}  entry=$${Number(cur.entrySpot).toFixed(2)}` +
+          `  x${actualMultiplier.toFixed(2)}  entry=$${Number(cur.entrySpot).toFixed(2)}` +
           `  expires in ${Math.max(0, Math.round((cur.market.expiryMs - Date.now()) / 1000))}s` +
           `  @${hhmmss()}  tx=${exec.digest.slice(0, 8)}`,
         );
         await prismaQuery.play.update({
           where: { id: playId },
-          data: { status: 'open', txMint: exec.digest, openedAt: new Date() },
+          data: {
+            status: 'open',
+            txMint: exec.digest,
+            entryCost: receipt.cost,
+            multiplier: actualMultiplier,
+            openedAt: new Date(),
+          },
         });
         invalidateBal(user.id); // the manager just changed; the next gate re-reads
         return;
@@ -358,20 +374,21 @@ async function cashoutPlayLocked(user: User, playId: string): Promise<CashoutRes
   if (!managerId) throw new PlayError('MANAGER_NOT_READY', 'Your account is still getting ready');
 
   const key = deserializeKey(play);
-  const amounts = key.kind === 'binary' ? await previewRedeem(key.params) : await previewRange(key.params);
-
   const tx = new Transaction();
   if (key.kind === 'binary') buildRedeem(tx, managerId, key.params);
   else buildRedeemRange(tx, managerId, key.params);
 
   try {
     const exec = await executeForUser(tx, userCtx(user));
-    // The exit price: the live spot the position closed against, the cash-out mirror of the
-    // settlement price an expiry gets. gameSpot is the same in-memory feed the chart and oracle read,
-    // so it agrees with the entry/settle prices. Best-effort: a feed miss just leaves it blank.
-    const spot = await gameSpot(play.asset).catch(() => null);
-    const exitPrice = spot && spot.price > 0 ? String(spot.price) : null;
-    return finalizeCashout(play, amounts.payout, exec.digest, exitPrice);
+    const receipt = redeemEventAmounts(exec.events, key.kind);
+    if (
+      receipt.managerId !== managerId ||
+      receipt.oracleId !== play.oracleId ||
+      receipt.quantity !== key.params.quantity
+    ) {
+      console.error(`[plays] redeem receipt identity mismatch for ${play.id}`);
+    }
+    return finalizeCashout(play, receipt.payout, exec.digest);
   } catch (e) {
     // The buzzer beat the cash-out: once the round crosses expiry the oracle is no longer quoteable
     // (assert_quoteable_oracle aborts EOracleExpired), so the live sell is gone and the position will
@@ -390,11 +407,19 @@ const isOracleExpiredAbort = (e: unknown): boolean => {
   return /assert_quoteable_oracle|EOracleExpired|EOracleSettled/i.test(m);
 };
 
-async function finalizeCashout(play: Play, payoutRaw: bigint, digest: string, exitPrice: string | null): Promise<{ play: PlayDTO; unlocked: string[] }> {
+async function finalizeCashout(play: Play, payoutRaw: bigint, digest: string): Promise<{ play: PlayDTO; unlocked: string[] }> {
   const pnl = payoutRaw - play.entryCost;
   const updated = await prismaQuery.play.update({
     where: { id: play.id },
-    data: { status: 'cashed_out', payout: payoutRaw, markValue: payoutRaw, pnl, txRedeem: digest, settledAt: new Date(), ...(exitPrice ? { settlePrice: exitPrice } : {}) },
+    data: {
+      status: 'cashed_out',
+      payout: payoutRaw,
+      markValue: payoutRaw,
+      pnl,
+      txRedeem: digest,
+      settlePrice: null,
+      settledAt: new Date(),
+    },
   });
   invalidateBal(play.userId); // the redeem credited the manager; the next gate must re-read
   await recordSettlement(play.userId);
@@ -449,12 +474,10 @@ function resolveOracleCap(st: OracleState): string | undefined {
   return st.authorizedCapIds.find((id) => operatorCaps.oracleCapIds.includes(id));
 }
 
-// The price to freeze an oracle at: the oracle's last on-chain spot, which is the price pushed right
-// before expiry (update_prices stops recording live prices once past expiry, oracle.move). It is
-// already frozen on-chain, identical for every play on the oracle, and independent of how late the
-// settle tx lands, so a round sitting on the strike resolves deterministically at its buzzer value
-// instead of at whatever the synthetic walk drifted to by the time the settle worker fires. Falls
-// back to the live feed only if the oracle somehow never recorded a spot. Null if neither is usable.
+// The price our settlement transaction will freeze: the oracle's last on-chain spot, pushed before
+// expiry. It is recorded on-chain but is not a settlement result until update_prices runs after
+// expiry. Using that recorded spot makes settlement independent of worker delay. Falls back to the
+// live feed only if the oracle somehow never recorded a spot.
 async function settleSpotUsd(asset: string, lastSpot1e9: bigint): Promise<number | null> {
   const last = Number(lastSpot1e9) / 1e9;
   if (last > 0) return last;
@@ -646,6 +669,7 @@ async function settleOnePlay(play: Play, settlement1e9: bigint, settleTx?: strin
   // never claims a payout the chain did not move; a failed redeem leaves the play open to retry on
   // the next settle tick. A losing play has nothing to redeem, so it settles immediately.
   let digest: string | undefined;
+  let payoutRaw = 0n;
   if (itm) {
     const user = await prismaQuery.user.findUnique({ where: { id: play.userId } });
     if (!user?.predictManagerId) {
@@ -659,14 +683,30 @@ async function settleOnePlay(play: Play, settlement1e9: bigint, settleTx?: strin
       // Permissionless redeem signs with the dedicated settlement wallet (its own gas coin), so a slow
       // redeem can't head-of-line block the operator's price-push/nudge lane. Falls back to the operator
       // wallet when no settlement wallet is configured.
-      digest = (await executeAsSettlement(tx, `settle-redeem ${play.id}`, { retries: SETTLE_STALE_RETRIES, freshFirst: true })).digest;
+      const exec = await executeAsSettlement(tx, `settle-redeem ${play.id}`, {
+        retries: SETTLE_STALE_RETRIES,
+        freshFirst: true,
+      });
+      const receipt = redeemEventAmounts(exec.events, key.kind);
+      if (
+        !receipt.settled ||
+        receipt.managerId !== user.predictManagerId ||
+        receipt.oracleId !== play.oracleId ||
+        receipt.quantity !== key.params.quantity
+      ) {
+        console.error(`[Settle] receipt identity mismatch for ${play.id}`);
+      }
+      digest = exec.digest;
+      payoutRaw = receipt.payout;
     } catch (e) {
       console.error(`[Settle] on-chain redeem failed for ${play.id}, will retry:`, e instanceof Error ? e.message : e);
       return; // leave status 'open' so the next settle tick retries the redeem
     }
   }
 
-  const payoutRaw = itm ? key.params.quantity : 0n; // settled ITM pays $1 per contract, else 0
+  // The redeem event is the exact amount credited on-chain. A loss has no redeem transaction and
+  // therefore a zero payout.
+  if (itm && digest == null) return;
   const pnl = payoutRaw - play.entryCost;
   await prismaQuery.play.update({
     where: { id: play.id },
@@ -695,8 +735,12 @@ async function settleOnePlay(play: Play, settlement1e9: bigint, settleTx?: strin
 export async function getLiveMarkRaw(play: Play): Promise<bigint> {
   if (play.status !== 'open') return play.payout ?? play.markValue ?? 0n;
   const key = deserializeKey(play);
-  const amounts = key.kind === 'binary' ? await previewRedeem(key.params) : await previewRange(key.params);
-  return amounts.payout;
+  const user = await prismaQuery.user.findUnique({
+    where: { id: play.userId },
+    select: { address: true, predictManagerId: true },
+  });
+  if (!user?.predictManagerId) throw new Error(`Play ${play.id} has no PredictManager`);
+  return previewExecutableRedeem(user.predictManagerId, user.address, key);
 }
 
 // Cached live mark for the hot read paths (the play SSE tick + /plays/:id). A binary/range mark
@@ -720,7 +764,7 @@ export async function getLiveMarkCached(play: Play): Promise<bigint> {
   return entry.p;
 }
 
-const money = (raw: bigint): string => (Number(raw) / 1_000_000).toFixed(2);
+const money = (raw: bigint): string => fromDusdcRaw(raw).toFixed(2);
 
 function paramsDTO(play: Play): PlayDTO['params'] {
   // 'tap' is retired; any legacy tap rows were stored range-style (lower/upper), so render them as range.
@@ -730,10 +774,23 @@ function paramsDTO(play: Play): PlayDTO['params'] {
   return { asset: play.asset, side: (play.side as Side) ?? 'up', multiplier: play.multiplier ?? 0, duration: play.durationSec };
 }
 
+// Exact settlement price for the short window after the oracle settlement transaction has landed but
+// before this play's redeem/DB finalization completes. Before the chain sets `settlement_price` there
+// is no result, so we return nothing instead of presenting the last live spot as a locked outcome.
+async function lockPriceOf(play: Play): Promise<string | undefined> {
+  if (play.status !== 'open') return undefined;
+  if (Date.now() < Number(play.expiry)) return undefined;
+  const oracle = await readOracle(play.oracleId).catch(() => null);
+  if (!oracle?.settled || oracle.settlementPrice1e9 == null) return undefined;
+  const px = Number(oracle.settlementPrice1e9) / 1e9;
+  return px > 0 ? String(px) : undefined;
+}
+
 export async function toPlayDTO(play: Play, liveMark?: bigint): Promise<PlayDTO> {
   const settled = play.status !== 'open' && play.status !== 'pending';
   const markRaw = settled ? (play.payout ?? 0n) : (liveMark ?? play.markValue ?? play.entryCost);
   const pnlRaw = play.pnl ?? markRaw - play.entryCost;
+  const key = deserializeKey(play);
 
   return {
     id: play.id,
@@ -753,9 +810,11 @@ export async function toPlayDTO(play: Play, liveMark?: bigint): Promise<PlayDTO>
     markValue: money(markRaw),
     pnl: money(pnlRaw),
     multiplier: play.multiplier ?? 0,
+    maxPayout: money(key.params.quantity),
     payout: play.payout != null ? money(play.payout) : undefined,
     entrySpot: play.entrySpot ?? undefined,
     settlePrice: play.settlePrice ?? undefined,
+    lockPrice: await lockPriceOf(play),
     openedAt: play.openedAt?.toISOString(),
     settledAt: play.settledAt?.toISOString(),
     txMint: play.txMint ?? undefined,

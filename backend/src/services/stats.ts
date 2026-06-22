@@ -23,7 +23,7 @@ export type LedgerStats = {
   losses: number;
   currentStreak: number; // signed: + current win run, - current loss run
   maxStreak: number; // best win run
-  totalVolume: bigint; // Σ stake, base units
+  totalVolume: bigint; // Σ actual on-chain mint cost, base units
   netPnl: bigint; // Σ pnl (payout - entryCost), base units
   firstPlayAt: Date | null;
   lastPlayAt: Date | null;
@@ -47,7 +47,7 @@ export async function computeLedgerStats(userId: string, plays?: Play[]): Promis
   let maxStreak = 0;
   for (const p of settled) {
     netPnl += p.pnl ?? 0n;
-    totalVolume += p.stake;
+    totalVolume += p.entryCost;
     if (isWinningPlay(p)) {
       wins += 1;
       streak = streak >= 0 ? streak + 1 : 1;

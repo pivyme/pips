@@ -192,7 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const balances = await readWalletBalances(address)
         if (!active) return
         console.info(
-          `[PIPS wallet]\nAddress: ${address}\nSUI: ${balances.sui}\nDUSDC: ${balances.usdc ?? 'not configured'}\nUpdated: ${new Date().toISOString()}`,
+          `[PIPS wallet]\nAddress: ${address}\nSUI: ${balances.sui}\nWallet DUSDC (manager excluded): ${balances.usdc ?? 'not configured'}\nUpdated: ${new Date().toISOString()}`,
         )
       } catch (error) {
         if (active) console.warn(`[PIPS wallet] Failed to read balances for ${address}`, error)
@@ -208,6 +208,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       window.clearInterval(interval)
     }
   }, [address])
+
+  // Keep the globally displayed available balance current even when funds move outside the active
+  // game screen (external deposits, another tab, or a background settlement). Each refresh reads
+  // wallet DUSDC + PredictManager cash directly from chain.
+  useEffect(() => {
+    if (status !== 'authed' || isDemo()) return
+    const onFocus = () => void refresh()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    const interval = window.setInterval(() => void refresh(), 30_000)
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [status, refresh])
 
   useEffect(() => {
     if (started.current) return

@@ -5,7 +5,7 @@ import { MenuScreen, ScreenError } from '@/components/menu/shared'
 import { api, type Game, type GlobalLeaderboard, type LeaderboardGameEntry, type Minigame, type MinigameLeaderboard } from '@/lib/api'
 import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
-import { displayHandle } from '@/utils/format'
+import { displayHandle, formatExactDecimal } from '@/utils/format'
 
 // The menu leaderboard. App Surface language (rounded cards, docs/DESIGN.md), distinct from the
 // in-device TE board. One fetch pulls every board (global Gainers/REKT, the two games' winners, the
@@ -24,7 +24,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
 
 const fmtMoney = (s: string): string => {
   const n = parseFloat(s) || 0
-  return `${n < 0 ? '-' : '+'}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return `${n < 0 ? '-' : '+'}$${formatExactDecimal(s, { absolute: true })}`
 }
 const fmtScore = (n: number): string => Math.round(n).toLocaleString('en-US')
 

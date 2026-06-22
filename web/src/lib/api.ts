@@ -69,11 +69,15 @@ export interface PlayDTO {
   markValue: string
   pnl: string
   multiplier: number
+  maxPayout: string
   payout?: string
   // Spot at entry (the price the strike was solved against). The chart's ENTRY line + the live P/L
   // anchor to this so entry, target, and settlement always agree.
   entrySpot?: string
-  settlePrice?: string
+  settlePrice?: string // exact expiry settlement price; absent for cash-outs
+  // Exact oracle settlement_price after the settlement transaction lands, while redeem/finalization
+  // may still be in progress.
+  lockPrice?: string
   openedAt?: string
   settledAt?: string
   txMint?: string
@@ -321,7 +325,16 @@ function stream<T>(path: string, onData: (data: T) => void, onError?: () => void
 }
 
 export type PriceTick = { price: string; ts: number }
-export type PlayTick = { markValue: string; pnl: string; multiplier: number; status: PlayStatus; ts: number }
+export type PlayTick = {
+  markValue: string
+  pnl: string
+  multiplier: number
+  entryValue?: string
+  maxPayout?: string
+  status: PlayStatus
+  lockPrice?: string
+  ts: number
+}
 // Live presence: how many players have PIPS open right now. Pushed on every join/leave.
 export type LiveTick = { online: number }
 

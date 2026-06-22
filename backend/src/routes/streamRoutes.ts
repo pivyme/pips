@@ -134,7 +134,16 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
       const settling = current.status === 'open' && Date.now() >= Number(current.expiry);
       const mark = current.status === 'open' && !settling ? await getLiveMarkCached(current).catch(() => undefined) : undefined;
       const dto = await toPlayDTO(current, mark);
-      send({ markValue: dto.markValue, pnl: dto.pnl, multiplier: dto.multiplier, status: dto.status, ts: Date.now() });
+      send({
+        markValue: dto.markValue,
+        pnl: dto.pnl,
+        multiplier: dto.multiplier,
+        entryValue: dto.entryValue,
+        maxPayout: dto.maxPayout,
+        status: dto.status,
+        lockPrice: dto.lockPrice,
+        ts: Date.now(),
+      });
       if (TERMINAL.has(current.status)) {
         closed = true;
         reply.raw.end();

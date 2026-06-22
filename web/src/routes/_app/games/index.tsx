@@ -121,6 +121,10 @@ export function GamesConsole() {
   const demo = isDemo()
   const name = displayHandle(user)
   const balance = parseFloat(user?.balance ?? '0') || 0
+  const balanceDecimals = Math.max(
+    2,
+    Math.min(6, (user?.balance.split('.')[1] ?? '').replace(/0+$/, '').length),
+  )
 
   return (
     <GameScreen>
@@ -187,9 +191,14 @@ export function GamesConsole() {
             <span className="tnum flex shrink-0 items-center border border-brand-500/60 px-1.5 py-0.5 text-brand-500">STREAK {streak}</span>
           )}
         </div>
-        <div className="mt-3 font-mono text-[11px] uppercase tracking-[0.14em] text-text-2">Balance</div>
+        <div className="mt-3 font-mono text-[11px] uppercase tracking-[0.14em] text-text-2">Available</div>
         <div className="mt-0.5 leading-none">
-          <Stat value={balance} prefix="$" className="text-[26px] font-extrabold tracking-tight text-text" />
+          <Stat
+            value={balance}
+            prefix="$"
+            decimals={balanceDecimals}
+            className="text-[26px] font-extrabold tracking-tight text-text"
+          />
           <span className="ml-1 font-mono text-[11px] uppercase tracking-[0.1em] text-text-2">DUSDC</span>
         </div>
       </div>

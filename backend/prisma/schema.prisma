@@ -76,7 +76,7 @@ model Play {
   multiplier   Float?                          // potential payout multiple at mint
 
   entrySpot    String?                         // asset spot at entry (display units), debug/audit
-  settlePrice  String?                         // asset price when the position closed: settlement price at expiry, or live spot at cash-out (display units)
+  settlePrice  String?                         // exact oracle settlement_price for expiry-settled plays; null for cash-outs
 
   txMint       String?
   txRedeem     String?
