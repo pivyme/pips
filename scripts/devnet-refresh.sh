@@ -9,7 +9,15 @@
 #
 # Run it LOCALLY from the repo (it publishes with your sui CLI + funds the operator from the faucet):
 #   scripts/devnet-refresh.sh            # interactive menu
+#   scripts/devnet-refresh.sh recover    # FAST, non-interactive, shortest-downtime auto-recover (do this on a wipe)
+#   scripts/devnet-refresh.sh watch      # poll devnet, auto-run recover the moment it wipes (leave running)
 #   scripts/devnet-refresh.sh all        # guided full run (preflight -> verify), confirms each step
+#
+# SHORT-DOWNTIME RECOVERY (the whole point): `recover` funds only enough to publish (one faucet hit),
+# republishes, then writes the fresh deploy record to the SHARED DB. The deployed box's deploy-watch
+# worker sees the new package id and RESTARTS onto it on its own (no Dokploy env paste, no redeploy),
+# and the frontend re-reads the live DUSDC type from /config (no Vercel rebuild). Requires `bun run
+# db:push` once (adds the AppConfig table) and a restart-on-exit box container (Dokploy default).
 #
 #   or one phase at a time:
 #   scripts/devnet-refresh.sh preflight  # deps + sui CLI devnet env + import operator key + switch
@@ -36,7 +44,17 @@ RPC="${PIPS_DEVNET_RPC:-https://fullnode.devnet.sui.io:443}"
 FAUCET="${PIPS_DEVNET_FAUCET:-https://faucet.devnet.sui.io/v2/gas}"
 FUND_SUI="${PIPS_DEVNET_FUND_SUI:-60}"        # operator target: deploy (~2 SUI) + a working buffer. The
                                               # devnet-faucet worker sustains it after, so this stays small.
+# Minimum operator balance to START a publish. The deploy reorder for short downtime: fund only this much
+# (usually ONE 10-SUI faucet hit), publish immediately, and let the box's faucet worker stack it after.
+# This is the whole speed win over phase_fund, which blocks all the way to FUND_SUI before deploying.
+DEPLOY_MIN_SUI="${PIPS_DEVNET_DEPLOY_MIN_SUI:-10}"
+# Hard ceiling on the publish. A healthy 4-package publish + seed + round-trip is ~2-4 min; anything
+# past this is the local sui CLI hanging against a freshly-wiped devnet whose protocol it lags (the
+# publish connects then stalls on a now-missing RPC method). Fail fast with the fix instead of hanging.
+DEPLOY_TIMEOUT="${PIPS_DEVNET_DEPLOY_TIMEOUT:-420}"
 CLI_ENV="devnet"
+# Non-interactive switch. `recover`/`watch` set this so confirm/pause auto-proceed (unattended runs).
+AUTO="${AUTO:-0}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND="$ROOT/backend"
@@ -78,11 +96,21 @@ step()  { echo; echo "${b}${cyn}== $* ==${rst}"; }
 die()   { echo "${red}error:${rst} $*" >&2; exit 1; }
 
 ask()     { local p="$1" a=""; read -r -p "$p" a </dev/tty || true; echo "$a"; }
-confirm() { case "$(ask "$1 [y/N] ")" in y|Y|yes|YES) return 0;; *) return 1;; esac; }
-confirm_word() { [ "$(ask "$2 (type ${b}$1${rst} to confirm): ")" = "$1" ]; }
-pause()   { ask "$1 (press Enter to continue) " >/dev/null; }
+confirm() { [ "$AUTO" = "1" ] && return 0; case "$(ask "$1 [y/N] ")" in y|Y|yes|YES) return 0;; *) return 1;; esac; }
+confirm_word() { [ "$AUTO" = "1" ] && return 0; [ "$(ask "$2 (type ${b}$1${rst} to confirm): ")" = "$1" ]; }
+pause()   { [ "$AUTO" = "1" ] && return 0; ask "$1 (press Enter to continue) " >/dev/null; }
 
 require() { command -v "$1" >/dev/null 2>&1 || die "the '$1' CLI is not installed. $2"; }
+
+# Run a command under a timeout if the system has one (coreutils `timeout`, or `gtimeout` on macOS via
+# `brew install coreutils`); otherwise run it plain. -k 10 hard-kills 10s after the soft TERM so a wedged
+# publish can't linger. Returns 124 on timeout (the standard coreutils code).
+tmo() {
+  local secs="$1"; shift
+  if   command -v timeout  >/dev/null 2>&1; then timeout  -k 10 "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 10 "$secs" "$@"
+  else "$@"; fi
+}
 
 # ---- rpc / faucet helpers --------------------------------------------------
 jrpc() { curl -s --max-time 20 -X POST "$RPC" -H 'content-type: application/json' \
@@ -200,7 +228,17 @@ phase_deploy() {
   # bundled deps and write deployed.devnet.json. We pass SUI_FULLNODE_URL so it ignores the stale
   # localnet URL still sitting in backend/.env (the explicit env var wins over .env).
   confirm "Publish the Predict stack to devnet now (force fresh)?" || { info "skipped"; return 1; }
-  ( cd "$BACKEND" && SUI_NETWORK=devnet SUI_FULLNODE_URL="$RPC" bun run bootstrap --force ) || { fail "bootstrap failed (see output above)"; return 1; }
+  if ! ( cd "$BACKEND" && SUI_NETWORK=devnet SUI_FULLNODE_URL="$RPC" tmo "$DEPLOY_TIMEOUT" bun run bootstrap --force ); then
+    local rc=$?
+    if [ "$rc" = "124" ]; then
+      fail "publish TIMED OUT after ${DEPLOY_TIMEOUT}s. This is almost always the local sui CLI lagging the"
+      fail "freshly-wiped devnet protocol (the publish connects, then stalls on a now-missing RPC method)."
+      fail "fix: ${b}brew upgrade sui${rst} (or install the build matching devnet), then re-run: $0 recover"
+    else
+      fail "bootstrap failed (see output above)"
+    fi
+    return 1
+  fi
 
   # The publish dirties the vendored Move.lock files (committed; they pin on-chain deps) and may add
   # a stray token/Published.toml. Restore them so the repo stays clean. Ids live in deployed.devnet.json.
@@ -351,6 +389,116 @@ phase_verify() {
 }
 
 # ===========================================================================
+# Phase: fund_fast (faucet only enough to publish, then return)
+# ===========================================================================
+phase_fund_fast() {
+  step "Fund (fast)  faucet the operator to the deploy minimum (~${DEPLOY_MIN_SUI} SUI)"
+  local addr; addr="$(operator_addr)"; [ -n "$addr" ] || { fail "no operator address"; return 1; }
+  local target=$(( DEPLOY_MIN_SUI * 1000000000 ))
+  local bal; bal="$(sui_mist "$addr")"; bal="${bal:-0}"
+  info "operator holds $(( bal / 1000000000 )) SUI"
+  local tries=0 max=12
+  while [ "${bal:-0}" -lt "$target" ] && [ "$tries" -lt "$max" ]; do
+    tries=$((tries + 1))
+    local code
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 --location --request POST "$FAUCET" \
+      --header 'Content-Type: application/json' --data-raw "{\"FixedAmountRequest\":{\"recipient\":\"$addr\"}}" 2>/dev/null)"
+    case "$code" in
+      200|201) info "faucet hit $tries ok"; sleep 2 ;;
+      429)     warn "faucet rate-limited (429), backing off 20s"; sleep 20 ;;
+      *)       warn "faucet HTTP $code, retrying"; sleep 4 ;;
+    esac
+    bal="$(sui_mist "$addr")"; bal="${bal:-0}"
+  done
+  # The publish needs ~1.5 SUI; once we clear that, stop waiting and deploy. The buffer fills after.
+  if [ "${bal:-0}" -ge 1200000000 ]; then
+    ok "operator has $(( bal / 1000000000 )) SUI, enough to publish"
+  else
+    fail "operator at $(( bal / 1000000000 )) SUI after $tries hits (faucet rate-limited; set PIPS_DEVNET_FAUCET or use scripts/faucet-spam.sh)"
+    return 1
+  fi
+}
+
+# ===========================================================================
+# Phase: publish_db (write the fresh deploy record to the shared DB)
+# ===========================================================================
+phase_publish_db() {
+  step "Publish  write the fresh deploy record to the shared DB (the box self-heal trigger)"
+  [ -f "$DEPLOYED" ] || { fail "no deployed.devnet.json yet. Run 'deploy' first."; return 1; }
+  if ( cd "$BACKEND" && bun scripts/publish-deploy-record.ts ); then
+    ok "deploy record in DB; the deployed box adopts it on its next deploy-watch tick (~20s)"
+  else
+    fail "publish-deploy-record failed. If it mentions AppConfig, run 'bun run db:push' from backend/ once, then re-run."
+    return 1
+  fi
+}
+
+# ===========================================================================
+# Phase: rearm (re-provision users only, no history wipe, non-interactive)
+# ===========================================================================
+phase_rearm() {
+  step "Re-arm  clear onboarding flags so users re-provision (new manager + chips) on next login"
+  [ -f "$BACKEND/scripts/reprovision-users.ts" ] || { fail "reprovision-users.ts missing"; return 1; }
+  ( cd "$BACKEND" && bun scripts/reprovision-users.ts ) && ok "users re-armed" || { fail "reprovision failed (DB reachable?)"; return 1; }
+}
+
+# ===========================================================================
+# recover  the one-shot, non-interactive, short-downtime path
+# ===========================================================================
+phase_recover() {
+  AUTO=1
+  echo "${b}${cyn}Devnet auto-recover.${rst}  RPC $RPC  |  operator $(operator_addr)"
+  echo "Funds the minimum, publishes, writes the DB record. The box self-heals; no Dokploy paste, no Vercel rebuild."
+  phase_preflight  || { fail "preflight failed"; return 1; }
+  phase_fund_fast  || { fail "could not fund the operator"; return 1; }
+  phase_deploy     || { fail "deploy failed; fix the error above and re-run: $0 recover"; return 1; }
+  phase_publish_db || warn "deploy is live but the DB record was not written: the box will NOT self-heal until you run '$0 recover' again (or 'bun run db:push' first)."
+  phase_wire
+  phase_rearm
+  phase_verify
+  echo; echo "${grn}${b}Recovery complete.${rst}"
+  cat <<EOF
+  [x] Predict stack republished to devnet, package $(dfield packageId)
+  [x] deploy record written to the shared DB  -> the box restarts onto it within ~20s (deploy-watch)
+  [x] backend/.env + web/.env wired to devnet (this machine = follower)
+  [x] users re-armed for re-provision
+  The box's devnet-faucet worker refills the operator/settlement/treasury/sponsor wallets on the fresh
+  chain automatically. The frontend re-reads the live DUSDC type from /config on next load. Zero-touch.
+EOF
+}
+
+# ===========================================================================
+# watch  poll devnet and auto-recover the moment the package is wiped
+# ===========================================================================
+phase_watch() {
+  local interval="${PIPS_DEVNET_WATCH_INTERVAL:-60}"
+  step "Watch  poll devnet every ${interval}s; auto-recover when the Predict package vanishes"
+  info "leave this running on the deploy machine (needs the sui CLI + Move sources). Ctrl-C to stop."
+  phase_preflight || { fail "preflight failed; fix it before watching"; return 1; }
+  while true; do
+    local pkg live obj
+    pkg="$(dfield packageId)"; live="$(chain_id)"
+    if [ -z "$live" ]; then
+      warn "$(ask_now) devnet unreachable, retrying in ${interval}s"
+    elif [ -z "$pkg" ]; then
+      warn "$(ask_now) no local deploy record; running first recover"
+      phase_recover
+    else
+      obj="$(jrpc sui_getObject "[\"$pkg\",{\"showType\":true}]")"
+      if [ -z "$obj" ] || echo "$obj" | grep -q '"notExists"\|"error"'; then
+        warn "$(ask_now) Predict package ${pkg:0:12}… is GONE (devnet wiped). Auto-recovering."
+        phase_recover
+      else
+        info "$(ask_now) ok  chain $live  pkg ${pkg:0:12}… live"
+      fi
+    fi
+    sleep "$interval"
+  done
+}
+# tiny HH:MM:SS stamp for the watch log (date is allowed in shell, just not in workflow scripts)
+ask_now() { date '+%H:%M:%S'; }
+
+# ===========================================================================
 # orchestration
 # ===========================================================================
 guided_all() {
@@ -379,30 +527,38 @@ menu() {
   echo "${b}PIPS devnet refresh${rst}"
   echo "  rpc=$RPC  fund-target=${FUND_SUI} SUI  operator=$(operator_addr)"
   echo
-  echo "  ${b}1${rst}) Guided full refresh (preflight -> verify)"
-  echo "  ${b}2${rst}) preflight   deps + sui CLI devnet env + operator key"
-  echo "  ${b}3${rst}) fund        faucet the operator"
-  echo "  ${b}4${rst}) deploy      publish the Predict stack"
-  echo "  ${b}5${rst}) wire        point both .envs at devnet"
-  echo "  ${b}6${rst}) reset       re-arm users + wipe history"
-  echo "  ${b}7${rst}) dokploy     print the operator env block"
-  echo "  ${b}8${rst}) verify      chain + package + funding"
+  echo "  ${b}1${rst}) ${grn}recover${rst}     one-shot auto-recover (fund -> publish -> DB record -> wire). Shortest downtime."
+  echo "  ${b}2${rst}) ${grn}watch${rst}       poll devnet and auto-recover the moment it wipes"
+  echo "  ${b}3${rst}) refresh     guided full refresh (preflight -> verify, with prompts)"
+  echo "  ${b}4${rst}) preflight   deps + sui CLI devnet env + operator key"
+  echo "  ${b}5${rst}) fund        faucet the operator"
+  echo "  ${b}6${rst}) deploy      publish the Predict stack"
+  echo "  ${b}7${rst}) wire        point both .envs at devnet"
+  echo "  ${b}8${rst}) reset       re-arm users + wipe history"
+  echo "  ${b}9${rst}) dokploy     print the operator env block"
+  echo "  ${b}0${rst}) verify      chain + package + funding"
   echo "  ${b}q${rst}) quit"
   case "$(ask "select: ")" in
-    1) guided_all ;;     2) phase_preflight ;;  3) phase_fund ;;
-    4) phase_deploy ;;   5) phase_wire ;;       6) phase_reset ;;
-    7) phase_dokploy ;;  8) phase_verify ;;
+    1) phase_recover ;;  2) phase_watch ;;      3) guided_all ;;
+    4) phase_preflight ;; 5) phase_fund ;;      6) phase_deploy ;;
+    7) phase_wire ;;     8) phase_reset ;;      9) phase_dokploy ;;
+    0) phase_verify ;;
     q|Q|"") return 0 ;;  *) warn "unknown choice" ;;
   esac
 }
 
 case "${1:-menu}" in
+  recover|auto-recover) phase_recover ;;
+  watch)             phase_watch ;;
   all|guided)        guided_all ;;
   preflight|phase0)  phase_preflight ;;
   fund)              phase_preflight && phase_fund ;;
+  fund-fast)         phase_preflight && phase_fund_fast ;;
   deploy)            phase_preflight && phase_deploy ;;
+  publish-db)        phase_publish_db ;;
   wire)              phase_wire ;;
   reset)             phase_reset ;;
+  rearm)             phase_rearm ;;
   dokploy)           phase_dokploy ;;
   verify)            phase_verify ;;
   menu)              menu ;;

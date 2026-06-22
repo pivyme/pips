@@ -1,0 +1,46 @@
+# OPT-IN operator image: the lean API PLUS the ability to republish the Predict stack after a devnet
+# wipe, so the box self-heals end-to-end (no machine of ours in the loop). The plain backend/Dockerfile
+# stays lean and is what you deploy normally; switch a service to THIS file only when you've tested it.
+#
+# It carries the sui CLI (Mysten's official devnet image, so the CLI tracks devnet), the contracts/ Move
+# sources, and scripts/, which the deploy-watch worker shells out to on a wipe (set PIPS_SELF_PUBLISH=true).
+#
+# BUILD FROM THE REPO ROOT (it needs contracts/ + scripts/):
+#   docker build -f backend/Dockerfile.operator -t pips-operator .
+#   Dokploy: Build Context = repo root (.), Dockerfile Path = backend/Dockerfile.operator.
+#
+# TEST/CAVEATS before trusting it (learned the hard way, see the publish-hang notes):
+#  - The publish hangs if the operator holds hundreds of tiny faucet coins (CLI gas discovery stalls).
+#    The box's devnet-faucet worker drips many small coins, so a self-publish must CONSOLIDATE the
+#    operator's coins to a handful (~15, not 1) before bootstrapping. Not yet automated here, verify it
+#    on a real wipe before relying on this image. Until then, the box ADOPTS via the DB just fine; the
+#    publishing half is what needs this image + the coin handling.
+#  - The CLI must match devnet's protocol. mysten/sui-tools:devnet tracks it, but on a protocol bump
+#    you may need to rebuild (redeploy) to pull a newer image.
+
+FROM oven/bun:1 AS bun
+
+FROM mysten/sui-tools:devnet
+
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+
+RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates bash \
+  && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production
+# The deploy-watch worker resolves the repo root from here when spawning the recovery script.
+ENV PIPS_REPO_ROOT=/app
+WORKDIR /app
+
+COPY backend/package.json backend/bun.lock* ./backend/
+RUN cd backend && bun install --frozen-lockfile
+
+COPY backend ./backend
+COPY contracts ./contracts
+COPY scripts ./scripts
+RUN cd backend && bunx prisma generate --config prisma/prisma.config.ts
+
+EXPOSE 3780
+
+# Seeds backend/.env + the sui CLI config, then execs `bun index.ts`.
+CMD ["bash", "scripts/operator-entrypoint.sh"]

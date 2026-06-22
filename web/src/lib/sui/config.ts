@@ -7,7 +7,27 @@ import { env } from '@/env'
 export const NETWORK = env.VITE_SUI_NETWORK
 export const PACKAGE_ID = env.VITE_PREDICT_PACKAGE_ID ?? ''
 export const PREDICT_ID = env.VITE_PREDICT_OBJECT_ID ?? ''
-export const DUSDC_TYPE = env.VITE_DUSDC_TYPE ?? ''
+
+// DUSDC_TYPE is the one id the client reads at runtime (balance lookups in predict.ts). It changes
+// every deploy, so instead of trusting the compile-time VITE value we refresh it from the backend
+// /config at boot (refreshDeployedConfig). That way a devnet wipe + redeploy never needs a Vercel
+// rebuild: the client just re-reads the live coin type. `let` + a live import binding = consumers
+// (predict.ts reads it inside its functions) pick up the new value with no extra plumbing.
+export let DUSDC_TYPE = env.VITE_DUSDC_TYPE ?? ''
+
+// Pull the live deploy ids from the backend and adopt the current DUSDC coin type. Fire-and-forget at
+// app boot; on any failure (no backend, demo mode, offline) we keep the compile-time fallback above.
+export async function refreshDeployedConfig(): Promise<void> {
+  try {
+    const res = await fetch(`${env.VITE_API_URL}/config`, { signal: AbortSignal.timeout(5000) })
+    if (!res.ok) return
+    const body = (await res.json()) as { data?: { dusdcType?: string } }
+    const live = body?.data?.dusdcType
+    if (live && live !== DUSDC_TYPE) DUSDC_TYPE = live
+  } catch {
+    // keep the VITE fallback
+  }
+}
 
 export const DUSDC_DECIMALS = 1_000_000
 

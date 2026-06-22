@@ -282,6 +282,25 @@ export const DEVNET_FAUCET_EXTRA: string[] = (
   .map((s) => s.trim())
   .filter(Boolean);
 
+// Self-heal watcher (src/workers/deploy-watch.ts). Polls the shared DB for a fresh deploy record and
+// restarts the process to adopt new ids after a devnet-wipe recovery. ON by default in production (the
+// box has a restart-on-exit container), OFF locally so it never kills a `bun dev` follower. The poll is
+// frequent because it only does one cheap DB read; the actual restart fires once, on a real change.
+export const DEPLOY_WATCH_ENABLED: boolean =
+  process.env.PIPS_DEPLOY_WATCH_ENABLED !== undefined
+    ? process.env.PIPS_DEPLOY_WATCH_ENABLED === 'true'
+    : IS_PROD;
+export const DEPLOY_WATCH_CRON: string = process.env.PIPS_DEPLOY_WATCH_CRON || '*/20 * * * * *';
+
+// Self-publish: when the operator container detects its Predict package is gone (a devnet wipe), it
+// republishes the whole stack itself (spawns scripts/devnet-refresh.sh recover) and then restarts onto
+// the fresh ids. ONLY for the operator box, whose image carries the sui CLI + contracts/ + scripts/ (see
+// backend/Dockerfile). Off by default; set PIPS_SELF_PUBLISH=true on the operator. Needs the operator
+// key funded on devnet (the box's devnet-faucet worker keeps it topped). Retries on a cooldown so a
+// devnet outage doesn't spam republishes.
+export const SELF_PUBLISH: boolean = process.env.PIPS_SELF_PUBLISH === 'true';
+export const SELF_PUBLISH_COOLDOWN_MS: number = Number(process.env.PIPS_SELF_PUBLISH_COOLDOWN_MS) || 5 * 60 * 1000;
+
 // Predict instance ids. Written by the bootstrap, never hardcoded. Unstable pre-mainnet.
 export const PREDICT_PACKAGE_ID: string = process.env.PREDICT_PACKAGE_ID || '';
 export const PREDICT_REGISTRY_ID: string = process.env.PREDICT_REGISTRY_ID || '';
@@ -365,6 +384,10 @@ export default {
   DEVNET_FAUCET_GAP_MS,
   DEVNET_FAUCET_CRON,
   DEVNET_FAUCET_EXTRA,
+  DEPLOY_WATCH_ENABLED,
+  DEPLOY_WATCH_CRON,
+  SELF_PUBLISH,
+  SELF_PUBLISH_COOLDOWN_MS,
   PREDICT_PACKAGE_ID,
   PREDICT_REGISTRY_ID,
   PREDICT_OBJECT_ID,

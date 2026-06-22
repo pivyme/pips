@@ -22,6 +22,7 @@ import { haptic } from '@/lib/haptics'
 import { api } from '@/lib/api'
 import { useAuth, loadToken } from '@/lib/auth'
 import { isDemo } from '@/lib/demo'
+import { refreshDeployedConfig } from '@/lib/sui/config'
 import { env } from '@/env'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
@@ -91,6 +92,11 @@ function AppLayout() {
   const savedThemeRef = useRef(savedTheme)
   savedThemeRef.current = savedTheme
   const themeHydratedFor = useRef<string | null>(null)
+  // Adopt the live deploy ids (the DUSDC coin type) from the backend once on boot, so a devnet
+  // redeploy never needs a frontend rebuild. Demo has no backend, so it keeps the compile-time value.
+  useEffect(() => {
+    if (!isDemo()) void refreshDeployedConfig()
+  }, [])
   useEffect(() => {
     if (!user) {
       themeHydratedFor.current = null

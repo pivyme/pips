@@ -1,0 +1,29 @@
+# Root build context, used only by the OPT-IN operator image (backend/Dockerfile.operator), which
+# builds from the repo root so it can grab contracts/ + scripts/. The default lean backend/Dockerfile
+# builds from ./backend and uses backend/.dockerignore instead.
+# Keep host deps, secrets, and stale artifacts out of the image; bun install + prisma generate rebuild.
+
+**/node_modules
+
+# Secrets stay out of image layers. Injected at runtime via Dokploy env vars.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Regenerated in-build by `prisma generate`.
+backend/prisma/generated
+
+# Stale per-deploy ids: the operator reads ids from the DB / env at runtime, never from a baked file.
+backend/src/lib/sui/deployed*.json
+backend/Pub.*.toml
+
+# Move build output (rebuilt by the publish).
+contracts/**/build
+
+# Pillars + tooling the operator image doesn't need.
+web
+bigdev
+docs
+.git
+.claude
+**/*.log

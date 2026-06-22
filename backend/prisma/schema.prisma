@@ -146,6 +146,16 @@ model MinigameScore {
   @@index([game, score])
 }
 
+// Small key/value store for runtime config the box must hot-read across restarts, keyed by string.
+// Today it holds the live Predict deploy record ("deployment.<network>"): the deployer writes a fresh
+// record here after a devnet wipe, and the box (which shares this DB) reloads the new ids on its next
+// boot, so a redeploy never needs a Dokploy env paste. See src/lib/deployment-store.ts.
+model AppConfig {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
 model ErrorLog {
   id         String   @id @default(cuid())
   errorCode  String
