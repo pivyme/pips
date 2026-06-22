@@ -3,9 +3,16 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
+import type { BandOverlay } from '@/components/game/Chart'
+import type { PlayDTO, PlayStatus } from '@/lib/api'
 import { useConsoleControls } from '@/components/console/controls'
-import { Chart, type BandOverlay } from '@/components/game/Chart'
-import { Cell, GameScreen, ScreenMessage, ScreenOverlay } from '@/components/game/screen'
+import { Chart } from '@/components/game/Chart'
+import {
+  Cell,
+  GameScreen,
+  ScreenMessage,
+  ScreenOverlay,
+} from '@/components/game/screen'
 import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
 import { Stat } from '@/components/Stat'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
@@ -13,16 +20,16 @@ import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
 import { haptic } from '@/lib/haptics'
 import {
+  rangeBuzzer,
+  rangeCross,
+  rangeLock,
+  rangeLose,
+  rangeWin,
   startRangeBgm,
   stopRangeBgm,
-  rangeLock,
-  rangeCross,
-  rangeBuzzer,
-  rangeWin,
-  rangeLose,
 } from '@/lib/sound'
-import { api, streamPlay, type PlayDTO, type PlayStatus } from '@/lib/api'
-import { placePlay, cashOut } from '@/lib/sui/predict'
+import { api, streamPlay } from '@/lib/api'
+import { cashOut, placePlay } from '@/lib/sui/predict'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
@@ -52,7 +59,22 @@ const TOKEN_LOGOS: Record<string, string> = {
   SUI: '/assets/images/coins/sui-logo.png',
 }
 const NOMINAL_ROUND_SEC = 30 // the idle multiplier preview's reference; the real round = oracle expiry
-const RESULT_MS = 4200
+// The result is dismissed with CONTINUE, so this is only a safety auto-advance for an idle player.
+// Generous, so it never yanks the result away mid-read but still recovers an AFK screen (Lucky parity).
+const RESULT_MS = 6500
+// The settlement price freezes ~EXPIRY_SAFETY_MS (backend, 5000) before the buzzer: the price-pusher
+// stops pushing an oracle once it is within that window of expiry, so the on-chain settle value is
+// locked seconds before the countdown hits zero while the chart keeps walking. From this lead in we
+// stop showing a live "am I winning" (it no longer reflects what settles) and disarm cash-out, then
+// reveal the real settle price at the end. Matches PIPS_EXPIRY_SAFETY_MS; if they drift the reveal is
+// still exact (it reads play.settlePrice), only the lock label timing shifts a touch.
+const SETTLE_LOCK_MS = 5000
+// The settle progress bar eases toward (never to) full over this window once past the buzzer.
+const SETTLE_EXPECT_MS = 12000
+// Safety-net poll of the play, independent of the live SSE: its socket can silently drop (expired
+// stream token, proxy timeout), which is what stranded the screen on OPENING / SETTLING forever. This
+// guarantees the terminal frame always lands. Same pattern as Lucky.
+const WATCHDOG_MS = 3000
 const TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out', 'error'])
 // Terminal states that resolve to a win/loss RESULT screen. 'error' is excluded: an errored play is
 // a background mint that could not open (chips safe), handled as a clean re-rack, not a result.
@@ -105,19 +127,32 @@ export function RangeScreen() {
   const [live, setLive] = useState<Live | null>(null)
   const [spot, setSpot] = useState<number | null>(null)
   const [secsLeft, setSecsLeft] = useState<number | null>(null)
+  const [remainingMs, setRemainingMs] = useState<number | null>(null) // ms to the real buzzer, drives the lock/settle states
+  const [settleMs, setSettleMs] = useState(0) // time past the buzzer, drives the SETTLING progress bar
   const [overlay, setOverlay] = useState<Overlay>('none')
-  // The chart's live active price captured the instant PLAY is hit, drawn as the grey ENTRY line.
+  // The chart's live active price captured the instant PLAY is hit, drawn as the grey ENTRY line while
+  // the band is still locking. Once the play opens the ENTRY line switches to play.entrySpot (the oracle
+  // spot the band was actually solved around), so entry, band, and settlement share one price space.
   const [entryPrice, setEntryPrice] = useState<number | null>(null)
 
   const finalized = useRef(false)
+  const watchdogRun = useRef(0)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasInside = useRef<boolean | null>(null) // last in/out band state, for the crossing tick
+  // The chart price captured at the press, used to paint a "locking" band instantly while the backend
+  // resolves the real bounds (the reels-equivalent that makes PLAY feel immediate).
+  const pressSpot = useRef<number | null>(null)
   // The chart's eased leading price (the active dot), written every frame by the Chart. The live P/L
   // reads it to track the line at 60fps instead of the laggy ~2s backend mark.
   const livePriceRef = useRef(0)
 
   // Shared feed: fast poll + grace so a ladder roll never flashes "no markets" at the player.
-  const { liveAssets, noLiveMarket, isLoading: marketsLoading, isError: marketsError } = useLiveMarkets()
+  const {
+    liveAssets,
+    noLiveMarket,
+    isLoading: marketsLoading,
+    isError: marketsError,
+  } = useLiveMarkets()
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const streak = statsQ.data?.stats.currentStreak ?? 0
 
@@ -140,7 +175,8 @@ export function RangeScreen() {
 
   const halfPct = BAND_LADDER[Math.min(widthIdx, BAND_LADDER.length - 1)]
   const canPlay = liveAssets.length > 0
-  const roundLive = phase === 'open' || phase === 'cashing' || phase === 'result'
+  const roundLive =
+    phase === 'open' || phase === 'cashing' || phase === 'result'
 
   // Multiplier quotes for the whole band ladder, off the real Predict ask. Fetched once per asset on
   // select and cached, so every band size shows its true locked multiple the instant the knob lands on
@@ -164,7 +200,9 @@ export function RangeScreen() {
   // Idle preview reads the cached real multiple for the selected band; the rough estimate is only the
   // cold-start fallback (and a guard against an unmintable 0 from the chain).
   const idleMult =
-    quotedMult && quotedMult > 0 ? quotedMult : estimateMultiplier(halfPct, NOMINAL_ROUND_SEC)
+    quotedMult && quotedMult > 0
+      ? quotedMult
+      : estimateMultiplier(halfPct, NOMINAL_ROUND_SEC)
   const mult = liveMult ?? idleMult
 
   // Band overlay: a live ±halfPct preview while idle (the chart centers it on the smoothed price and
@@ -174,30 +212,54 @@ export function RangeScreen() {
   // resuming the live preview.
   const lower = play?.market.lower ? parseFloat(play.market.lower) : null
   const upper = play?.market.upper ? parseFloat(play.market.upper) : null
+  // The instant PLAY is pressed the backend still has to resolve the real oracle bounds (~a few sec).
+  // Paint a "locking" band frozen at the press spot right away, then snap to the real strike bounds when
+  // the play opens. That, plus the LOCKING readout, is what makes the press feel immediate instead of
+  // dead while the resolve runs.
+  const placingBand: BandOverlay | null =
+    phase === 'placing' && pressSpot.current != null
+      ? {
+          lower: pressSpot.current * (1 - halfPct / 100),
+          upper: pressSpot.current * (1 + halfPct / 100),
+          locked: true,
+        }
+      : null
   const band: BandOverlay | undefined =
     roundLive && lower != null && upper != null
       ? { lower, upper, locked: true }
-      : spot != null
-        ? { pct: halfPct }
-        : undefined
+      : placingBand
+        ? placingBand
+        : spot != null
+          ? { pct: halfPct }
+          : undefined
   const showBand = phase !== 'result' || play != null
 
-  // Entry reference = the chart's live price the instant PLAY was hit. The grey ENTRY line and the
-  // round-start dot both sit on it. Falls back to the band center if the capture is somehow missing.
+  // Entry reference: play.entrySpot, the oracle spot the band was solved around, so the ENTRY line, the
+  // band, and the on-chain settlement all sit in one price space. The old client capture floated in the
+  // chart's feed (a different sample of the same walk), which is part of why the line could read inside
+  // while the round settled outside. Falls back to the press capture while the band is still locking.
+  const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
   const bandCenter = lower != null && upper != null ? (lower + upper) / 2 : null
-  const entryLevel = entryPrice ?? bandCenter
-  const showEntryLine = entryLevel != null && play != null && roundLive
+  const entryLevel =
+    Number.isFinite(entrySpotNum) && entrySpotNum > 0
+      ? entrySpotNum
+      : (entryPrice ?? bandCenter)
+  const showEntryLine = entryLevel != null && (roundLive || phase === 'placing')
 
-  // Round-start + settle dots on the line, anchored at the entry level. The now-dot rides from the
-  // start dot toward the settle dot, which lands at the buzzer. Same window the countdown uses. Gated
-  // on roundLive too, so the dots clear with the band once the round ends.
+  // Round-start + settle dots on the line, anchored at the entry level. The settle dot lands at the real
+  // on-chain buzzer (play.market.expiry), not openedAt+duration, which overshoots past the real settle by
+  // the mint latency. Gated on roundLive so the dots clear with the band once the round ends.
   const openedAtMs = play?.openedAt ? Date.parse(play.openedAt) : 0
-  const settleMs = openedAtMs ? openedAtMs + (play?.params.duration || NOMINAL_ROUND_SEC) * 1000 : 0
+  const buzzerMs =
+    play?.market.expiry ||
+    (openedAtMs
+      ? openedAtMs + (play?.params.duration || NOMINAL_ROUND_SEC) * 1000
+      : 0)
   const markers =
     roundLive && play && entryLevel != null && openedAtMs
       ? [
           { t: openedAtMs, p: entryLevel },
-          { t: settleMs, p: entryLevel },
+          { t: buzzerMs, p: entryLevel },
         ]
       : undefined
 
@@ -208,6 +270,29 @@ export function RangeScreen() {
       ? spot > lower && spot <= upper
       : null
 
+  // Phase machine, derived from the live status + the countdown. The settlement price freezes
+  // SETTLE_LOCK_MS before the buzzer, so the round has a clear lock-in window:
+  //   opening  - the mint is still landing (band locked, not open on-chain yet)
+  //   liveHold - open and far enough from expiry that the live line still reflects what will settle
+  //   sealing  - inside the lock window: the outcome is already frozen on-chain, so we stop the live
+  //              read and disarm cash-out, the result is just being sealed
+  //   settling - past the buzzer, waiting on the on-chain settle frame
+  const confirmed = live?.status === 'open'
+  const opening = phase === 'open' && live?.status === 'pending'
+  const settling = phase === 'open' && remainingMs != null && remainingMs <= 0
+  const sealing =
+    phase === 'open' &&
+    confirmed &&
+    remainingMs != null &&
+    remainingMs > 0 &&
+    remainingMs <= SETTLE_LOCK_MS
+  const liveHold =
+    phase === 'open' &&
+    confirmed &&
+    remainingMs != null &&
+    remainingMs > SETTLE_LOCK_MS
+  const cashing = phase === 'cashing'
+
   const clearResetTimer = () => {
     if (resetTimer.current) clearTimeout(resetTimer.current)
     resetTimer.current = null
@@ -216,6 +301,7 @@ export function RangeScreen() {
   const finishResult = useCallback(
     (final: PlayDTO) => {
       finalized.current = true
+      watchdogRun.current += 1
       wasInside.current = null
       setPlay(final)
       setLive({
@@ -239,15 +325,46 @@ export function RangeScreen() {
     [refresh, qc],
   )
 
+  // Resolve a round from a status, idempotent via `finalized` so the SSE and the watchdog below can both
+  // feed it and only the first acts. 'error' = the background mint never opened (chips safe), so re-rack
+  // cleanly. A win/loss/cashout refetches the finalized play for the payout + the real settle price.
+  const resolveTerminal = useCallback(
+    (status: PlayStatus, playId: string) => {
+      if (finalized.current) return
+      if (status === 'error') {
+        finalized.current = true
+        watchdogRun.current += 1
+        toast.error(
+          'Could not open that play. Your chips are safe, play again.',
+          { id: 'range-play-error' },
+        )
+        clearResetTimer()
+        pressSpot.current = null
+        setPlay(null)
+        setLive(null)
+        setPhase('idle')
+        return
+      }
+      if (RESULT_TERMINAL.has(status)) {
+        finalized.current = true
+        watchdogRun.current += 1
+        void api
+          .getPlay(playId)
+          .then(({ play: final }) => finishResult(final))
+          .catch(() => setPhase('idle'))
+      }
+    },
+    [finishResult],
+  )
+
   // Live value while a play is open. The play comes back 'pending' the instant it's placed; the real
-  // mint_range lands a moment later and the stream flips it to 'open'. The stream closes on a terminal
-  // frame (the settle worker drives the oracle to settlement and redeems an in-the-money position); we
-  // then refetch the finalized play to grab the payout + redeem digest. A 'pending' that flips to
-  // 'error' means the background mint could not open it (rare): chips are safe, so we re-rack cleanly.
+  // mint_range lands a moment later and the stream flips it to 'open', then to a terminal frame at the
+  // buzzer settle.
   useEffect(() => {
     if (!play || phase !== 'open') return
-    const unsub = streamPlay(
-      play.id,
+    const id = play.id
+    return streamPlay(
+      id,
       (tick) => {
         setLive({
           markValue: tick.markValue,
@@ -255,57 +372,84 @@ export function RangeScreen() {
           multiplier: tick.multiplier,
           status: tick.status,
         })
-        if (tick.status === 'error' && !finalized.current) {
-          finalized.current = true
-          toast.error('Could not open that play. Your chips are safe, play again.', {
-            id: 'range-play-error',
-          })
-          clearResetTimer()
-          setPlay(null)
-          setLive(null)
-          setPhase('idle')
-          return
-        }
-        if (RESULT_TERMINAL.has(tick.status) && !finalized.current) {
-          finalized.current = true
-          void api
-            .getPlay(play.id)
-            .then(({ play: final }) => finishResult(final))
-            .catch(() => setPhase('idle'))
-        }
+        resolveTerminal(tick.status, id)
       },
       () => {
-        // SSE dropped: keep the last good readout, EventSource retries on its own.
+        // SSE dropped: keep the last readout. EventSource retries, and the watchdog below still resolves.
       },
     )
-    return unsub
-  }, [play, phase, finishResult])
+  }, [play, phase, resolveTerminal])
+
+  // Watchdog: poll the play directly on a steady cadence, independent of the SSE socket. This is what
+  // makes OPENING / SETTLING deterministic, the result lands even if the stream silently died. Reads are
+  // cheap (the backend caches the live mark and skips it entirely once past the buzzer). Mirrors Lucky.
+  useEffect(() => {
+    if (!play || phase !== 'open') return
+    const id = play.id
+    const run = ++watchdogRun.current
+    let timer: ReturnType<typeof setTimeout>
+    const poll = async (): Promise<void> => {
+      if (run !== watchdogRun.current || finalized.current) return
+      try {
+        const { play: cur } = await api.getPlay(id)
+        if (run !== watchdogRun.current) return
+        setLive({
+          markValue: cur.markValue,
+          pnl: cur.pnl,
+          multiplier: cur.multiplier,
+          status: cur.status,
+        })
+        resolveTerminal(cur.status, id)
+      } catch {
+        // transient; the next tick retries
+      }
+      if (run === watchdogRun.current)
+        timer = setTimeout(() => void poll(), WATCHDOG_MS)
+    }
+    timer = setTimeout(() => void poll(), WATCHDOG_MS)
+    return () => {
+      if (watchdogRun.current === run) watchdogRun.current += 1
+      clearTimeout(timer)
+    }
+  }, [play, phase, resolveTerminal])
 
   useEffect(() => () => clearResetTimer(), [])
 
-  // The cinematic tension bed rides the open hold only: it fades in when a position opens and out the
-  // moment the phase leaves 'open' (cash out, settle, re-rack, or navigating away).
+  // The cinematic tension bed rides the whole active window: it fades in the instant PLAY is pressed
+  // (placing), through the open hold, and out the moment the phase leaves it (cash out, settle, re-rack,
+  // or navigating away). finishResult also cuts it so the win/lose sting lands over silence.
+  const rangeActive = phase === 'placing' || phase === 'open'
   useEffect(() => {
-    if (phase !== 'open') return
+    if (!rangeActive) return
     startRangeBgm()
     return () => stopRangeBgm()
-  }, [phase])
+  }, [rangeActive])
 
   const doPlay = useCallback(async () => {
-    if (phase !== 'idle' && phase !== 'result') return
+    // Idle only: a finished round must be dismissed back to the default screen first (CONTINUE), never
+    // re-played straight from the result. That keeps the post-round always landing on the live screen.
+    if (phase !== 'idle') return
     if (!canPlay) {
-      toast.error('No live market right now. Try again in a sec.', { id: 'no-market' })
+      toast.error('No live market right now. Try again in a sec.', {
+        id: 'no-market',
+      })
       return
     }
     clearResetTimer()
     finalized.current = false
     wasInside.current = null
     setOverlay('none')
-    // The chart's eased active price (the dot the player is watching) at the press. This is the entry.
+    // The chart's eased active price (the dot the player is watching) at the press. The band locks here
+    // visually (placingBand) and the grey ENTRY line sits on it until the real entrySpot arrives.
     const entryAt = livePriceRef.current > 0 ? livePriceRef.current : spot
-    setEntryPrice(entryAt && entryAt > 0 ? entryAt : null)
+    const px = entryAt && entryAt > 0 ? entryAt : null
+    pressSpot.current = px
+    setEntryPrice(px)
     setPhase('placing')
-    haptic('rigid')
+    // Fire the committal confirm AT the press, not after the await: this is what makes PLAY feel
+    // immediate instead of dead for the few seconds the backend takes to resolve the band.
+    haptic('heavy')
+    rangeLock()
     try {
       const { play: p } = await placePlay('range', {
         stake,
@@ -320,16 +464,17 @@ export function RangeScreen() {
         status: p.status,
       })
       setPhase('open')
-      haptic('heavy')
-      rangeLock() // the band locks: a deep, committing confirm
+      haptic('selection') // a light tick as the position lands; the heavy confirm already fired on press
     } catch (e) {
       toastError(e)
+      pressSpot.current = null
       setPhase('idle')
     }
   }, [phase, canPlay, stake, asset, halfPct, spot])
 
   const doCashOut = useCallback(async () => {
-    if (phase !== 'open' || !play) return
+    // Armed only during the live hold (the button is hidden once the round is sealing/settling).
+    if (!liveHold || !play) return
     setPhase('cashing')
     haptic('rigid')
     try {
@@ -349,36 +494,53 @@ export function RangeScreen() {
       toastError(e)
       setPhase('open')
     }
-  }, [phase, play, finishResult])
+  }, [liveHold, play, finishResult])
 
-  // Round countdown to the routed oracle's real expiry. At the buzzer we HOLD (the readout shows
-  // SETTLING) and let the settle worker drive the win/lose; the stream effect above catches the
-  // terminal frame. An early Main cash-out exits sooner. No auto-cash here.
+  // Leave the result on any console button: drops straight back to the default idle screen, it does NOT
+  // re-play. The auto-advance timer lands in the same place, a button just gets there sooner.
+  const dismissResult = useCallback(() => {
+    clearResetTimer()
+    haptic('selection')
+    pressSpot.current = null
+    setPhase('idle')
+  }, [])
+
+  // Round countdown to the real on-chain buzzer (play.market.expiry, the oracle expiry the round settles
+  // at), not openedAt+duration: the mint lands a beat after PLAY, so openedAt+duration runs PAST the real
+  // expiry and showed phantom seconds. Drives the lock-in window + the SETTLING progress off remainingMs.
+  // At 0 it flips to SETTLING and the settle worker drives the win/lose; the streams above catch it.
   useEffect(() => {
     if (phase !== 'open' || !play) {
       setSecsLeft(null)
+      setRemainingMs(null)
+      setSettleMs(0)
       return
     }
-    const lenMs = (play.params.duration || NOMINAL_ROUND_SEC) * 1000
     const endAt =
-      (play.openedAt ? Date.parse(play.openedAt) : Date.now()) + lenMs
-    const tick = () =>
-      setSecsLeft(Math.max(0, Math.ceil((endAt - Date.now()) / 1000)))
+      play.market.expiry ||
+      (play.openedAt ? Date.parse(play.openedAt) : Date.now()) +
+        (play.params.duration || NOMINAL_ROUND_SEC) * 1000
+    const tick = () => {
+      const remaining = endAt - Date.now()
+      setSecsLeft(Math.max(0, Math.ceil(remaining / 1000)))
+      setRemainingMs(remaining)
+      setSettleMs(remaining < 0 ? -remaining : 0)
+    }
     tick()
     const iv = setInterval(tick, 250)
     return () => clearInterval(iv)
   }, [phase, play])
 
-  // A tactile tick whenever the live price crosses into or out of your band (open only), so the
-  // tension is felt, not just seen.
+  // A tactile tick whenever the live price crosses into or out of your band, only during the live hold
+  // (not once the outcome is sealing, where a late chart wiggle no longer changes the result).
   useEffect(() => {
-    if (phase !== 'open' || inZone == null) return
+    if (!liveHold || inZone == null) return
     if (wasInside.current != null && wasInside.current !== inZone) {
       haptic('selection')
       rangeCross(inZone)
     }
     wasInside.current = inZone
-  }, [inZone, phase])
+  }, [inZone, liveHold])
 
   const cycleAsset = useCallback(() => {
     haptic('selection')
@@ -392,15 +554,20 @@ export function RangeScreen() {
   // resets to 'none', which lands the cap back on HOW TO, so the two ways out stay in sync.
   const rotateInfo = useCallback(() => {
     haptic('selection')
-    setOverlay((o) => (o === 'none' ? 'howto' : o === 'howto' ? 'board' : 'none'))
+    setOverlay((o) =>
+      o === 'none' ? 'howto' : o === 'howto' ? 'board' : 'none',
+    )
   }, [])
-  const infoLabel = overlay === 'none' ? 'HOW TO' : overlay === 'howto' ? 'RANKS' : 'GAME'
+  const infoLabel =
+    overlay === 'none' ? 'HOW TO' : overlay === 'howto' ? 'RANKS' : 'GAME'
 
-  // The mint lands a beat after PLAY, so CASH OUT only arms once the play is confirmed 'open'
-  // on-chain; until then the button reads OPENING (cashing a not-yet-minted play would revert).
-  const confirmed = live?.status === 'open'
-  const isOpen = phase === 'open' && confirmed
-  const isOpening = phase === 'open' && !confirmed
+  const isResult = phase === 'result'
+  const resultPositive =
+    isResult &&
+    play != null &&
+    (play.status === 'won' ||
+      (play.status === 'cashed_out' && parseFloat(play.pnl) >= 0))
+  const resultColor: 'up' | 'down' = resultPositive ? 'up' : 'down'
   useConsoleControls({
     knob: {
       label: 'RANGE',
@@ -409,7 +576,8 @@ export function RangeScreen() {
       step: 1,
       value: widthIdx,
       onChange: setWidthIdx,
-      format: (v) => `±${BAND_LADDER[Math.min(v, BAND_LADDER.length - 1)].toFixed(1)}%`,
+      format: (v) =>
+        `±${BAND_LADDER[Math.min(v, BAND_LADDER.length - 1)].toFixed(1)}%`,
     },
     numberWheel: {
       label: 'DUSDC',
@@ -420,39 +588,77 @@ export function RangeScreen() {
       onChange: setStakeIdx,
       format: (v) => `$${STAKE_LADDER[Math.min(v, maxBetIdx)]}`,
     },
-    action1: { label: infoLabel, color: 'neutral', onPress: rotateInfo },
-    action2: {
-      label: asset,
-      color: 'neutral',
-      onPress: cycleAsset,
-      display: {
-        mode: 'token',
-        ticker: asset,
-        logoSrc: TOKEN_LOGOS[asset],
-      },
-    },
-    main: isOpen
-      ? { label: 'CASH OUT', color: 'up', onPress: () => void doCashOut() }
-      : isOpening
-        ? { label: 'OPENING', color: 'up', onPress: () => {}, loading: true }
-        : phase === 'cashing'
-          ? { label: 'CASH OUT', color: 'up', onPress: () => {}, loading: true }
-          : {
-              label: 'PLAY',
+    action1: isResult
+      ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
+      : { label: infoLabel, color: 'neutral', onPress: rotateInfo },
+    action2: isResult
+      ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
+      : {
+          label: asset,
+          color: 'neutral',
+          onPress: cycleAsset,
+          display: {
+            mode: 'token',
+            ticker: asset,
+            logoSrc: TOKEN_LOGOS[asset],
+          },
+        },
+    main: isResult
+      ? { label: 'CONTINUE', color: 'amber', onPress: dismissResult }
+      : settling
+        ? {
+            label: 'SETTLING',
+            color: 'amber',
+            onPress: () => {},
+            loading: true,
+          }
+        : sealing
+          ? {
+              label: 'LOCKING IN',
               color: 'amber',
-              onPress: () => void doPlay(),
-              loading: phase === 'placing',
-            },
+              onPress: () => {},
+              loading: true,
+            }
+          : liveHold
+            ? {
+                label: 'CASH OUT',
+                color: 'up',
+                onPress: () => void doCashOut(),
+              }
+            : opening
+              ? {
+                  label: 'OPENING',
+                  color: 'up',
+                  onPress: () => {},
+                  loading: true,
+                }
+              : cashing
+                ? {
+                    label: 'CASHING OUT',
+                    color: 'up',
+                    onPress: () => {},
+                    loading: true,
+                  }
+                : phase === 'placing'
+                  ? {
+                      label: 'LOCKING IN',
+                      color: 'amber',
+                      onPress: () => {},
+                      loading: true,
+                    }
+                  : {
+                      label: 'PLAY',
+                      color: 'amber',
+                      onPress: () => void doPlay(),
+                    },
   })
 
   const pnlNum = live ? parseFloat(live.pnl) : 0
   const showReadouts =
     play != null &&
     (phase === 'open' || phase === 'cashing' || phase === 'result')
-  // The mint is still landing (reels of this game: the band locked, the position not open on-chain yet).
-  const opening = phase === 'open' && live?.status === 'pending'
-  const settling = phase === 'open' && secsLeft != null && secsLeft <= 0
-  const showZonePill = phase === 'open' && inZone != null && !settling
+  const showZonePill = liveHold && inZone != null
+  const settleSecs = Math.floor(settleMs / 1000)
   const firstRun =
     !statsQ.isLoading && (statsQ.data?.stats.gamesPlayed ?? 0) === 0
   const playStake = play ? parseFloat(play.stake) : stake
@@ -532,7 +738,11 @@ export function RangeScreen() {
                 asset={asset}
                 overlays={
                   showBand && band
-                    ? { band, markers, entry: showEntryLine ? entryLevel : undefined }
+                    ? {
+                        band,
+                        markers,
+                        entry: showEntryLine ? entryLevel : undefined,
+                      }
                     : undefined
                 }
                 livePriceRef={livePriceRef}
@@ -548,7 +758,22 @@ export function RangeScreen() {
               runs, OPENING while the mint lands, SETTLING at the buzzer. */}
           <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5 min-h-[var(--screen-notch,21%)]">
             <div className="max-w-[60%]">
-              {opening ? (
+              {phase === 'placing' ? (
+                <>
+                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                    Locking band
+                  </div>
+                  <div className="text-[30px] font-extrabold leading-none text-brand-500">
+                    LOCKING IN
+                  </div>
+                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
+                    {recap}
+                  </div>
+                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
+                    <div className="bar-sweep h-full w-1/3 bg-brand-500" />
+                  </div>
+                </>
+              ) : opening ? (
                 <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
                     Opening
@@ -566,7 +791,7 @@ export function RangeScreen() {
               ) : settling ? (
                 <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                    Settling
+                    Settling · {settleSecs}s
                   </div>
                   <div className="text-[30px] font-extrabold leading-none text-brand-500">
                     SETTLING
@@ -575,7 +800,51 @@ export function RangeScreen() {
                     {recap}
                   </div>
                   <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
-                    <div className="bar-sweep h-full w-1/3 bg-brand-500" />
+                    <div
+                      className="h-full bg-brand-500 transition-[width] duration-300 ease-out"
+                      style={{
+                        width: `${Math.min(94, (settleMs / SETTLE_EXPECT_MS) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </>
+              ) : sealing ? (
+                <>
+                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                    Price locked · {secsLeft ?? 0}s
+                  </div>
+                  <div className="text-[30px] font-extrabold leading-none text-brand-500">
+                    LOCKING IN
+                  </div>
+                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
+                    {recap}
+                  </div>
+                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
+                    <div
+                      className="h-full bg-brand-500 transition-[width] duration-300 ease-out"
+                      style={{
+                        width: `${Math.min(
+                          96,
+                          ((SETTLE_LOCK_MS - remainingMs) / SETTLE_LOCK_MS) *
+                            100,
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </>
+              ) : cashing ? (
+                <>
+                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                    Cashing out
+                  </div>
+                  <div className="text-[30px] font-extrabold leading-none text-up">
+                    CASHING OUT
+                  </div>
+                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
+                    {recap}
+                  </div>
+                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
+                    <div className="bar-sweep h-full w-1/3 bg-up" />
                   </div>
                 </>
               ) : showReadouts ? (
@@ -647,11 +916,11 @@ export function RangeScreen() {
         </div>
       )}
 
-      {phase === 'result' && play && (
-        <RangeResult play={play} />
-      )}
+      {phase === 'result' && play && <RangeResult play={play} />}
       {overlay === 'howto' && <HowTo />}
-      {overlay === 'board' && <GameLeaderboardOverlay game="range" title="Range" />}
+      {overlay === 'board' && (
+        <GameLeaderboardOverlay game="range" title="Range" />
+      )}
     </GameScreen>
   )
 }
@@ -712,19 +981,23 @@ function RangePnl({
       : -stake
   const up = pnl >= 0
   return (
-    <div className={cnm('tnum text-[40px] font-extrabold leading-none', up ? 'text-up' : 'text-down')}>
+    <div
+      className={cnm(
+        'tnum text-[40px] font-extrabold leading-none',
+        up ? 'text-up' : 'text-down',
+      )}
+    >
       {up ? '+' : '-'}$<Stat value={Math.abs(pnl)} />
     </div>
   )
 }
 
-// The win/loss/cash-out moment. Flat full-screen wash (docs/SCREEN.md: big, flat, momentary, no blur),
-// the §10 copy, the signed amount, the band recap. The device screen is not clickable, so it is a pure
-// readout: it auto-clears after a beat, and PLAY (the physical button) starts the next round.
+// The win/loss/cash-out moment. The verdict comes from the settled play status. The gauge only explains
+// where the backend's frozen settlement price landed relative to the actual on-chain band.
 function RangeResult({ play }: { play: PlayDTO }) {
   const reduced = useReducedMotion()
-  const pnl = parseFloat(play.pnl ?? '0')
-  const stake = parseFloat(play.stake ?? '0')
+  const pnl = parseFloat(play.pnl)
+  const stake = parseFloat(play.stake)
   const won = play.status === 'won'
   const cashed = play.status === 'cashed_out'
   const positive = won || (cashed && pnl >= 0)
@@ -733,6 +1006,22 @@ function RangeResult({ play }: { play: PlayDTO }) {
   const head = won ? 'IN THE ZONE' : cashed ? 'CASHED OUT' : 'OUT OF RANGE'
   const lo = play.market.lower ? parseFloat(play.market.lower) : null
   const hi = play.market.upper ? parseFloat(play.market.upper) : null
+  const settled = play.settlePrice ? parseFloat(play.settlePrice) : null
+  const hasGauge =
+    lo != null &&
+    hi != null &&
+    settled != null &&
+    Number.isFinite(lo) &&
+    Number.isFinite(hi) &&
+    Number.isFinite(settled) &&
+    hi > lo
+  const relation = hasGauge
+    ? settled <= lo
+      ? 'below'
+      : settled > hi
+        ? 'above'
+        : 'inside'
+    : null
   const pop = reduced
     ? {}
     : {
@@ -760,19 +1049,77 @@ function RangeResult({ play }: { play: PlayDTO }) {
       >
         {shown >= 0 ? '+' : '-'}$<Stat value={Math.abs(shown)} />
       </motion.div>
-      {lo != null && hi != null && (
-        <div className="font-mono text-[12px] uppercase tracking-[0.12em] text-text-3">
-          Band {compact(lo)} – {compact(hi)}
-        </div>
+      {hasGauge ? (
+        <SettlementGauge
+          lower={lo}
+          upper={hi}
+          price={settled}
+          relation={relation}
+          label={cashed ? 'Exit' : 'Settled'}
+        />
+      ) : (
+        lo != null &&
+        hi != null && (
+          <div className="font-mono text-[12px] uppercase tracking-[0.12em] text-text-3">
+            Band {compact(lo)} – {compact(hi)}
+          </div>
+        )
       )}
-      {!positive && (
-        <div className="font-mono text-[12px] uppercase tracking-[0.12em] text-text-3">
-          Play again
-        </div>
-      )}
-      <span className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">
-        Press PLAY to go again
+      <span className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">
+        Any button to continue
       </span>
+    </div>
+  )
+}
+
+function SettlementGauge({
+  lower,
+  upper,
+  price,
+  relation,
+  label,
+}: {
+  lower: number
+  upper: number
+  price: number
+  relation: 'below' | 'inside' | 'above'
+  label: 'Exit' | 'Settled'
+}) {
+  const span = upper - lower
+  // The band owns the middle half of the gauge. Far misses clamp to an edge, while the exact price
+  // remains visible in the label below.
+  const pricePct = Math.max(4, Math.min(96, 25 + ((price - lower) / span) * 50))
+  const relationCopy =
+    relation === 'inside'
+      ? `${label} inside your band`
+      : `${label} ${relation} your band`
+
+  return (
+    <div className="mt-3 w-[280px] max-w-[72%]">
+      <div className="relative h-5 border-y border-line-strong">
+        <div className="absolute inset-y-0 left-1/4 w-1/2 bg-brand-500/20" />
+        <div className="absolute inset-y-0 left-1/4 w-px bg-brand-500" />
+        <div className="absolute inset-y-0 left-3/4 w-px bg-brand-500" />
+        <div
+          className={cnm(
+            'absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 border-2 border-black',
+            relation === 'inside' ? 'bg-up' : 'bg-down',
+          )}
+          style={{ left: `${pricePct}%` }}
+        />
+      </div>
+      <div className="mt-1 flex justify-between font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-text-3">
+        <span>{compact(lower)}</span>
+        <span>{compact(upper)}</span>
+      </div>
+      <div
+        className={cnm(
+          'mt-2 font-mono text-[11px] font-bold uppercase tracking-[0.1em]',
+          relation === 'inside' ? 'text-up' : 'text-down',
+        )}
+      >
+        {relationCopy} · {priceLabel(price)}
+      </div>
     </div>
   )
 }
@@ -790,7 +1137,9 @@ function HowTo() {
       <div className="flex w-full flex-col gap-4">
         {lines.map(([k, v]) => (
           <div key={k}>
-            <div className="font-mono text-[16px] font-bold uppercase tracking-[0.12em] text-text">{k}</div>
+            <div className="font-mono text-[16px] font-bold uppercase tracking-[0.12em] text-text">
+              {k}
+            </div>
             <div className="mt-1 text-[15px] leading-snug text-text-2">{v}</div>
           </div>
         ))}

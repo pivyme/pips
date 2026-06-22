@@ -325,8 +325,19 @@ function AppLayout() {
   useIsoLayoutEffect(() => {
     const prev = prevPhaseRef.current
     prevPhaseRef.current = phase
-    if (phase !== 'app' || prev !== 'landing') return
-    if (restoring || reduced) {
+    // Outside the app the screen reveal is governed by the landing/onboarding code, so never gate
+    // here. Crucially this also un-wedges a settle that the brief landing -> app render arms a frame
+    // before the phase machine detours into onboarding: without it, deviceSettled stayed false for the
+    // whole run, so the screen went black and stuck the instant onboarding handed off to the app (the
+    // "click any button on Welcome -> all black" bug), since deviceChild gates on it.
+    if (phase !== 'app') {
+      setDeviceSettled(true)
+      return
+    }
+    // Only the direct door -> games walk-in flies the device in from the hero pose; hold the screen
+    // dark until it lands. Onboarding -> app (and a restored session / reduced motion) already sits at
+    // the resting pose, so reveal at once.
+    if (prev !== 'landing' || restoring || reduced) {
       setDeviceSettled(true)
       return
     }

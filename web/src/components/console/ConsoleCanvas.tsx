@@ -2482,7 +2482,39 @@ export default function ConsoleCanvas({
       keyTap(bi)
     }
 
+    // Mobile keyboard: focus an on-screen text field (the onboarding handle) on touchstart, with
+    // preventDefault. The canvas sits over the HTML screen layer, so a tap lands here, not on the field;
+    // pointerdown already forwards focus, but on touch the trailing compatibility click re-targets the
+    // unfocusable canvas and blurs the field, snapping the just-opened keyboard shut (the "keyboard
+    // flashes then hides" bug). Calling preventDefault on touchstart kills that compat click, so focus
+    // sticks and the keyboard stays up. Scoped to the field's own padded rect so the knob + PLAY (which
+    // fall inside the screen's bounding box but well below the field) keep their normal press flow.
+    const onScreenTouchStart = (e: TouchEvent) => {
+      if (customize || exportMode || debug) return
+      const layer = screenLayerRef.current
+      if (!layer) return
+      const field = layer.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+        '[data-visible="true"] input, [data-visible="true"] textarea',
+      )
+      if (!field) return
+      const t = e.touches[0]
+      if (!t) return
+      const r = field.getBoundingClientRect()
+      const padX = 28,
+        padY = 22
+      if (
+        t.clientX >= r.left - padX &&
+        t.clientX <= r.right + padX &&
+        t.clientY >= r.top - padY &&
+        t.clientY <= r.bottom + padY
+      ) {
+        e.preventDefault()
+        if (document.activeElement !== field) field.focus()
+      }
+    }
+
     canvas.addEventListener('pointerdown', onPointerDown)
+    canvas.addEventListener('touchstart', onScreenTouchStart, { passive: false })
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)
@@ -2866,6 +2898,7 @@ export default function ConsoleCanvas({
     return () => {
       cancelAnimationFrame(rafId)
       canvas.removeEventListener('pointerdown', onPointerDown)
+      canvas.removeEventListener('touchstart', onScreenTouchStart)
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', release)
       window.removeEventListener('pointercancel', release)
