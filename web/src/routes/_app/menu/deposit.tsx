@@ -69,7 +69,7 @@ function DepositScreen() {
         {/* What DUSDC is, up front: a test token we mint, not the real thing. */}
         <div className="surface-skeuo flex items-start gap-3 rounded-card p-4">
           <img
-            src="/assets/icons/dusdc-logo.png"
+            src="/assets/icons/dusdc-logo.webp"
             alt=""
             className="h-9 w-9 shrink-0 rounded-full"
             draggable={false}

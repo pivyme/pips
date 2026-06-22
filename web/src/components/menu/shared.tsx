@@ -27,7 +27,7 @@ export function DusdcMark({
   return (
     <span className={cnm('inline-flex items-center gap-1.5', className)}>
       <img
-        src="/assets/icons/dusdc-logo.png"
+        src="/assets/icons/dusdc-logo.webp"
         alt="DUSDC"
         width={size}
         height={size}

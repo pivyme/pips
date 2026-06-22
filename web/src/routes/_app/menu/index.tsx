@@ -34,30 +34,36 @@ function MenuHome() {
       <MenuHeader title="Menu" showBack={false} />
       <div className="relative z-0 -mt-1 flex flex-col gap-6 pt-5">
         <StatsSection />
+        <img
+          src="/proud-badge.webp"
+          alt="We think this is something Sui would be proud to have in the ecosystem."
+          className="-my-3 w-full select-none"
+          draggable={false}
+        />
         <BalanceHero />
         <div className="flex flex-col gap-3">
           <MenuRow
             to="/menu/customize"
-            icon="/assets/icons/icon-customize.png"
+            icon="/assets/icons/icon-customize.webp"
             title="Customize"
             sub="Make it yours"
             launch
           />
           <MenuRow
             to="/menu/leaderboard"
-            icon="/assets/icons/leaderboard-icon.png"
+            icon="/assets/icons/leaderboard-icon.webp"
             title="Leaderboard"
             sub="Top gainers, REKT & game ranks"
           />
           <MenuRow
             to="/menu/history"
-            icon="/assets/icons/icon-history.png"
+            icon="/assets/icons/icon-history.webp"
             title="History"
             sub="Every play, with tx links"
           />
           <MenuRow
             to="/menu/settings"
-            icon="/assets/icons/icon-settings.png"
+            icon="/assets/icons/icon-settings.webp"
             title="Settings"
             sub="Sound, haptics, motion"
           />
@@ -95,7 +101,7 @@ function BalanceHero() {
       </div>
       <div className="mt-2 flex items-center gap-2.5">
         <img
-          src="/assets/icons/dusdc-logo.png"
+          src="/assets/icons/dusdc-logo.webp"
           alt=""
           className="h-9 w-9 shrink-0 rounded-full"
           draggable={false}

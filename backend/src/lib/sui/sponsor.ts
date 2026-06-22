@@ -15,9 +15,10 @@
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { fromBase64 } from '@mysten/sui/utils';
-import type { Transaction } from '@mysten/sui/transactions';
+import { Transaction, coinWithBalance } from '@mysten/sui/transactions';
 
-import { GAS_SPONSORSHIP_WALLET_PK } from '../../config/main-config.ts';
+import { GAS_SPONSORSHIP_WALLET_PK, SPONSOR_TOPUP_SUI } from '../../config/main-config.ts';
+import { suiClient } from './client.ts';
 
 // Same parser as the operator key (signer.ts): a suiprivkey envelope, or base64 (32-byte secret or
 // a 33-byte flagged keystore entry).
@@ -54,4 +55,50 @@ export function applySponsorGas(tx: Transaction): void {
 export async function signAsSponsor(txBytes: Uint8Array): Promise<string> {
   if (!sponsorKeypair) throw new Error('signAsSponsor: sponsor wallet not configured');
   return (await sponsorKeypair.signTransaction(txBytes)).signature;
+}
+
+// The accumulator that empty-payment sponsored gas is drawn from can't be read over RPC (getBalance
+// reports owned COINS, not the address balance), so we can't gate a top-up on a balance check. Two
+// things keep it funded instead, and together make an empty accumulator self-heal:
+//   1) a once-per-process top-up on boot (warm-up), so a fresh chain / post-wipe restart is covered;
+//   2) a forced top-up reacted to the exact "Invalid withdraw reservation" failure (execute.ts), so a
+//      mid-session drain refills and the play retries.
+// The deposit is sponsor-signed (works on a follower with no operator) and uses coinWithBalance so it
+// is robust against the sponsor's SUI being fragmented into many small faucet coins (the old
+// splitCoins(tx.gas) form failed with InsufficientCoinBalance on that fragmentation). Single-flighted
+// so a burst of plays triggers one deposit. The sponsor keeps SUI in coins via the devnet faucet.
+const SUI_TYPE = '0x2::sui::SUI';
+let warmedThisProcess = false;
+let inflightTopup: Promise<void> | null = null;
+
+export async function ensureSponsorAccumulator(force = false): Promise<void> {
+  if (!sponsorKeypair) return;
+  if (!force && warmedThisProcess) return;
+  if (inflightTopup) return inflightTopup;
+  inflightTopup = (async () => {
+    const tx = new Transaction();
+    const coin = coinWithBalance({ type: SUI_TYPE, balance: BigInt(Math.round(SPONSOR_TOPUP_SUI * 1e9)) })(tx);
+    // send_funds credits the coin into the recipient's SUI address balance (the accumulator).
+    tx.moveCall({ target: '0x2::coin::send_funds', typeArguments: [SUI_TYPE], arguments: [coin, tx.pure.address(sponsorAddress)] });
+    tx.setSender(sponsorAddress);
+    const res = await suiClient.signAndExecuteTransaction({ signer: sponsorKeypair!, transaction: tx, options: { showEffects: true } });
+    if (res.effects?.status?.status !== 'success') {
+      throw new Error(`sponsor accumulator top-up failed: ${JSON.stringify(res.effects?.status)}`);
+    }
+    await suiClient.waitForTransaction({ digest: res.digest });
+    warmedThisProcess = true;
+    console.log(`[sponsor] topped up gas accumulator with ${SPONSOR_TOPUP_SUI} SUI (${res.digest})`);
+  })();
+  try {
+    await inflightTopup;
+  } finally {
+    inflightTopup = null;
+  }
+}
+
+// The exact node rejection when the sponsor's accumulator can't cover a sponsored tx's gas. Matched so
+// the play path can top up and retry instead of surfacing a dead "account still getting ready".
+export function isSponsorGasError(e: unknown): boolean {
+  const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return m.includes('withdraw reservation') || (m.includes('available amount in account') && m.includes('less than requested'));
 }

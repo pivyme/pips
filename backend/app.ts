@@ -27,6 +27,7 @@ import { startDeployWatch } from './src/workers/deploy-watch.ts';
 // Ops-wallet funding (operator-driven): seeds/tops up the sponsor (SUI), settlement (SUI), and
 // treasury (SUI + DUSDC reserve) wallets so plays, redeems, and chip payouts never stall.
 import { ensureOpsFunded } from './src/lib/sui/gas.ts';
+import { SPONSOR_ENABLED, ensureSponsorAccumulator } from './src/lib/sui/sponsor.ts';
 
 console.log(
   '======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n'
@@ -105,6 +106,16 @@ const start = async (): Promise<void> => {
       } catch (e) {
         console.warn('[ops-funding] boot funding failed (plays/payouts may stall until funded):', e instanceof Error ? e.message : e);
       }
+    }
+
+    // The gas sponsor's address-balance accumulator funds every privy play, and unlike the operator
+    // ops wallets a FOLLOWER can keep it topped up itself (the deposit is sponsor-signed), so warm it
+    // up here regardless of OPERATOR_ENABLED. Fire-and-forget so it never delays serving; if it can't
+    // land now, the first play that hits an empty accumulator self-heals + retries (execute.ts).
+    if (SPONSOR_ENABLED) {
+      void ensureSponsorAccumulator().catch((e) =>
+        console.warn('[sponsor] boot accumulator warm-up failed (self-heals on first play):', e instanceof Error ? e.message : e),
+      );
     }
 
     // Predict operator: roll the oracle ladder, keep prices fresh, settle expiries.

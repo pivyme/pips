@@ -135,8 +135,18 @@ export async function provisionUser(user: User): Promise<User> {
       user = await prismaQuery.user.update({ where: { id: user.id }, data: { predictManagerId: managerId } });
     } catch (e) {
       if (user.provider === 'dev') throw e; // dev must have a manager to play
-      console.warn('[auth] manager creation deferred:', e instanceof Error ? e.message : e);
+      // Loud, not swallowed: this is the exact reason /auth/heal can't restore a re-armed session.
+      // Most often the backend isn't on the fresh deploy (the tx aborts against a dead package), or
+      // the user's wallet is out of gas. Findable in the box logs to tell apart from a client issue.
+      console.error(
+        `[auth] manager creation FAILED for ${user.provider} ${user.address}:`,
+        e instanceof Error ? e.message : e,
+      );
     }
+  } else if (!user.predictManagerId) {
+    // Can't even attempt it: the user's signer isn't ready (privy walletId/pubkey or custodial key
+    // missing). They'll re-provision once those land on a fresh sign-in.
+    console.warn(`[auth] manager creation skipped for ${user.provider} ${user.address}: signer not ready`);
   }
 
   return user;

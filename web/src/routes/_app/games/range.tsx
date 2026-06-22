@@ -1059,6 +1059,7 @@ function RangeResult({ play, feedOffset }: { play: PlayDTO; feedOffset: number }
   const pnl = parseFloat(play.pnl)
   const won = play.status === 'won'
   const cashed = play.status === 'cashed_out'
+  const lost = play.status === 'lost'
   const positive = won || (cashed && pnl > 0)
   const head = won ? 'IN THE ZONE' : cashed ? 'CASHED OUT' : 'OUT OF RANGE'
   // Shift the gauge by the same feed offset the chart used, so the band + settle price the player sees
@@ -1117,7 +1118,10 @@ function RangeResult({ play, feedOffset }: { play: PlayDTO; feedOffset: number }
           positive ? 'text-up' : 'text-down',
         )}
       >
-        {pnl >= 0 ? '+' : '-'}${formatExactDecimal(play.pnl, { absolute: true })}
+        {/* A settled loss pays $0, not minus the stake. Wins + cash-outs keep their real signed net. */}
+        {lost
+          ? `$${formatExactDecimal('0')}`
+          : `${pnl >= 0 ? '+' : '-'}$${formatExactDecimal(play.pnl, { absolute: true })}`}
       </motion.div>
       <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
         Payout ${formatExactDecimal(play.payout ?? '0')} · Cost ${formatExactDecimal(play.entryValue)}

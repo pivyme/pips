@@ -409,7 +409,7 @@ export function WorkshopBackdrop() {
       {/* the real workbench photo — graded a touch darker so the device reads as the hero. The CSS
           layers above are the fallback if it ever fails to load. */}
       <img
-        src="/assets/images/customize-bg.png"
+        src="/assets/images/customize-bg.webp"
         alt=""
         onLoad={() => setHasPhoto(true)}
         onError={() => setHasPhoto(false)}

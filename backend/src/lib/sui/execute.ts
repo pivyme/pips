@@ -12,7 +12,7 @@ import { suiClient } from './client.ts';
 import { operatorKeypair, settlementKeypair, treasuryKeypair, treasuryAddress } from './signer.ts';
 import { signSuiTxWithPrivy } from './privy.ts';
 import { loadCustodialKeypair } from './custodial.ts';
-import { SPONSOR_ENABLED, applySponsorGas, signAsSponsor } from './sponsor.ts';
+import { SPONSOR_ENABLED, applySponsorGas, signAsSponsor, ensureSponsorAccumulator, isSponsorGasError } from './sponsor.ts';
 
 export type ExecResult = {
   digest: string;
@@ -210,6 +210,22 @@ async function submitAndConfirm(txBytes: Uint8Array, signature: string | string[
   }
 }
 
+// Submit a sponsored user tx, self-healing an empty gas accumulator. If the node rejects the submit
+// with the sponsor's address-balance reservation error (the accumulator ran dry, e.g. right after a
+// devnet wipe), top it up and retry the SAME bytes once: the reservation is checked at input
+// validation BEFORE execution, so a rejected tx never ran and is safe to resubmit unchanged. Any
+// other error (or a second reservation failure) surfaces normally.
+async function submitSponsored(txBytes: Uint8Array, signature: string | string[], digest: string) {
+  try {
+    return await submitAndConfirm(txBytes, signature, digest);
+  } catch (e) {
+    if (!SPONSOR_ENABLED || !isSponsorGasError(e)) throw e;
+    console.warn('[sponsor] gas accumulator empty, topping up and retrying the play once');
+    await ensureSponsorAccumulator(true);
+    return await submitAndConfirm(txBytes, signature, digest);
+  }
+}
+
 // DUSDC payouts (onboarding chips + the Request DUSDC faucet) sign with the treasury wallet, which
 // pays its own gas from its own SUI. We use the proven build-sign-submit path (the same one withdraw
 // uses with coinWithBalance), not the serial executor, and serialize calls through one in-process
@@ -298,7 +314,7 @@ export async function executeForUser(tx: Transaction, ctx: UserContext): Promise
   // The digest is fixed by the signed bytes, so compute it before submitting. A timed-out submit is
   // then confirmed against it (the tx may still be landing) rather than mistaken for a failure.
   const digest = TransactionDataBuilder.getDigestFromBytes(txBytes);
-  const res = await submitAndConfirm(txBytes, signature, digest);
+  const res = await submitSponsored(txBytes, signature, digest);
   if (res.effects?.status?.status !== 'success') {
     throw new Error(`privy play failed: ${JSON.stringify(res.effects?.status ?? res)}`);
   }
@@ -331,7 +347,7 @@ async function executeAsCustodialWallet(tx: Transaction, ctx: UserContext): Prom
   const signature = SPONSOR_ENABLED ? [userSig, await signAsSponsor(txBytes)] : userSig;
 
   const digest = TransactionDataBuilder.getDigestFromBytes(txBytes);
-  const res = await submitAndConfirm(txBytes, signature, digest);
+  const res = await submitSponsored(txBytes, signature, digest);
   if (res.effects?.status?.status !== 'success') {
     throw new Error(`wallet play failed: ${JSON.stringify(res.effects?.status ?? res)}`);
   }

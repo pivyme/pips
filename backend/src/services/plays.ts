@@ -21,6 +21,7 @@ import {
   buildRedeemRange,
   buildRedeemPermissionless,
   buildRedeemRangePermissionless,
+  findRedeemOnChain,
   getManagerBalanceRaw,
   mintEventAmounts,
   previewExecutableRedeem,
@@ -407,6 +408,15 @@ const isOracleExpiredAbort = (e: unknown): boolean => {
   return /assert_quoteable_oracle|EOracleExpired|EOracleSettled/i.test(m);
 };
 
+// A redeem against a manager that no longer holds the position. decrease_position (binary) and
+// decrease_range (range) are the only callers of EInsufficientPosition/EInsufficientRangePosition,
+// and both abort only when the position quantity isn't there, i.e. it was already redeemed (almost
+// always a cash-out whose DB write was lost). This is terminal, never a transient retry.
+const isAlreadyRedeemedAbort = (e: unknown): boolean => {
+  const m = e instanceof Error ? e.message : String(e);
+  return /decrease_position|decrease_range/.test(m);
+};
+
 async function finalizeCashout(play: Play, payoutRaw: bigint, digest: string): Promise<{ play: PlayDTO; unlocked: string[] }> {
   const pnl = payoutRaw - play.entryCost;
   const updated = await prismaQuery.play.update({
@@ -699,6 +709,14 @@ async function settleOnePlay(play: Play, settlement1e9: bigint, settleTx?: strin
       digest = exec.digest;
       payoutRaw = receipt.payout;
     } catch (e) {
+      // The position is already gone from the manager (decrease_position/decrease_range aborts on an
+      // empty quantity): this play was cashed out before expiry but its DB write was lost, so it sat
+      // 'open' while the chips already moved on-chain. Retrying the redeem can NEVER succeed, so we
+      // reconcile from the chain's own redeem record instead of looping forever.
+      if (isAlreadyRedeemedAbort(e)) {
+        await reconcileAlreadyRedeemed(play, key, settlement1e9);
+        return;
+      }
       console.error(`[Settle] on-chain redeem failed for ${play.id}, will retry:`, e instanceof Error ? e.message : e);
       return; // leave status 'open' so the next settle tick retries the redeem
     }
@@ -726,6 +744,44 @@ async function settleOnePlay(play: Play, settlement1e9: bigint, settleTx?: strin
   if (itm) invalidateBal(play.userId); // the settle redeem credited the manager; the next gate re-reads
   await recordSettlement(play.userId);
   await evaluateAndUnlock(play.userId);
+}
+
+// Reconcile a play whose position is already gone (the settle redeem aborted EInsufficientPosition).
+// The chips already moved on-chain in an earlier redeem whose DB write was lost, so we pull that exact
+// redeem off the chain and record its true payout. is_settled tells us whether it was a live cash-out
+// (pre-expiry, status 'cashed_out') or a settled win ('won'); either way the payout the chain actually
+// paid is the truth, so we never invent money. If we can't find the redeem at all (the position never
+// existed in this manager, e.g. a stale manager from a re-provision), we mark the play 'error' so it
+// stops looping: 'error' is excluded from the PnL ledger, so it records neither a phantom win nor a
+// fake loss.
+async function reconcileAlreadyRedeemed(play: Play, key: PlayKey, settlement1e9: bigint): Promise<void> {
+  const user = await prismaQuery.user.findUnique({ where: { id: play.userId }, select: { predictManagerId: true } });
+  const onChain = user?.predictManagerId ? await findRedeemOnChain(user.predictManagerId, key).catch(() => null) : null;
+
+  if (!onChain) {
+    await prismaQuery.play.update({ where: { id: play.id }, data: { status: 'error', settledAt: new Date() } });
+    console.warn(`[Settle] ${play.id} position is gone but no on-chain redeem found; marked error (no double-pay)`);
+    return;
+  }
+
+  const pnl = onChain.payout - play.entryCost;
+  const status: PlayStatus = onChain.settled ? 'won' : 'cashed_out';
+  await prismaQuery.play.update({
+    where: { id: play.id },
+    data: {
+      status,
+      payout: onChain.payout,
+      markValue: onChain.payout,
+      pnl,
+      settlePrice: onChain.settled ? String(Number(settlement1e9) / 1e9) : null,
+      txRedeem: onChain.digest,
+      settledAt: new Date(),
+    },
+  });
+  invalidateBal(play.userId);
+  await recordSettlement(play.userId);
+  await evaluateAndUnlock(play.userId);
+  console.log(`\x1b[33m[Settle] reconciled ${play.id}: already ${status} on-chain, payout=$${fromDusdcRaw(onChain.payout).toFixed(2)} (recovered lost write)\x1b[0m`);
 }
 
 // === Reads / DTO ===

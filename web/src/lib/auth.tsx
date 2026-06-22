@@ -89,10 +89,14 @@ const isPrivy = env.VITE_AUTH_MODE === 'privy'
 // After a devnet refresh the backend re-arms every user: the on-chain PredictManager is nulled and
 // chips/gas are re-issued on the next login. A live session then carries a stale null manager, so
 // every play 409s MANAGER_NOT_READY. /auth/me reports managerReady; when it comes back false we
-// self-heal in place (POST /auth/heal re-provisions server-side) behind a brief overlay, and only
-// fall back to the door if the heal can't restore it. A healthy login is never managerLost, so
-// onboarding and the normal first run never touch this path.
+// self-heal in place (POST /auth/heal re-provisions server-side) behind a brief overlay. We NEVER
+// log the user out for this: if the heal can't restore the manager yet (the backend isn't on the
+// fresh deploy), we keep them signed in and just retry later. A healthy login is never managerLost,
+// so onboarding and the normal first run never touch this path.
 const managerLost = (u: UserDTO): boolean => !isDemo() && !u.managerReady
+// After a heal that couldn't restore the manager, wait this long before another attempt, so a player
+// hammering PLAY doesn't reopen the overlay on every tap. The periodic refresh retries past it.
+const HEAL_BACKOFF_MS = 15_000
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading')
@@ -106,6 +110,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Single-flights the heal so a burst of MANAGER_NOT_READY 409s (a frustrated player tapping PLAY)
   // triggers one recovery, not many.
   const recoveringRef = useRef(false)
+  // Epoch ms until which we skip heal attempts after one that couldn't restore the manager.
+  const healBackoffUntil = useRef(0)
 
   // Single entry point for status + error so the two never drift: an error carries a reason and
   // clears on any healthy transition.
@@ -146,39 +152,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [move])
 
   // Self-heal a re-armed session in place: ask the backend to re-provision (new PredictManager +
-  // re-funded chips) and adopt the fresh user, all behind a brief overlay so the player never sees
-  // the broken state. Single-flighted. Only if the heal can't restore the manager (chain still down,
-  // signer gone) do we fall back to the door, where the next sign-in retries and shows the refreshing
-  // sheet if needed.
+  // re-funded chips) and adopt the fresh user, behind a brief overlay so the player never sees the
+  // broken state. Always runs in the background of an already-authed session, so it never changes
+  // status and never signs anyone out: if the heal can't restore the manager yet (the backend isn't
+  // on the fresh deploy), we keep the user signed in, back off, and the periodic refresh retries.
   const recoverSession = useCallback(async () => {
-    if (recoveringRef.current) return
+    if (recoveringRef.current || Date.now() < healBackoffUntil.current) return
     recoveringRef.current = true
     setRecovering(true)
     try {
       const { user: u } = await api.authHeal()
-      if (managerLost(u)) {
-        await signOut()
-        return
-      }
-      setUser(u)
-      move('authed')
+      setUser(u) // adopt the freshest user either way (new manager, or still-not-ready)
+      healBackoffUntil.current = managerLost(u) ? Date.now() + HEAL_BACKOFF_MS : 0
     } catch {
-      await signOut()
+      // network / route missing / server error: keep the session, retry after the backoff
+      healBackoffUntil.current = Date.now() + HEAL_BACKOFF_MS
     } finally {
       recoveringRef.current = false
       setRecovering(false)
     }
-  }, [move, signOut])
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
       const { user: u } = await api.me()
-      if (managerLost(u)) {
-        await recoverSession() // re-armed session: heal in place, no logout
-        return
-      }
       setUser(u)
       move('authed')
+      if (managerLost(u)) void recoverSession() // re-armed session: heal in the background, stay in
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         saveToken(null)
@@ -298,12 +298,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setAuthToken(token)
         try {
           const { user: u } = await api.me()
-          if (managerLost(u)) {
-            await recoverSession() // re-armed since last visit: heal in place before showing the app
-            return
-          }
           setUser(u)
-          move('authed')
+          move('authed') // always show the app; never park a returning user on a loading veil
+          if (managerLost(u)) void recoverSession() // re-armed since last visit: heal in the background
           return
         } catch (e) {
           if (!(e instanceof ApiError && e.status === 401)) {

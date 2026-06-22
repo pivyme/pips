@@ -170,7 +170,7 @@ async function renderCard(
   ctx.clip()
   ctx.fillStyle = C.screen
   ctx.fillRect(sx, sy, sw, sh)
-  const bg = await loadImage('/assets/images/stats-bg.png')
+  const bg = await loadImage('/assets/images/stats-bg.webp')
   if (bg) drawCover(ctx, bg, sx, sy, sw, sh)
   // Scrim so text always reads over the backdrop.
   const scrim = ctx.createLinearGradient(0, sy, 0, sy + sh)

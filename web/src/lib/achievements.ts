@@ -42,7 +42,7 @@ export const ACHIEVEMENTS: Array<CatalogAchievement> = [
 
 // Sticker art lives at /assets/achievements, named by the canonical slug.
 export const achievementImage = (slug: string): string =>
-  `/assets/achievements/achievement-${slug.replaceAll('_', '-')}.png`
+  `/assets/achievements/achievement-${slug.replaceAll('_', '-')}.webp`
 
 // The backend hands back catalog/legacy slugs (e.g. `first_play`); resolve each to its canonical
 // entry so a fresh unlock surfaces with the right sticker art + copy in the celebration overlay.

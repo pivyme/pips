@@ -267,6 +267,60 @@ export function redeemEventAmounts(events: TradeEvent[], kind: 'binary' | 'range
   };
 }
 
+// Find the on-chain redeem for one exact position key on a manager. The settle backstop uses this to
+// reconcile a play whose position is already gone (a cash-out whose DB write was lost): recover the
+// true payout + digest from the chain instead of retrying a redeem that can never succeed. A redeem is
+// uniquely pinned by oracle + strike(s) + side + quantity, so we scan the manager's transactions
+// newest-first (the lost redeem is among the most recent, settle runs seconds after expiry) and stop
+// after a bounded number of pages so a genuinely-absent record fails fast instead of paging forever.
+export type OnChainRedeem = { payout: bigint; quantity: bigint; settled: boolean; digest: string };
+
+export async function findRedeemOnChain(
+  managerId: string,
+  key: { kind: 'binary'; params: BinaryParams } | { kind: 'range'; params: RangeParams },
+): Promise<OnChainRedeem | null> {
+  const suffix = key.kind === 'range' ? '::predict::RangeRedeemed' : '::predict::PositionRedeemed';
+  const matches = (j: Record<string, unknown>): boolean => {
+    if (j.oracle_id !== key.params.oracleId) return false;
+    if (String(j.quantity) !== key.params.quantity.toString()) return false;
+    if (key.kind === 'binary') {
+      return j.is_up === (key.params.side === 'up') && String(j.strike) === key.params.strike1e9.toString();
+    }
+    return (
+      String(j.lower_strike) === key.params.lower1e9.toString() &&
+      String(j.higher_strike) === key.params.higher1e9.toString()
+    );
+  };
+
+  let cursor: string | null | undefined = null;
+  for (let page = 0; page < 6; page++) {
+    const res = await suiClient.queryTransactionBlocks({
+      filter: { InputObject: managerId },
+      options: { showEvents: true },
+      order: 'descending',
+      cursor: cursor ?? null,
+      limit: 50,
+    });
+    for (const t of res.data) {
+      for (const e of t.events ?? []) {
+        if (!e.type.endsWith(suffix)) continue;
+        const j = (e.parsedJson as Record<string, unknown> | null) ?? null;
+        if (j && matches(j)) {
+          return {
+            payout: BigInt(eventString(j, 'payout')),
+            quantity: BigInt(eventString(j, 'quantity')),
+            settled: j.is_settled === true,
+            digest: t.digest,
+          };
+        }
+      }
+    }
+    if (!res.hasNextPage || !res.nextCursor) break;
+    cursor = res.nextCursor;
+  }
+  return null;
+}
+
 const binaryKey = (tx: Transaction, p: BinaryParams): TransactionObjectArgument =>
   tx.moveCall({
     target: target('market_key', p.side === 'up' ? 'up' : 'down'),

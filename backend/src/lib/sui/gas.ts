@@ -9,9 +9,9 @@ import { suiClient } from './client.ts';
 import { executeAsOperator } from './execute.ts';
 import { mintDusdc, getDusdcBalanceRaw } from './dusdc.ts';
 import { operatorAddress, settlementAddress, SETTLEMENT_ENABLED, treasuryAddress, TREASURY_ENABLED } from './signer.ts';
-import { SPONSOR_ENABLED, sponsorAddress } from './sponsor.ts';
+import { SPONSOR_ENABLED, ensureSponsorAccumulator } from './sponsor.ts';
 import {
-  GAS_FUND_SUI, GAS_MIN_SUI, SPONSOR_MIN_SUI, SPONSOR_TOPUP_SUI,
+  GAS_FUND_SUI, GAS_MIN_SUI,
   SETTLEMENT_MIN_SUI, SETTLEMENT_TOPUP_SUI,
   TREASURY_MIN_SUI, TREASURY_TOPUP_SUI, TREASURY_MIN_DUSDC, TREASURY_TOPUP_DUSDC,
 } from '../../config/main-config.ts';
@@ -25,8 +25,6 @@ const toMist = (sui: number): bigint => BigInt(Math.round(sui * Number(MIST_PER_
 // The refill floor in MIST: top up whenever a user's SUI dips below this.
 export const GAS_MIN_RAW = toMist(GAS_MIN_SUI);
 
-// The sponsor's refill floor in MIST.
-const SPONSOR_MIN_RAW = toMist(SPONSOR_MIN_SUI);
 const SETTLEMENT_MIN_RAW = toMist(SETTLEMENT_MIN_SUI);
 const TREASURY_MIN_SUI_RAW = toMist(TREASURY_MIN_SUI);
 // DUSDC is 6dp; the treasury reserve floor in base units.
@@ -68,25 +66,16 @@ export async function ensureSuiGas(address: string, funded: boolean): Promise<bo
   return false;
 }
 
-// Keep the gas sponsor able to pay for user plays. Idempotent, operator-driven: the operator
-// deposits SUI into the sponsor's ADDRESS BALANCE via 0x2::coin::send_funds, which is where the
-// empty-payment sponsored gas is drawn from (getBalance.totalBalance includes that balance). The
-// operator pays its own gas for the deposit, so the sponsor needs zero SUI to bootstrap, its key
-// only ever co-signs user plays. A no-op when sponsorship is off. Safe to call on every boot.
+// Keep the gas sponsor able to pay for user plays. The sponsor's address-balance accumulator (where
+// empty-payment sponsored gas is drawn from) is the thing that has to stay funded, and it lives in
+// sponsor.ts now: ensureSponsorAccumulator is sponsor-signed (works on a follower with no operator),
+// fragmentation-robust, and self-healing. This wrapper just delegates so the operator's ops-funding
+// loop still pokes it. The old form here gated on the COIN balance (which the devnet faucet keeps
+// high) and so never deposited into the accumulator, and split from a single gas coin (which failed
+// on faucet-fragmented SUI), the two-bug combo that left every privy play stuck on MANAGER_NOT_READY.
 export async function ensureSponsorFunded(): Promise<void> {
   if (!SPONSOR_ENABLED) return;
-  if ((await getSuiBalanceRaw(sponsorAddress)) >= SPONSOR_MIN_RAW) return;
-
-  const tx = new Transaction();
-  const coin = tx.splitCoins(tx.gas, [tx.pure.u64(toMist(SPONSOR_TOPUP_SUI))]);
-  // send_funds credits the coin into the recipient's SUI address balance (the accumulator).
-  tx.moveCall({
-    target: '0x2::coin::send_funds',
-    typeArguments: [SUI_TYPE],
-    arguments: [coin, tx.pure.address(sponsorAddress)],
-  });
-  await executeAsOperator(tx, 'fundSponsor');
-  console.log(`[sponsor] deposited ${SPONSOR_TOPUP_SUI} SUI into ${sponsorAddress} address balance`);
+  await ensureSponsorAccumulator();
 }
 
 // Keep the settlement wallet able to pay gas for the permissionless redeem sweep. Operator-driven,

@@ -1026,6 +1026,7 @@ function LuckyResult({ play, streak }: { play: PlayDTO; streak: number }) {
   const pnl = parseFloat(play.pnl ?? '0')
   const won = play.status === 'won'
   const cashed = play.status === 'cashed_out'
+  const lost = play.status === 'lost'
   const positive = won || (cashed && pnl > 0)
   const head = won ? 'YOU WON' : cashed ? 'CASHED OUT' : 'MISSED'
   const pop = reduced
@@ -1039,7 +1040,10 @@ function LuckyResult({ play, streak }: { play: PlayDTO; streak: number }) {
         style={{ textShadow: '0 0 28px currentColor' }}
         className={cnm('tnum text-[56px] font-extrabold leading-none', positive ? 'text-up' : 'text-down')}
       >
-        {pnl >= 0 ? '+' : '-'}${formatExactDecimal(play.pnl, { absolute: true })}
+        {/* A settled loss pays $0, not minus the bet. Wins + cash-outs keep their real signed net. */}
+        {lost
+          ? `$${formatExactDecimal('0')}`
+          : `${pnl >= 0 ? '+' : '-'}$${formatExactDecimal(play.pnl, { absolute: true })}`}
       </motion.div>
       <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
         Payout ${formatExactDecimal(play.payout ?? '0')} · Cost ${formatExactDecimal(play.entryValue)}

@@ -228,8 +228,8 @@ export async function solveStrike(args: {
   // pre-trade: the real mint, sized against the post-trade vault, costs a touch more, and the
   // manager is funded above the bet to absorb exactly that. The per-unit estimate may come from a
   // cached (slightly older) curve, but the sizing preview re-prices fresh, so entryCost is current. ----
-  const cap = (betRaw * 995n) / 1000n; // selected pre-trade cost ceiling (99.5%)
-  const target = (betRaw * 99n) / 100n; // aim just under so the largest candidate lands near the bet
+  const cap = (betRaw * 1n); // selected pre-trade cost ceiling (99.5%)
+  const target = (betRaw * 1n); // aim just under so the largest candidate lands near the bet
   const q0 = (probe * target) / bestPerUnit;
   const factors = [0.9, 0.94, 0.97, 1.0, 1.03, 1.06].slice(0, SIZE_SAMPLES);
   const qs = factors.map((f) => {
