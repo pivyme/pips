@@ -8,12 +8,23 @@ import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { prismaQuery } from '../lib/prisma.ts';
 import { AUTH_MODE, WALLET_AUTH_ENABLED } from '../config/main-config.ts';
 import { operatorAddress } from '../lib/sui/signer.ts';
+import { isChainUnavailableError } from '../lib/sui/client.ts';
 import { verifyPrivyToken, provisionServerSuiWallet, fetchPrivyEmail } from '../lib/sui/privy.ts';
 import { issueWalletNonce, verifyWalletSignature } from '../lib/sui/walletAuth.ts';
 import { ensureUser, ensureWalletUser, mintToken, toUserDTO } from '../services/auth.ts';
 
 // A Sui address that is shaped right (0x + hex) and valid once normalized.
 const isAddress = (a: string): boolean => /^0x[0-9a-fA-F]+$/.test(a) && isValidSuiAddress(normalizeSuiAddress(a));
+
+// One exit for a failed sign-in. When the failure is our Predict deployment being gone (the test
+// chain was wiped, see isChainUnavailableError), return a stable CHAIN_UNAVAILABLE code so the door
+// shows the "we're refreshing, try demo" sheet. The code is the only channel in prod (error details
+// are stripped there), so the meaning has to ride the code, not the message. Anything else keeps the
+// caller's own generic failure code.
+const failSignIn = (reply: FastifyReply, error: unknown, code: string, message: string): Promise<FastifyReply> =>
+  isChainUnavailableError(error)
+    ? handleError(reply, 503, "Sui Devnet was reset, so PIPS is redeploying. It's usually back within a couple of hours. You can play demo mode in the meantime.", 'CHAIN_UNAVAILABLE', error as Error)
+    : handleError(reply, 500, message, code, error as Error);
 
 export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
   // dev mode: auto-login the operator wallet. The backend is the user and signs its plays.
@@ -23,7 +34,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
       const user = await ensureUser({ address: operatorAddress, provider: 'dev' });
       return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user) } });
     } catch (error) {
-      return handleError(reply, 500, 'Could not sign in', 'AUTH_DEV_FAILED', error as Error);
+      return failSignIn(reply, error, 'AUTH_DEV_FAILED', 'Could not sign in');
     }
   });
 
@@ -59,7 +70,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
       });
       return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user) } });
     } catch (error) {
-      return handleError(reply, 500, 'Could not finish sign-in', 'AUTH_VERIFY_FAILED', error as Error);
+      return failSignIn(reply, error, 'AUTH_VERIFY_FAILED', 'Could not finish sign-in');
     }
   });
 
@@ -91,7 +102,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
       const user = await ensureWalletUser(address);
       return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user) } });
     } catch (error) {
-      return handleError(reply, 500, 'Could not finish sign-in', 'AUTH_VERIFY_FAILED', error as Error);
+      return failSignIn(reply, error, 'AUTH_VERIFY_FAILED', 'Could not finish sign-in');
     }
   });
 
@@ -100,7 +111,9 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     try {
       return reply.code(200).send({ success: true, error: null, data: { user: await toUserDTO(request.user!) } });
     } catch (error) {
-      return handleError(reply, 500, 'Could not load profile', 'AUTH_ME_FAILED', error as Error);
+      // A returning session resolves through here on boot; classify the test-chain wipe the same way
+      // so the door shows the refreshing sheet instead of a dead generic error.
+      return failSignIn(reply, error, 'AUTH_ME_FAILED', 'Could not load profile');
     }
   });
 

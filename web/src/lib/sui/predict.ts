@@ -5,7 +5,7 @@
 import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from '@mysten/sui/jsonRpc'
 
 import { api } from '../api'
-import { DUSDC_TYPE, NETWORK, fromDusdcRaw } from './config'
+import { DUSDC_TYPE, NETWORK, PACKAGE_ID, fromDusdcRaw } from './config'
 import type { Game, PlayDTO } from '../api'
 import { env } from '@/env'
 
@@ -24,6 +24,40 @@ function suiClient(): SuiJsonRpcClient {
     client = new SuiJsonRpcClient({ url, network: NETWORK })
   }
   return client
+}
+
+// Has Sui Devnet been reset out from under our deployment? Devnet (not testnet) wipes roughly weekly,
+// which deletes the Predict package we published, so every chain call against the stale id fails. We
+// detect it definitively from the browser: ask the backend for the LIVE package id (/config is fresh
+// even after a self-heal redeploy, so a healthy redeploy reads as alive), then check whether that
+// package still exists on chain. Used by the door to turn a sign-in failure into the friendly
+// "redeploying, play demo" sheet without depending on the deployed backend's error code.
+//
+// Best-effort and bounded: any hiccup (backend down, RPC slow, no ids configured) resolves false so
+// we fall back to the generic error sheet, never a false "redeploying".
+export async function probeChainWiped(): Promise<boolean> {
+  const probe = (async (): Promise<boolean> => {
+    let packageId = PACKAGE_ID
+    try {
+      const res = await fetch(`${env.VITE_API_URL}/config`, { signal: AbortSignal.timeout(4000) })
+      if (res.ok) {
+        const body = (await res.json()) as { data?: { predictPackageId?: string } }
+        if (body.data?.predictPackageId) packageId = body.data.predictPackageId
+      }
+    } catch {
+      // backend unreachable: fall back to the compile-time package id
+    }
+    if (!packageId) return false
+    const obj = (await suiClient().getObject({ id: packageId, options: { showType: true } })) as {
+      data?: { objectId?: string } | null
+      error?: { code?: string } | null
+    }
+    // A live package returns data and no error; a reset chain returns a notExists/deleted error for
+    // the same id. Require both signals so an unexpected response shape never reads as a false wipe.
+    return Boolean(obj.error) && !obj.data
+  })()
+  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000))
+  return Promise.race([probe.catch(() => false), timeout])
 }
 
 // Live on-chain DUSDC wallet balance in display units. The authoritative spendable figure is

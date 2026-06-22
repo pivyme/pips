@@ -12,6 +12,7 @@ import { accessGuardEnabled, isUnlocked, tryUnlock } from '@/lib/accessGuard'
 import { cnm } from '@/utils/style'
 import { useAuth, toAuthError, type AuthError } from '@/lib/auth'
 import { listSuiWallets, onWalletsChange, isUserRejection, type SuiWallet } from '@/lib/walletConnect'
+import { probeChainWiped } from '@/lib/sui/predict'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 // `onEnter` walks the user off the door into the shell (onboarding or app). It fires once a session
@@ -58,15 +59,24 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
     if (status === 'authed' && (connecting || (isPrivy && !demo))) onEnter()
   }, [status, connecting, isPrivy, demo, onEnter])
 
-  // A failed sign-in (e.g. the verify handshake errored) drops the spinner and raises the error sheet
-  // with the real reason, so the door stays usable and a reviewer can see what broke + reach us.
+  // Raise the sign-in error sheet with the right variant. Before showing a generic failure, check
+  // whether Sui Devnet was reset under us (our on-chain deployment gone): if so, upgrade to
+  // CHAIN_UNAVAILABLE so the sheet shows "PIPS is redeploying, play demo" instead. We do this on the
+  // client too (not just from the backend's code) so it works even when the deployed backend hasn't
+  // picked up the new error code yet. The spinner stays up through the short probe so the correct
+  // copy paints on first show (no flip from generic to devnet).
+  const surfaceError = useCallback(async (err: AuthError) => {
+    const wiped = err.code === 'CHAIN_UNAVAILABLE' || (await probeChainWiped())
+    setConnecting(false)
+    setSignInError(wiped ? { ...err, code: 'CHAIN_UNAVAILABLE' } : err)
+    haptic('error')
+  }, [])
+
+  // A failed sign-in (e.g. the verify handshake errored) raises the error sheet with the real reason,
+  // so the door stays usable and a reviewer can see what broke + reach us.
   useEffect(() => {
-    if (status === 'error') {
-      setConnecting(false)
-      setSignInError(authError ?? { message: 'Could not sign you in. Please try again.' })
-      haptic('error')
-    }
-  }, [status, authError])
+    if (status === 'error') void surfaceError(authError ?? { message: 'Could not sign you in. Please try again.' })
+  }, [status, authError, surfaceError])
 
   // The real entry: walk an already-authed session in, else kick off sign-in.
   const proceed = useCallback(async () => {
@@ -82,14 +92,14 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
       await signIn()
     } catch (e) {
       // Backing out of the sign-in modal is not an error, just drop the spinner. Anything else is a
-      // real failure worth surfacing.
-      setConnecting(false)
-      if (!(e instanceof Error && e.message === 'login_cancelled')) {
-        setSignInError(toAuthError(e))
-        haptic('error')
+      // real failure worth surfacing (surfaceError keeps the spinner up while it probes the chain).
+      if (e instanceof Error && e.message === 'login_cancelled') {
+        setConnecting(false)
+        return
       }
+      await surfaceError(toAuthError(e))
     }
-  }, [status, signIn, onEnter])
+  }, [status, signIn, onEnter, surfaceError])
 
   const onCta = useCallback(() => {
     haptic('rigid')
@@ -118,14 +128,14 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
       try {
         await signInWithWallet(wallet)
       } catch (e) {
-        setConnecting(false)
-        if (!isUserRejection(e)) {
-          setSignInError(toAuthError(e))
-          haptic('error')
+        if (isUserRejection(e)) {
+          setConnecting(false)
+          return
         }
+        await surfaceError(toAuthError(e))
       }
     },
-    [signInWithWallet],
+    [signInWithWallet, surfaceError],
   )
 
   // The "Connect Sui Wallet" CTA: no wallet -> hint, one -> straight in, several -> the picker.
@@ -260,6 +270,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
           setSignInError(null)
           void onCta()
         }}
+        onTryDemo={() => toggleDemo(true)}
         onClose={() => setSignInError(null)}
       />
     </div>
@@ -269,18 +280,26 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
 // Shown when sign-in fails. App-Surface bottom sheet (same language as the wallet picker). It names
 // what broke and, for the case that matters most during a live demo, hands a reviewer a direct line
 // to us instead of a dead end. The raw cause sits in a collapsible block so it stays out of the way.
+// CHAIN_UNAVAILABLE is special-cased: that's not a bug, it's Sui Devnet getting reset (which deletes
+// our deployment until we redeploy), so we say so plainly and push demo mode as the way in right now.
 function SignInErrorSheet({
   error,
   onRetry,
+  onTryDemo,
   onClose,
 }: {
   error: AuthError | null
   onRetry: () => void
+  onTryDemo: () => void
   onClose: () => void
 }) {
   const [showDetails, setShowDetails] = useState(false)
   // The technical line worth showing: the backend's underlying cause if present, else the message.
   const detail = error?.details || error?.message
+  // Sui Devnet was reset and our Predict deployment is gone until the next bootstrap. The backend
+  // tags this so the door knows it's maintenance, not a real failure (the code is the only signal in
+  // prod, where error details are stripped).
+  const chainDown = error?.code === 'CHAIN_UNAVAILABLE'
 
   return (
     <AnimatePresence onExitComplete={() => setShowDetails(false)}>
@@ -302,51 +321,96 @@ function SignInErrorSheet({
           >
             <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-line-strong" />
 
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-down/15 text-down">
-              <AlertGlyph className="h-6 w-6" />
-            </div>
+            {chainDown ? (
+              <>
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-500/15 text-brand-500">
+                  <RefreshGlyph className="h-6 w-6" />
+                </div>
 
-            <h2 className="text-center text-lg font-extrabold tracking-tight text-text">Sign-in hit a snag</h2>
-            <p className="mx-auto mt-1.5 max-w-xs text-center text-[13.5px] leading-snug text-text-2">
-              Something on our end is misbehaving, so we could not finish signing you in. If you are
-              reviewing PIPS, message us and we will fix it on the spot.
-            </p>
+                <h2 className="text-center text-lg font-extrabold tracking-tight text-text">PIPS is redeploying</h2>
+                <p className="mx-auto mt-1.5 max-w-xs text-center text-[13.5px] leading-snug text-text-2">
+                  Sui Devnet was just reset, which clears our on-chain deployment, so sign-in is paused
+                  while we redeploy. This happens every so often and is usually back within a couple of
+                  hours. Jump into demo mode to play the full app right now with practice chips.
+                </p>
 
-            {error.code && (
-              <div className="mt-3 flex justify-center">
-                <span className="rounded-full border border-line-strong bg-canvas px-2.5 py-1 font-mono text-[10.5px] font-bold uppercase tracking-[0.06em] text-text-3">
-                  {error.code}
-                </span>
-              </div>
+                <button
+                  type="button"
+                  onClick={onTryDemo}
+                  className="btn-primary mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-full text-[15px]"
+                >
+                  Play demo mode
+                </button>
+
+                <div className="mt-2.5 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="flex h-11 flex-1 items-center justify-center rounded-full border border-line-strong bg-canvas text-[14px] font-bold text-text transition-colors hover:bg-surface-2"
+                  >
+                    Try again
+                  </button>
+                  <a
+                    href={config.links.support}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => haptic('rigid')}
+                    className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-full border border-line-strong bg-canvas text-[14px] font-bold text-text transition-colors hover:bg-surface-2"
+                  >
+                    <TelegramGlyph className="size-4" />
+                    Telegram
+                  </a>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-down/15 text-down">
+                  <AlertGlyph className="h-6 w-6" />
+                </div>
+
+                <h2 className="text-center text-lg font-extrabold tracking-tight text-text">Sign-in hit a snag</h2>
+                <p className="mx-auto mt-1.5 max-w-xs text-center text-[13.5px] leading-snug text-text-2">
+                  Something on our end is misbehaving, so we could not finish signing you in. If you are
+                  reviewing PIPS, message us and we will fix it on the spot.
+                </p>
+
+                {error.code && (
+                  <div className="mt-3 flex justify-center">
+                    <span className="rounded-full border border-line-strong bg-canvas px-2.5 py-1 font-mono text-[10.5px] font-bold uppercase tracking-[0.06em] text-text-3">
+                      {error.code}
+                    </span>
+                  </div>
+                )}
+
+                <a
+                  href={config.links.support}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => haptic('rigid')}
+                  className="btn-primary mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-full text-[15px]"
+                >
+                  <TelegramGlyph className="size-4.5" />
+                  Message us on Telegram
+                </a>
+
+                <div className="mt-2.5 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="flex h-11 flex-1 items-center justify-center rounded-full border border-line-strong bg-canvas text-[14px] font-bold text-text transition-colors hover:bg-surface-2"
+                  >
+                    Try again
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="flex h-11 flex-1 items-center justify-center rounded-full text-[14px] font-bold text-text-3 transition-colors hover:text-text-2"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </>
             )}
-
-            <a
-              href={config.links.support}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => haptic('rigid')}
-              className="btn-primary mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-full text-[15px]"
-            >
-              <TelegramGlyph className="size-4.5" />
-              Message us on Telegram
-            </a>
-
-            <div className="mt-2.5 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onRetry}
-                className="flex h-11 flex-1 items-center justify-center rounded-full border border-line-strong bg-canvas text-[14px] font-bold text-text transition-colors hover:bg-surface-2"
-              >
-                Try again
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex h-11 flex-1 items-center justify-center rounded-full text-[14px] font-bold text-text-3 transition-colors hover:text-text-2"
-              >
-                Dismiss
-              </button>
-            </div>
 
             {detail && (
               <div className="mt-3 border-t border-line pt-3">
@@ -473,6 +537,20 @@ function AlertGlyph({ className }: { className?: string }) {
     <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
       <path
         d="M12 9v4m0 4h.01M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.42 0Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function RefreshGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M3.5 12a8.5 8.5 0 0 1 14.5-6m2 0v-4m0 4h-4M20.5 12A8.5 8.5 0 0 1 6 18m-2 0v4m0-4h4"
         stroke="currentColor"
         strokeWidth="1.8"
         strokeLinecap="round"
