@@ -8,7 +8,7 @@
 
 </div>
 
-[![PIPS gamified trading console](web/public/pips-thumbnail.png)](https://playpips.fun)
+<img width="1600" height="900" alt="pips-FINAL_THUMBNAIL" src="https://github.com/user-attachments/assets/ea847ac7-9770-48ff-b373-755b0c609c24" />
 
 PIPS turns short-expiry prediction markets into games played through a virtual handheld console. The interface removes the usual charts, order forms, and wallet friction, while successful trading plays still mint and redeem real on-chain positions.
 
