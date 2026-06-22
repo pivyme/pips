@@ -278,7 +278,8 @@ export function RangeScreen() {
   //              read and disarm cash-out, the result is just being sealed
   //   settling - past the buzzer, waiting on the on-chain settle frame
   const confirmed = live?.status === 'open'
-  const opening = phase === 'open' && live?.status === 'pending'
+  const opening =
+    phase === 'open' && (live?.status === 'pending' || remainingMs == null)
   const settling = phase === 'open' && remainingMs != null && remainingMs <= 0
   const sealing =
     phase === 'open' &&
@@ -1015,13 +1016,23 @@ function RangeResult({ play }: { play: PlayDTO }) {
     Number.isFinite(hi) &&
     Number.isFinite(settled) &&
     hi > lo
-  const relation = hasGauge
-    ? settled <= lo
-      ? 'below'
-      : settled > hi
-        ? 'above'
-        : 'inside'
-    : null
+  // The inside/outside call follows the settled VERDICT (won == inside, lost == outside), the on-chain
+  // truth, not a float price compare that can disagree right on a band edge and contradict the headline.
+  // The price still places the marker + names which side. A cash-out has no band verdict, so it reads the
+  // exit price directly (and a lost play that rounds onto the band is pushed to the nearer edge).
+  const relation: 'below' | 'inside' | 'above' = !hasGauge
+    ? 'inside'
+    : won
+      ? 'inside'
+      : settled <= lo
+        ? 'below'
+        : settled > hi
+          ? 'above'
+          : cashed
+            ? 'inside'
+            : settled <= (lo + hi) / 2
+              ? 'below'
+              : 'above'
   const pop = reduced
     ? {}
     : {
@@ -1055,6 +1066,7 @@ function RangeResult({ play }: { play: PlayDTO }) {
           upper={hi}
           price={settled}
           relation={relation}
+          win={positive}
           label={cashed ? 'Exit' : 'Settled'}
         />
       ) : (
@@ -1077,12 +1089,14 @@ function SettlementGauge({
   upper,
   price,
   relation,
+  win,
   label,
 }: {
   lower: number
   upper: number
   price: number
   relation: 'below' | 'inside' | 'above'
+  win: boolean
   label: 'Exit' | 'Settled'
 }) {
   const span = upper - lower
@@ -1094,6 +1108,8 @@ function SettlementGauge({
       ? `${label} inside your band`
       : `${label} ${relation} your band`
 
+  // Colored by the settled verdict, never the raw relation, so the marker can never contradict the
+  // headline at a band edge (a loss whose price rounds onto the band still reads red).
   return (
     <div className="mt-3 w-[280px] max-w-[72%]">
       <div className="relative h-5 border-y border-line-strong">
@@ -1103,7 +1119,7 @@ function SettlementGauge({
         <div
           className={cnm(
             'absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 border-2 border-black',
-            relation === 'inside' ? 'bg-up' : 'bg-down',
+            win ? 'bg-up' : 'bg-down',
           )}
           style={{ left: `${pricePct}%` }}
         />
@@ -1115,7 +1131,7 @@ function SettlementGauge({
       <div
         className={cnm(
           'mt-2 font-mono text-[11px] font-bold uppercase tracking-[0.1em]',
-          relation === 'inside' ? 'text-up' : 'text-down',
+          win ? 'text-up' : 'text-down',
         )}
       >
         {relationCopy} · {priceLabel(price)}
