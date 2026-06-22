@@ -23,7 +23,9 @@ export function friendlyError(e: unknown): string {
 // Expected, benign outcomes the player should never see a toast for. The cash-out buzzer race returns
 // PLAY_NOT_OPEN: the round just crossed expiry and settles to a normal win/loss on its own, and the
 // screen already drops into its on-screen settling beat, so a toast would be wrong here.
-const SILENT = new Set(['PLAY_NOT_OPEN'])
+// MANAGER_NOT_READY is the re-armed-session case: the auth layer heals it in place behind its own
+// overlay (see recoverSession), so a toast would just be noise on top of that.
+const SILENT = new Set(['PLAY_NOT_OPEN', 'MANAGER_NOT_READY'])
 
 export function toastError(e: unknown): void {
   if (e instanceof ApiError && SILENT.has(e.code)) return

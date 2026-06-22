@@ -106,8 +106,9 @@ function managerReadyToCreate(user: User): boolean {
 }
 
 // Shared provisioning, idempotent: empty stats row, free chips once, free gas (when unsponsored), and
-// the PredictManager. Runs for every login regardless of identity mode.
-async function provisionUser(user: User): Promise<User> {
+// the PredictManager. Runs for every login regardless of identity mode, and is also the in-place
+// self-heal for a re-armed session (POST /auth/heal), so it must stay safe to call repeatedly.
+export async function provisionUser(user: User): Promise<User> {
   // Empty stats row so the menu reads cleanly from the first login.
   await prismaQuery.userStats.upsert({ where: { userId: user.id }, update: {}, create: { userId: user.id } });
 

@@ -57,6 +57,14 @@
 }
 
 @layer base {
+  html,
+  body {
+    /* No pull-to-refresh or rubber-band bounce: this is an app, not a page. */
+    overscroll-behavior: none;
+    /* iOS must not auto-inflate font sizes in landscape. */
+    -webkit-text-size-adjust: 100%;
+  }
+
   html {
     background: #000;
     color-scheme: dark;
@@ -78,6 +86,16 @@
   [type='button'],
   [type='submit'] {
     cursor: pointer;
+  }
+
+  /* Kill the 300ms tap delay and double-tap-zoom on every control, everywhere
+     (safe globally, including the standalone tools). */
+  button,
+  a,
+  [role='button'],
+  [role='slider'],
+  summary {
+    touch-action: manipulation;
   }
 
   code {
@@ -116,6 +134,35 @@
     background: rgba(255, 192, 22, 0.28);
     color: #fff;
   }
+}
+
+/* ── Native touch feel (the app shell only) ─────────────────────────────
+   Scoped to .app-shell (the device + landing + onboarding + menu) so a
+   press-and-hold on a button or the knob never triggers iOS text selection,
+   the long-press callout / magnifier, or an image drag. The standalone tools
+   (/tools/wallet, /pitch) live outside the shell and keep normal selection. */
+.app-shell {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+
+/* Opt selection back in where text is genuinely meant to be selected: real
+   inputs, editable regions, and anything explicitly tagged .selectable
+   (e.g. a wallet address or an error payload). */
+.app-shell input,
+.app-shell textarea,
+.app-shell [contenteditable],
+.app-shell .selectable {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.app-shell img {
+  -webkit-user-drag: none;
+  user-drag: none;
 }
 
 /* ── Material recipes (docs/DESIGN.md §5) ───────────────────────────────
@@ -609,6 +656,36 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
 @media (prefers-reduced-motion: reduce) {
   .app-loading-screen-leaving {
     animation-duration: 0.001ms;
+  }
+}
+
+/* Self-heal veil: shown while re-provisioning a re-armed session in place. Sits above the app so the
+   broken state is never visible, fades in so it doesn't hard-cut over a game. */
+.recovery-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  gap: 1rem;
+  background: rgba(0, 0, 0, 0.82);
+  backdrop-filter: blur(6px);
+  animation: recovery-overlay-in 220ms var(--ease-in-out-quart, ease) both;
+}
+
+.recovery-overlay-text {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+@keyframes recovery-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 

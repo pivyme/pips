@@ -207,6 +207,14 @@ export const setAuthToken = (token: string | null): void => {
 }
 export const getAuthToken = (): string | null => authToken
 
+// After a devnet refresh the backend re-arms users (their PredictManager is nulled), so a live
+// session 409s MANAGER_NOT_READY on every play until it re-logs-in. The auth layer registers a
+// handler here to bounce a stale session to the door the moment the backend reports it.
+let onManagerNotReady: (() => void) | null = null
+export const setManagerNotReadyHandler = (fn: (() => void) | null): void => {
+  onManagerNotReady = fn
+}
+
 interface Envelope<T> {
   success: boolean
   error: { code: string; message: string; details?: string } | null
@@ -236,6 +244,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
 
   if (!res.ok || !json.success) {
+    if (json.error?.code === 'MANAGER_NOT_READY') onManagerNotReady?.()
     throw new ApiError(
       json.error?.code ?? 'UNKNOWN',
       json.error?.message ?? 'Something went wrong',
@@ -255,6 +264,9 @@ const realApi = {
   authWalletNonce: (address: string) => request<{ message: string }>('POST', '/auth/wallet/nonce', { address }),
   authWalletVerify: (input: WalletVerifyInput) => request<{ token: string; user: UserDTO }>('POST', '/auth/wallet/verify', input),
   me: () => request<{ user: UserDTO }>('GET', '/auth/me'),
+  // Re-provision a re-armed session in place (new PredictManager + re-funded chips). Called to self-heal
+  // a stale session after a devnet refresh instead of forcing a full re-login.
+  authHeal: () => request<{ user: UserDTO }>('POST', '/auth/heal'),
   setUsername: (username: string) => request<{ user: UserDTO }>('PATCH', '/auth/me', { username }),
 
   // markets + plays

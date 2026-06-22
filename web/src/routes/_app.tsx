@@ -60,7 +60,7 @@ type OnboardingStep = 'username' | 'customize' | 'welcome'
 export const Route = createFileRoute('/_app')({ component: AppLayout })
 
 function AppLayout() {
-  const { status, user, refresh } = useAuth()
+  const { status, user, recovering, refresh } = useAuth()
   const reduced = useReducedMotion()
   const [showLoadingScreen, setShowLoadingScreen] = useState(true)
   const [loadingScreenLeaving, setLoadingScreenLeaving] = useState(false)
@@ -457,6 +457,9 @@ function AppLayout() {
         </ConsoleControlsProvider>
       </AppFrame>
       {loadingScreen}
+      {/* Shown only while healing a re-armed session in place (devnet refresh). Never appears on a
+          healthy login, so onboarding and the normal first run are untouched. */}
+      {recovering && !showLoadingScreen && <RecoveryOverlay />}
       <AchievementCelebration />
     </AchievementDetailProvider>
   )
@@ -466,6 +469,15 @@ function AppLoadingScreen({ leaving = false }: { leaving?: boolean }) {
   return (
     <div className={leaving ? 'app-loading-screen app-loading-screen-leaving' : 'app-loading-screen'}>
       <LoadingIcon size={72} />
+    </div>
+  )
+}
+
+function RecoveryOverlay() {
+  return (
+    <div className="recovery-overlay">
+      <LoadingIcon size={56} />
+      <div className="recovery-overlay-text">Getting your account ready</div>
     </div>
   )
 }

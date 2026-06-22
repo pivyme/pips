@@ -801,6 +801,9 @@ export const demoApi = {
     return { token: 'demo-token', user: userDTO() }
   },
   me: async () => ({ user: userDTO() }),
+  // Demo never re-arms (managerReady is always true), so heal is unreachable here; keep the twin so
+  // the demo client stays complete.
+  authHeal: async () => ({ user: userDTO() }),
 
   setUsername: async (username: string) => {
     const name = typeof username === 'string' ? username.trim() : ''

@@ -428,7 +428,7 @@ function SignInErrorSheet({
                       animate={{ height: 'auto', opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }}
                       transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                      className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap wrap-break-word rounded-xl border border-line bg-canvas p-3 font-mono text-[11px] leading-relaxed text-text-3 select-text"
+                      className="selectable mt-2 max-h-32 overflow-auto whitespace-pre-wrap wrap-break-word rounded-xl border border-line bg-canvas p-3 font-mono text-[11px] leading-relaxed text-text-3 select-text"
                     >
                       {detail}
                     </motion.pre>

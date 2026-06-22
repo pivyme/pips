@@ -8,7 +8,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import type { UserDTO } from '@/lib/api'
 import { env } from '@/env'
-import { ApiError, api, setAuthToken } from '@/lib/api'
+import { ApiError, api, setAuthToken, setManagerNotReadyHandler } from '@/lib/api'
 import { connectWallet, signLoginMessage, type SuiWallet } from '@/lib/walletConnect'
 import { demoUser, isDemo } from '@/lib/demo'
 import { setHapticsEnabled } from '@/lib/haptics'
@@ -57,6 +57,8 @@ interface AuthContextValue {
   user: UserDTO | null
   // Set when status is 'error': the reason sign-in failed. Null otherwise.
   error: AuthError | null
+  // True while re-provisioning a re-armed session in place (drives the recovery overlay).
+  recovering: boolean
   signIn: () => Promise<void>
   // Native Sui wallet connect (custodial login): connect the wallet, sign the nonce, verify. The
   // wallet object comes from the door's picker. Throws on cancel/failure so the caller can react.
@@ -84,12 +86,26 @@ export function useAuthControl(): AuthControl {
 
 const isPrivy = env.VITE_AUTH_MODE === 'privy'
 
+// After a devnet refresh the backend re-arms every user: the on-chain PredictManager is nulled and
+// chips/gas are re-issued on the next login. A live session then carries a stale null manager, so
+// every play 409s MANAGER_NOT_READY. /auth/me reports managerReady; when it comes back false we
+// self-heal in place (POST /auth/heal re-provisions server-side) behind a brief overlay, and only
+// fall back to the door if the heal can't restore it. A healthy login is never managerLost, so
+// onboarding and the normal first run never touch this path.
+const managerLost = (u: UserDTO): boolean => !isDemo() && !u.managerReady
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading')
   const [user, setUser] = useState<UserDTO | null>(null)
   const [error, setError] = useState<AuthError | null>(null)
+  // True while self-healing a re-armed session (see recoverSession). Drives a thin "getting your
+  // account ready" overlay so the heal is seamless, not a flash of broken plays.
+  const [recovering, setRecovering] = useState(false)
   const started = useRef(false)
   const privyControl = useRef<{ signIn: () => Promise<void>; signOut: () => Promise<void> } | null>(null)
+  // Single-flights the heal so a burst of MANAGER_NOT_READY 409s (a frustrated player tapping PLAY)
+  // triggers one recovery, not many.
+  const recoveringRef = useRef(false)
 
   // Single entry point for status + error so the two never drift: an error carries a reason and
   // clears on any healthy transition.
@@ -112,9 +128,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     apply(token, u)
   }, [apply])
 
+  const signOut = useCallback(async () => {
+    // Await Privy's logout so the session is fully cleared before the door shows again. Fire-and-forget
+    // left Privy still authenticated, so the next login skipped the modal and the bridge silently
+    // re-authed the same account. Then drop our app session.
+    if (isPrivy && privyControl.current) {
+      try {
+        await privyControl.current.signOut()
+      } catch (e) {
+        console.error('[auth] privy logout failed', e)
+      }
+    }
+    saveToken(null)
+    setAuthToken(null)
+    setUser(null)
+    move('anon')
+  }, [move])
+
+  // Self-heal a re-armed session in place: ask the backend to re-provision (new PredictManager +
+  // re-funded chips) and adopt the fresh user, all behind a brief overlay so the player never sees
+  // the broken state. Single-flighted. Only if the heal can't restore the manager (chain still down,
+  // signer gone) do we fall back to the door, where the next sign-in retries and shows the refreshing
+  // sheet if needed.
+  const recoverSession = useCallback(async () => {
+    if (recoveringRef.current) return
+    recoveringRef.current = true
+    setRecovering(true)
+    try {
+      const { user: u } = await api.authHeal()
+      if (managerLost(u)) {
+        await signOut()
+        return
+      }
+      setUser(u)
+      move('authed')
+    } catch {
+      await signOut()
+    } finally {
+      recoveringRef.current = false
+      setRecovering(false)
+    }
+  }, [move, signOut])
+
   const refresh = useCallback(async () => {
     try {
       const { user: u } = await api.me()
+      if (managerLost(u)) {
+        await recoverSession() // re-armed session: heal in place, no logout
+        return
+      }
       setUser(u)
       move('authed')
     } catch (e) {
@@ -125,7 +187,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         move('anon')
       }
     }
-  }, [move])
+  }, [move, recoverSession])
 
   const signIn = useCallback(async () => {
     setError(null) // a fresh attempt clears the last failure so the error sheet drops
@@ -152,22 +214,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     apply(token, u)
   }, [apply])
 
-  const signOut = useCallback(async () => {
-    // Await Privy's logout so the session is fully cleared before the door shows again. Fire-and-forget
-    // left Privy still authenticated, so the next login skipped the modal and the bridge silently
-    // re-authed the same account. Then drop our app session.
-    if (isPrivy && privyControl.current) {
-      try {
-        await privyControl.current.signOut()
-      } catch (e) {
-        console.error('[auth] privy logout failed', e)
-      }
-    }
-    saveToken(null)
-    setAuthToken(null)
-    setUser(null)
-    move('anon')
-  }, [move])
+  // The instant case: a play (or any call) that 409s MANAGER_NOT_READY means this session's manager
+  // was re-armed away. Heal on the first one (recoverSession single-flights, so the burst of 409s
+  // from a player tapping PLAY collapses to one recovery).
+  useEffect(() => {
+    if (isDemo()) return
+    setManagerNotReadyHandler(() => void recoverSession())
+    return () => setManagerNotReadyHandler(null)
+  }, [recoverSession])
 
   // Keep haptics + sound in step with the user's settings, app-wide, from the moment they load.
   useEffect(() => {
@@ -244,6 +298,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setAuthToken(token)
         try {
           const { user: u } = await api.me()
+          if (managerLost(u)) {
+            await recoverSession() // re-armed since last visit: heal in place before showing the app
+            return
+          }
           setUser(u)
           move('authed')
           return
@@ -269,7 +327,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // privy: the bridge resolves status from the live Privy session (anon, or run the verify
       // handshake once Privy is ready). Stay 'loading' until it does.
     })()
-  }, [apply, devLogin, move, fail])
+  }, [apply, devLogin, move, fail, recoverSession])
 
   // Stable so the Privy bridge's effects don't re-run every render (an unstable control made the
   // bridge re-assert 'anon' right after a wallet login set 'authed', bouncing the user to the door).
@@ -279,7 +337,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const control = useMemo<AuthControl>(() => ({ apply, setStatus: move, registerPrivy }), [apply, move, registerPrivy])
 
   return (
-    <AuthContext.Provider value={{ status, user, error, signIn, signInWithWallet, signOut, refresh }}>
+    <AuthContext.Provider value={{ status, user, error, recovering, signIn, signInWithWallet, signOut, refresh }}>
       <AuthControlContext.Provider value={control}>{children}</AuthControlContext.Provider>
     </AuthContext.Provider>
   )

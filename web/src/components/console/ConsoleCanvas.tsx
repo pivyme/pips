@@ -2513,8 +2513,12 @@ export default function ConsoleCanvas({
       }
     }
 
+    // An Android long-press on the device should never pop the OS context menu.
+    const onContextMenu = (e: Event) => e.preventDefault()
+
     canvas.addEventListener('pointerdown', onPointerDown)
     canvas.addEventListener('touchstart', onScreenTouchStart, { passive: false })
+    canvas.addEventListener('contextmenu', onContextMenu)
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)
@@ -2899,6 +2903,7 @@ export default function ConsoleCanvas({
       cancelAnimationFrame(rafId)
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('touchstart', onScreenTouchStart)
+      canvas.removeEventListener('contextmenu', onContextMenu)
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', release)
       window.removeEventListener('pointercancel', release)
@@ -3022,6 +3027,9 @@ export default function ConsoleCanvas({
           inset: 0,
           zIndex: 10,
           touchAction: 'none',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          WebkitTouchCallout: 'none',
         }}
       >
         <canvas ref={canvasRef} style={{ display: 'block' }} />

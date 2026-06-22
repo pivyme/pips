@@ -11,7 +11,7 @@ import { operatorAddress } from '../lib/sui/signer.ts';
 import { isChainUnavailableError } from '../lib/sui/client.ts';
 import { verifyPrivyToken, provisionServerSuiWallet, fetchPrivyEmail } from '../lib/sui/privy.ts';
 import { issueWalletNonce, verifyWalletSignature } from '../lib/sui/walletAuth.ts';
-import { ensureUser, ensureWalletUser, mintToken, toUserDTO } from '../services/auth.ts';
+import { ensureUser, ensureWalletUser, provisionUser, mintToken, toUserDTO } from '../services/auth.ts';
 
 // A Sui address that is shaped right (0x + hex) and valid once normalized.
 const isAddress = (a: string): boolean => /^0x[0-9a-fA-F]+$/.test(a) && isValidSuiAddress(normalizeSuiAddress(a));
@@ -114,6 +114,20 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
       // A returning session resolves through here on boot; classify the test-chain wipe the same way
       // so the door shows the refreshing sheet instead of a dead generic error.
       return failSignIn(reply, error, 'AUTH_ME_FAILED', 'Could not load profile');
+    }
+  });
+
+  // Re-provision the signed-in user in place: re-create the PredictManager and re-fund chips/gas if a
+  // devnet refresh re-armed the account (or first-login manager creation was deferred). Idempotent, so
+  // it's a no-op once everything is in place. The client calls this to self-heal a stale session
+  // without forcing a full sign-out. managerReady on the returned user tells the client whether the
+  // heal restored the manager; if not (chain still down), it falls back to the door.
+  app.post('/heal', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const healed = await provisionUser(request.user!);
+      return reply.code(200).send({ success: true, error: null, data: { user: await toUserDTO(healed) } });
+    } catch (error) {
+      return failSignIn(reply, error, 'AUTH_HEAL_FAILED', 'Could not finish setting up your account');
     }
   });
 

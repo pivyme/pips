@@ -16,7 +16,7 @@ export function AppFrame({ children, bg, dimmed = false }: { children: ReactNode
   const style = bg ? { background: bg } : undefined
   return (
     <div
-      className="relative flex min-h-dvh w-full items-stretch justify-center overflow-hidden bg-black sm:items-center"
+      className="app-shell relative flex min-h-dvh w-full items-stretch justify-center overflow-hidden bg-black sm:items-center"
       style={style}
     >
       {/* Desktop surround: the device floats on a slow diagonal field of the PIPS logo, not flat black. */}
