@@ -327,11 +327,11 @@ function SignInErrorSheet({
                   <RefreshGlyph className="h-6 w-6" />
                 </div>
 
-                <h2 className="text-center text-lg font-extrabold tracking-tight text-text">PIPS is redeploying</h2>
+                <h2 className="text-center text-lg font-extrabold tracking-tight text-text">PIPS is back soon</h2>
                 <p className="mx-auto mt-1.5 max-w-xs text-center text-[13.5px] leading-snug text-text-2">
-                  Sui Devnet was just reset, which clears our on-chain deployment, so sign-in is paused
-                  while we redeploy. This happens every so often and is usually back within a couple of
-                  hours. Jump into demo mode to play the full app right now with practice chips.
+                  Sui Devnet just got reset, so we're putting PIPS back online. Sign-in is down for a
+                  bit, usually back within a couple of hours. You can play demo mode right now with
+                  free practice chips.
                 </p>
 
                 <button

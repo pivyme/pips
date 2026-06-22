@@ -23,7 +23,7 @@ const isAddress = (a: string): boolean => /^0x[0-9a-fA-F]+$/.test(a) && isValidS
 // caller's own generic failure code.
 const failSignIn = (reply: FastifyReply, error: unknown, code: string, message: string): Promise<FastifyReply> =>
   isChainUnavailableError(error)
-    ? handleError(reply, 503, "Sui Devnet was reset, so PIPS is redeploying. It's usually back within a couple of hours. You can play demo mode in the meantime.", 'CHAIN_UNAVAILABLE', error as Error)
+    ? handleError(reply, 503, "Sui Devnet just got reset, so we're putting PIPS back online. Usually back within a couple of hours. You can play demo mode in the meantime.", 'CHAIN_UNAVAILABLE', error as Error)
     : handleError(reply, 500, message, code, error as Error);
 
 export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
