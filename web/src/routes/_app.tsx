@@ -65,8 +65,22 @@ function AppLayout() {
   const { status, user, recovering, refresh } = useAuth()
   const reduced = useReducedMotion()
   // The Add-to-Home-Screen guide. Active only on a mobile browser that isn't installed yet and
-  // hasn't been skipped; takes over in place of the 3D console (so Three.js never inits behind it).
+  // hasn't been skipped; it sits as an opaque overlay over the console.
   const gate = useInstallGate()
+  // Warm the 3D console underneath the gate so dismissing it ("Continue in browser") reveals the
+  // device instantly instead of cold-building Three.js on tap. With the gate up we defer the build a
+  // beat so the gate paints snappily first, then it warms in the background; with no gate it mounts
+  // right away. Sticky: once mounted it stays, so toggling the gate never thrashes the WebGL scene.
+  const [mountConsole, setMountConsole] = useState(false)
+  useEffect(() => {
+    if (mountConsole) return
+    if (!gate.active) {
+      setMountConsole(true)
+      return
+    }
+    const t = window.setTimeout(() => setMountConsole(true), 300)
+    return () => window.clearTimeout(t)
+  }, [gate.active, mountConsole])
   const [showLoadingScreen, setShowLoadingScreen] = useState(true)
   const [loadingScreenLeaving, setLoadingScreenLeaving] = useState(false)
   const [customizePrepared, setCustomizePrepared] = useState(false)
@@ -397,9 +411,7 @@ function AppLayout() {
   return (
     <AchievementDetailProvider>
       <AppFrame bg={backdrop} dimmed={phase === 'landing' && !restoring}>
-        {gate.active ? (
-          <InstallGate {...gate} />
-        ) : (
+        {mountConsole && (
         <ConsoleControlsProvider>
           <Console3DRoute
             theme={savedTheme.theme}
@@ -464,6 +476,7 @@ function AppLayout() {
           )}
         </ConsoleControlsProvider>
         )}
+        {gate.active && <InstallGate {...gate} />}
       </AppFrame>
       {loadingScreen}
       {/* Shown only while healing a re-armed session in place (devnet refresh). Never appears on a
