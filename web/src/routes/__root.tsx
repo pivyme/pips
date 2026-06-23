@@ -43,6 +43,14 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
       { name: 'darkreader-lock', content: '' },
       { name: 'theme-color', content: '#000000' },
 
+      // Standalone / "Add to Home Screen": a home-screen launch opens full-screen with no browser
+      // chrome. black-translucent goes edge-to-edge under the status bar (the app already pads with
+      // env(safe-area-inset-*)). The InstallGate guide walks users into installing.
+      { name: 'apple-mobile-web-app-capable', content: 'yes' },
+      { name: 'mobile-web-app-capable', content: 'yes' },
+      { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
+      { name: 'apple-mobile-web-app-title', content: 'PIPS' },
+
       // Open Graph (Telegram, iMessage, Discord, Facebook, Slack)
       { property: 'og:site_name', content: 'PIPS' },
       { property: 'og:title', content: OG_TITLE },

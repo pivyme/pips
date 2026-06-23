@@ -15,12 +15,14 @@ import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { MenuDrawer } from '@/components/console/MenuDrawer'
 import { CustomizeStudio } from '@/components/console/CustomizeStudio'
 import { LandingOverlay, AttractScreen } from '@/components/console/LandingOverlay'
+import { InstallGate } from '@/components/InstallGate'
 import { UsernameScreen, ThemePicker, WelcomeScreen } from '@/components/console/Onboarding'
 import { DEFAULT_THEME_ID, THEME_BY_ID, themeBackdrop, useConsoleTheme } from '@/components/console/themes'
 import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
 import { api } from '@/lib/api'
 import { useAuth, loadToken } from '@/lib/auth'
+import { useInstallGate } from '@/lib/platform'
 import { isDemo } from '@/lib/demo'
 import { refreshDeployedConfig } from '@/lib/sui/config'
 import { env } from '@/env'
@@ -62,6 +64,9 @@ export const Route = createFileRoute('/_app')({ component: AppLayout })
 function AppLayout() {
   const { status, user, recovering, refresh } = useAuth()
   const reduced = useReducedMotion()
+  // The Add-to-Home-Screen guide. Active only on a mobile browser that isn't installed yet and
+  // hasn't been skipped; takes over in place of the 3D console (so Three.js never inits behind it).
+  const gate = useInstallGate()
   const [showLoadingScreen, setShowLoadingScreen] = useState(true)
   const [loadingScreenLeaving, setLoadingScreenLeaving] = useState(false)
   const [customizePrepared, setCustomizePrepared] = useState(false)
@@ -392,6 +397,9 @@ function AppLayout() {
   return (
     <AchievementDetailProvider>
       <AppFrame bg={backdrop} dimmed={phase === 'landing' && !restoring}>
+        {gate.active ? (
+          <InstallGate {...gate} />
+        ) : (
         <ConsoleControlsProvider>
           <Console3DRoute
             theme={savedTheme.theme}
@@ -455,6 +463,7 @@ function AppLayout() {
             </MenuDrawer>
           )}
         </ConsoleControlsProvider>
+        )}
       </AppFrame>
       {loadingScreen}
       {/* Shown only while healing a re-armed session in place (devnet refresh). Never appears on a

@@ -1,7 +1,9 @@
 {
+  "id": "/",
   "short_name": "PIPS",
   "name": "PIPS",
   "description": "The world's first virtual gamified trading console. Built for fun and money.",
+  "categories": ["games", "finance"],
   "icons": [
     {
       "src": "/favicon.ico",
@@ -28,7 +30,10 @@
     }
   ],
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone"],
+  "orientation": "portrait",
   "theme_color": "#000000",
   "background_color": "#000000"
 }
