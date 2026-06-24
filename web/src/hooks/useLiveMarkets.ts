@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { api, type MarketDTO } from '@/lib/api'
 
-// Shared market feed for the games (lucky, range). The chain's oracle ladder rolls every few seconds
+// Shared market feed for the games (lucky, range, moonshot). The chain's oracle ladder rolls every few seconds
 // and the operator can briefly fall behind, so `live` flickers off for a moment now and then. Three
 // things keep that from flashing the scary "Market catching up" screen at the player:
 //

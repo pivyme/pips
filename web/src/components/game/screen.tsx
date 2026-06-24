@@ -76,7 +76,13 @@ export function ScreenOverlay({
   children: ReactNode
 }) {
   return (
-    <div className="absolute inset-0 z-20 flex flex-col gap-4 overflow-y-auto bg-black/96 px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-[calc(var(--screen-rim,24px)+2.25rem)] text-left">
+    <div
+      data-screen-overlay
+      // pb clears the rim AND the occluded bottom-right body (--screen-notch): without it the last
+      // section runs under the knob/PLAY corner and its right edge is hidden. The auto-fit (ConsoleCanvas
+      // recomputeScreenFit) measures this and shrinks the whole panel so every line stays in the clear.
+      className="absolute inset-0 z-20 flex flex-col gap-4 overflow-y-auto bg-black/96 px-[var(--screen-rim,24px)] pb-[calc(var(--screen-rim,24px)+var(--screen-notch,0px))] pt-[calc(var(--screen-rim,24px)+2.25rem)] text-left"
+    >
       <div className="flex shrink-0 items-start justify-between gap-3">
         <div>
           <div className="font-mono text-[20px] font-bold uppercase tracking-[0.16em] text-brand-500">{title}</div>

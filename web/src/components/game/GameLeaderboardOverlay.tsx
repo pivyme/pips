@@ -25,11 +25,14 @@ export function GameLeaderboardOverlay({ game, title }: { game: Game; title: str
   const rekt = (board?.rekt ?? []).slice(0, PER_BOARD)
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col gap-4 bg-black/95 px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-[calc(var(--screen-rim,24px)+2.25rem)] text-left">
+    // pb clears the rim AND the occluded bottom-right body (--screen-notch). Content is natural height
+    // (no inner overflow-hidden) so the auto-fit (ConsoleCanvas recomputeScreenFit) can measure both
+    // boards and shrink the whole panel to fit, instead of the lower rows clipping off the bottom.
+    <div data-screen-overlay className="absolute inset-0 z-20 flex flex-col gap-3 bg-black/95 px-[var(--screen-rim,24px)] pb-[calc(var(--screen-rim,24px)+var(--screen-notch,0px))] pt-[calc(var(--screen-rim,24px)+2.25rem)] text-left">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="font-mono text-[20px] font-bold uppercase tracking-[0.16em] text-brand-500">{title}</div>
-          <div className="mt-1.5 font-mono text-[12px] font-bold uppercase tracking-[0.14em] text-text-3">Leaderboard</div>
+          <div className="font-mono text-[19px] font-bold uppercase tracking-[0.16em] text-brand-500">{title}</div>
+          <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-text-3">Leaderboard</div>
         </div>
         <span className="mt-1 shrink-0 text-right font-mono text-[10px] uppercase tracking-[0.12em] text-text-3">Press again to close</span>
       </div>
@@ -40,7 +43,7 @@ export function GameLeaderboardOverlay({ game, title }: { game: Game; title: str
           ))}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+        <div className="flex flex-col gap-3">
           <Board label="Top Gainers" tone="up" rows={gainers} empty="No winners yet. Bank a profit to take #1." />
           <Board label="Top Rekt" tone="down" rows={rekt} empty="Nobody's down yet. Keep it that way." />
         </div>
@@ -53,18 +56,18 @@ function Board({ label, tone, rows, empty }: { label: string; tone: 'up' | 'down
   const amount = tone === 'up' ? 'text-up' : 'text-down'
   return (
     <div className="flex max-w-[92%] flex-col">
-      <div className="mb-2 flex items-center gap-2 border-b border-line-strong pb-2">
+      <div className="mb-1.5 flex items-center gap-2 border-b border-line-strong pb-1.5">
         <span className={cnm('h-2.5 w-2.5', tone === 'up' ? 'bg-up' : 'bg-down')} />
-        <span className="font-mono text-[14px] font-bold uppercase tracking-[0.16em] text-text-2">{label}</span>
+        <span className="font-mono text-[13px] font-bold uppercase tracking-[0.16em] text-text-2">{label}</span>
       </div>
       {rows.length === 0 ? (
-        <div className="py-1.5 text-[13px] leading-snug text-text-3">{empty}</div>
+        <div className="py-1 text-[13px] leading-snug text-text-3">{empty}</div>
       ) : (
         <div className="flex flex-col font-mono">
           {rows.map((r) => (
             <div
               key={r.rank}
-              className={cnm('flex items-center gap-3 py-1.5 text-[15px] tracking-[0.04em]', r.isYou ? 'text-brand-500' : 'text-text-2')}
+              className={cnm('flex items-center gap-3 py-1 text-[14px] tracking-[0.04em]', r.isYou ? 'text-brand-500' : 'text-text-2')}
             >
               <span className="tnum w-6 text-text-3">{r.rank}</span>
               <span className="flex-1 truncate font-bold">{displayHandle(r)}</span>

@@ -2087,7 +2087,12 @@ export default function ConsoleCanvas({
         const root = content.firstElementChild as HTMLElement | null
         const r1 = content.clientHeight ? content.scrollHeight / content.clientHeight : 1
         const r2 = root && root.clientHeight ? root.scrollHeight / root.clientHeight : 1
-        const ratio = Math.max(r1, r2, 1)
+        // An open in-screen overlay (How to play, ranks) is absolute + scrollable, so its overflow
+        // never reaches the root above. Measure it directly so a short one (the rules) scales to fit
+        // fully instead of hiding its last lines; a long list still scrolls once we hit the floor.
+        const overlay = content.querySelector('[data-screen-overlay]') as HTMLElement | null
+        const r3 = overlay && overlay.clientHeight ? overlay.scrollHeight / overlay.clientHeight : 1
+        const ratio = Math.max(r1, r2, r3, 1)
         if (ratio <= 1.005) break
         screenFitScale = screenFitScale / (ratio * 1.01)
         projectScreenLayer()

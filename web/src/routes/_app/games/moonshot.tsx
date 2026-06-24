@@ -28,11 +28,12 @@ import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
 import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
-// MOONSHOT. Call the direction (LONG / SHORT) with the right button, dial the REACH (how far out the
-// target sits = the multiple) with the knob, set the bet, then PLAY: a real Predict binary mint at the
-// solved strike, ride the live value on the chart with a TARGET line, and CASH OUT early or hold to the
-// buzzer for a spread-free WIN/MISS. It is the directional twin of Lucky (same binary mint/redeem path)
-// but YOU pick the side and reach instead of the reel dealing them. Every round is a real position; demo
+// MOONSHOT. The whole call lives on the knob: scroll UP to go LONG, DOWN to go SHORT, and the further
+// you scroll the bigger the target and the multiple (the sign is the side, the distance is the REACH).
+// The right button switches the market, the number wheel sets the bet, then PLAY: a real Predict binary
+// mint at the solved strike, ride the live value on the chart with a TARGET line, and CASH OUT early or
+// hold to the buzzer for a spread-free WIN/MISS. It is the directional twin of Lucky (same binary
+// mint/redeem path) but YOU aim it instead of the reel dealing it. Every round is a real position; demo
 // mode runs the same flow on the in-memory model. The left button is the info rotary (HOW TO / RANKS),
 // exactly like Range. Teenage Engineering language throughout (docs/SCREEN.md): flat black, mono labels,
 // one amber accent, green/red for facts.
@@ -41,14 +42,21 @@ export const Route = createFileRoute('/_app/games/moonshot')({ component: Moonsh
 // Stake ladder, scrubbed on the number wheel, shared with Lucky + Range + the home wheel (same key).
 const STAKE_LADDER = [1, 5, 10, 25, 50, 100] as const
 const STAKE_KEY = 'pips_stake_idx'
-// REACH ladder: the target multiple the knob dials. Bigger reach = a target further out = longer odds,
-// a bigger multiple. The solver clamps to the live ask, so a 25x lands on the real mintable ceiling.
-const REACH_LADDER = [2, 3, 5, 10, 25] as const
-const SIDE_KEY = 'pips_moonshot_side'
-const REACH_KEY = 'pips_moonshot_reach'
-// Preferred asset order: Moonshot pins one stable top-liquidity market (no per-shot asset switch, the
-// right button is the direction toggle), only re-picking if the current one drops offline.
+// AIM ladder = the knob. Scroll up to go LONG, down to go SHORT: the index climbs bottom->top, so the
+// deepest SHORT sits at the floor, the deepest LONG at the ceiling, and crossing the middle flips the
+// side. The sign is the direction, abs() is the REACH (how far out the target sits = the multiple).
+// The solver clamps to the live ask, so the far rungs land on the real mintable ceiling.
+const AIM_LADDER = [-25, -10, -5, -3, -2, 2, 3, 5, 10, 25] as const
+const AIM_KEY = 'pips_moonshot_aim'
+const DEFAULT_AIM_IDX = 7 // LONG x5
+// Preferred asset order for the first pin; the right button cycles the live markets from there.
 const PREFERRED = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
+// Coin marks for the asset cap (token display). Falls back to the ticker text where there is no logo.
+const TOKEN_LOGOS: Record<string, string> = {
+  BTC: '/assets/images/coins/btc-logo.png',
+  ETH: '/assets/images/coins/eth-logo.png',
+  SUI: '/assets/images/coins/sui-logo.png',
+}
 
 // Preview TARGET placement (pre-play only): the same vol + reach->quantile mapping the backend solver
 // uses, so the aim line sits where the real strike will land. On open it snaps to the true solved strike.
@@ -90,8 +98,7 @@ export function MoonshotScreen() {
   const qc = useQueryClient()
 
   const [stakeIdx, setStakeIdx] = useLocalStorage(STAKE_KEY, 2)
-  const [reachIdx, setReachIdx] = useLocalStorage(REACH_KEY, 2) // default 5x
-  const [side, setSide] = useLocalStorage<Side>(SIDE_KEY, 'up')
+  const [aimIdx, setAimIdx] = useLocalStorage(AIM_KEY, DEFAULT_AIM_IDX)
   const [pinnedAsset, setPinnedAsset] = useState<string | null>(null)
 
   const [phase, setPhase] = useState<Phase>('idle')
@@ -127,7 +134,11 @@ export function MoonshotScreen() {
   const asset =
     play && phase !== 'idle' ? (play.params as LuckyParams).asset : (pinnedAsset ?? liveAssets[0] ?? PREFERRED[0])
 
-  const reach = REACH_LADDER[Math.min(reachIdx, REACH_LADDER.length - 1)]
+  // The scroll wheel is the whole call: the sign is the side (LONG above the middle, SHORT below), the
+  // distance from the middle is the REACH multiple.
+  const aim = AIM_LADDER[Math.min(aimIdx, AIM_LADDER.length - 1)]
+  const side: Side = aim >= 0 ? 'up' : 'down'
+  const reach = Math.abs(aim)
 
   // BET clamps to what the balance affords, so the wheel never offers an unplayable bet.
   const balance = parseFloat(user?.balance ?? '0') || 0
@@ -366,13 +377,32 @@ export function MoonshotScreen() {
     setPhase('idle')
   }, [])
 
-  // Flip the called direction. Locked while a round is live (you can't change an open position's side).
-  const toggleSide = useCallback(() => {
+  // The knob sets the whole call. Fire the flip sting only when the side actually crosses the middle
+  // (LONG <-> SHORT); a plain reach step within a side just clicks the knob's own detent.
+  const setAim = useCallback(
+    (next: number) => {
+      const prev = AIM_LADDER[Math.min(aimIdx, AIM_LADDER.length - 1)]
+      const now = AIM_LADDER[Math.min(next, AIM_LADDER.length - 1)]
+      if ((prev >= 0) !== (now >= 0)) {
+        moonshotFlip()
+        haptic('rigid')
+      }
+      setAimIdx(next)
+    },
+    [aimIdx, setAimIdx],
+  )
+
+  // The right cap switches the market you're calling. Locked while a round is live (the open position's
+  // asset can't change), and a no-op with nothing else to switch to.
+  const cycleAsset = useCallback(() => {
     if (phase !== 'idle' && phase !== 'placing') return
-    haptic('rigid')
-    moonshotFlip()
-    setSide((s) => (s === 'up' ? 'down' : 'up'))
-  }, [phase, setSide])
+    if (liveAssets.length < 2) return
+    haptic('selection')
+    setPinnedAsset((cur) => {
+      const i = cur ? liveAssets.indexOf(cur) : -1
+      return liveAssets[(i + 1) % liveAssets.length]
+    })
+  }, [phase, liveAssets])
 
   // The left cap is the same info rotary as Range: game -> how to -> leaderboard -> game. The label
   // names where the NEXT press lands.
@@ -422,15 +452,20 @@ export function MoonshotScreen() {
   const resultColor: 'up' | 'down' = resultPositive ? 'up' : 'down'
 
   useConsoleControls({
+    // The knob is the whole call: scroll up for LONG, down for SHORT, further out for a bigger reach.
     knob: {
-      label: 'REACH',
+      label: 'AIM',
       min: 0,
-      max: REACH_LADDER.length - 1,
+      max: AIM_LADDER.length - 1,
       step: 1,
-      value: reachIdx,
-      onChange: setReachIdx,
-      format: (v) => `x${REACH_LADDER[Math.min(v, REACH_LADDER.length - 1)]}`,
+      value: aimIdx,
+      onChange: setAim,
+      format: (v) => {
+        const a = AIM_LADDER[Math.min(v, AIM_LADDER.length - 1)]
+        return `${a > 0 ? 'L' : 'S'}${Math.abs(a)}x`
+      },
     },
+    // The number wheel keeps the bet, same as Lucky + Range.
     numberWheel: {
       label: 'DUSDC',
       min: 0,
@@ -443,13 +478,16 @@ export function MoonshotScreen() {
     action1: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
       : { label: infoLabel, color: 'neutral', onPress: rotateInfo },
-    // The right cap is the direction toggle: shows the called side in its color, flips on press. Inert
-    // (shows the locked side) once a round is live, since an open position's side can't change.
+    // The right cap switches the market (token display). A no-op once a round is live, since an open
+    // position's asset can't change, so it just reads the locked market.
     action2: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
-      : roundLive
-        ? { label: sideLabel((lp?.side ?? side)), color: (lp?.side ?? side) === 'up' ? 'up' : 'down', onPress: () => {} }
-        : { label: sideLabel(side), color: side === 'up' ? 'up' : 'down', onPress: toggleSide },
+      : {
+          label: asset,
+          color: 'neutral',
+          onPress: cycleAsset,
+          display: { mode: 'token', ticker: asset, logoSrc: TOKEN_LOGOS[asset] },
+        },
     main: isResult
       ? { label: 'CONTINUE', color: 'amber', onPress: dismissResult }
       : settling
@@ -555,7 +593,8 @@ export function MoonshotScreen() {
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Welcome</div>
                   <div className="text-[22px] font-extrabold uppercase leading-none tracking-[0.02em] text-text">Moonshot</div>
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
-                    Call a side, dial the reach, hit <span className="text-brand-500">PLAY</span>
+                    Scroll up <span className="text-up">LONG</span> or down <span className="text-down">SHORT</span>, hit{' '}
+                    <span className="text-brand-500">PLAY</span>
                   </div>
                 </>
               ) : (
@@ -682,18 +721,18 @@ function MoonshotResult({ play, streak }: { play: PlayDTO; streak: number }) {
 // HOW TO: a flat in-screen card of the rules. Plain terminology only, no banned words.
 function HowTo() {
   const lines: Array<[string, string]> = [
-    ['CALL', 'Pick a side. LONG wins if the price climbs past your target, SHORT if it falls past it.'],
-    ['REACH', 'Dial how far. A bigger reach sits further out, longer odds, a bigger multiple.'],
-    ['WIN', 'Land past your target at the buzzer to win bet × multiple. Only where it ends counts.'],
-    ['CASH OUT', 'Take the live value any time before the buzzer. Ahead? Lock it in before it can turn.'],
+    ['AIM', 'Knob up to go LONG, down to go SHORT. Further out, bigger target and multiple.'],
+    ['MARKET', 'Right button switches the market you call.'],
+    ['WIN', 'End past your target at the buzzer to win bet × multiple.'],
+    ['CASH OUT', 'Take the live value any time before the buzzer.'],
   ]
   return (
     <ScreenOverlay title="How to play">
-      <div className="flex w-full flex-col gap-4">
+      <div className="flex w-full flex-col gap-3">
         {lines.map(([k, v]) => (
           <div key={k}>
-            <div className="font-mono text-[16px] font-bold uppercase tracking-[0.12em] text-text">{k}</div>
-            <div className="mt-1 text-[15px] leading-snug text-text-2">{v}</div>
+            <div className="font-mono text-[13px] font-bold uppercase tracking-[0.12em] text-text">{k}</div>
+            <div className="mt-0.5 text-[13px] leading-snug text-text-2">{v}</div>
           </div>
         ))}
       </div>

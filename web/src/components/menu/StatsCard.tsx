@@ -4,14 +4,13 @@ import type { ReactNode } from 'react'
 import type { UserStatsDTO } from '@/lib/api'
 import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
-import { formatExactDecimal } from '@/utils/format'
+import { formatCompactCount, formatCompactMoney } from '@/utils/format'
 
 // The shareable trader card, styled as a little PIPS handheld: a bright amber bezel with a
 // branded screen window sunk into it. Shown on the menu home (tap to open the share detail) and
 // on the Stats screen (where Share renders the same card to a PNG via shareCard.ts). Keep this and
 // the canvas renderer in sync. Presentational, no data fetching.
 
-const commas = (n: number): string => Math.round(n).toLocaleString('en-US')
 const shortAddr = (a: string): string => (a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a)
 
 export function StatsCard({
@@ -50,12 +49,15 @@ export function StatsCard({
   }
 
   return (
-    <div className="trader-bezel overflow-hidden rounded-[26px] p-2.5">
+    // @container: the card sizes its text + padding off its OWN width (cqi), not the viewport, so it
+    // shrinks gracefully in a narrow drawer instead of the big win-rate + P&L numbers colliding. The
+    // clamp maxes match the original sizes, so at a normal width it looks exactly as before.
+    <div className="trader-bezel @container overflow-hidden rounded-[26px] p-2.5">
       <CardHeader />
-      <div className="trader-screen relative overflow-hidden rounded-[18px] p-5">
+      <div className="trader-screen relative overflow-hidden rounded-[18px] p-[clamp(13px,5cqi,20px)]">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="truncate text-2xl font-extrabold leading-tight text-white">{displayName}</div>
+            <div className="truncate text-[clamp(17px,6cqi,24px)] font-extrabold leading-tight text-white">{displayName}</div>
             {(email || address) && (
               <div className="mt-1 flex max-w-full items-center gap-2 text-xs">
                 {email && (
@@ -95,23 +97,23 @@ export function StatsCard({
           )}
         </div>
 
-        <div className="mt-5 flex items-end justify-between">
-          <div>
+        <div className="mt-[clamp(12px,5cqi,20px)] flex items-end justify-between gap-3">
+          <div className="min-w-0">
             <Label>Win rate</Label>
-            <div className="text-[52px] font-extrabold leading-none text-brand-400">{winPct}%</div>
+            <div className="text-[clamp(32px,13cqi,52px)] font-extrabold leading-none text-brand-400">{winPct}%</div>
           </div>
-          <div className="text-right">
+          <div className="min-w-0 text-right">
             <Label>Net P&L</Label>
-            <div className={cnm('tnum text-3xl font-extrabold leading-none', net >= 0 ? 'text-up' : 'text-down')}>
-              {net >= 0 ? '+' : '-'}${formatExactDecimal(stats.netPnl, { absolute: true })}
+            <div className={cnm('tnum truncate text-[clamp(18px,7.5cqi,30px)] font-extrabold leading-none', net >= 0 ? 'text-up' : 'text-down')}>
+              {net >= 0 ? '+' : '-'}${formatCompactMoney(stats.netPnl)}
             </div>
           </div>
         </div>
 
         <div className="mt-4 grid grid-cols-3 divide-x divide-white/[0.08] overflow-hidden rounded-xl border border-white/[0.07] bg-black/40">
-          <Cell label="Plays" value={commas(stats.gamesPlayed)} />
-          <Cell label="Volume" value={`$${formatExactDecimal(stats.totalVolume)}`} />
-          <Cell label="Streak" value={commas(Math.max(0, stats.currentStreak))} />
+          <Cell label="Plays" value={formatCompactCount(stats.gamesPlayed)} />
+          <Cell label="Volume" value={`$${formatCompactMoney(stats.totalVolume)}`} />
+          <Cell label="Streak" value={formatCompactCount(Math.max(0, stats.currentStreak))} />
         </div>
       </div>
     </div>
@@ -138,9 +140,9 @@ function Label({ children }: { children: ReactNode }) {
 
 function Cell({ label, value }: { label: string; value: string }): ReactNode {
   return (
-    <div className="px-3 py-2.5">
+    <div className="min-w-0 px-[clamp(8px,3cqi,12px)] py-2.5">
       <div className="text-[10px] font-bold uppercase tracking-[0.06em] text-white/55">{label}</div>
-      <div className="tnum mt-1 text-[17px] font-extrabold text-white">{value}</div>
+      <div className="tnum mt-1 truncate text-[clamp(13px,4.3cqi,17px)] font-extrabold text-white">{value}</div>
     </div>
   )
 }

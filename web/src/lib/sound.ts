@@ -1035,43 +1035,47 @@ export function rangeLose(): void {
   }
 }
 
-// --- Moonshot voices. An ignition-countdown identity: urgent but controlled, its own world clear of
-// Lucky's funk and Range's four-on-the-floor techno. G minor at 138 with a half-time *swagger*, a
-// syncopated punchy kick (never on every beat), an octave-popping saw bass, a sparse resonant pluck riff
-// that leaves space (tension, not busy), and a noise clap on the backbeat. Around it: a launch "fire", a
-// quick direction-flip tick, and the win/cash-out/miss resolves (the win lifts G minor into G major for
-// the payoff). Same synth bus + quality bar as the others.
+// --- Moonshot voices. A driving, euphoric synth engine, its own world clear of Lucky's funk and Range's
+// dark tense techno. Four-on-the-floor drive, a pumping offbeat bass, big detuned supersaw chord pads for
+// the wide euphoric body, and a continuous flowing supersaw ARP as the hook (smooth and rich, not the old
+// sparse sproingy pluck). G minor at 150, intense and uplifting, but complete and satisfying on every loop.
+// Around it: a launch "fire", a direction-flip tick, and the win/cash-out/miss resolves.
 
-const MOON_TEMPO = 138
+const MOON_TEMPO = 150
 const MOON_STEP = 60 / MOON_TEMPO / 4 // sixteenth-note length, seconds
 const MOON_STEPS = 64 // 4 bars
-// Gm - Eb - F - D (i - VI - VII - V): the D's F# leading tone keeps pulling the tension home to Gm.
+const MOON_BAR_LEN = MOON_STEP * 16 // one bar, seconds (how long the pad holds)
+// Gm - Eb - Bb - F (i - VI - III - VII): a warm, uplifting circular loop that never touches the tense V,
+// so it drives without straining. F (bVII) steps right back up to Gm at the loop point.
+// pad = the supersaw chord voicing (root up to the octave); arp = the five hook tones, low to high.
 const MOON_BARS = [
-  { bass: 98.0, arp: [233.08, 293.66, 392.0] }, // Gm  (Bb3 D4 G4)
-  { bass: 77.78, arp: [311.13, 392.0, 466.16] }, // Eb  (Eb4 G4 Bb4)
-  { bass: 87.31, arp: [349.23, 440.0, 523.25] }, // F   (F4 A4 C5)
-  { bass: 73.42, arp: [293.66, 369.99, 440.0] }, // D   (D4 F#4 A4)
+  { bass: 98.0, pad: [196.0, 233.08, 293.66, 392.0], arp: [293.66, 392.0, 466.16, 587.33, 783.99] }, // Gm
+  { bass: 77.78, pad: [155.56, 196.0, 233.08, 311.13], arp: [311.13, 392.0, 466.16, 622.25, 783.99] }, // Eb
+  { bass: 116.54, pad: [233.08, 293.66, 349.23, 466.16], arp: [233.08, 293.66, 349.23, 466.16, 587.33] }, // Bb
+  { bass: 87.31, pad: [174.61, 220.0, 261.63, 349.23], arp: [349.23, 440.0, 523.25, 698.46, 880.0] }, // F
 ]
-// A syncopated, off-kilter kick (1, the "and" of 2, the "a" of 3): deliberate and tense, not four-on-floor.
-const MOON_KICKS = new Set([0, 6, 11])
-// The riff fires only on these steps (lots of rest = suspense): a rising 3-note ping per bar.
-const MOON_RIFF: Record<number, number> = { 0: 0, 4: 1, 7: 2, 10: 1 }
+// Four-on-the-floor: the relentless drive under everything.
+const MOON_KICKS = new Set([0, 4, 8, 12])
+// The hook: a bouncing up-down arp figure over the five chord tones, one note per sixteenth. Same shape
+// every bar, so the harmony does the moving and the figure stays something you lock onto, not a scale run.
+const MOON_ARP = [0, 2, 4, 2, 1, 3, 4, 3, 0, 2, 4, 2, 1, 2, 3, 4]
 
 function moonKick(ac: AudioContext, dest: AudioNode, t: number): void {
   const o = ac.createOscillator()
   const g = ac.createGain()
   o.type = 'sine'
-  o.frequency.setValueAtTime(160, t)
-  o.frequency.exponentialRampToValueAtTime(46, t + 0.12)
+  o.frequency.setValueAtTime(170, t)
+  o.frequency.exponentialRampToValueAtTime(48, t + 0.11)
   g.gain.setValueAtTime(0.0001, t)
-  g.gain.exponentialRampToValueAtTime(0.2, t + 0.006)
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2)
+  g.gain.exponentialRampToValueAtTime(0.22, t + 0.005)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.19)
   o.connect(g).connect(dest)
   o.start(t)
-  o.stop(t + 0.22)
+  o.stop(t + 0.21)
 }
 
-// An octave-popping saw bass through a low lowpass plus a sine sub: the urgent low-end drive.
+// The pumping offbeat bass: a punchy saw through a low lowpass plus a sine sub, short and tight. It lands
+// on the "and" of every beat, filling the gaps between the kicks so the low end never stops moving.
 function moonBass(ac: AudioContext, dest: AudioNode, freq: number, t: number): void {
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -1079,23 +1083,82 @@ function moonBass(ac: AudioContext, dest: AudioNode, freq: number, t: number): v
   o.type = 'sawtooth'
   o.frequency.setValueAtTime(freq, t)
   f.type = 'lowpass'
-  f.frequency.value = 540
+  f.frequency.value = 620
   g.gain.setValueAtTime(0.0001, t)
-  g.gain.exponentialRampToValueAtTime(0.1, t + 0.01)
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.17)
+  g.gain.exponentialRampToValueAtTime(0.11, t + 0.008)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16)
   o.connect(f).connect(g).connect(dest)
   o.start(t)
-  o.stop(t + 0.19)
+  o.stop(t + 0.18)
   const sub = ac.createOscillator()
   const sg = ac.createGain()
   sub.type = 'sine'
   sub.frequency.setValueAtTime(freq, t)
   sg.gain.setValueAtTime(0.0001, t)
-  sg.gain.exponentialRampToValueAtTime(0.1, t + 0.01)
-  sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.16)
+  sg.gain.exponentialRampToValueAtTime(0.09, t + 0.01)
+  sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.15)
   sub.connect(sg).connect(dest)
   sub.start(t)
-  sub.stop(t + 0.18)
+  sub.stop(t + 0.17)
+}
+
+// Big detuned-saw PAD: two saws a few cents apart through a lowpass, slow swell, held across the bar, long
+// release. The wide euphoric chord bed the arp rides on. Spawned as a chord at the top of each bar.
+function moonPad(ac: AudioContext, dest: AudioNode, freq: number, t: number, dur: number): void {
+  const o = ac.createOscillator()
+  const d = ac.createOscillator()
+  const g = ac.createGain()
+  const f = ac.createBiquadFilter()
+  o.type = 'sawtooth'
+  d.type = 'sawtooth'
+  o.frequency.setValueAtTime(freq, t)
+  d.frequency.setValueAtTime(freq, t)
+  o.detune.setValueAtTime(-10, t)
+  d.detune.setValueAtTime(10, t) // a few cents apart = the wide supersaw shimmer
+  f.type = 'lowpass'
+  f.Q.value = 1
+  f.frequency.setValueAtTime(900, t)
+  f.frequency.linearRampToValueAtTime(1700, t + dur * 0.5) // a gentle breathing open
+  f.frequency.linearRampToValueAtTime(1100, t + dur)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.028, t + 0.08) // slow swell in
+  g.gain.setValueAtTime(0.028, t + dur * 0.6)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur) // long release out
+  o.connect(f)
+  d.connect(f)
+  f.connect(g).connect(dest)
+  o.start(t)
+  o.stop(t + dur + 0.06)
+  d.start(t)
+  d.stop(t + dur + 0.06)
+}
+
+// The hook: a bright detuned-saw arp pluck. Two saws through a lowpass with a touch of resonance for the
+// classic trance edge, fast attack and a short decay so each sixteenth is articulate but the line flows.
+function moonArp(ac: AudioContext, dest: AudioNode, freq: number, t: number): void {
+  const o = ac.createOscillator()
+  const d = ac.createOscillator()
+  const g = ac.createGain()
+  const f = ac.createBiquadFilter()
+  o.type = 'sawtooth'
+  d.type = 'sawtooth'
+  o.frequency.setValueAtTime(freq, t)
+  d.frequency.setValueAtTime(freq, t)
+  o.detune.setValueAtTime(-7, t)
+  d.detune.setValueAtTime(7, t)
+  f.type = 'lowpass'
+  f.frequency.value = 3000
+  f.Q.value = 2.5
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.04, t + 0.004)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14)
+  o.connect(f)
+  d.connect(f)
+  f.connect(g).connect(dest)
+  o.start(t)
+  o.stop(t + 0.16)
+  d.start(t)
+  d.stop(t + 0.16)
 }
 
 // The riff pluck: a resonant saw blip, bright but short, the tense "countdown" voice.
@@ -1116,7 +1179,7 @@ function moonPluck(ac: AudioContext, dest: AudioNode, freq: number, t: number): 
   o.stop(t + 0.18)
 }
 
-// Backbeat clap: a short wide noise burst through a bandpass, the half-time snap on beat 3.
+// Backbeat clap: a short wide noise burst through a bandpass, the snap on beats 2 and 4.
 function moonClap(ac: AudioContext, dest: AudioNode, t: number): void {
   const src = ac.createBufferSource()
   const f = ac.createBiquadFilter()
@@ -1126,11 +1189,11 @@ function moonClap(ac: AudioContext, dest: AudioNode, t: number): void {
   f.Q.value = 0.7
   f.frequency.value = 1900
   g.gain.setValueAtTime(0.0001, t)
-  g.gain.exponentialRampToValueAtTime(0.05, t + 0.005)
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12)
+  g.gain.exponentialRampToValueAtTime(0.055, t + 0.005)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13)
   src.connect(f).connect(g).connect(dest)
   src.start(t)
-  src.stop(t + 0.14)
+  src.stop(t + 0.15)
 }
 
 function moonHat(ac: AudioContext, dest: AudioNode, t: number, accent: boolean): void {
@@ -1148,18 +1211,20 @@ function moonHat(ac: AudioContext, dest: AudioNode, t: number, accent: boolean):
   src.stop(t + 0.05)
 }
 
-// One sixteenth of the loop: the syncopated kick, the backbeat clap, the octave-pop bass on the eighths,
-// the sparse resonant riff, and offbeat hats.
+// One sixteenth of the engine: the supersaw pad chord at the top of each bar, the four-on-the-floor kick,
+// the backbeat clap on 2 and 4, the pumping offbeat bass, the flowing arp hook every step, and 8th hats
+// with the offbeat accented (the trance "tss").
 function moonStepAt(ac: AudioContext, dest: AudioNode, step: number, t: number): void {
   const bar = Math.floor(step / 16) % MOON_BARS.length
   const chord = MOON_BARS[bar]
   const s = step % 16
+  if (s === 0) chord.pad.forEach((f, i) => moonPad(ac, dest, f, t + i * 0.008, MOON_BAR_LEN * 0.99))
   if (MOON_KICKS.has(s)) moonKick(ac, dest, t)
-  if (s === 8) moonClap(ac, dest, t) // backbeat
-  if (s % 2 === 0) moonBass(ac, dest, s % 8 === 4 ? chord.bass * 2 : chord.bass, t) // octave pop mid-bar
-  const riff = MOON_RIFF[s]
-  if (riff != null) moonPluck(ac, dest, chord.arp[riff], t)
-  if (s === 2 || s === 6 || s === 10 || s === 14) moonHat(ac, dest, t, s === 6 || s === 14)
+  if (s === 4 || s === 12) moonClap(ac, dest, t) // backbeat on beats 2 and 4
+  const offbeat = s === 2 || s === 6 || s === 10 || s === 14
+  if (offbeat) moonBass(ac, dest, chord.bass, t) // the pump, between the kicks
+  moonArp(ac, dest, chord.arp[MOON_ARP[s]], t) // the hook, every sixteenth
+  if (s % 2 === 0) moonHat(ac, dest, t, offbeat)
 }
 
 let moonTimer: ReturnType<typeof setInterval> | null = null
@@ -1176,7 +1241,7 @@ export function startMoonshotBgm(): void {
   if (ac.state === 'suspended') void ac.resume()
   const bus = ac.createGain()
   bus.gain.setValueAtTime(0.0001, ac.currentTime)
-  bus.gain.exponentialRampToValueAtTime(0.22, ac.currentTime + 0.45)
+  bus.gain.exponentialRampToValueAtTime(0.26, ac.currentTime + 0.5) // driving, present, but still a bed
   bus.connect(out(ac))
   moonBus = bus
   moonStepIdx = 0

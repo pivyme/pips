@@ -56,6 +56,38 @@ export const formatExactDecimal = (
   return `${sign}${whole}${fraction ? `.${fraction}` : ''}`
 }
 
+// Collapse anything >= 1000 to a short 1-decimal suffix (5152 -> "5.1k", 2.3M, 1B). Truncates
+// instead of rounding so a value never reads higher than it actually is. Returns null below 1k so
+// the caller keeps its own exact formatting. Magnitude only, the caller owns the sign and currency.
+const compactSuffix = (abs: number): string | null => {
+  if (abs < 1000) return null
+  for (const [base, suffix] of [
+    [1e9, 'B'],
+    [1e6, 'M'],
+    [1e3, 'k'],
+  ] as const) {
+    if (abs >= base) {
+      const scaled = Math.floor((abs / base) * 10) / 10
+      return `${Number.isInteger(scaled) ? scaled : scaled.toFixed(1)}${suffix}`
+    }
+  }
+  return null
+}
+
+// Compact money for tight card cells. Keeps small amounts exact (the usual 2dp) and collapses
+// anything >= 1k to a 1-decimal suffix to save space. Magnitude only (absolute), the caller
+// prepends the sign and the $. Input is the DUSDC string the API returns.
+export const formatCompactMoney = (value: string): string => {
+  const match = value.trim().replace(/,/g, '').match(/^([+-]?)(\d+)(?:\.(\d+))?$/)
+  if (!match) return '0.00'
+  const abs = parseFloat(`${match[2]}.${match[3] ?? '0'}`)
+  return compactSuffix(abs) ?? formatExactDecimal(value, { absolute: true })
+}
+
+// Compact integer count (plays, streak): >= 1k collapses to a suffix, else comma-grouped.
+export const formatCompactCount = (n: number): string =>
+  compactSuffix(Math.abs(Math.round(n))) ?? Math.round(n).toLocaleString('en-US')
+
 export const formatNumberToKMB = (num: number): string => {
   try {
     if (num >= 1_000_000_000) {

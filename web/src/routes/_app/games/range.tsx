@@ -183,10 +183,17 @@ export function RangeScreen() {
   // asset until the player chooses, and if their pick ever drops offline.
   const activeAsset =
     selectedAsset && assets.includes(selectedAsset) ? selectedAsset : assets[0]
-  // Pin the asset to the live play only while a round is actually running. A finished round's `play`
-  // lingers (the result overlay still reads it), so once we're back to idle the selector must follow
-  // the player's pick again, otherwise cycling the asset between rounds has no visible effect.
-  const asset = play && phase !== 'idle' ? play.params.asset : activeAsset
+  // Pin the asset to the live play only while THIS round is actually live on-chain (open / cashing /
+  // result). A finished round's `play` lingers (the result overlay still reads it) AND it stays set
+  // through the next PLAY press while the new mint resolves. Gating on `phase !== 'idle'` would snap
+  // the asset back to the previous round's coin the instant you pressed PLAY on a different one, which
+  // resubscribed the chart to the wrong asset, left the live-price ref stale, and poisoned the feed
+  // offset (flattening the chart). Gate on the live phases so after switching coins the selector +
+  // chart follow the new pick straight through placing.
+  const asset =
+    play && (phase === 'open' || phase === 'cashing' || phase === 'result')
+      ? play.params.asset
+      : activeAsset
 
   // BET clamps to what the balance affords, so the wheel never offers an unplayable bet.
   const balance = parseFloat(user?.balance ?? '0') || 0
@@ -242,7 +249,12 @@ export function RangeScreen() {
     const ec = livePriceRef.current
     if (Number.isFinite(entrySpotNum) && entrySpotNum > 0 && ec > 0) {
       offsetPlayId.current = play.id
-      feedOffsetRef.current = ec - entrySpotNum
+      // The offset only corrects a ~0.1% chart-vs-oracle sampling gap. If the chart price ref is
+      // momentarily from a just-switched asset (a cross-coin gap of tens of percent), refuse it: a
+      // bogus offset would shove the band/entry thousands off and flatten the whole frame. 2% is
+      // ~20x the real gap, so it cleanly separates a true sample gap from a stale wrong-asset read.
+      const gap = ec - entrySpotNum
+      feedOffsetRef.current = Math.abs(gap) <= entrySpotNum * 0.02 ? gap : 0
     }
   }
   const feedOffset = play && phase !== 'idle' ? feedOffsetRef.current : 0
@@ -470,6 +482,11 @@ export function RangeScreen() {
     setLockPrice(null)
     feedOffsetRef.current = 0
     offsetPlayId.current = null
+    // Drop the previous round's play before placing the next one. It lingers after a result (the
+    // overlay reads it), and leaving it set through 'placing' is what let the screen snap back to the
+    // old coin + stale band while the new mint resolved. A clean slate keeps placing on the new pick.
+    setPlay(null)
+    setLive(null)
     setOverlay('none')
     setPhase('placing')
     // Snapshot the UI numbers at the press so the console audit can diff them against the chain on open.

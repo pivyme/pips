@@ -2,7 +2,7 @@
 // falling back to a download when the Web Share API cannot take files. One canvas renderer so
 // the share image stays on-brand without pulling in a DOM-to-image dependency.
 import type { UserStatsDTO } from '@/lib/api'
-import { formatExactDecimal } from '@/utils/format'
+import { formatCompactCount, formatCompactMoney } from '@/utils/format'
 
 const W = 1080
 const H = 960
@@ -69,7 +69,6 @@ function drawCover(
 }
 
 const shortAddr = (a: string): string => (a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a)
-const commas = (n: number): string => Math.round(n).toLocaleString('en-US')
 
 async function renderCard(
   stats: UserStatsDTO,
@@ -226,7 +225,7 @@ async function renderCard(
   ctx.fillStyle = net >= 0 ? C.up : C.down
   ctx.font = `800 70px ${FONT}`
   ctx.fillText(
-    `${net >= 0 ? '+' : '-'}$${formatExactDecimal(stats.netPnl, { absolute: true })}`,
+    `${net >= 0 ? '+' : '-'}$${formatCompactMoney(stats.netPnl)}`,
     cr,
     y,
   )
@@ -243,9 +242,9 @@ async function renderCard(
   ctx.strokeStyle = 'rgba(255,255,255,0.07)'
   ctx.stroke()
   const cells: Array<[string, string]> = [
-    ['PLAYS', commas(stats.gamesPlayed)],
-    ['VOLUME', `$${formatExactDecimal(stats.totalVolume)}`],
-    ['STREAK', commas(Math.max(0, stats.currentStreak))],
+    ['PLAYS', formatCompactCount(stats.gamesPlayed)],
+    ['VOLUME', `$${formatCompactMoney(stats.totalVolume)}`],
+    ['STREAK', formatCompactCount(Math.max(0, stats.currentStreak))],
   ]
   cells.forEach(([label, value], i) => {
     const ex = cx + i * segW
