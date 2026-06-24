@@ -187,7 +187,7 @@ function StatsSection() {
   }
 
   return (
-    <StatsCard stats={stats} displayName={displayHandle(user)} address={user?.address ?? ''} onEdit={editHandle} />
+    <StatsCard stats={stats} displayName={displayHandle(user)} address={user?.address ?? ''} email={user?.email} onEdit={editHandle} />
   )
 }
 

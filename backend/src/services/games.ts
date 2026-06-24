@@ -250,7 +250,7 @@ export function parseStake(stake: string | number): bigint {
 
 export type ResolvedBinary = {
   kind: 'binary';
-  game: 'lucky';
+  game: 'lucky' | 'moonshot';
   market: Market;
   params: BinaryParams;
   asset: string;
@@ -361,6 +361,68 @@ export async function resolveLucky(stakeRaw: bigint, existingSeed?: string): Pro
       lastErr = e;
       // First failure re-routes to a fresh oracle (the old one likely expired mid-solve); a
       // second failure is real, surface it as a friendly price error.
+      if (attempt === 0) continue;
+      throw new PlayError('MINT_FAILED', `Could not price this play: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  throw new PlayError('MINT_FAILED', `Could not price this play: ${lastErr instanceof Error ? lastErr.message : lastErr}`);
+}
+
+// MOONSHOT: the player picks what the machine picks in Lucky. They call the direction (LONG = up,
+// SHORT = down) and dial a reach (the target multiple = how far OTM the strike sits = conviction);
+// the bet sizes it. Same honest binary path as Lucky: the §5 solver finds the grid strike whose real
+// live multiple matches the requested reach and sizes the quantity so cost ~= bet, so the multiple we
+// surface is one we can actually mint, clamped to the live ask bounds (a too-far reach lands on the
+// mintable ceiling). Settles at the routed oracle's expiry (~30s); early cash-out exits at the live mark.
+export async function resolveMoonshot(stakeRaw: bigint, asset: string, side: Side, reach: number): Promise<ResolvedBinary> {
+  if (side !== 'up' && side !== 'down') throw new PlayError('INVALID_PARAMS', 'Pick a direction');
+  if (!Number.isFinite(reach)) throw new PlayError('INVALID_PARAMS', 'Pick a reach');
+  // Clamp the dialed reach into the reel's reachable band (2x floor, 25x lotto). The solver clamps to
+  // the live ask on top of this, so a wild request still mints at the honest mintable ceiling.
+  const tier = Math.max(2, Math.min(25, reach));
+  if (!liveAssets().includes(asset)) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
+
+  // Route to the oracle expiring nearest the round target and solve in a few batched round trips. Mirrors
+  // resolveLucky's loop: the first failure re-routes to a fresh oracle (the old one likely expired
+  // mid-solve), a second is a real price error.
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const market = roundOracle(asset);
+    if (!market) throw new PlayError('MARKET_UNAVAILABLE', `No live ${asset} market right now`);
+    const g = gridOf(market);
+    const preview: BatchPreviewFn = async (probes) => {
+      const amts = await previewBinaryBatch(market.oracleId, market.expiryMs, side, probes);
+      return amts.map((a) => (a.cost > 0n ? a : null));
+    };
+    try {
+      const cacheKey = `${market.oracleId}:${side}`;
+      const t0 = now();
+      const curve = getFreshCurve(cacheKey, t0);
+      const atm1e9 = market.spot1e9 ? BigInt(market.spot1e9) : undefined;
+      // Floor the strike a minimum fraction off spot so even a 2x reach is a real, visible move and the
+      // TARGET line never lands on top of ENTRY (same gate Lucky uses).
+      const minOffset1e9 = atm1e9 ? (atm1e9 * BigInt(Math.round(LUCKY_MIN_TARGET_FRAC * 1e9))) / FLOAT_SCALING : undefined;
+      const solution = await solveStrike({ grid: g, side, tierMultiplier: tier, betRaw: stakeRaw, preview, curve, atm1e9, minOffset1e9, analyticSize: true });
+      if (!curve) putCurve(cacheKey, solution.curve, t0);
+      const duration = Math.max(1, Math.round((market.expiryMs - now()) / 1000));
+      return {
+        kind: 'binary',
+        game: 'moonshot',
+        market,
+        params: { oracleId: market.oracleId, expiryMs: market.expiryMs, strike1e9: solution.strike1e9, side, quantity: solution.quantity },
+        asset,
+        side,
+        tier: solution.achievedTier,
+        duration,
+        strikeDisplay: fmt1e9(solution.strike1e9),
+        entrySpot: market.spot1e9 ? fmt1e9(BigInt(market.spot1e9)) : '',
+        entryCost: solution.entryCost,
+        maxPayout: solution.quantity,
+        multiplier: solution.multiplier,
+        seed: '', // moonshot is player-directed, no RNG seed to record
+      };
+    } catch (e) {
+      lastErr = e;
       if (attempt === 0) continue;
       throw new PlayError('MINT_FAILED', `Could not price this play: ${e instanceof Error ? e.message : e}`);
     }

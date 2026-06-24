@@ -328,9 +328,19 @@
       inset 0 0 54px rgba(0, 0, 0, 0.74);
   }
 
+  /* The screen content is authored for a full-size aperture. When the device is forced smaller (a
+     short, wide, or zoomed viewport contains it height-first), ConsoleCanvas sets --screen-content-scale
+     below 1 so the whole layer shrinks to fit instead of letting fixed-size content overflow and clip.
+     We lay the content out 1/scale larger and scale it back down, so at scale 1 (the normal phone /
+     product-shot sizes) this is identical to inset:0, byte for byte. */
   .console-screen-content {
     position: absolute;
-    inset: 0;
+    top: 0;
+    left: 0;
+    width: calc(100% / var(--screen-content-scale, 1));
+    height: calc(100% / var(--screen-content-scale, 1));
+    transform: scale(var(--screen-content-scale, 1));
+    transform-origin: top left;
     opacity: 1;
     transition: opacity 420ms cubic-bezier(0.16, 1, 0.3, 1);
     will-change: opacity;

@@ -20,6 +20,7 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'lucky', label: 'Lucky' },
   { key: 'range', label: 'Range' },
+  { key: 'moonshot', label: 'Moonshot' },
 ]
 
 // Resolved outcomes only. Open/pending are in-flight (the live screen owns them); error rounds never
@@ -105,9 +106,10 @@ function HistoryPage() {
 }
 
 function headOf(play: PlayDTO): { asset: string; line: string } {
-  if (play.game === 'lucky') {
+  if (play.game === 'lucky' || play.game === 'moonshot') {
     const lp = play.params as LuckyParams
-    return { asset: lp.asset, line: `${lp.side === 'up' ? 'UP' : 'DOWN'} · ${fmtMult(play.multiplier)}` }
+    const dir = play.game === 'moonshot' ? (lp.side === 'up' ? 'LONG' : 'SHORT') : lp.side === 'up' ? 'UP' : 'DOWN'
+    return { asset: lp.asset, line: `${dir} · ${fmtMult(play.multiplier)}` }
   }
   const rp = play.params as RangeParams
   return { asset: rp.asset, line: rp.widthPct ? `Range · ${rp.widthPct}% band` : 'Range' }
@@ -119,7 +121,7 @@ function detailRows(play: PlayDTO): Array<[string, ReactNode]> {
     ['Duration', `${play.params.duration}s`],
     ['Multiplier', fmtMult(play.multiplier)],
   ]
-  if (play.game === 'lucky') {
+  if (play.game === 'lucky' || play.game === 'moonshot') {
     rows.push(['Target', fmtPrice(play.market.strike)])
   } else {
     rows.push(['Band', `${fmtPrice(play.market.lower)} – ${fmtPrice(play.market.upper)}`])

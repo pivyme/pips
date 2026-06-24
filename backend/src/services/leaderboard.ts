@@ -152,16 +152,17 @@ export async function submitMinigameScore(userId: string, game: Minigame, score:
 // Every board in one round-trip, run in parallel. Powers the menu leaderboard so switching tabs is
 // instant (no per-tab fetch). The in-game overlays still call the focused functions above.
 export async function fullLeaderboard(userId: string): Promise<FullLeaderboardDTO> {
-  const [global, lucky, range, lineRider, candleHop] = await Promise.all([
+  const [global, lucky, range, moonshot, lineRider, candleHop] = await Promise.all([
     globalLeaderboard(userId),
     gameLeaderboard('lucky', userId),
     gameLeaderboard('range', userId),
+    gameLeaderboard('moonshot', userId),
     minigameLeaderboard('line-rider', userId),
     minigameLeaderboard('candle-hop', userId),
   ]);
   return {
     global,
-    games: { lucky: lucky.entries, range: range.entries },
+    games: { lucky: lucky.entries, range: range.entries, moonshot: moonshot.entries },
     minigames: { 'line-rider': lineRider, 'candle-hop': candleHop },
   };
 }

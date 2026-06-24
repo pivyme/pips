@@ -124,7 +124,7 @@ const CATALOG = [
   { slug: 'win_streak_5', name: 'On Fire', description: 'Win 5 plays in a row.', illo: 'flame', metric: 'win_streak', threshold: 5 },
   { slug: 'big_multiplier', name: 'Moonshot', description: 'Cash out a 25x or higher.', illo: 'up', metric: 'big_multiplier', threshold: 25 },
   { slug: 'volume_1000', name: 'High Roller', description: 'Trade $1,000 in total volume.', illo: 'gem', metric: 'volume', threshold: 1000 },
-  { slug: 'all_games', name: 'Sampler', description: 'Play both games.', illo: 'dice', metric: 'distinct_games', threshold: 2 },
+  { slug: 'all_games', name: 'Sampler', description: 'Play two different games.', illo: 'dice', metric: 'distinct_games', threshold: 2 },
   { slug: 'cashout_10', name: 'Quick Hands', description: 'Cash out 10 winning plays.', illo: 'coin', metric: 'cashouts', threshold: 10 },
   { slug: 'comeback', name: 'Comeback', description: 'Win a play right after a loss.', illo: 'medal', metric: 'comeback', threshold: 1 },
 ] as const
@@ -313,7 +313,7 @@ function freshState(): DemoState {
     netPnl: 612,
     cashouts: 8,
     maxMultiplierCashed: 12,
-    distinctGames: ['lucky', 'range'],
+    distinctGames: ['lucky', 'range', 'moonshot'],
     comebackDone: true,
     lastWasLoss: false,
     firstPlayAt: new Date(now - 34 * 86_400_000).toISOString(),
@@ -473,7 +473,7 @@ function evaluateUnlocks(): string[] {
 
 // Value an open position against a live price. Returns display-unit value + win flag.
 function mark(c: MarkCtx, price: number): { markValue: number; pnl: number; multiplier: number; win: boolean } {
-  if (c.game === 'lucky') {
+  if (c.game === 'lucky' || c.game === 'moonshot') {
     const dir = c.side === 'up' ? 1 : -1
     const target = c.target ?? c.entry
     // Favorable gap past the TARGET as a fraction of entry (positive = in the money).
@@ -647,6 +647,55 @@ function createRange(body: Record<string, unknown>): PlayDTO {
   return p
 }
 
+// Reach (the dialed target multiple) -> normal quantile, matching the real solver's tier distances, so
+// a bigger reach places the TARGET further OTM (longer odds, bigger multiple). Exact for the ladder
+// values [2,3,5,10,25]; anything between snaps to the nearest rung at or below.
+const REACH_Z: Record<number, number> = { 2: 0, 3: 0.4307, 5: 0.8416, 10: 1.2816, 25: 1.7507 }
+function reachZ(reach: number): number {
+  if (REACH_Z[reach] != null) return REACH_Z[reach]
+  let z = 0
+  for (const k of Object.keys(REACH_Z).map(Number).sort((a, b) => a - b)) if (reach >= k) z = REACH_Z[k]
+  return z
+}
+
+// MOONSHOT: the directional twin of Lucky. The player calls the side (LONG = up, SHORT = down) and
+// dials a reach (the target multiple); the bet sizes it. Same binary settle as Lucky, but you pick the
+// direction + reach instead of the reel dealing them. The TARGET sits in the bet direction at the reach's
+// implied distance, floored so even a 2x is a real move.
+function createMoonshot(body: Record<string, unknown>): PlayDTO {
+  const stake = Number(body.stake ?? 25)
+  ensureBalance(stake)
+  const asset = String(body.asset ?? MARKET_ASSETS[0])
+  const side: Side = body.side === 'down' ? 'down' : 'up'
+  const reach = Math.max(2, Math.min(25, Number(body.reach ?? 5)))
+  const duration = LUCKY_ROUND_SEC
+  const entry = currentPrice(asset)
+  const roundVol = ROUND_VOL * Math.sqrt(duration / LUCKY_ROUND_SEC)
+  const dir = side === 'up' ? 1 : -1
+  const MIN_TARGET_FRAC = 0.0015
+  const target = entry * (1 + dir * Math.max(roundVol * reachZ(reach), MIN_TARGET_FRAC))
+  const openedMs = nowMs()
+  const expiryMs = openedMs + duration * 1000
+  const id = newId()
+  const p: PlayDTO = {
+    id,
+    game: 'moonshot',
+    status: 'pending',
+    stake: str(stake),
+    params: { asset, side, multiplier: reach, duration },
+    market: { asset, oracleId: `demo-oracle-${asset}`, expiry: expiryMs, strike: String(target) },
+    entryValue: str(stake),
+    markValue: str(stake),
+    pnl: '0.00',
+    multiplier: reach,
+    maxPayout: str(stake * reach),
+    entrySpot: String(entry),
+    openedAt: new Date(openedMs).toISOString(),
+  }
+  registerOpen(p, { game: 'moonshot', asset, stake, entry, side, lockedMult: reach, target, roundVol, openedMs, expiryMs })
+  return p
+}
+
 // === The mock api surface (mirrors lib/api.ts `api`) ===
 
 function userDTO(): UserDTO {
@@ -655,6 +704,7 @@ function userDTO(): UserDTO {
     address: DEMO_ADDRESS,
     displayName: DEMO_HANDLE,
     username: state.username,
+    email: 'demo@playpips.fun',
     provider: 'dev',
     balance: str(state.balance),
     managerReady: true,
@@ -750,7 +800,7 @@ function globalLeaderboardDTO(): GlobalLeaderboard {
 function gameLeaderboardDTO(game: Game): GameLeaderboard {
   const mine = state.history.filter((p) => p.game === game)
   const youPnl = mine.reduce((s, p) => s + parseFloat(p.pnl), 0)
-  const split = game === 'lucky' ? 0.6 : 0.4 // a believable per-game share of each rival's net
+  const split = game === 'lucky' ? 0.45 : game === 'range' ? 0.3 : 0.25 // a believable per-game share of each rival's net
   const rows = LB_TRADERS.map((b) => ({ username: b.username as string | null, displayName: b.username, pnl: Math.round(b.netPnl * split), plays: Math.max(1, Math.round(b.games * split)), isYou: false }))
   rows.push({ username: state.username, displayName: DEMO_HANDLE, pnl: Math.round(youPnl), plays: mine.length, isYou: true })
   const row = (r: (typeof rows)[number], i: number) => ({ rank: i + 1, username: r.username, displayName: r.displayName, pnl: str(r.pnl), plays: r.plays, isYou: r.isYou })
@@ -776,7 +826,7 @@ function minigameLeaderboardDTO(game: Minigame): MinigameLeaderboard {
 function fullLeaderboardDTO(): FullLeaderboard {
   return {
     global: globalLeaderboardDTO(),
-    games: { lucky: gameLeaderboardDTO('lucky').entries, range: gameLeaderboardDTO('range').entries },
+    games: { lucky: gameLeaderboardDTO('lucky').entries, range: gameLeaderboardDTO('range').entries, moonshot: gameLeaderboardDTO('moonshot').entries },
     minigames: { 'line-rider': minigameLeaderboardDTO('line-rider'), 'candle-hop': minigameLeaderboardDTO('candle-hop') },
   }
 }
@@ -841,7 +891,7 @@ export const demoApi = {
 
   play: async (game: Game, body: Record<string, unknown>): Promise<PlayResult> => {
     await delay(140)
-    const play = game === 'lucky' ? createLucky(body) : createRange(body)
+    const play = game === 'lucky' ? createLucky(body) : game === 'moonshot' ? createMoonshot(body) : createRange(body)
     return { play }
   },
 
@@ -1044,11 +1094,14 @@ const SEED_PLAYS: SeedSpec[] = [
   { game: 'range', asset: 'ETH', status: 'won', stake: 25, mult: 2.4, pnl: 35, minsAgo: 26 },
   { game: 'lucky', asset: 'SOL', status: 'lost', stake: 50, mult: 0, pnl: -50, minsAgo: 44 },
   { game: 'lucky', asset: 'BTC', status: 'won', stake: 10, mult: 10, pnl: 90, minsAgo: 71 },
+  { game: 'moonshot', asset: 'SOL', status: 'won', stake: 25, mult: 5, pnl: 100, minsAgo: 84 },
   { game: 'range', asset: 'SUI', status: 'cashed_out', stake: 25, mult: 3.1, pnl: 28, minsAgo: 98 },
   { game: 'lucky', asset: 'ETH', status: 'won', stake: 5, mult: 2, pnl: 5, minsAgo: 150 },
   { game: 'range', asset: 'SOL', status: 'lost', stake: 25, mult: 0, pnl: -25, minsAgo: 240 },
+  { game: 'moonshot', asset: 'BTC', status: 'cashed_out', stake: 10, mult: 10, pnl: 34, minsAgo: 300 },
   { game: 'lucky', asset: 'SUI', status: 'won', stake: 50, mult: 3, pnl: 100, minsAgo: 360 },
   { game: 'lucky', asset: 'DEEP', status: 'cashed_out', stake: 10, mult: 5, pnl: 18, minsAgo: 520 },
+  { game: 'moonshot', asset: 'ETH', status: 'lost', stake: 25, mult: 25, pnl: -25, minsAgo: 600 },
   { game: 'range', asset: 'BTC', status: 'won', stake: 25, mult: 4.2, pnl: 80, minsAgo: 760 },
   { game: 'lucky', asset: 'ETH', status: 'won', stake: 100, mult: 2, pnl: 100, minsAgo: 1700 },
 ]
@@ -1070,7 +1123,7 @@ function buildSeedPlay(s: SeedSpec, i: number, past: (mins: number) => string): 
   const market: PlayDTO['market'] = { asset: s.asset, oracleId: `demo-oracle-${s.asset}`, expiry: nowMs() - s.minsAgo * 60_000 }
   let params: PlayDTO['params']
   let settlePrice: number
-  if (s.game === 'lucky') {
+  if (s.game === 'lucky' || s.game === 'moonshot') {
     const side: Side = i % 2 === 0 ? 'up' : 'down'
     const dir = side === 'up' ? 1 : -1
     // Target sits in the bet direction; the close lands past it on a win, short of it on a loss.

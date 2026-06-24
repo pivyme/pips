@@ -37,6 +37,7 @@ import { gameSpot } from '../lib/game-price.ts';
 import { executeForUser, executeAsOperator, executeAsSettlement, userContext } from '../lib/sui/execute.ts';
 import {
   resolveLucky,
+  resolveMoonshot,
   resolveRange,
   parseStake,
   PlayError,
@@ -140,7 +141,8 @@ function fundManager(tx: Transaction, managerId: string, needRaw: bigint, refill
 
 export type CreatePlayInput =
   | { game: 'lucky'; stake: string | number }
-  | { game: 'range'; stake: string | number; asset: string; widthPct: number };
+  | { game: 'range'; stake: string | number; asset: string; widthPct: number }
+  | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number };
 
 export type CreateResult = { play: PlayDTO };
 
@@ -150,6 +152,7 @@ const userCtx = userContext;
 
 async function resolveByGame(input: CreatePlayInput, stakeRaw: bigint): Promise<Resolved> {
   if (input.game === 'lucky') return resolveLucky(stakeRaw);
+  if (input.game === 'moonshot') return resolveMoonshot(stakeRaw, input.asset, input.side, input.reach);
   return resolveRange(stakeRaw, input.asset, input.widthPct);
 }
 
@@ -356,6 +359,7 @@ function mapResolvedToPlay(userId: string, r: Resolved, stakeRaw: bigint) {
 // multiplier re-price against the new oracle, which is honest (the closest mintable to the deal).
 function reResolve(input: CreatePlayInput, stakeRaw: bigint, prev: Resolved): Promise<Resolved> {
   if (input.game === 'lucky') return resolveLucky(stakeRaw, prev.kind === 'binary' ? prev.seed : undefined);
+  if (input.game === 'moonshot') return resolveMoonshot(stakeRaw, input.asset, input.side, input.reach);
   return resolveRange(stakeRaw, input.asset, input.widthPct);
 }
 

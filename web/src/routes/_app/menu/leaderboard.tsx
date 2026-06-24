@@ -18,6 +18,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'traders', label: 'Traders' },
   { key: 'lucky', label: 'Lucky' },
   { key: 'range', label: 'Range' },
+  { key: 'moonshot', label: 'Moonshot' },
   { key: 'line-rider', label: 'Line Rider' },
   { key: 'candle-hop', label: 'Flappy Piper' },
 ]
@@ -62,7 +63,7 @@ function LeaderboardScreen() {
           <BoardSkeleton count={tab === 'traders' ? 2 : 1} />
         ) : tab === 'traders' ? (
           <TradersView data={lb.global} />
-        ) : tab === 'lucky' || tab === 'range' ? (
+        ) : tab === 'lucky' || tab === 'range' || tab === 'moonshot' ? (
           <GameView entries={lb.games[tab]} />
         ) : (
           <MinigameView data={lb.minigames[tab]} />

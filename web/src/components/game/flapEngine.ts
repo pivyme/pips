@@ -230,12 +230,16 @@ export class FlapEngine {
     while (this.candles.length && this.candles[0].x < -BODY_W) this.candles.shift()
     this.fillCandles()
 
-    // trail drifts with the field and fades
-    for (const t of this.trail) {
+    // trail drifts with the field and fades, compacted in place (a fresh filtered array every frame
+    // was needless GC churn under the run)
+    let kept = 0
+    for (let i = 0; i < this.trail.length; i++) {
+      const t = this.trail[i]
       t.x -= speed * dt
       t.life -= dt * 1.6
+      if (t.life > 0 && t.x > -20) this.trail[kept++] = t
     }
-    this.trail = this.trail.filter((t) => t.life > 0 && t.x > -20)
+    this.trail.length = kept
 
     // score: a candle whose body has fully passed the character
     const birdX = this.w * BIRD_X_FRAC

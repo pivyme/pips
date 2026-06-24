@@ -8,7 +8,7 @@ import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
 import { Chart, type ChartOverlays } from '@/components/game/Chart'
-import { GameScreen, ScreenMessage, ScreenOverlay } from '@/components/game/screen'
+import { Cell, GameScreen, ScreenMessage, ScreenOverlay } from '@/components/game/screen'
 import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
 import { haptic } from '@/lib/haptics'
 import { slotSpin, slotTick, slotLock, slotPick, startLuckyBgm, stopLuckyBgm, luckyWin, luckyCashout, luckyLose } from '@/lib/sound'
@@ -1077,25 +1077,18 @@ function LivePnl({
   return (
     <>
       <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Cash out now</div>
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="tnum text-[40px] font-extrabold leading-none text-text">
-          ${formatExactDecimal(markValue)}
-        </div>
-        <div className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-text-3">
-          Cost <span className="tnum text-text-2">${formatExactDecimal(entryValue)}</span>
-        </div>
+      <div className="tnum text-[40px] font-extrabold leading-none text-text">
+        ${formatExactDecimal(markValue)}
       </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em]">
+      <div className="mt-1 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-text-3">
+        If you cash out now{' '}
         <span className={cnm('tnum', positive ? 'text-up' : 'text-down')}>
           {pnlNumber >= 0 ? '+' : '-'}${formatExactDecimal(pnl, { absolute: true })}
         </span>
-        <span className="text-text-3">·</span>
-        <span className="text-text-2">
-          Win <span className="tnum text-up">${formatExactDecimal(maxPayout)}</span>
-        </span>
       </div>
-      <div className="mt-1 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-text-3">
-        On-chain redeem quote
+      <div className="mt-2.5 grid grid-cols-2 gap-x-3">
+        <Cell label="Cost" value={`$${formatExactDecimal(entryValue)}`} />
+        <Cell label="Win" value={`$${formatExactDecimal(maxPayout)}`} />
       </div>
     </>
   )

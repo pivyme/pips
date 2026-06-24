@@ -53,7 +53,7 @@ model Play {
   userId       String
   user         User      @relation(fields: [userId], references: [id])
 
-  game         String                          // 'lucky' | 'range'
+  game         String                          // 'lucky' | 'range' | 'moonshot'
   status       String    @default("pending")   // pending|open|won|lost|cashed_out|error
 
   asset        String                          // 'BTC' | 'ETH' | 'SOL' | 'SUI'

@@ -19,7 +19,7 @@ import {
 } from '../services/plays.ts';
 import type { Game, MarketDTO } from '../types/api.ts';
 
-const GAMES: Game[] = ['lucky', 'range'];
+const GAMES: Game[] = ['lucky', 'range', 'moonshot'];
 
 // Stable display order for the market list. The live oracle set reshuffles as the ladder rolls
 // (oracles added/retired every few seconds), so without a fixed order the client's asset picker
@@ -153,6 +153,18 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
   if (game === 'lucky') {
     // LUCKY takes only the bet. The reel deals asset, direction, and multiplier tier server-side.
     return { game, stake };
+  }
+
+  if (game === 'moonshot') {
+    // MOONSHOT: the player calls the direction (LONG/SHORT) and dials a reach (target multiple). The
+    // round holds to the routed oracle's real expiry, so no duration is sent.
+    const asset = String(body.asset ?? '');
+    const side = body.side === 'down' ? 'down' : body.side === 'up' ? 'up' : null;
+    const reach = Number(body.reach);
+    if (!asset || !side || !Number.isFinite(reach)) {
+      throw new PlayError('INVALID_PARAMS', 'Pick an asset, a direction, and a reach');
+    }
+    return { game, stake, asset, side, reach };
   }
 
   // range: the round holds to the routed oracle's real expiry, so the client sends no duration.

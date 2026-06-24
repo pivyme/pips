@@ -24,9 +24,11 @@ const SETTLING_POLL_MS = 1000;
 // the heartbeat and also self-heals any client that missed a broadcast.
 const LIVE_HEARTBEAT_MS = 25_000;
 
-// Live presence: every open device Home holds one connection here. Broadcast the current count to
-// all of them on every join/leave so the "N ONLINE" ticker moves in real time. One process serves
-// every web client (frontend talks to a single API), so this Set is the global count.
+// Live presence: every open app holds one connection here for its whole session (the client opens it
+// at the app shell, so it stays up across home, games, and menu, not just on the Home screen).
+// Broadcast the current count to all of them on every join/leave so the "N ONLINE" ticker moves in
+// real time. One process serves every web client (frontend talks to a single API), so this Set is the
+// global count.
 const liveClients = new Set<{ send: (data: unknown) => void }>();
 
 function broadcastOnline(): void {
@@ -77,7 +79,8 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
     onClose(() => clearInterval(timer));
   });
 
-  // Live presence: one connection per open Home screen. No per-client tick beyond the keepalive,
+  // Live presence: one connection per open app session (held at the client app shell, so a player
+  // stays counted while playing a game, not only on Home). No per-client tick beyond the keepalive,
   // the count is pushed to everyone on join/leave. Drives the "N ONLINE" ticker on the device home.
   app.get('/live', async (request: FastifyRequest, reply: FastifyReply) => {
     const { t } = request.query as { t?: string };

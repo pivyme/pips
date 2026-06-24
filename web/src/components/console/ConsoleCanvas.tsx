@@ -1899,6 +1899,10 @@ export default function ConsoleCanvas({
     const restLook = new THREE.Vector3()
     let viewW = 0
     let viewH = 0
+    // Extra shrink (<=1) folded into the screen content scale to fit a screen whose fixed-height stack
+    // is taller than a short aperture (the hub has no chart to absorb it). Measured by recomputeScreenFit
+    // on resize + structural content changes, never per frame; projectScreenLayer just reads it.
+    let screenFitScale = 1
     // Hero product-shot offset, relative to rest: pulled well back so the device floats smaller, and
     // raised in frame (negative dLookY lifts it) so its controls clear the landing copy band below.
     // A gentle 3/4 tilt gives it the product-shot feel.
@@ -2040,11 +2044,54 @@ export default function ConsoleCanvas({
       })
       el.style.left = `${minX - M}px`
       el.style.top = `${minY - M}px`
-      el.style.width = `${maxX - minX + M * 2}px`
+      const apertureW = maxX - minX + M * 2
+      el.style.width = `${apertureW}px`
       el.style.height = `${maxY - minY + M * 2}px`
+      // Content is authored for a roughly full-size aperture (DESIGN_W). When a short/wide/zoomed
+      // viewport forces the device smaller (it gets contained height-first), the aperture shrinks but
+      // the fixed-size content doesn't, so it overflows and clips. Shrink the whole layer to fit
+      // instead. widthScale fits the design WIDTH; screenFitScale fits the HEIGHT (measured from the
+      // live content's vertical overflow, for fixed-height screens the chart can't absorb). Capped at 1
+      // so the normal phone + product-shot sizes are untouched; floored so it never collapses to a
+      // speck. CSS lays the content out 1/scale bigger and scales it back down.
+      const DESIGN_W = 340
+      const widthScale = Math.min(1, apertureW / DESIGN_W)
+      const contentScale = Math.max(0.4, Math.min(1, widthScale * screenFitScale))
+      el.style.setProperty('--screen-content-scale', contentScale.toFixed(4))
+      // rim + notch are px in the content's pre-scale space, so divide by the scale to land at the
+      // intended physical inset once the transform shrinks everything back down.
       const scale = (maxX - minX) / (wx(1140) - wx(30))
-      el.style.setProperty('--screen-rim', `${Math.max(16, Math.round(M + 0.33 * scale))}px`)
-      el.style.setProperty('--screen-notch', `${Math.max(0, Math.round(maxY + M - notchTopY))}px`)
+      const rimPx = Math.max(16, Math.round(M + 0.33 * scale))
+      el.style.setProperty('--screen-rim', `${Math.round(rimPx / contentScale)}px`)
+      const notchPx = Math.max(0, Math.round(maxY + M - notchTopY))
+      el.style.setProperty('--screen-notch', `${Math.round(notchPx / contentScale)}px`)
+    }
+
+    // Measure the live content's vertical overflow and fold it into screenFitScale so a too-tall screen
+    // (the hub stack on a short aperture) shrinks to fit instead of clipping its lower rows. Measured at
+    // the width-only scale, then re-applied. Cheap and rare: resize + structural content changes only,
+    // never per frame (projectScreenLayer reads the cached factor). GameScreen clips its own overflow
+    // (overflow-hidden), so its scrollHeight, not the wrapper's, is what exposes a too-tall stack, hence
+    // the worst-of both. Re-running projectScreenLayer here forces one reflow, which is fine at this rate.
+    function recomputeScreenFit() {
+      const layer = screenLayerRef.current
+      if (!layer || viewW === 0 || viewH === 0 || customize) return
+      const content = layer.firstElementChild as HTMLElement | null
+      if (!content) return
+      screenFitScale = 1
+      projectScreenLayer()
+      // Converge: re-applying the scale widens the design box, so text can rewrap and nudge the natural
+      // height, which one correction misses (the lowest row ends up kissing the bevel). Re-measure a few
+      // times, with ~1% headroom so the last row keeps a hair of black under it instead of touching.
+      for (let i = 0; i < 4; i++) {
+        const root = content.firstElementChild as HTMLElement | null
+        const r1 = content.clientHeight ? content.scrollHeight / content.clientHeight : 1
+        const r2 = root && root.clientHeight ? root.scrollHeight / root.clientHeight : 1
+        const ratio = Math.max(r1, r2, 1)
+        if (ratio <= 1.005) break
+        screenFitScale = screenFitScale / (ratio * 1.01)
+        projectScreenLayer()
+      }
     }
 
     // The single place the LIVE camera is written: blend the hero offset and the welcome into-screen
@@ -2592,12 +2639,30 @@ export default function ConsoleCanvas({
       } else {
         placeLiveCamera()
       }
+      // A new aperture size can newly overflow (or relieve) the content, so re-fit after the layout.
+      recomputeScreenFit()
       dirty = true // camera/geometry moved, repaint once
     }
     const ro = new ResizeObserver(() => resize())
     if (rootRef.current) ro.observe(rootRef.current)
     resize()
     applyView(viewRef.current)
+
+    // Re-fit when the on-screen content changes height: navigating to another screen, or async data like
+    // the balance row mounting. Structural changes only (childList/subtree), so a ticking price label (a
+    // text update, not a node add/remove) never triggers a reflow. rAF-coalesced so a burst is one pass.
+    let fitRaf = 0
+    const scheduleFit = () => {
+      if (fitRaf) return
+      fitRaf = requestAnimationFrame(() => {
+        fitRaf = 0
+        recomputeScreenFit()
+        dirty = true
+      })
+    }
+    const contentObserver = new MutationObserver(scheduleFit)
+    if (screenLayerRef.current) contentObserver.observe(screenLayerRef.current, { childList: true, subtree: true })
+    recomputeScreenFit()
 
     // Game side only: the layer starts hidden (opacity 0) only so it doesn't flash before it's been
     // sized, then snaps to visible on the next frame. No fade, no entry animation, the screen just
@@ -2614,7 +2679,12 @@ export default function ConsoleCanvas({
     let coinAccum = 0
     let decorAccum = 0
     const COIN_FRAME = 1 / 30 // chunky pixels don't need 60fps; keeps the idle device cheap
-    const DECOR_FRAME = 1 / 30 // ambient light show / result pulse: 30fps is plenty, halves the GPU tax
+    const DECOR_FRAME = 1 / 30 // result pulse: 30fps is plenty, halves the GPU tax
+    // The ambient light show is a ~14s hue lap + a slow breathe, pure side-cap decoration. When it is
+    // the only thing animating, a game's own 60fps canvas owns the foreground, so render the device
+    // even slower: 15fps is visually identical here and stops the full-scene render stealing the
+    // game's frames (this is what made flappy stutter, the device repainting at 30fps under it).
+    const LIGHTSHOW_FRAME = 1 / 15
 
     function loop() {
       rafId = requestAnimationFrame(loop)
@@ -2886,8 +2956,12 @@ export default function ConsoleCanvas({
       let doRender = dirty || animating
       const decorOnly = animating && !dirty && !realtime && !geoMoved && !tokenDrew
       if (decorOnly) {
+        // The light show alone (no result pulse) drives the device at the slow cadence so a running
+        // game keeps its frames; a pulse still gets the smoother 30fps (it only fires at a result).
+        const decorFrame =
+          state.lightShow && !state.a1Pulse && !state.a2Pulse ? LIGHTSHOW_FRAME : DECOR_FRAME
         decorAccum += dt
-        if (decorAccum >= DECOR_FRAME) decorAccum = 0
+        if (decorAccum >= decorFrame) decorAccum = 0
         else doRender = false
       }
       if (doRender) {
@@ -2911,6 +2985,8 @@ export default function ConsoleCanvas({
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('focus', onVisible)
       ro.disconnect()
+      contentObserver.disconnect()
+      if (fitRaf) cancelAnimationFrame(fitRaf)
       pressTimers.forEach(clearTimeout)
       applyViewRef.current = () => {}
       applyThemeRef.current = () => {}

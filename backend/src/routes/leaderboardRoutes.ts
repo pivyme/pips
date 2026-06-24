@@ -14,7 +14,7 @@ import {
 } from '../services/leaderboard.ts';
 import type { Game, Minigame } from '../types/api.ts';
 
-const GAMES = new Set<Game>(['lucky', 'range']);
+const GAMES = new Set<Game>(['lucky', 'range', 'moonshot']);
 const MINIGAMES = new Set<Minigame>(['line-rider', 'candle-hop']);
 const MAX_SCORE = 100_000_000; // a sane ceiling so a tampered client can't park garbage at #1
 

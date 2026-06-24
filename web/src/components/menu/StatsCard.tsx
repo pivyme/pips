@@ -1,4 +1,4 @@
-import { Check, Copy, Pencil } from 'lucide-react'
+import { Check, Copy, Mail, Pencil } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { UserStatsDTO } from '@/lib/api'
@@ -18,11 +18,15 @@ export function StatsCard({
   stats,
   displayName,
   address,
+  email,
   onEdit,
 }: {
   stats: UserStatsDTO
   displayName: string
   address: string
+  // The login email (Privy Google/email). Shown so the user knows which account this is. Owner-only:
+  // the shareable PNG (shareCard.ts) never includes it, so this stays off anything public.
+  email?: string | null
   // When set, a pen sits next to the handle so it can be changed. Omitted on the shareable card.
   onEdit?: () => void
 }) {
@@ -52,20 +56,31 @@ export function StatsCard({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="truncate text-2xl font-extrabold leading-tight text-white">{displayName}</div>
-            {address && (
-              <button
-                type="button"
-                onClick={copyAddress}
-                aria-label="Copy wallet address"
-                className="tnum mt-1 flex max-w-full items-center gap-1.5 text-xs text-white/45 transition hover:text-white/70 active:scale-95"
-              >
-                <span className="truncate">{shortAddr(address)}</span>
-                {copied ? (
-                  <Check className="h-3 w-3 shrink-0 text-up" strokeWidth={2.6} />
-                ) : (
-                  <Copy className="h-3 w-3 shrink-0" strokeWidth={2.2} />
+            {(email || address) && (
+              <div className="mt-1 flex max-w-full items-center gap-2 text-xs">
+                {email && (
+                  <span className="flex min-w-0 items-center gap-1.5 text-white/55">
+                    <Mail className="h-3 w-3 shrink-0" strokeWidth={2.2} />
+                    <span className="truncate">{email}</span>
+                  </span>
                 )}
-              </button>
+                {email && address && <span className="h-3 w-px shrink-0 bg-white/15" />}
+                {address && (
+                  <button
+                    type="button"
+                    onClick={copyAddress}
+                    aria-label="Copy wallet address"
+                    className="tnum flex shrink-0 items-center gap-1.5 text-white/45 transition hover:text-white/70 active:scale-95"
+                  >
+                    <span>{shortAddr(address)}</span>
+                    {copied ? (
+                      <Check className="h-3 w-3 shrink-0 text-up" strokeWidth={2.6} />
+                    ) : (
+                      <Copy className="h-3 w-3 shrink-0" strokeWidth={2.2} />
+                    )}
+                  </button>
+                )}
+              </div>
             )}
           </div>
           {onEdit && (

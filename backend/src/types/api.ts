@@ -1,7 +1,7 @@
 // Shared API DTOs (the wire shape between backend and web). DUSDC amounts cross the wire
 // as human-readable decimal strings, never raw 6dp integers or JS numbers. See 02-API.md.
 
-export type Game = 'lucky' | 'range';
+export type Game = 'lucky' | 'range' | 'moonshot';
 export type PlayStatus = 'pending' | 'open' | 'won' | 'lost' | 'cashed_out' | 'error';
 export type Side = 'up' | 'down'; // up = call/long, down = put/short
 
@@ -10,6 +10,7 @@ export interface UserDTO {
   address: string; // Sui address. privy/dev = their wallet; wallet-connect = the custodial play wallet
   displayName: string; // generated handle, e.g. "Lucky Otter"
   username: string | null; // user-chosen unique handle; null until set in onboarding
+  email: string | null; // login email (Privy Google/email sign-in); null for dev/wallet
   provider: 'privy' | 'dev' | 'wallet';
   walletAuthAddress?: string; // wallet-connect: the connected external wallet (login + default withdraw target)
   balance: string; // available DUSDC (wallet + manager cash), 2dp display, e.g. "983.50"
@@ -175,6 +176,6 @@ export interface MinigameSubmitDTO {
 // no refetch. The in-game overlays still use the focused /game and /minigame endpoints.
 export interface FullLeaderboardDTO {
   global: GlobalLeaderboardDTO;
-  games: Record<Game, LeaderboardGameEntryDTO[]>; // lucky, range
+  games: Record<Game, LeaderboardGameEntryDTO[]>; // lucky, range, moonshot
   minigames: Record<Minigame, MinigameLeaderboardDTO>; // line-rider, candle-hop
 }

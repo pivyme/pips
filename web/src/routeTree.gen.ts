@@ -29,6 +29,7 @@ import { Route as AppMenuDepositRouteImport } from './routes/_app/menu/deposit'
 import { Route as AppMenuCustomizeRouteImport } from './routes/_app/menu/customize'
 import { Route as AppMenuAchievementsRouteImport } from './routes/_app/menu/achievements'
 import { Route as AppGamesRangeRouteImport } from './routes/_app/games/range'
+import { Route as AppGamesMoonshotRouteImport } from './routes/_app/games/moonshot'
 import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
 import { Route as AppGamesLineRiderRouteImport } from './routes/_app/games/line-rider'
 import { Route as AppGamesCandleHopRouteImport } from './routes/_app/games/candle-hop'
@@ -132,6 +133,11 @@ const AppGamesRangeRoute = AppGamesRangeRouteImport.update({
   path: '/games/range',
   getParentRoute: () => AppRoute,
 } as any)
+const AppGamesMoonshotRoute = AppGamesMoonshotRouteImport.update({
+  id: '/games/moonshot',
+  path: '/games/moonshot',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppGamesLuckyRoute = AppGamesLuckyRouteImport.update({
   id: '/games/lucky',
   path: '/games/lucky',
@@ -159,6 +165,7 @@ export interface FileRoutesByFullPath {
   '/games/candle-hop': typeof AppGamesCandleHopRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
+  '/games/moonshot': typeof AppGamesMoonshotRoute
   '/games/range': typeof AppGamesRangeRoute
   '/menu/achievements': typeof AppMenuAchievementsRoute
   '/menu/customize': typeof AppMenuCustomizeRoute
@@ -183,6 +190,7 @@ export interface FileRoutesByTo {
   '/games/candle-hop': typeof AppGamesCandleHopRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
+  '/games/moonshot': typeof AppGamesMoonshotRoute
   '/games/range': typeof AppGamesRangeRoute
   '/menu/achievements': typeof AppMenuAchievementsRoute
   '/menu/customize': typeof AppMenuCustomizeRoute
@@ -209,6 +217,7 @@ export interface FileRoutesById {
   '/_app/games/candle-hop': typeof AppGamesCandleHopRoute
   '/_app/games/line-rider': typeof AppGamesLineRiderRoute
   '/_app/games/lucky': typeof AppGamesLuckyRoute
+  '/_app/games/moonshot': typeof AppGamesMoonshotRoute
   '/_app/games/range': typeof AppGamesRangeRoute
   '/_app/menu/achievements': typeof AppMenuAchievementsRoute
   '/_app/menu/customize': typeof AppMenuCustomizeRoute
@@ -235,6 +244,7 @@ export interface FileRouteTypes {
     | '/games/candle-hop'
     | '/games/line-rider'
     | '/games/lucky'
+    | '/games/moonshot'
     | '/games/range'
     | '/menu/achievements'
     | '/menu/customize'
@@ -259,6 +269,7 @@ export interface FileRouteTypes {
     | '/games/candle-hop'
     | '/games/line-rider'
     | '/games/lucky'
+    | '/games/moonshot'
     | '/games/range'
     | '/menu/achievements'
     | '/menu/customize'
@@ -284,6 +295,7 @@ export interface FileRouteTypes {
     | '/_app/games/candle-hop'
     | '/_app/games/line-rider'
     | '/_app/games/lucky'
+    | '/_app/games/moonshot'
     | '/_app/games/range'
     | '/_app/menu/achievements'
     | '/_app/menu/customize'
@@ -450,6 +462,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppGamesRangeRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/games/moonshot': {
+      id: '/_app/games/moonshot'
+      path: '/games/moonshot'
+      fullPath: '/games/moonshot'
+      preLoaderRoute: typeof AppGamesMoonshotRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/games/lucky': {
       id: '/_app/games/lucky'
       path: '/games/lucky'
@@ -479,6 +498,7 @@ interface AppRouteChildren {
   AppGamesCandleHopRoute: typeof AppGamesCandleHopRoute
   AppGamesLineRiderRoute: typeof AppGamesLineRiderRoute
   AppGamesLuckyRoute: typeof AppGamesLuckyRoute
+  AppGamesMoonshotRoute: typeof AppGamesMoonshotRoute
   AppGamesRangeRoute: typeof AppGamesRangeRoute
   AppMenuAchievementsRoute: typeof AppMenuAchievementsRoute
   AppMenuCustomizeRoute: typeof AppMenuCustomizeRoute
@@ -498,6 +518,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppGamesCandleHopRoute: AppGamesCandleHopRoute,
   AppGamesLineRiderRoute: AppGamesLineRiderRoute,
   AppGamesLuckyRoute: AppGamesLuckyRoute,
+  AppGamesMoonshotRoute: AppGamesMoonshotRoute,
   AppGamesRangeRoute: AppGamesRangeRoute,
   AppMenuAchievementsRoute: AppMenuAchievementsRoute,
   AppMenuCustomizeRoute: AppMenuCustomizeRoute,

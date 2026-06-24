@@ -66,6 +66,11 @@ const RESULT_MS = 6500
 // may land after the oracle expires, so we disarm cash-out. This is NOT a settled result: only an
 // on-chain settlement_price or the finalized play may claim the outcome.
 const SETTLE_LOCK_MS = 5000
+// Cash-out settling beat: hold the 'cashing' state open at least this long so the result lands as a
+// deliberate moment instead of snapping straight from the press to the result. Through it the main
+// button stays a no-op (CASHING OUT), absorbing the follow-up taps that otherwise blow past the result
+// into a fresh PLAY. Mirrors Lucky, so a mid-round cash-out reads exactly like a win/lose settle.
+const CASHOUT_SETTLE_MS = 1100
 // The settle progress bar eases toward (never to) full over this window once past the buzzer.
 const SETTLE_EXPECT_MS = 12000
 // Safety-net poll of the play, independent of the live SSE: its socket can silently drop (expired
@@ -178,7 +183,10 @@ export function RangeScreen() {
   // asset until the player chooses, and if their pick ever drops offline.
   const activeAsset =
     selectedAsset && assets.includes(selectedAsset) ? selectedAsset : assets[0]
-  const asset = play?.params.asset ?? activeAsset
+  // Pin the asset to the live play only while a round is actually running. A finished round's `play`
+  // lingers (the result overlay still reads it), so once we're back to idle the selector must follow
+  // the player's pick again, otherwise cycling the asset between rounds has no visible effect.
+  const asset = play && phase !== 'idle' ? play.params.asset : activeAsset
 
   // BET clamps to what the balance affords, so the wheel never offers an unplayable bet.
   const balance = parseFloat(user?.balance ?? '0') || 0
@@ -511,8 +519,14 @@ export function RangeScreen() {
     if (!liveHold || !play) return
     setPhase('cashing')
     haptic('rigid')
+    const started = Date.now()
     try {
       const { play: p } = await cashOut(play.id)
+      // Hold the settling beat open so the result is a deliberate landing, even when the redeem returns
+      // in ~120ms (demo). The CASHING OUT no-op rides this window, so a stray follow-up tap can't carry
+      // through to a fresh play. Same beat Lucky uses.
+      const wait = CASHOUT_SETTLE_MS - (Date.now() - started)
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait))
       finishResult(p)
     } catch (e) {
       // The buzzer settle may have beaten the cash-out. Reconcile against the chain before complaining.

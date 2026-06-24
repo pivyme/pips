@@ -1,13 +1,14 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Activity, CandlestickChart, Dices, Target } from 'lucide-react'
+import { Activity, CandlestickChart, Dices, Rocket, Target } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
 import { useConsoleControls } from '@/components/console/controls'
 import { GameScreen } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
-import { api, streamLive } from '@/lib/api'
+import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { useLivePresence } from '@/lib/presence'
 import { isDemo } from '@/lib/demo'
 import { haptic } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
@@ -35,8 +36,9 @@ export const Route = createFileRoute('/_app/games/')({ component: GamesConsole }
 // per device scale (24px fallback). Rules + row fills stay full width and bleed under the rim, so
 // the screen reads edge-to-edge while text never crops as the device grows.
 const RIM = 'px-[var(--screen-rim,24px)]'
-// Extra breathing room up top so the status strip doesn't kiss the bevel.
-const RIM_T = 'pt-[calc(var(--screen-rim,24px)_+_18px)]'
+// A little breathing room up top so the status strip doesn't kiss the bevel (kept small so the list
+// sits higher and the last minigame clears the bottom-right body).
+const RIM_T = 'pt-[calc(var(--screen-rim,24px)_+_6px)]'
 const RIM_B = 'pb-[var(--screen-rim,24px)]'
 
 type GameDef = { to: string; icon: LucideIcon; name: string; tag: string }
@@ -45,6 +47,7 @@ type GameDef = { to: string; icon: LucideIcon; name: string; tag: string }
 const GAMES: ReadonlyArray<GameDef> = [
   { to: '/games/lucky', icon: Dices, name: 'I Feel Lucky', tag: 'Spin. Win. Cash out.' },
   { to: '/games/range', icon: Target, name: 'Range', tag: 'Call the zone. Tighter pays more.' },
+  { to: '/games/moonshot', icon: Rocket, name: 'Moonshot', tag: 'Long or short. Reach further, win bigger.' },
 ]
 
 // Minigames. Pure local arcade, no chain, no funds. A totally separate, just-for-fun lane.
@@ -57,7 +60,6 @@ const MINIGAMES: ReadonlyArray<GameDef> = [
 const ALL: ReadonlyArray<GameDef> = [...GAMES, ...MINIGAMES]
 
 const pad2 = (n: number): string => String(n).padStart(2, '0')
-const shortAddr = (a: string): string => (a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a)
 
 export function GamesConsole() {
   const navigate = useNavigate()
@@ -71,20 +73,9 @@ export function GamesConsole() {
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const streak = statsQ.data?.stats.currentStreak ?? 0
 
-  // Live presence over SSE: the ticker moves in real time as players open and close PIPS. `online`
-  // stays null until the first frame lands; `liveOn` tracks the connection so the pip can breathe.
-  const [online, setOnline] = useState<number | null>(null)
-  const [liveOn, setLiveOn] = useState(false)
-  useEffect(() => {
-    const stop = streamLive(
-      (t) => {
-        setOnline(t.online)
-        setLiveOn(true)
-      },
-      () => setLiveOn(false),
-    )
-    return stop
-  }, [user?.id])
+  // Live presence ticker. The connection lives at the app shell (LivePresenceProvider) so it stays up
+  // across every game/menu screen, not just here; we only read the count to paint the readout.
+  const { online, live: liveOn } = useLivePresence()
 
   const move = useCallback(
     (next: number) => {
@@ -184,14 +175,14 @@ export function GamesConsole() {
           who you are, streak, chip balance: all the read-only context lives down here now. */}
       <Rule />
       <div className={cnm('max-w-[62%] pt-3', RIM_B, RIM)}>
-        <div className="truncate text-[17px] font-extrabold lowercase leading-tight tracking-[0.02em] text-text">{name}</div>
-        <div className="mt-1 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-text-2">
-          <span className="tnum truncate">{user ? shortAddr(user.address) : '—'}</span>
+        {/* who you are + streak on one line: no wallet address here, it just ate vertical space */}
+        <div className="flex items-center gap-2.5">
+          <span className="min-w-0 truncate text-[17px] font-extrabold lowercase leading-tight tracking-[0.02em] text-text">{name}</span>
           {streak > 0 && (
-            <span className="tnum flex shrink-0 items-center border border-brand-500/60 px-1.5 py-0.5 text-brand-500">STREAK {streak}</span>
+            <span className="tnum flex shrink-0 items-center border border-brand-500/60 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-[0.08em] text-brand-500">STREAK {streak}</span>
           )}
         </div>
-        <div className="mt-3 font-mono text-[11px] uppercase tracking-[0.14em] text-text-2">Available</div>
+        <div className="mt-2 font-mono text-[11px] uppercase tracking-[0.14em] text-text-2">Available</div>
         <div className="mt-0.5 leading-none">
           <Stat
             value={balance}
@@ -221,18 +212,18 @@ function GameRow({
   return (
     <div
       className={cnm(
-        'relative flex w-full items-center gap-3.5 py-3.5 text-left',
+        'relative flex w-full items-center gap-3 py-2.5 text-left',
         RIM,
         selected ? 'bg-brand-500/[0.13]' : '',
       )}
     >
       {/* left edge bar marks the selected cartridge, instrument-panel style */}
       {selected && <span className="absolute inset-y-0 left-0 w-1 bg-brand-500" />}
-      <span className={cnm('tnum w-6 font-mono text-[15px] font-bold', selected ? 'text-brand-500' : 'text-text-2')}>{pad2(index)}</span>
-      <Icon size={28} strokeWidth={2} className={selected ? 'text-brand-500' : 'text-text-2'} />
+      <span className={cnm('tnum w-5 font-mono text-[14px] font-bold', selected ? 'text-brand-500' : 'text-text-2')}>{pad2(index)}</span>
+      <Icon size={23} strokeWidth={2} className={selected ? 'text-brand-500' : 'text-text-2'} />
       <div className="min-w-0 flex-1">
-        <div className={cnm('text-[21px] font-extrabold uppercase leading-tight tracking-[0.02em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</div>
-        <div className="truncate font-mono text-[12px] uppercase tracking-[0.08em] text-text-3">{game.tag}</div>
+        <div className={cnm('text-[18px] font-extrabold uppercase leading-tight tracking-[0.02em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</div>
+        <div className="truncate font-mono text-[11px] uppercase tracking-[0.08em] text-text-3">{game.tag}</div>
       </div>
       {selected && <span className="font-mono text-lg text-brand-500">▶</span>}
     </div>

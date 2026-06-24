@@ -181,6 +181,7 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
     address: user.address,
     displayName: user.displayName,
     username: user.username,
+    email: user.email ?? null,
     provider: user.provider === 'privy' || user.provider === 'wallet' ? user.provider : 'dev',
     walletAuthAddress: user.walletAuthAddress ?? undefined,
     balance: fromDusdcRaw(wallet + manager).toFixed(2),

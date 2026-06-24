@@ -8,6 +8,7 @@ import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '
 import { GamesConsole } from './_app/games/index'
 import { LuckyScreen } from './_app/games/lucky'
 import { RangeScreen } from './_app/games/range'
+import { MoonshotScreen } from './_app/games/moonshot'
 import { LineRiderScreen } from './_app/games/line-rider'
 import { CandleHopScreen } from './_app/games/candle-hop'
 import { isDemo } from '@/lib/demo'
@@ -27,6 +28,7 @@ const SCREENS: { key: string; name: string; Comp: ComponentType }[] = [
   { key: 'home', name: 'Home', Comp: GamesConsole },
   { key: 'lucky', name: 'Lucky', Comp: LuckyScreen },
   { key: 'range', name: 'Range', Comp: RangeScreen },
+  { key: 'moonshot', name: 'Moonshot', Comp: MoonshotScreen },
   { key: 'line-rider', name: 'Line Rider', Comp: LineRiderScreen },
   { key: 'candle-hop', name: 'Candle Hop', Comp: CandleHopScreen },
 ]

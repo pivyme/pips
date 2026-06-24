@@ -37,6 +37,7 @@ export function setSoundEnabled(value: boolean): void {
     stopBgm()
     stopLuckyBgm()
     stopRangeBgm()
+    stopMoonshotBgm()
     stopRideBgm()
   }
 }
@@ -1032,6 +1033,317 @@ export function rangeLose(): void {
     s.start(t)
     s.stop(t + 0.82)
   }
+}
+
+// --- Moonshot voices. An ignition-countdown identity: urgent but controlled, its own world clear of
+// Lucky's funk and Range's four-on-the-floor techno. G minor at 138 with a half-time *swagger*, a
+// syncopated punchy kick (never on every beat), an octave-popping saw bass, a sparse resonant pluck riff
+// that leaves space (tension, not busy), and a noise clap on the backbeat. Around it: a launch "fire", a
+// quick direction-flip tick, and the win/cash-out/miss resolves (the win lifts G minor into G major for
+// the payoff). Same synth bus + quality bar as the others.
+
+const MOON_TEMPO = 138
+const MOON_STEP = 60 / MOON_TEMPO / 4 // sixteenth-note length, seconds
+const MOON_STEPS = 64 // 4 bars
+// Gm - Eb - F - D (i - VI - VII - V): the D's F# leading tone keeps pulling the tension home to Gm.
+const MOON_BARS = [
+  { bass: 98.0, arp: [233.08, 293.66, 392.0] }, // Gm  (Bb3 D4 G4)
+  { bass: 77.78, arp: [311.13, 392.0, 466.16] }, // Eb  (Eb4 G4 Bb4)
+  { bass: 87.31, arp: [349.23, 440.0, 523.25] }, // F   (F4 A4 C5)
+  { bass: 73.42, arp: [293.66, 369.99, 440.0] }, // D   (D4 F#4 A4)
+]
+// A syncopated, off-kilter kick (1, the "and" of 2, the "a" of 3): deliberate and tense, not four-on-floor.
+const MOON_KICKS = new Set([0, 6, 11])
+// The riff fires only on these steps (lots of rest = suspense): a rising 3-note ping per bar.
+const MOON_RIFF: Record<number, number> = { 0: 0, 4: 1, 7: 2, 10: 1 }
+
+function moonKick(ac: AudioContext, dest: AudioNode, t: number): void {
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(160, t)
+  o.frequency.exponentialRampToValueAtTime(46, t + 0.12)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.2, t + 0.006)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2)
+  o.connect(g).connect(dest)
+  o.start(t)
+  o.stop(t + 0.22)
+}
+
+// An octave-popping saw bass through a low lowpass plus a sine sub: the urgent low-end drive.
+function moonBass(ac: AudioContext, dest: AudioNode, freq: number, t: number): void {
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  const f = ac.createBiquadFilter()
+  o.type = 'sawtooth'
+  o.frequency.setValueAtTime(freq, t)
+  f.type = 'lowpass'
+  f.frequency.value = 540
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.1, t + 0.01)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.17)
+  o.connect(f).connect(g).connect(dest)
+  o.start(t)
+  o.stop(t + 0.19)
+  const sub = ac.createOscillator()
+  const sg = ac.createGain()
+  sub.type = 'sine'
+  sub.frequency.setValueAtTime(freq, t)
+  sg.gain.setValueAtTime(0.0001, t)
+  sg.gain.exponentialRampToValueAtTime(0.1, t + 0.01)
+  sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.16)
+  sub.connect(sg).connect(dest)
+  sub.start(t)
+  sub.stop(t + 0.18)
+}
+
+// The riff pluck: a resonant saw blip, bright but short, the tense "countdown" voice.
+function moonPluck(ac: AudioContext, dest: AudioNode, freq: number, t: number): void {
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  const f = ac.createBiquadFilter()
+  o.type = 'sawtooth'
+  o.frequency.setValueAtTime(freq, t)
+  f.type = 'lowpass'
+  f.frequency.value = 2600
+  f.Q.value = 8 // resonant edge, tense
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.045, t + 0.005)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16)
+  o.connect(f).connect(g).connect(dest)
+  o.start(t)
+  o.stop(t + 0.18)
+}
+
+// Backbeat clap: a short wide noise burst through a bandpass, the half-time snap on beat 3.
+function moonClap(ac: AudioContext, dest: AudioNode, t: number): void {
+  const src = ac.createBufferSource()
+  const f = ac.createBiquadFilter()
+  const g = ac.createGain()
+  src.buffer = noise(ac)
+  f.type = 'bandpass'
+  f.Q.value = 0.7
+  f.frequency.value = 1900
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.05, t + 0.005)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12)
+  src.connect(f).connect(g).connect(dest)
+  src.start(t)
+  src.stop(t + 0.14)
+}
+
+function moonHat(ac: AudioContext, dest: AudioNode, t: number, accent: boolean): void {
+  const src = ac.createBufferSource()
+  const f = ac.createBiquadFilter()
+  const g = ac.createGain()
+  src.buffer = noise(ac)
+  f.type = 'highpass'
+  f.frequency.value = 8200
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(accent ? 0.03 : 0.018, t + 0.004)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04)
+  src.connect(f).connect(g).connect(dest)
+  src.start(t)
+  src.stop(t + 0.05)
+}
+
+// One sixteenth of the loop: the syncopated kick, the backbeat clap, the octave-pop bass on the eighths,
+// the sparse resonant riff, and offbeat hats.
+function moonStepAt(ac: AudioContext, dest: AudioNode, step: number, t: number): void {
+  const bar = Math.floor(step / 16) % MOON_BARS.length
+  const chord = MOON_BARS[bar]
+  const s = step % 16
+  if (MOON_KICKS.has(s)) moonKick(ac, dest, t)
+  if (s === 8) moonClap(ac, dest, t) // backbeat
+  if (s % 2 === 0) moonBass(ac, dest, s % 8 === 4 ? chord.bass * 2 : chord.bass, t) // octave pop mid-bar
+  const riff = MOON_RIFF[s]
+  if (riff != null) moonPluck(ac, dest, chord.arp[riff], t)
+  if (s === 2 || s === 6 || s === 10 || s === 14) moonHat(ac, dest, t, s === 6 || s === 14)
+}
+
+let moonTimer: ReturnType<typeof setInterval> | null = null
+let moonStepIdx = 0
+let moonNext = 0
+let moonBus: GainNode | null = null
+
+// Start the bed (fire -> open). Same lookahead scheduler as the other beds, kept low so it sits under
+// the chart + readouts. No-op if sound is off or it is already running.
+export function startMoonshotBgm(): void {
+  if (!enabled || moonTimer) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const bus = ac.createGain()
+  bus.gain.setValueAtTime(0.0001, ac.currentTime)
+  bus.gain.exponentialRampToValueAtTime(0.22, ac.currentTime + 0.45)
+  bus.connect(out(ac))
+  moonBus = bus
+  moonStepIdx = 0
+  moonNext = ac.currentTime + 0.08
+  moonTimer = setInterval(() => {
+    if (!ac || !moonBus) return
+    while (moonNext < ac.currentTime + 0.1) {
+      moonStepAt(ac, moonBus, moonStepIdx, moonNext)
+      moonNext += MOON_STEP
+      moonStepIdx = (moonStepIdx + 1) % MOON_STEPS
+    }
+  }, 25)
+}
+
+export function stopMoonshotBgm(): void {
+  if (moonTimer) {
+    clearInterval(moonTimer)
+    moonTimer = null
+  }
+  const bus = moonBus
+  moonBus = null
+  if (bus && ctx) {
+    const now = ctx.currentTime
+    bus.gain.cancelScheduledValues(now)
+    bus.gain.setValueAtTime(Math.max(0.0001, bus.gain.value), now)
+    bus.gain.exponentialRampToValueAtTime(0.0001, now + 0.22)
+    setTimeout(() => bus.disconnect(), 360)
+  }
+}
+
+// Ignition on PLAY: a deep launch thump under a fast rising filtered-noise whoosh and a tense three-note
+// saw climb. "We have liftoff", punchy and committal.
+export function moonshotFire(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  // launch thump
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(150, t)
+  o.frequency.exponentialRampToValueAtTime(44, t + 0.22)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.22, t + 0.01)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34)
+  o.connect(g).connect(out(ac))
+  o.start(t)
+  o.stop(t + 0.36)
+  // rising whoosh
+  const src = ac.createBufferSource()
+  src.buffer = noise(ac)
+  const f = ac.createBiquadFilter()
+  f.type = 'bandpass'
+  f.Q.value = 0.9
+  f.frequency.setValueAtTime(300, t)
+  f.frequency.exponentialRampToValueAtTime(3200, t + 0.34)
+  const ng = ac.createGain()
+  ng.gain.setValueAtTime(0.0001, t)
+  ng.gain.exponentialRampToValueAtTime(0.05, t + 0.08)
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.4)
+  src.connect(f).connect(ng).connect(out(ac))
+  src.start(t)
+  src.stop(t + 0.44)
+  // tense saw climb (G minor pull-up: D4 -> F4 -> G4)
+  const climb = [293.66, 349.23, 392.0]
+  climb.forEach((freq, i) => moonPluck(ac, out(ac), freq, t + 0.04 + i * 0.06))
+}
+
+// Direction flip: a crisp mechanical tick (a noise detent + a short triangle), neutral so toggling
+// either way reads the same.
+export function moonshotFlip(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  const src = ac.createBufferSource()
+  src.buffer = noise(ac)
+  const f = ac.createBiquadFilter()
+  f.type = 'highpass'
+  f.frequency.value = 4200
+  const ng = ac.createGain()
+  ng.gain.setValueAtTime(0.0001, t)
+  ng.gain.exponentialRampToValueAtTime(0.02, t + 0.002)
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.035)
+  src.connect(f).connect(ng).connect(out(ac))
+  src.start(t)
+  src.stop(t + 0.05)
+  blip(ac, 560, t + 0.004, 0.07, 0.035)
+}
+
+// Win: the tension resolves G minor -> G major. A low boom under a bright ascending G-major arpeggio
+// (G B D G B), topped with a sparkle. Triumphant and distinct from Lucky's C climb / Range's D chord.
+export function moonshotWin(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(98, t)
+  o.frequency.exponentialRampToValueAtTime(49, t + 0.5)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.22, t + 0.01)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7)
+  o.connect(g).connect(out(ac))
+  o.start(t)
+  o.stop(t + 0.72)
+  const climb = [392.0, 493.88, 587.33, 783.99, 987.77] // G4 B4 D5 G5 B5 (G major)
+  climb.forEach((f, i) => bell(ac, f, t + 0.04 + i * 0.075, 0.42, 0.055))
+  const spark = [1567.98, 1975.53, 2349.32]
+  spark.forEach((f, i) => bell(ac, f, t + 0.5 + i * 0.07, 0.18, 0.02))
+}
+
+// Cash-out: a confident rising fourth (D5 -> G5) topped with a sparkle, over a soft body. The "locked
+// it in" chime, its own interval so it never sounds like the held win.
+export function moonshotCashout(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(116, t)
+  o.frequency.exponentialRampToValueAtTime(73, t + 0.22)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.12, t + 0.008)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28)
+  o.connect(g).connect(out(ac))
+  o.start(t)
+  o.stop(t + 0.3)
+  bell(ac, 587.33, t, 0.22, 0.06) // D5
+  bell(ac, 783.99, t + 0.1, 0.32, 0.065) // G5
+  bell(ac, 1174.66, t + 0.22, 0.2, 0.03) // D6 sparkle
+}
+
+// Miss: a soft low sigh under a gentle descending minor third (Bb4 -> G4). Acknowledges the miss,
+// warm and brief.
+export function moonshotLose(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  if (ac.state === 'suspended') void ac.resume()
+  const t = ac.currentTime
+  const o = ac.createOscillator()
+  const g = ac.createGain()
+  const f = ac.createBiquadFilter()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(210, t)
+  o.frequency.exponentialRampToValueAtTime(140, t + 0.45)
+  f.type = 'lowpass'
+  f.frequency.setValueAtTime(1200, t)
+  f.frequency.exponentialRampToValueAtTime(480, t + 0.4)
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.09, t + 0.02)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55)
+  o.connect(f).connect(g).connect(out(ac))
+  o.start(t)
+  o.stop(t + 0.58)
+  bell(ac, 466.16, t + 0.02, 0.3, 0.04) // Bb4
+  bell(ac, 392.0, t + 0.16, 0.42, 0.04) // G4
 }
 
 // --- Line Rider voices. A dreamy synthwave glide, its own world: slow 90bpm, bright E major, a soft

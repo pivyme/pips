@@ -55,7 +55,6 @@ const HOT = [0xff, 0x5a, 0x4d] // x8+ hot red
 interface Trail {
   x: number
   y: number
-  hue: string
   life: number
 }
 interface Spark {
@@ -69,16 +68,22 @@ interface Spark {
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
 
-// Heat color for the multiplier: cyan -> amber -> hot red as the streak climbs. Exported so the
-// DOM HUD (multiplier, pending) can tint to match the field.
-export function heat(mult: number, alpha = 1): string {
+// Heat color for the multiplier: cyan -> amber -> hot red as the streak climbs. Split so the per-frame
+// draw can resolve the rgb once and only vary alpha, instead of redoing the lerp math per trail segment.
+function heatRgb(mult: number): [number, number, number] {
   const t = clamp01((mult - 1) / 7)
-  const [a, b] =
-    t < 0.5 ? [COOL, WARM] : [WARM, HOT]
+  const [a, b] = t < 0.5 ? [COOL, WARM] : [WARM, HOT]
   const k = t < 0.5 ? t / 0.5 : (t - 0.5) / 0.5
-  const r = Math.round(lerp(a[0], b[0], k))
-  const g = Math.round(lerp(a[1], b[1], k))
-  const bl = Math.round(lerp(a[2], b[2], k))
+  return [
+    Math.round(lerp(a[0], b[0], k)),
+    Math.round(lerp(a[1], b[1], k)),
+    Math.round(lerp(a[2], b[2], k)),
+  ]
+}
+
+// Exported so the DOM HUD (multiplier, pending) can tint to match the field.
+export function heat(mult: number, alpha = 1): string {
+  const [r, g, bl] = heatRgb(mult)
   return `rgba(${r},${g},${bl},${alpha})`
 }
 
@@ -309,20 +314,27 @@ export class RideEngine {
     }
 
     // trail (ink on the scrolling tape): laid at the pip, drifts left with the world
-    this.trail.push({ x: pipX, y: this.pipY * this.h, hue: heat(this.mult, 0.9), life: 1 })
-    for (const t of this.trail) {
+    this.trail.push({ x: pipX, y: this.pipY * this.h, life: 1 })
+    // Drift + fade, then compact in place (a fresh filtered array every frame was needless GC churn).
+    let kept = 0
+    for (let i = 0; i < this.trail.length; i++) {
+      const t = this.trail[i]
       t.x -= speed * dt
       t.life -= dt * 0.7
+      if (t.life > 0 && t.x > -20) this.trail[kept++] = t
     }
-    this.trail = this.trail.filter((t) => t.life > 0 && t.x > -20)
+    this.trail.length = kept
 
-    for (const s of this.sparks) {
+    let liveSparks = 0
+    for (let i = 0; i < this.sparks.length; i++) {
+      const s = this.sparks[i]
       s.x += s.vx * dt
       s.y += s.vy * dt
       s.vy += 60 * dt
       s.life -= dt * 2.2
+      if (s.life > 0) this.sparks[liveSparks++] = s
     }
-    this.sparks = this.sparks.filter((s) => s.life > 0)
+    this.sparks.length = liveSparks
 
     this.pushHud()
 
@@ -359,7 +371,11 @@ export class RideEngine {
     const pipX = w * PIP_X_FRAC
     const d = this.difficulty()
     const band = lerp(BAND0, BAND1, d)
-    const hue = heat(this.mult)
+    // Resolve the heat color once per frame; build only the varying alpha per use (hc). Was a full
+    // lerp+round per trail segment per frame.
+    const [hr, hg, hb] = heatRgb(this.mult)
+    const hc = (a: number) => `rgba(${hr},${hg},${hb},${a})`
+    const hue = hc(1)
 
     // faint vertical "now" guide at the pip
     ctx.strokeStyle = 'rgba(255,255,255,0.06)'
@@ -382,24 +398,31 @@ export class RideEngine {
       ctx.lineTo(x, y + band * h)
     }
     ctx.closePath()
-    ctx.fillStyle = heat(this.mult, 0.07)
+    ctx.fillStyle = hc(0.07)
     ctx.fill()
 
-    // the trend line, glowing, heat-colored
-    ctx.save()
-    ctx.shadowColor = hue
-    ctx.shadowBlur = 12 + Math.min(18, this.mult * 2)
-    ctx.strokeStyle = hue
-    ctx.lineWidth = 2.4
+    // The trend line, glowing, heat-colored. Layered translucent strokes fake the neon halo: a wide
+    // faint pass, a mid pass, then the crisp bright core, all the same hue. This replaces a per-frame
+    // shadowBlur (a full-width gaussian blur every frame, the line-rider stutter). The halo still
+    // flares with the multiplier the way the old blur radius did.
+    const flare = Math.min(1, this.mult / 10) // mirrors the old 12->30px blur ramp
     ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
     ctx.beginPath()
     for (let x = 0; x <= w; x += step) {
       const y = this.lineYAt(x) * h
       if (x === 0) ctx.moveTo(x, y)
       else ctx.lineTo(x, y)
     }
+    ctx.strokeStyle = hc(0.12 + 0.1 * flare)
+    ctx.lineWidth = 9 + 7 * flare
     ctx.stroke()
-    ctx.restore()
+    ctx.strokeStyle = hc(0.3 + 0.12 * flare)
+    ctx.lineWidth = 5
+    ctx.stroke()
+    ctx.strokeStyle = hue
+    ctx.lineWidth = 2.4
+    ctx.stroke()
 
     // trail
     if (this.trail.length > 1) {
@@ -408,7 +431,7 @@ export class RideEngine {
       for (let i = 1; i < this.trail.length; i++) {
         const a = this.trail[i - 1]
         const b = this.trail[i]
-        ctx.strokeStyle = heat(this.mult, 0.5 * b.life)
+        ctx.strokeStyle = hc(0.5 * b.life)
         ctx.beginPath()
         ctx.moveTo(a.x, a.y)
         ctx.lineTo(b.x, b.y)
@@ -434,7 +457,7 @@ export class RideEngine {
     ctx.restore()
     // lock ring when riding
     if (this.onLine) {
-      ctx.strokeStyle = heat(this.mult, 0.6)
+      ctx.strokeStyle = hc(0.6)
       ctx.lineWidth = 1.5
       ctx.beginPath()
       ctx.arc(pipX, py, 11, 0, Math.PI * 2)
@@ -448,7 +471,7 @@ export class RideEngine {
     ctx.fillStyle = 'rgba(255,255,255,0.08)'
     ctx.fillRect(gx, gTop, 4, gH)
     const low = this.grip < 0.28
-    ctx.fillStyle = low ? '#ff5a4d' : heat(this.mult, 0.9)
+    ctx.fillStyle = low ? '#ff5a4d' : hc(0.9)
     ctx.fillRect(gx, gTop + gH * (1 - this.grip), 4, gH * this.grip)
 
     if (low && !this.cb.reduced) {

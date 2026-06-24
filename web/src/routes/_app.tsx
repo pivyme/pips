@@ -5,6 +5,7 @@ import type { ConsoleTheme } from '@/components/console/themes'
 import { GamesConsole } from './_app/games/index'
 import { LuckyScreen } from './_app/games/lucky'
 import { RangeScreen } from './_app/games/range'
+import { MoonshotScreen } from './_app/games/moonshot'
 import { LineRiderScreen } from './_app/games/line-rider'
 import { CandleHopScreen } from './_app/games/candle-hop'
 import { AppFrame } from '@/components/console/AppFrame'
@@ -21,6 +22,7 @@ import { DEFAULT_THEME_ID, THEME_BY_ID, themeBackdrop, useConsoleTheme } from '@
 import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
 import { api } from '@/lib/api'
+import { LivePresenceProvider } from '@/lib/presence'
 import { useAuth, loadToken } from '@/lib/auth'
 import { useInstallGate } from '@/lib/platform'
 import { isDemo } from '@/lib/demo'
@@ -48,6 +50,7 @@ const DEVICE_SCREENS: Record<string, ComponentType> = {
   '/games': GamesConsole,
   '/games/lucky': LuckyScreen,
   '/games/range': RangeScreen,
+  '/games/moonshot': MoonshotScreen,
   '/games/line-rider': LineRiderScreen,
   '/games/candle-hop': CandleHopScreen,
 }
@@ -93,6 +96,7 @@ function AppLayout() {
   const onMenu = Boolean(matchRoute({ to: '/menu', fuzzy: true }))
   const onRange = Boolean(matchRoute({ to: '/games/range' }))
   const onLucky = Boolean(matchRoute({ to: '/games/lucky' }))
+  const onMoonshot = Boolean(matchRoute({ to: '/games/moonshot' }))
   const onLineRider = Boolean(matchRoute({ to: '/games/line-rider' }))
   const onCandleHop = Boolean(matchRoute({ to: '/games/candle-hop' }))
   const on3D = Boolean(matchRoute({ to: '/games', fuzzy: true }))
@@ -179,11 +183,13 @@ function AppLayout() {
       ? '/games/range'
       : onLucky
         ? '/games/lucky'
-        : onLineRider
-          ? '/games/line-rider'
-          : onCandleHop
-            ? '/games/candle-hop'
-            : '/games'
+        : onMoonshot
+          ? '/games/moonshot'
+          : onLineRider
+            ? '/games/line-rider'
+            : onCandleHop
+              ? '/games/candle-hop'
+              : '/games'
   const DeviceScreen = DEVICE_SCREENS[last3DPath.current]
 
   // ===== Phase machine: landing (the door) -> onboarding (new account) -> app =====
@@ -410,6 +416,7 @@ function AppLayout() {
 
   return (
     <AchievementDetailProvider>
+      <LivePresenceProvider userId={status === 'authed' ? user?.id ?? null : null}>
       <AppFrame bg={backdrop} dimmed={phase === 'landing' && !restoring}>
         {mountConsole && (
         <ConsoleControlsProvider>
@@ -483,6 +490,7 @@ function AppLayout() {
           healthy login, so onboarding and the normal first run are untouched. */}
       {recovering && !showLoadingScreen && <RecoveryOverlay />}
       <AchievementCelebration />
+      </LivePresenceProvider>
     </AchievementDetailProvider>
   )
 }

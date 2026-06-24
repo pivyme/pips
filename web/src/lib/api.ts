@@ -9,7 +9,7 @@ const BASE = env.VITE_API_URL
 
 // === DTOs (mirror the backend) ===
 
-export type Game = 'lucky' | 'range'
+export type Game = 'lucky' | 'range' | 'moonshot'
 export type PlayStatus = 'pending' | 'open' | 'won' | 'lost' | 'cashed_out' | 'error'
 export type Side = 'up' | 'down'
 
@@ -18,6 +18,7 @@ export interface UserDTO {
   address: string
   displayName: string
   username: string | null
+  email: string | null // login email (Privy Google/email sign-in); null for dev/wallet
   provider: 'privy' | 'dev' | 'wallet'
   // wallet-connect: the connected external wallet (login + default withdraw target).
   walletAuthAddress?: string

@@ -54,7 +54,7 @@ function StatsScreen() {
         </ScreenEmpty>
       ) : (
         <div className="flex flex-col gap-4">
-          <StatsCard stats={stats} displayName={displayHandle(user)} address={user?.address ?? ''} />
+          <StatsCard stats={stats} displayName={displayHandle(user)} address={user?.address ?? ''} email={user?.email} />
           <Button disabled={sharing} onClick={() => void onShare()} className="w-full">
             {sharing ? 'Making your card...' : 'Share card'}
           </Button>
