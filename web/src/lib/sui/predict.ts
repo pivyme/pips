@@ -2,7 +2,7 @@
 // embedded wallet via a session signer), and submits every PTB, so this layer just drives the play
 // flow. Games and screens call placePlay / cashOut and never touch a moveCall or an id directly.
 
-import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from '@mysten/sui/jsonRpc'
+import { SuiGrpcClient } from '@mysten/sui/grpc'
 
 import { api } from '../api'
 import { DUSDC_TYPE, NETWORK, PACKAGE_ID, fromDusdcRaw } from './config'
@@ -15,13 +15,22 @@ export type WalletBalances = { sui: string; usdc: string | null }
 const SUI_TYPE = '0x2::sui::SUI'
 const SUI_DECIMALS = 9
 
-// Lazy read-only client. JSON-RPC (matches the backend, no WASM, browser safe). Only used for
-// the live DUSDC balance read below, never for building a Predict moveCall.
-let client: SuiJsonRpcClient | null = null
-function suiClient(): SuiJsonRpcClient {
+// Per-network fullnode gRPC default when VITE_SUI_FULLNODE_URL is unset. grpc-web runs over fetch
+// (no extra WASM beyond the crypto stack the app already loads), so it is browser safe.
+const DEFAULT_FULLNODE: Record<string, string> = {
+  mainnet: 'https://fullnode.mainnet.sui.io:443',
+  testnet: 'https://fullnode.testnet.sui.io:443',
+  devnet: 'https://fullnode.devnet.sui.io:443',
+  localnet: 'http://127.0.0.1:9000',
+}
+
+// Lazy read-only client. gRPC (matches the backend). Only used for the live balance reads below,
+// never for building a Predict moveCall. baseUrl is required (the shorthand ctor throws).
+let client: SuiGrpcClient | null = null
+function suiClient(): SuiGrpcClient {
   if (!client) {
-    const url = env.VITE_SUI_FULLNODE_URL || getJsonRpcFullnodeUrl(NETWORK)
-    client = new SuiJsonRpcClient({ url, network: NETWORK })
+    const baseUrl = env.VITE_SUI_FULLNODE_URL || DEFAULT_FULLNODE[NETWORK] || DEFAULT_FULLNODE.devnet
+    client = new SuiGrpcClient({ network: NETWORK, baseUrl })
   }
   return client
 }
@@ -48,13 +57,14 @@ export async function probeChainWiped(): Promise<boolean> {
       // backend unreachable: fall back to the compile-time package id
     }
     if (!packageId) return false
-    const obj = (await suiClient().getObject({ id: packageId, options: { showType: true } })) as {
-      data?: { objectId?: string } | null
-      error?: { code?: string } | null
+    // A live package reads cleanly; a reset chain throws "<id> not found" for the same id. Only that
+    // exact not-found signal reads as a wipe, so an unrelated hiccup never becomes a false "redeploying".
+    try {
+      await suiClient().getObject({ objectId: packageId })
+      return false
+    } catch (e) {
+      return (e instanceof Error ? e.message : String(e)).toLowerCase().includes('not found')
     }
-    // A live package returns data and no error; a reset chain returns a notExists/deleted error for
-    // the same id. Require both signals so an unexpected response shape never reads as a false wipe.
-    return Boolean(obj.error) && !obj.data
   })()
   const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000))
   return Promise.race([probe.catch(() => false), timeout])
@@ -66,7 +76,7 @@ export async function probeChainWiped(): Promise<boolean> {
 export async function readDusdcBalance(address: string): Promise<number> {
   if (!DUSDC_TYPE) return 0
   const bal = await suiClient().getBalance({ owner: address, coinType: DUSDC_TYPE })
-  return fromDusdcRaw(bal.totalBalance)
+  return fromDusdcRaw(bal.balance.balance)
 }
 
 const formatRawBalance = (raw: string, decimals: number): string => {
@@ -88,8 +98,8 @@ export async function readWalletBalances(address: string): Promise<WalletBalance
   ])
 
   return {
-    sui: formatRawBalance(sui.totalBalance, SUI_DECIMALS),
-    usdc: usdc ? formatRawBalance(usdc.totalBalance, 6) : null,
+    sui: formatRawBalance(sui.balance.balance, SUI_DECIMALS),
+    usdc: usdc ? formatRawBalance(usdc.balance.balance, 6) : null,
   }
 }
 
