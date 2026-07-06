@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 
 import { verifyPersonalMessageSignature } from '@mysten/sui/verify';
 import { normalizeSuiAddress, fromBase64 } from '@mysten/sui/utils';
-import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 
 const NONCE_TTL_MS = 5 * 60_000;
 const MAX_PENDING = 4096;
@@ -49,11 +49,15 @@ const ZKLOGIN_FLAG = 0x05;
 // NOT against our localnet, which has neither. So those are verified against public fullnodes. Slush
 // social accounts live on mainnet; testnet is the fallback. Plain keypair / multisig / passkey sigs
 // verify offline with no client. Lazily built so non-zkLogin logins never touch an external node.
-let zkClients: SuiJsonRpcClient[] | null = null;
-function zkVerifyClients(): SuiJsonRpcClient[] {
+const ZK_FULLNODE: Record<'mainnet' | 'testnet', string> = {
+  mainnet: 'https://fullnode.mainnet.sui.io:443',
+  testnet: 'https://fullnode.testnet.sui.io:443',
+};
+let zkClients: SuiGrpcClient[] | null = null;
+function zkVerifyClients(): SuiGrpcClient[] {
   if (!zkClients) {
     zkClients = (['mainnet', 'testnet'] as const).map(
-      (n) => new SuiJsonRpcClient({ url: getJsonRpcFullnodeUrl(n), network: n }),
+      (n) => new SuiGrpcClient({ network: n, baseUrl: ZK_FULLNODE[n] }),
     );
   }
   return zkClients;
@@ -81,7 +85,7 @@ export async function verifyWalletSignature(address: string, signature: string):
   const bytes = new TextEncoder().encode(entry.message);
   const flag = schemeFlag(signature);
   // zkLogin needs a node to verify the proof, against the network it targets; everything else is offline.
-  const clients: Array<SuiJsonRpcClient | undefined> = flag === ZKLOGIN_FLAG ? zkVerifyClients() : [undefined];
+  const clients: Array<SuiGrpcClient | undefined> = flag === ZKLOGIN_FLAG ? zkVerifyClients() : [undefined];
 
   for (const client of clients) {
     try {

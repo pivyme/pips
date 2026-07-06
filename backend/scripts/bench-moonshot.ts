@@ -17,7 +17,7 @@ import '../dotenv.ts';
 
 import { EXPIRY_SAFETY_MS, ORACLE_LIFETIME_MS } from '../src/config/main-config.ts';
 import { PACKAGE_ID } from '../src/lib/sui/config.ts';
-import { suiClient, explorerTxUrl } from '../src/lib/sui/client.ts';
+import { graphqlClient, explorerTxUrl } from '../src/lib/sui/client.ts';
 import { readOracle, readOracleGrid } from '../src/lib/sui/predict.ts';
 import { allMarkets, removeMarket, upsertMarket } from '../src/lib/sui/markets.ts';
 import { prismaQuery } from '../src/lib/prisma.ts';
@@ -37,23 +37,30 @@ async function syncMarketsOnce(): Promise<void> {
   const t = Date.now();
   const cutoff = t - ORACLE_LIFETIME_MS - 60_000;
   const ids = new Set<string>();
-  let cursor: Parameters<typeof suiClient.queryEvents>[0]['cursor'] = null;
+  // Historical event scan via GraphQL (fullnode gRPC has none). newest-first: last/before pagination.
+  const EVENTS_Q = `query($type: String!, $last: Int!, $before: String) {
+    events(last: $last, before: $before, filter: { type: $type }) {
+      pageInfo { hasPreviousPage startCursor }
+      nodes { contents { json } }
+    }
+  }`;
+  let before: string | null = null;
   for (let page = 0; page < 6; page++) {
-    const res = await suiClient.queryEvents({
-      query: { MoveEventType: `${PACKAGE_ID}::oracle::OracleActivated` },
-      cursor,
-      limit: 50,
-      order: 'descending',
+    const res: { data?: unknown } = await graphqlClient.query({
+      query: EVENTS_Q,
+      variables: { type: `${PACKAGE_ID}::oracle::OracleActivated`, last: 50, before },
     });
+    const conn = (res.data as any)?.events;
+    if (!conn) break;
     let reachedOld = false;
-    for (const e of res.data) {
-      const pj = e.parsedJson as { oracle_id?: string; expiry?: string; timestamp?: string } | undefined;
+    for (let i = conn.nodes.length - 1; i >= 0; i--) {
+      const pj = conn.nodes[i].contents?.json as { oracle_id?: string; expiry?: string; timestamp?: string } | undefined;
       if (!pj?.oracle_id) continue;
       if (Number(pj.timestamp) < cutoff) { reachedOld = true; continue; }
       if (Number(pj.expiry) > t + EXPIRY_SAFETY_MS) ids.add(pj.oracle_id);
     }
-    if (reachedOld || !res.hasNextPage || !res.nextCursor) break;
-    cursor = res.nextCursor;
+    if (reachedOld || !conn.pageInfo.hasPreviousPage || !conn.pageInfo.startCursor) break;
+    before = conn.pageInfo.startCursor;
   }
   await Promise.all(
     [...ids].map(async (oracleId) => {

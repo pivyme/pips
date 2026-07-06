@@ -11,7 +11,7 @@ import cron from 'node-cron';
 
 import { EXPIRY_SAFETY_MS, MARKET_SYNC_CRON, OPERATOR_ENABLED, ORACLE_LIFETIME_MS } from '../config/main-config.ts';
 import { PACKAGE_ID } from '../lib/sui/config.ts';
-import { suiClient } from '../lib/sui/client.ts';
+import { graphqlClient } from '../lib/sui/client.ts';
 import { readOracle, readOracleGrid } from '../lib/sui/predict.ts';
 import { allMarkets, removeMarket, upsertMarket } from '../lib/sui/markets.ts';
 
@@ -20,7 +20,22 @@ const ORACLE_ACTIVATED_EVENT = `${PACKAGE_ID}::oracle::OracleActivated`;
 // and we stop early once a page predates any oracle that could still be live, so this is just a cap.
 const SYNC_PAGE_CAP = 6;
 
+// Fullnode gRPC v2 has no event scan, so historical event discovery goes through GraphQL. `last`
+// returns the newest N (ascending within the page); we walk pages backwards with `before`.
+const ACTIVATED_EVENTS_QUERY = `query($type: String!, $last: Int!, $before: String) {
+  events(last: $last, before: $before, filter: { type: $type }) {
+    pageInfo { hasPreviousPage startCursor }
+    nodes { contents { json } }
+  }
+}`;
+
 type ActivatedEvent = { oracle_id: string; expiry: string; timestamp: string };
+type ActivatedEventsResult = {
+  events: {
+    pageInfo: { hasPreviousPage: boolean; startCursor: string | null };
+    nodes: { contents: { json: ActivatedEvent | null } | null }[];
+  };
+};
 
 // Recent OracleActivated oracle ids whose expiry is still ahead. Walks events newest-first and stops
 // once activations predate the max oracle lifetime (those oracles are certainly expired), so the scan
@@ -28,23 +43,24 @@ type ActivatedEvent = { oracle_id: string; expiry: string; timestamp: string };
 async function liveCandidateIds(now: number): Promise<string[]> {
   const cutoff = now - ORACLE_LIFETIME_MS - 60_000; // activated before this => long expired
   const ids = new Set<string>();
-  let cursor: Parameters<typeof suiClient.queryEvents>[0]['cursor'] = null;
+  let before: string | null = null;
   for (let page = 0; page < SYNC_PAGE_CAP; page++) {
-    const res = await suiClient.queryEvents({
-      query: { MoveEventType: ORACLE_ACTIVATED_EVENT },
-      cursor,
-      limit: 50,
-      order: 'descending',
+    const res: { data?: unknown } = await graphqlClient.query({
+      query: ACTIVATED_EVENTS_QUERY,
+      variables: { type: ORACLE_ACTIVATED_EVENT, last: 50, before },
     });
+    const conn = (res.data as ActivatedEventsResult | undefined)?.events;
+    if (!conn) break;
     let reachedOld = false;
-    for (const e of res.data) {
-      const pj = e.parsedJson as ActivatedEvent | undefined;
+    // GraphQL returns the page oldest-first; iterate in reverse so it's newest-first like the old scan.
+    for (let i = conn.nodes.length - 1; i >= 0; i--) {
+      const pj = conn.nodes[i].contents?.json ?? undefined;
       if (!pj?.oracle_id) continue;
       if (Number(pj.timestamp) < cutoff) { reachedOld = true; continue; }
       if (Number(pj.expiry) > now + EXPIRY_SAFETY_MS) ids.add(pj.oracle_id);
     }
-    if (reachedOld || !res.hasNextPage || !res.nextCursor) break;
-    cursor = res.nextCursor;
+    if (reachedOld || !conn.pageInfo.hasPreviousPage || !conn.pageInfo.startCursor) break;
+    before = conn.pageInfo.startCursor;
   }
   return [...ids];
 }
