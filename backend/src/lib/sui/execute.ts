@@ -161,7 +161,7 @@ let gasPriceCache: { price: bigint; at: number } | null = null;
 async function refGasPrice(): Promise<bigint> {
   const now = Date.now();
   if (gasPriceCache && now - gasPriceCache.at < 60_000) return gasPriceCache.price;
-  const price = await suiClient.getReferenceGasPrice();
+  const price = BigInt((await suiClient.getReferenceGasPrice()).referenceGasPrice);
   gasPriceCache = { price, at: now };
   return price;
 }
@@ -187,12 +187,13 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 // not a timeout) is surfaced immediately, there is nothing to reconcile. If the digest never appears
 // within the reconcile window, the tx genuinely did not finalize and the original failure stands.
 async function submitAndConfirm(txBytes: Uint8Array, signature: string | string[], digest: string) {
+  const signatures = Array.isArray(signature) ? signature : [signature];
   try {
     return await withTimeout(
-      suiClient.executeTransactionBlock({
-        transactionBlock: txBytes,
-        signature,
-        options: { showEffects: true, showObjectChanges: true, showEvents: true },
+      suiClient.executeTransaction({
+        transaction: txBytes,
+        signatures,
+        include: { effects: true, objectTypes: true, events: true },
       }),
       SUBMIT_TIMEOUT_MS,
       'submit',
@@ -204,10 +205,26 @@ async function submitAndConfirm(txBytes: Uint8Array, signature: string | string[
     return await suiClient.waitForTransaction({
       digest,
       timeout: SUBMIT_RECONCILE_MS,
-      pollInterval: 1500,
-      options: { showEffects: true, showObjectChanges: true, showEvents: true },
+      include: { effects: true, objectTypes: true, events: true },
     });
   }
+}
+
+// Normalize a gRPC execute/wait result (with effects/objectTypes/events included) into ExecResult,
+// throwing a labelled error on a failed/reverted tx. Mirrors the serial-executor parse in
+// runViaExecutor: created objects carry their Move type, events map to {type, parsedJson}.
+type FullTxResult = Awaited<ReturnType<typeof submitAndConfirm>>;
+function toExecResult(out: FullTxResult, label: string): ExecResult {
+  const t = out.$kind === 'Transaction' ? out.Transaction : null;
+  if (!t || t.effects?.status?.success !== true) {
+    const status = t?.effects?.status ?? (out.$kind === 'FailedTransaction' ? out.FailedTransaction.status : out);
+    throw new Error(`${label} failed: ${JSON.stringify(status)}`);
+  }
+  const objectChanges = (t.effects.changedObjects ?? [])
+    .filter((o) => o.idOperation === 'Created')
+    .map((o) => ({ type: 'created', objectId: o.objectId, objectType: t.objectTypes?.[o.objectId] }));
+  const events = (t.events ?? []).map((event) => ({ type: event.eventType, parsedJson: event.json }));
+  return { digest: t.digest ?? t.effects.transactionDigest ?? '', objectChanges, events };
 }
 
 // Submit a sponsored user tx, self-healing an empty gas accumulator. If the node rejects the submit
@@ -243,17 +260,7 @@ export function executeAsTreasury(tx: Transaction, label: string): Promise<ExecR
     const { signature } = await kp.signTransaction(txBytes);
     const digest = TransactionDataBuilder.getDigestFromBytes(txBytes);
     const res = await submitAndConfirm(txBytes, signature, digest);
-    if (res.effects?.status?.status !== 'success') {
-      throw new Error(`treasury ${label} failed: ${JSON.stringify(res.effects?.status ?? res)}`);
-    }
-    const objectChanges = (res.objectChanges ?? [])
-      .filter((c) => c.type === 'created')
-      .map((c) => ({ type: 'created', objectId: 'objectId' in c ? c.objectId : undefined, objectType: 'objectType' in c ? c.objectType : undefined }));
-    const events = (res.events ?? []).map((event) => ({
-      type: event.type,
-      parsedJson: (event.parsedJson as Record<string, unknown> | undefined) ?? null,
-    }));
-    return { digest: res.digest, objectChanges, events };
+    return toExecResult(res, `treasury ${label}`);
   });
   // Keep the chain alive regardless of this tx's outcome so one failure doesn't wedge later payouts.
   treasuryChain = run.catch(() => { });
@@ -315,17 +322,7 @@ export async function executeForUser(tx: Transaction, ctx: UserContext): Promise
   // then confirmed against it (the tx may still be landing) rather than mistaken for a failure.
   const digest = TransactionDataBuilder.getDigestFromBytes(txBytes);
   const res = await submitSponsored(txBytes, signature, digest);
-  if (res.effects?.status?.status !== 'success') {
-    throw new Error(`privy play failed: ${JSON.stringify(res.effects?.status ?? res)}`);
-  }
-  const objectChanges = (res.objectChanges ?? [])
-    .filter((c) => c.type === 'created')
-    .map((c) => ({ type: 'created', objectId: 'objectId' in c ? c.objectId : undefined, objectType: 'objectType' in c ? c.objectType : undefined }));
-  const events = (res.events ?? []).map((event) => ({
-    type: event.type,
-    parsedJson: (event.parsedJson as Record<string, unknown> | undefined) ?? null,
-  }));
-  return { digest: res.digest, objectChanges, events };
+  return toExecResult(res, 'privy play');
 }
 
 // Wallet-connect (custodial) play execution. The server holds this user's play wallet, so signing is a
@@ -348,15 +345,5 @@ async function executeAsCustodialWallet(tx: Transaction, ctx: UserContext): Prom
 
   const digest = TransactionDataBuilder.getDigestFromBytes(txBytes);
   const res = await submitSponsored(txBytes, signature, digest);
-  if (res.effects?.status?.status !== 'success') {
-    throw new Error(`wallet play failed: ${JSON.stringify(res.effects?.status ?? res)}`);
-  }
-  const objectChanges = (res.objectChanges ?? [])
-    .filter((c) => c.type === 'created')
-    .map((c) => ({ type: 'created', objectId: 'objectId' in c ? c.objectId : undefined, objectType: 'objectType' in c ? c.objectType : undefined }));
-  const events = (res.events ?? []).map((event) => ({
-    type: event.type,
-    parsedJson: (event.parsedJson as Record<string, unknown> | undefined) ?? null,
-  }));
-  return { digest: res.digest, objectChanges, events };
+  return toExecResult(res, 'wallet play');
 }

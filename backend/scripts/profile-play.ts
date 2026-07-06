@@ -11,7 +11,7 @@
 import '../dotenv.ts';
 import jwt from 'jsonwebtoken';
 import { Transaction } from '@mysten/sui/transactions';
-import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 
 import { JWT_SECRET, APP_PORT, SUI_FULLNODE_URL } from '../src/config/main-config.ts';
 import { prismaQuery } from '../src/lib/prisma.ts';
@@ -93,7 +93,7 @@ const scanProbes = Array.from({ length: 128 }, (_, i) => ({ strike1e9: strike1e9
 const sizeProbes = Array.from({ length: 6 }, (_, i) => ({ strike1e9, quantity: BigInt(900 + i * 30) * 1000n }));
 
 // An origin-pointed client (bypasses Cloudflare) to measure proxy overhead on the same devInspect.
-const originClient = new SuiJsonRpcClient({ url: ORIGIN, network: NETWORK });
+const originClient = new SuiGrpcClient({ network: NETWORK, baseUrl: ORIGIN });
 
 // Build a representative mint tx (tiny qty so it always prices) the way executeForUser does.
 function freshMintTx(): Transaction {
@@ -115,10 +115,11 @@ await bench('scan 128 @ ORIGIN (no cloudflare)', 5, async () => {
     const k = tx.moveCall({ target: target('market_key', side === 'up' ? 'up' : 'down'), arguments: [tx.pure.id(oracleId), tx.pure.u64(BigInt(expiryMs)), tx.pure.u64(p.strike1e9)] });
     tx.moveCall({ target: target('predict', 'get_trade_amounts'), arguments: [tx.object(PREDICT_ID), tx.object(oracleId), k, tx.pure.u64(p.quantity), tx.object(CLOCK)] });
   }
-  await originClient.devInspectTransactionBlock({ sender: operatorAddress, transactionBlock: tx });
+  tx.setSender(operatorAddress);
+  await originClient.simulateTransaction({ transaction: tx, checksEnabled: false });
 });
 
-const gasPrice = await suiClient.getReferenceGasPrice();
+const gasPrice = BigInt((await suiClient.getReferenceGasPrice()).referenceGasPrice);
 await bench('tx.build NO budget (dry-run)', 3, async () => {
   const tx = freshMintTx();
   tx.setGasPrice(gasPrice);

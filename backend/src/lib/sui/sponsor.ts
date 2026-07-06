@@ -81,13 +81,15 @@ export async function ensureSponsorAccumulator(force = false): Promise<void> {
     // send_funds credits the coin into the recipient's SUI address balance (the accumulator).
     tx.moveCall({ target: '0x2::coin::send_funds', typeArguments: [SUI_TYPE], arguments: [coin, tx.pure.address(sponsorAddress)] });
     tx.setSender(sponsorAddress);
-    const res = await suiClient.signAndExecuteTransaction({ signer: sponsorKeypair!, transaction: tx, options: { showEffects: true } });
-    if (res.effects?.status?.status !== 'success') {
-      throw new Error(`sponsor accumulator top-up failed: ${JSON.stringify(res.effects?.status)}`);
+    const res = await suiClient.signAndExecuteTransaction({ signer: sponsorKeypair!, transaction: tx, include: { effects: true } });
+    const t = res.$kind === 'Transaction' ? res.Transaction : null;
+    if (!t || t.effects?.status?.success !== true) {
+      const status = t?.effects?.status ?? (res.$kind === 'FailedTransaction' ? res.FailedTransaction.status : res);
+      throw new Error(`sponsor accumulator top-up failed: ${JSON.stringify(status)}`);
     }
-    await suiClient.waitForTransaction({ digest: res.digest });
+    await suiClient.waitForTransaction({ digest: t.digest });
     warmedThisProcess = true;
-    console.log(`[sponsor] topped up gas accumulator with ${SPONSOR_TOPUP_SUI} SUI (${res.digest})`);
+    console.log(`[sponsor] topped up gas accumulator with ${SPONSOR_TOPUP_SUI} SUI (${t.digest})`);
   })();
   try {
     await inflightTopup;

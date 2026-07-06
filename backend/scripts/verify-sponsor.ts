@@ -34,7 +34,7 @@ async function buildSponsored(user: Ed25519Keypair) {
   const tx = new Transaction();
   tx.moveCall({ target: '0x2::clock::timestamp_ms', arguments: [tx.object('0x6')] });
   tx.setSender(user.getPublicKey().toSuiAddress());
-  tx.setGasPrice(await suiClient.getReferenceGasPrice());
+  tx.setGasPrice(BigInt((await suiClient.getReferenceGasPrice()).referenceGasPrice));
   applySponsorGas(tx);
   const bytes = await tx.build({ client: suiClient });
   const userSig = (await user.signTransaction(bytes)).signature;
@@ -43,14 +43,15 @@ async function buildSponsored(user: Ed25519Keypair) {
 }
 
 async function submit(bytes: Uint8Array, signature: string[]) {
-  const res = await suiClient.executeTransactionBlock({
-    transactionBlock: bytes,
-    signature,
-    options: { showEffects: true },
+  const res = await suiClient.executeTransaction({
+    transaction: bytes,
+    signatures: signature,
+    include: { effects: true },
   });
-  return res.effects?.status?.status === 'success'
-    ? { ok: true as const, digest: res.digest }
-    : { ok: false as const, status: JSON.stringify(res.effects?.status ?? res) };
+  const t = res.$kind === 'Transaction' ? res.Transaction : null;
+  return t?.effects?.status?.success === true
+    ? { ok: true as const, digest: t.digest }
+    : { ok: false as const, status: JSON.stringify(t?.effects?.status ?? res) };
 }
 
 console.log(`Gas sponsor: ${sponsorAddress}`);
