@@ -208,3 +208,21 @@ Track it in [`.claude/progress.md`](./.claude/progress.md). That file holds the 
 - `./bigdev/autoreview status | kill | logs | watch`
 
 Spec in `bigdev/plans/review/`. Tasks in `bigdev/REVIEW-TODO.md`. State in `bigdev/claude/review-state.json`. The loop drives the UI in demo mode (`VITE_DEMO_MODE=true`), no backend or wallet needed.
+
+## Learnings (do not repeat)
+
+Durable rules distilled from the user's corrections and hard-won gotchas. Every session (any bigdev loop or a plain chat) reads these first and must not repeat the mistakes below. Terse imperative bullets, each citing its lesson id in `bigdev/claude/lessons.md`.
+
+- Sui fullnode reads/writes go through `SuiGrpcClient` (`@mysten/sui/grpc`). Never import `@mysten/sui/jsonRpc`, `SuiJsonRpcClient`, or `getJsonRpcFullnodeUrl`, and never re-add them as a fallback. Construct with an explicit `baseUrl` (fullnode url from config); `new SuiGrpcClient({network})` alone throws `base.endsWith`. (L-001)
+- Historical queries (events, tx-history) go through `SuiGraphQLClient` (`@mysten/sui/graphql`), not gRPC. Fullnode gRPC v2 has no `queryEvents` / `queryTransactionBlocks`; any scan-by-filter is GraphQL. (L-002)
+
+## Continuation mode
+
+/bigdev-cont setup. Run `./bigdev/autocont` to build the current wave autonomously.
+- `./bigdev/autocont` start (or attach to) the loop; `status | kill | logs | watch`
+- `./bigdev/autocont say "rule"` durable steering; `fix "msg"` one-shot
+- `./bigdev/autocont learn "never do X"` log a lesson; it lands in bigdev/claude/lessons.md and gets promoted into ## Learnings
+- `./bigdev/autocont lessons` view the ledger; `log` view durable rules
+- `MAX=20 ./bigdev/autocont` cap iterations; `VALIDATE=1 ./bigdev/autocont` pre-flight
+
+Current wave: `bigdev/CONT-TODO.md`. Wave specs + archive: `bigdev/plans/cont/`. Lessons: `bigdev/claude/lessons.md`.
