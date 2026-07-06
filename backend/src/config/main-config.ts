@@ -36,6 +36,15 @@ export const AUTH_MODE: AuthMode = process.env.PIPS_AUTH_MODE === 'privy' ? 'pri
 // Sui. Testnet only pre-mainnet. The dev key doubles as the Predict operator.
 export const SUI_NETWORK: string = process.env.SUI_NETWORK || 'testnet';
 export const SUI_FULLNODE_URL: string = process.env.SUI_FULLNODE_URL || '';
+// GraphQL endpoint for historical queries (events / tx-history) that fullnode gRPC v2 can't serve.
+// Defaults per network; override with SUI_GRAPHQL_URL. Mysten hosts one per public network.
+const DEFAULT_GRAPHQL_URL: Record<string, string> = {
+  mainnet: 'https://graphql.mainnet.sui.io/graphql',
+  testnet: 'https://graphql.testnet.sui.io/graphql',
+  devnet: 'https://graphql.devnet.sui.io/graphql',
+};
+export const SUI_GRAPHQL_URL: string =
+  process.env.SUI_GRAPHQL_URL || DEFAULT_GRAPHQL_URL[SUI_NETWORK] || DEFAULT_GRAPHQL_URL.devnet;
 export const TESTING_WALLET_PK: string = process.env.TESTING_WALLET_PK || '';
 export const PYTH_HERMES_URL: string = process.env.PYTH_HERMES_URL || 'https://hermes.pyth.network';
 
@@ -329,6 +338,7 @@ export default {
   GAME_DURATIONS,
   SUI_NETWORK,
   SUI_FULLNODE_URL,
+  SUI_GRAPHQL_URL,
   TESTING_WALLET_PK,
   PRIVY_APP_ID,
   PRIVY_APP_SECRET,

@@ -1,14 +1,29 @@
-// One testnet RPC client for the whole backend. JSON-RPC (the current non-legacy
-// client, gRPC is an option later); proven against every Predict call in the spike.
+// One gRPC client for the whole backend. JSON-RPC is deprecated: fullnode reads/writes go
+// through SuiGrpcClient (grpc-web over fetch), historical queries (events / tx-history, which
+// fullnode gRPC v2 does not serve) go through SuiGraphQLClient. baseUrl is required, the
+// `new SuiGrpcClient({ network })` shorthand throws `base.endsWith`; pass the fullnode url.
 
-import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
+import { SuiGraphQLClient } from '@mysten/sui/graphql';
 
-import { SUI_FULLNODE_URL } from '../../config/main-config.ts';
+import { SUI_FULLNODE_URL, SUI_GRAPHQL_URL } from '../../config/main-config.ts';
 import { NETWORK } from './config.ts';
 
-const url = SUI_FULLNODE_URL || getJsonRpcFullnodeUrl(NETWORK as 'testnet' | 'mainnet' | 'devnet' | 'localnet');
+// Per-network fullnode gRPC default when SUI_FULLNODE_URL is empty. The public Mysten
+// fullnodes speak grpc-web, so the same url serves both apps and this client.
+const DEFAULT_FULLNODE: Record<string, string> = {
+  mainnet: 'https://fullnode.mainnet.sui.io:443',
+  testnet: 'https://fullnode.testnet.sui.io:443',
+  devnet: 'https://fullnode.devnet.sui.io:443',
+  localnet: 'http://127.0.0.1:9000',
+};
+const baseUrl = SUI_FULLNODE_URL || DEFAULT_FULLNODE[NETWORK] || DEFAULT_FULLNODE.devnet;
 
-export const suiClient = new SuiJsonRpcClient({ url, network: NETWORK });
+export const suiClient = new SuiGrpcClient({ network: NETWORK, baseUrl });
+
+// Historical-query client (events + tx history). Only the two scan paths (market-sync oracle
+// discovery, predict redeem-reconcile) use it; everything else stays on gRPC.
+export const graphqlClient = new SuiGraphQLClient({ url: SUI_GRAPHQL_URL, network: NETWORK });
 
 // Suiscan explorer links. Network comes from config (devnet now, mainnet later); Suiscan natively
 // indexes mainnet, testnet, and devnet.
@@ -38,6 +53,10 @@ export function isChainUnavailableError(e: unknown): boolean {
     m.includes('vmverificationordeserialization') ||
     m.includes('could not find the referenced object') ||
     m.includes('is not a valid package') ||
+    // gRPC surfaces a missing object/package as a NOT_FOUND status with a bare "<id> not found"
+    // message (e.g. "Object 0x.. not found"), so match that shape too.
+    m.includes('not_found') ||
+    /\b(object|package)\b[^]*?not found/.test(m) ||
     /\bpackage\b[^]*?(does not exist|was not found|not found|cannot find|deleted)/.test(m) ||
     /\bobject\b[^]*?(does not exist|was not found|not found)/.test(m)
   );
