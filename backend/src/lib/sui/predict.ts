@@ -5,8 +5,9 @@
 // All on-chain prices/strikes are 1e9-scaled; coin amounts and quantities are 6dp.
 
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
+import { bcs } from '@mysten/sui/bcs';
 
-import { suiClient } from './client.ts';
+import { suiClient, graphqlClient } from './client.ts';
 import { operatorAddress } from './signer.ts';
 import {
   ADMIN_CAP_ID,
@@ -116,15 +117,47 @@ export type OracleState = {
   authorizedCapIds: string[]; // the OracleSVICap ids allowed to push/settle this oracle
 };
 
+// gRPC's `json` object view is flatter than JSON-RPC's `content.fields`: nested Move structs
+// are inlined directly (no `.fields` wrapper).
 type OracleFields = {
   underlying_asset: string;
   expiry: string;
   active: boolean;
-  prices: { fields: { spot: string; forward: string } };
+  prices: { spot: string; forward: string };
   settlement_price: string | null;
   timestamp: string;
-  authorized_caps?: { fields?: { contents?: string[] } };
+  authorized_caps?: { contents?: string[] };
 };
+
+// gRPC throws "<id> not found" where JSON-RPC returned empty object data. Reads that mean
+// "gone -> null" catch this and return null instead of surfacing the throw.
+const isNotFound = (e: unknown): boolean =>
+  (e instanceof Error ? e.message : String(e)).toLowerCase().includes('not found');
+
+// Run a read-only PTB via gRPC simulate (the devInspect replacement). Sets the sender, disables
+// validation checks (so non-entry getters return values just like devInspect did), and throws a
+// labelled error on failure. Returns command return-values (for u64 getters) and mapped events.
+type SimReturnValues = { returnValues: { bcs: Uint8Array | null }[] }[];
+async function simulateRead(
+  tx: Transaction,
+  sender: string,
+  label: string,
+  withEvents = false,
+): Promise<{ commandResults: SimReturnValues; events: TradeEvent[] }> {
+  tx.setSender(sender);
+  const res = await suiClient.simulateTransaction({
+    transaction: tx,
+    include: withEvents ? { commandResults: true, events: true } : { commandResults: true },
+    checksEnabled: false,
+  });
+  if (res.$kind !== 'Transaction') {
+    throw new Error(`${label}: ${res.FailedTransaction?.status?.error?.message ?? 'simulate error'}`);
+  }
+  const events: TradeEvent[] = withEvents
+    ? (res.Transaction.events ?? []).map((e) => ({ type: e.eventType, parsedJson: e.json ?? null }))
+    : [];
+  return { commandResults: (res.commandResults ?? []) as SimReturnValues, events };
+}
 
 // Read the current on-chain oracle state. Returns null if the object is gone or not an
 // oracle. `active` is the stored flag; lifecycle status is derived against the clock by
@@ -132,20 +165,25 @@ type OracleFields = {
 // on-chain set of caps allowed to push/settle it, so the settle path can find the right cap to
 // nudge an oracle with even when it has fallen out of the in-memory ladder cache (a restart).
 export async function readOracle(oracleId: string): Promise<OracleState | null> {
-  const obj = await suiClient.getObject({ id: oracleId, options: { showContent: true } });
-  const content = obj.data?.content;
-  if (!content || content.dataType !== 'moveObject') return null;
-  const f = content.fields as unknown as OracleFields;
+  let f: OracleFields | null;
+  try {
+    const obj = await suiClient.getObject({ objectId: oracleId, include: { json: true } });
+    f = (obj.object?.json as unknown as OracleFields | null) ?? null;
+  } catch (e) {
+    if (isNotFound(e)) return null; // gRPC throws "not found" where JSON-RPC returned empty data
+    throw e;
+  }
+  if (!f) return null;
   return {
     oracleId,
     underlying: f.underlying_asset,
     expiryMs: Number(f.expiry),
     active: f.active === true,
     settled: f.settlement_price != null,
-    spot1e9: BigInt(f.prices.fields.spot),
+    spot1e9: BigInt(f.prices.spot),
     settlementPrice1e9: f.settlement_price != null ? BigInt(f.settlement_price) : null,
     timestampMs: Number(f.timestamp),
-    authorizedCapIds: f.authorized_caps?.fields?.contents ?? [],
+    authorizedCapIds: f.authorized_caps?.contents ?? [],
   };
 }
 
@@ -159,11 +197,9 @@ let oracleGridsTableIdP: Promise<string> | null = null;
 async function oracleGridsTableId(): Promise<string> {
   if (!oracleGridsTableIdP) {
     oracleGridsTableIdP = (async () => {
-      const obj = await suiClient.getObject({ id: PREDICT_ID, options: { showContent: true } });
-      const content = obj.data?.content;
-      if (!content || content.dataType !== 'moveObject') throw new Error('Predict object not readable');
-      const id = (content.fields as { oracle_config?: { fields?: { oracle_grids?: { fields?: { id?: { id?: string } } } } } })
-        .oracle_config?.fields?.oracle_grids?.fields?.id?.id;
+      const res = await suiClient.getObject({ objectId: PREDICT_ID, include: { json: true } });
+      const j = res.object?.json as { oracle_config?: { oracle_grids?: { id?: string } } } | null | undefined;
+      const id = j?.oracle_config?.oracle_grids?.id;
       if (!id) throw new Error('oracle_grids table id not found on Predict');
       return id;
     })().catch((e) => {
@@ -180,14 +216,23 @@ export async function readOracleGrid(oracleId: string): Promise<{ minStrike: big
   const hit = gridCache.get(oracleId);
   if (hit) return hit;
   const parentId = await oracleGridsTableId();
-  const df = await suiClient.getDynamicFieldObject({ parentId, name: { type: '0x2::object::ID', value: oracleId } });
-  const content = df.data?.content;
-  if (!content || content.dataType !== 'moveObject') return null;
-  const v = (content.fields as { value?: { fields?: { min_strike?: string; tick_size?: string } } }).value?.fields;
-  if (v?.min_strike == null || v.tick_size == null) return null;
-  const grid = { minStrike: BigInt(v.min_strike), tickSize: BigInt(v.tick_size) };
-  gridCache.set(oracleId, grid);
-  return grid;
+  try {
+    // gRPC's getDynamicField returns the field's BCS value; read the field wrapper object's flat
+    // json view instead to keep the same `value.min_strike / value.tick_size` parse as before.
+    const df = await suiClient.getDynamicField({
+      parentId,
+      name: { type: '0x2::object::ID', bcs: bcs.Address.serialize(oracleId).toBytes() },
+    });
+    const fo = await suiClient.getObject({ objectId: df.dynamicField.fieldId, include: { json: true } });
+    const v = (fo.object?.json as { value?: { min_strike?: string; tick_size?: string } } | null | undefined)?.value;
+    if (v?.min_strike == null || v.tick_size == null) return null;
+    const grid = { minStrike: BigInt(v.min_strike), tickSize: BigInt(v.tick_size) };
+    gridCache.set(oracleId, grid);
+    return grid;
+  } catch (e) {
+    if (isNotFound(e)) return null;
+    throw e;
+  }
 }
 
 // === User trade surface ===
@@ -292,19 +337,22 @@ export async function findRedeemOnChain(
     );
   };
 
-  let cursor: string | null | undefined = null;
+  // Fullnode gRPC v2 has no tx-history scan, so this reconcile path uses GraphQL. `affectedObject`
+  // matches every tx that used the manager (the redeem mutates it), newest-first via last/before.
+  let before: string | null = null;
   for (let page = 0; page < 6; page++) {
-    const res = await suiClient.queryTransactionBlocks({
-      filter: { InputObject: managerId },
-      options: { showEvents: true },
-      order: 'descending',
-      cursor: cursor ?? null,
-      limit: 50,
+    const res: { data?: unknown } = await graphqlClient.query({
+      query: TX_BY_OBJECT_QUERY,
+      variables: { obj: managerId, last: 50, before },
     });
-    for (const t of res.data) {
-      for (const e of t.events ?? []) {
-        if (!e.type.endsWith(suffix)) continue;
-        const j = (e.parsedJson as Record<string, unknown> | null) ?? null;
+    const conn = (res.data as TxByObjectResult | undefined)?.transactions;
+    if (!conn) break;
+    // GraphQL returns the page oldest-first; iterate reversed so the most recent redeem wins.
+    for (let i = conn.nodes.length - 1; i >= 0; i--) {
+      const t = conn.nodes[i];
+      for (const e of t.effects?.events?.nodes ?? []) {
+        if (!(e.contents?.type?.repr ?? '').endsWith(suffix)) continue;
+        const j = e.contents?.json ?? null;
         if (j && matches(j)) {
           return {
             payout: BigInt(eventString(j, 'payout')),
@@ -315,11 +363,29 @@ export async function findRedeemOnChain(
         }
       }
     }
-    if (!res.hasNextPage || !res.nextCursor) break;
-    cursor = res.nextCursor;
+    if (!conn.pageInfo.hasPreviousPage || !conn.pageInfo.startCursor) break;
+    before = conn.pageInfo.startCursor;
   }
   return null;
 }
+
+// Historical tx scan for the redeem reconcile above. Newest-first (last/before), events inlined.
+const TX_BY_OBJECT_QUERY = `query($obj: SuiAddress!, $last: Int!, $before: String) {
+  transactions(last: $last, before: $before, filter: { affectedObject: $obj }) {
+    pageInfo { hasPreviousPage startCursor }
+    nodes { digest effects { events { nodes { contents { json type { repr } } } } } }
+  }
+}`;
+
+type TxByObjectResult = {
+  transactions: {
+    pageInfo: { hasPreviousPage: boolean; startCursor: string | null };
+    nodes: {
+      digest: string;
+      effects: { events: { nodes: { contents: { json: Record<string, unknown> | null; type: { repr: string } | null } | null }[] } | null } | null;
+    }[];
+  };
+};
 
 const binaryKey = (tx: Transaction, p: BinaryParams): TransactionObjectArgument =>
   tx.moveCall({
@@ -338,27 +404,25 @@ const rangeKey = (tx: Transaction, p: RangeParams): TransactionObjectArgument =>
     ],
   });
 
-// Decode a devInspect u64 return value (little-endian BCS bytes) into a bigint.
-const decodeU64 = (bytes: number[]): bigint => {
+// Decode a simulate u64 return value (little-endian BCS bytes) into a bigint.
+const decodeU64 = (bytes: Uint8Array | number[] | null): bigint => {
+  if (!bytes) throw new Error('missing return value bytes');
   let v = 0n;
   for (let i = bytes.length - 1; i >= 0; i--) v = (v << 8n) | BigInt(bytes[i]);
   return v;
 };
 
-// devInspect get_trade_amounts / get_range_trade_amounts -> (mint cost, redeem payout), 6dp.
+// simulate get_trade_amounts / get_range_trade_amounts -> (mint cost, redeem payout), 6dp.
 async function tradeAmounts(buildKey: (tx: Transaction) => TransactionObjectArgument, getter: string, oracleId: string, quantity: bigint): Promise<TradeAmounts> {
   const tx = new Transaction();
   tx.moveCall({
     target: target('predict', getter),
     arguments: [tx.object(PREDICT_ID), tx.object(oracleId), buildKey(tx), tx.pure.u64(quantity), tx.object(CLOCK)],
   });
-  const res = await suiClient.devInspectTransactionBlock({ sender: operatorAddress, transactionBlock: tx });
-  if (res.effects?.status?.status !== 'success') {
-    throw new Error(`preview failed: ${res.effects?.status?.error ?? 'devInspect error'}`);
-  }
-  const rv = res.results?.[res.results.length - 1]?.returnValues;
+  const { commandResults } = await simulateRead(tx, operatorAddress, 'preview failed');
+  const rv = commandResults[commandResults.length - 1]?.returnValues;
   if (!rv || rv.length < 2) throw new Error('preview returned no amounts');
-  return { cost: decodeU64(rv[0][0] as number[]), payout: decodeU64(rv[1][0] as number[]) };
+  return { cost: decodeU64(rv[0].bcs), payout: decodeU64(rv[1].bcs) };
 }
 
 // The user's playable chips live in the PredictManager's inner BalanceManager: mint debits
@@ -371,13 +435,10 @@ export async function getManagerBalanceRaw(managerId: string): Promise<bigint> {
     typeArguments: [DUSDC_TYPE],
     arguments: [tx.object(managerId)],
   });
-  const res = await suiClient.devInspectTransactionBlock({ sender: operatorAddress, transactionBlock: tx });
-  if (res.effects?.status?.status !== 'success') {
-    throw new Error(`manager balance read failed: ${res.effects?.status?.error ?? 'devInspect error'}`);
-  }
-  const rv = res.results?.[res.results.length - 1]?.returnValues;
+  const { commandResults } = await simulateRead(tx, operatorAddress, 'manager balance read failed');
+  const rv = commandResults[commandResults.length - 1]?.returnValues;
   if (!rv || rv.length < 1) throw new Error('manager balance read returned no value');
-  return decodeU64(rv[0][0] as number[]);
+  return decodeU64(rv[0].bcs);
 }
 
 // Preview a binary mint/cash-out. cost = enter now, payout = redeem value now (live mark,
@@ -412,14 +473,11 @@ export async function previewBinaryBatch(
       arguments: [tx.object(PREDICT_ID), tx.object(oracleId), key, tx.pure.u64(p.quantity), tx.object(CLOCK)],
     });
   }
-  const res = await suiClient.devInspectTransactionBlock({ sender: operatorAddress, transactionBlock: tx });
-  if (res.effects?.status?.status !== 'success') {
-    throw new Error(`batch preview failed: ${res.effects?.status?.error ?? 'devInspect error'}`);
-  }
+  const { commandResults } = await simulateRead(tx, operatorAddress, 'batch preview failed');
   return probes.map((_, i) => {
-    const rv = res.results?.[2 * i + 1]?.returnValues;
+    const rv = commandResults[2 * i + 1]?.returnValues;
     if (!rv || rv.length < 2) throw new Error('batch preview returned no amounts');
-    return { cost: decodeU64(rv[0][0] as number[]), payout: decodeU64(rv[1][0] as number[]) };
+    return { cost: decodeU64(rv[0].bcs), payout: decodeU64(rv[1].bcs) };
   });
 }
 
@@ -447,14 +505,11 @@ export async function previewRangeBatch(
       arguments: [tx.object(PREDICT_ID), tx.object(oracleId), key, tx.pure.u64(b.quantity), tx.object(CLOCK)],
     });
   }
-  const res = await suiClient.devInspectTransactionBlock({ sender: operatorAddress, transactionBlock: tx });
-  if (res.effects?.status?.status !== 'success') {
-    throw new Error(`batch range preview failed: ${res.effects?.status?.error ?? 'devInspect error'}`);
-  }
+  const { commandResults } = await simulateRead(tx, operatorAddress, 'batch range preview failed');
   return bands.map((_, i) => {
-    const rv = res.results?.[2 * i + 1]?.returnValues;
+    const rv = commandResults[2 * i + 1]?.returnValues;
     if (!rv || rv.length < 2) throw new Error('batch range preview returned no amounts');
-    return { cost: decodeU64(rv[0][0] as number[]), payout: decodeU64(rv[1][0] as number[]) };
+    return { cost: decodeU64(rv[0].bcs), payout: decodeU64(rv[1].bcs) };
   });
 }
 
@@ -543,13 +598,6 @@ export async function previewExecutableRedeem(
   const tx = new Transaction();
   if (key.kind === 'binary') buildRedeem(tx, managerId, key.params);
   else buildRedeemRange(tx, managerId, key.params);
-  const res = await suiClient.devInspectTransactionBlock({ sender: owner, transactionBlock: tx });
-  if (res.effects?.status?.status !== 'success') {
-    throw new Error(`redeem simulation failed: ${res.effects?.status?.error ?? 'devInspect error'}`);
-  }
-  const events: TradeEvent[] = (res.events ?? []).map((event) => ({
-    type: event.type,
-    parsedJson: (event.parsedJson as Record<string, unknown> | undefined) ?? null,
-  }));
+  const { events } = await simulateRead(tx, owner, 'redeem simulation failed', true);
   return redeemEventAmounts(events, key.kind).payout;
 }

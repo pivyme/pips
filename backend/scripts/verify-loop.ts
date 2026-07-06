@@ -207,8 +207,13 @@ async function placeLuckyPlay(
 // it. Returns the id that is actually live on chain.
 async function ensureManagerOnChain(userId: string, storedId: string | null): Promise<string> {
   if (storedId) {
-    const obj = await suiClient.getObject({ id: storedId, options: {} });
-    if (obj.data) return storedId;
+    // gRPC throws "not found" when the manager is gone; a clean read means it's live.
+    let live = false;
+    try {
+      await suiClient.getObject({ objectId: storedId });
+      live = true;
+    } catch { /* gone on this chain, fall through to create a fresh one */ }
+    if (live) return storedId;
     info('manager', `stored ${storedId.slice(0, 10)} not on this chain, creating a fresh PredictManager`);
   }
   const tx = new Transaction();
@@ -222,9 +227,9 @@ async function ensureManagerOnChain(userId: string, storedId: string | null): Pr
 }
 
 async function vaultBalance(): Promise<number> {
-  const obj = await suiClient.getObject({ id: PREDICT_ID, options: { showContent: true } });
-  const c = obj.data?.content as { dataType?: string; fields?: { vault?: { fields?: { balance?: string } } } } | undefined;
-  const raw = c?.dataType === 'moveObject' ? c.fields?.vault?.fields?.balance : undefined;
+  const obj = await suiClient.getObject({ objectId: PREDICT_ID, include: { json: true } });
+  const j = obj.object?.json as { vault?: { balance?: string } } | null | undefined;
+  const raw = j?.vault?.balance;
   return raw ? Number(raw) / 1_000_000 : 0;
 }
 
@@ -252,7 +257,7 @@ const spendable = async (u: User): Promise<number> => Number(await playableBalan
 
 async function gasSui(): Promise<number> {
   const b = await suiClient.getBalance({ owner: operatorAddress, coinType: '0x2::sui::SUI' });
-  return Number(b.totalBalance) / 1e9;
+  return Number(b.balance.balance) / 1e9;
 }
 
 async function main(): Promise<void> {

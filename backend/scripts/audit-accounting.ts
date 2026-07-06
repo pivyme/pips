@@ -24,22 +24,25 @@ import { computeLedgerStats, recordSettlement } from '../src/services/stats.ts';
 const TERMINAL = new Set(['won', 'lost', 'cashed_out']);
 const heal = process.argv[2] === 'heal';
 
-type Tx = Awaited<ReturnType<typeof suiClient.getTransactionBlock>>;
+// Normalized receipt: gRPC has no multiGet, so we read each digest via getTransaction and reduce it
+// to the success flag + the event view the audit needs. A missing/failed digest becomes {success:false}.
+type Tx = { success: boolean; events: TradeEvent[] };
 
-const eventView = (tx: Tx): TradeEvent[] =>
-  (tx.events ?? []).map((event) => ({
-    type: event.type,
-    parsedJson: (event.parsedJson as Record<string, unknown> | undefined) ?? null,
-  }));
+const eventView = (tx: Tx): TradeEvent[] => tx.events;
 
 async function transactions(digests: string[]): Promise<Map<string, Tx>> {
   const out = new Map<string, Tx>();
-  for (let i = 0; i < digests.length; i += 50) {
-    const rows = await suiClient.multiGetTransactionBlocks({
-      digests: digests.slice(i, i + 50),
-      options: { showEffects: true, showEvents: true },
-    });
-    for (const row of rows) out.set(row.digest, row);
+  for (const digest of digests) {
+    try {
+      const res = await suiClient.getTransaction({ digest, include: { effects: true, events: true } });
+      const t = res.$kind === 'Transaction' ? res.Transaction : null;
+      out.set(digest, {
+        success: t?.effects?.status?.success === true,
+        events: (t?.events ?? []).map((e) => ({ type: e.eventType, parsedJson: e.json ?? null })),
+      });
+    } catch {
+      out.set(digest, { success: false, events: [] });
+    }
   }
   return out;
 }
@@ -81,7 +84,7 @@ async function main(): Promise<void> {
 
   for (const play of plays) {
     const mintTx = byDigest.get(play.txMint!);
-    if (!mintTx || mintTx.effects?.status?.status !== 'success') {
+    if (!mintTx || !mintTx.success) {
       badTransactions += 1;
       continue;
     }
@@ -113,7 +116,7 @@ async function main(): Promise<void> {
         exactPayout = 0n;
       } else if (play.txRedeem) {
         const redeemTx = byDigest.get(play.txRedeem);
-        if (!redeemTx || redeemTx.effects?.status?.status !== 'success') {
+        if (!redeemTx || !redeemTx.success) {
           badTransactions += 1;
           continue;
         }

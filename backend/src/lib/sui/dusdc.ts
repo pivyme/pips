@@ -53,7 +53,7 @@ export async function transferDusdc(to: string, amount: number): Promise<string>
 // Read an address's wallet DUSDC balance in 6dp base units.
 export async function getDusdcBalanceRaw(owner: string): Promise<bigint> {
   const bal = await suiClient.getBalance({ owner, coinType: DUSDC_TYPE });
-  return BigInt(bal.totalBalance);
+  return BigInt(bal.balance.balance);
 }
 
 // Read an address's DUSDC balance in display units.

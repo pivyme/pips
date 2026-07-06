@@ -33,7 +33,7 @@ const TREASURY_MIN_DUSDC_RAW = BigInt(Math.round(TREASURY_MIN_DUSDC * 1_000_000)
 // Read an address's SUI balance in MIST.
 export async function getSuiBalanceRaw(owner: string): Promise<bigint> {
   const bal = await suiClient.getBalance({ owner, coinType: SUI_TYPE });
-  return BigInt(bal.totalBalance);
+  return BigInt(bal.balance.balance);
 }
 
 // Transfer `amount` SUI (display units) from the operator to `to`. Routes through the operator

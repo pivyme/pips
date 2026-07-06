@@ -89,8 +89,14 @@ const tick = async (): Promise<void> => {
     // and in self-publish mode kick off the republish ourselves.
     if (bootPackageId) {
       try {
-        const obj = await suiClient.getObject({ id: bootPackageId });
-        const gone = !obj.data && !!obj.error;
+        // gRPC throws "not found" when the package is gone; a successful read means it's live.
+        let gone = false;
+        try {
+          await suiClient.getObject({ objectId: bootPackageId });
+        } catch (readErr) {
+          if ((readErr instanceof Error ? readErr.message : String(readErr)).toLowerCase().includes('not found')) gone = true;
+          else throw readErr;
+        }
         if (gone) {
           if (!warnedMissing) {
             warnedMissing = true;

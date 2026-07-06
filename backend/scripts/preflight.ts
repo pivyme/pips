@@ -34,9 +34,9 @@ const warn = (label: string, detail = ''): void => console.log(`  [WARN] ${label
 
 // Quote (DUSDC) balance sitting in the shared Predict vault, display units.
 async function vaultBalance(): Promise<number> {
-  const obj = await suiClient.getObject({ id: PREDICT_ID, options: { showContent: true } });
-  const c = obj.data?.content as { dataType?: string; fields?: { vault?: { fields?: { balance?: string } } } } | undefined;
-  const raw = c?.dataType === 'moveObject' ? c.fields?.vault?.fields?.balance : undefined;
+  const obj = await suiClient.getObject({ objectId: PREDICT_ID, include: { json: true } });
+  const j = obj.object?.json as { vault?: { balance?: string } } | null | undefined;
+  const raw = j?.vault?.balance;
   return raw ? Number(raw) / 1_000_000 : 0;
 }
 
@@ -77,7 +77,7 @@ async function main(): Promise<void> {
   console.log('Config + funds');
   check('Predict ids present', Boolean(PACKAGE_ID && PREDICT_ID && REGISTRY_ID && ADMIN_CAP_ID && ORACLE_CAP_IDS[0]));
   const sui = await suiClient.getBalance({ owner: operatorAddress, coinType: '0x2::sui::SUI' });
-  const gas = Number(sui.totalBalance) / 1e9;
+  const gas = Number(sui.balance.balance) / 1e9;
   check(`Operator gas >= ${MIN_GAS_SUI} SUI`, gas >= MIN_GAS_SUI, `${gas.toFixed(4)} SUI`);
 
   const user = await prismaQuery.user.findUnique({ where: { address: operatorAddress } });

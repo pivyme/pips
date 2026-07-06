@@ -54,7 +54,7 @@ function targets(): { label: string; address: string }[] {
 
 const balanceMist = async (owner: string): Promise<bigint> => {
   try {
-    return BigInt((await suiClient.getBalance({ owner })).totalBalance);
+    return BigInt((await suiClient.getBalance({ owner })).balance.balance);
   } catch {
     return -1n; // read failed: skip this one rather than faucet blindly
   }
