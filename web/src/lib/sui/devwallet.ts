@@ -1,12 +1,13 @@
 // Standalone localnet debug wallet. NOT part of the product path: no auth, no backend, no
-// Predict wrapper. It talks straight to a configurable Sui JSON-RPC node so you can inspect
-// balances and move funds on a custom / localnet chain that no real wallet supports.
+// Predict wrapper. It talks straight to a configurable Sui node over gRPC (grpc-web, matches the
+// rest of the app) so you can inspect balances and move funds on a custom / localnet chain that
+// no real wallet supports.
 //
 // Browser only. The key lives in localStorage in the clear, so this is for throwaway dev keys
 // against a local chain, never a mainnet key. Powers /tools/wallet.
 
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography'
-import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc'
+import { SuiGrpcClient } from '@mysten/sui/grpc'
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519'
 import { Transaction, coinWithBalance } from '@mysten/sui/transactions'
 import { isValidSuiAddress } from '@mysten/sui/utils'
@@ -53,8 +54,10 @@ export function saveFaucetUrl(url: string): void {
   ls()?.setItem(FAUCET_KEY, url.trim())
 }
 
-export function makeClient(url: string): SuiJsonRpcClient {
-  return new SuiJsonRpcClient({ url, network: env.VITE_SUI_NETWORK })
+// baseUrl is required (the `new SuiGrpcClient({ network })` shorthand throws `base.endsWith`);
+// pass the editable node url straight through.
+export function makeClient(url: string): SuiGrpcClient {
+  return new SuiGrpcClient({ network: env.VITE_SUI_NETWORK, baseUrl: url })
 }
 
 // --- keypair (one throwaway key, persisted) ---
@@ -86,23 +89,23 @@ export const isAddress = (a: string): boolean => isValidSuiAddress(a.trim())
 // --- reads ---
 
 export type NetInfo = { chainId: string; gasPrice: string }
-export async function probe(client: SuiJsonRpcClient): Promise<NetInfo> {
-  const [chainId, gas] = await Promise.all([client.getChainIdentifier(), client.getReferenceGasPrice()])
-  return { chainId, gasPrice: gas.toString() }
+export async function probe(client: SuiGrpcClient): Promise<NetInfo> {
+  const [chainId, gas] = await Promise.all([client.core.getChainIdentifier(), client.getReferenceGasPrice()])
+  return { chainId: chainId.chainIdentifier, gasPrice: gas.referenceGasPrice }
 }
 
 export type CoinRow = { coinType: string; symbol: string; decimals: number; raw: bigint }
 
 const metaCache = new Map<string, { symbol: string; decimals: number }>()
-async function coinMeta(client: SuiJsonRpcClient, coinType: string): Promise<{ symbol: string; decimals: number }> {
+async function coinMeta(client: SuiGrpcClient, coinType: string): Promise<{ symbol: string; decimals: number }> {
   if (coinType === SUI_TYPE) return { symbol: 'SUI', decimals: SUI_DECIMALS }
   const hit = metaCache.get(coinType)
   if (hit) return hit
   // Fall back to the bare struct name + raw units if a coin has no published metadata.
   let m = { symbol: coinType.split('::').pop() || 'COIN', decimals: 0 }
   try {
-    const md = await client.getCoinMetadata({ coinType })
-    if (md) m = { symbol: md.symbol, decimals: md.decimals }
+    const { coinMetadata } = await client.getCoinMetadata({ coinType })
+    if (coinMetadata) m = { symbol: coinMetadata.symbol, decimals: coinMetadata.decimals }
   } catch {
     // leave the fallback
   }
@@ -110,12 +113,20 @@ async function coinMeta(client: SuiJsonRpcClient, coinType: string): Promise<{ s
   return m
 }
 
-export async function fetchBalances(client: SuiJsonRpcClient, address: string): Promise<CoinRow[]> {
-  const balances = await client.getAllBalances({ owner: address })
+export async function fetchBalances(client: SuiGrpcClient, address: string): Promise<CoinRow[]> {
+  // listBalances is paginated; walk every page so a wallet holding many coin types shows all of
+  // them (the old getAllBalances returned the full set in one call).
+  const balances: Array<{ coinType: string; balance: string }> = []
+  let cursor: string | null = null
+  do {
+    const page = await client.listBalances({ owner: address, cursor })
+    balances.push(...page.balances)
+    cursor = page.hasNextPage ? page.cursor : null
+  } while (cursor)
   const rows = await Promise.all(
     balances.map(async (b) => {
       const meta = await coinMeta(client, b.coinType)
-      return { coinType: b.coinType, symbol: meta.symbol, decimals: meta.decimals, raw: BigInt(b.totalBalance) }
+      return { coinType: b.coinType, symbol: meta.symbol, decimals: meta.decimals, raw: BigInt(b.balance) }
     }),
   )
   // SUI first, then alphabetical by symbol. Stable, predictable list.
@@ -129,7 +140,7 @@ export async function fetchBalances(client: SuiJsonRpcClient, address: string): 
 // --- writes ---
 
 export async function sendCoin(opts: {
-  client: SuiJsonRpcClient
+  client: SuiGrpcClient
   pk: string
   coinType: string
   recipient: string
@@ -143,12 +154,14 @@ export async function sendCoin(opts: {
   const res = await opts.client.signAndExecuteTransaction({
     transaction: tx,
     signer: kp,
-    options: { showEffects: true },
+    include: { effects: true },
   })
-  if (res.effects?.status.status !== 'success') {
-    throw new Error(res.effects?.status.error || 'Transaction failed')
+  const t = res.$kind === 'Transaction' ? res.Transaction : null
+  if (!t || t.effects?.status?.success !== true) {
+    const status = t?.status ?? (res.$kind === 'FailedTransaction' ? res.FailedTransaction.status : null)
+    throw new Error(status?.error?.message || 'Transaction failed')
   }
-  return res.digest
+  return t.digest
 }
 
 export async function requestFaucet(host: string, recipient: string): Promise<void> {
