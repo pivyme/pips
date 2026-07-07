@@ -65,7 +65,7 @@ These are the packages and patterns we standardize on. The Mysten SDK had a 2.0 
 |---|---|---|
 | Core TS SDK | `@mysten/sui` (v2.x) | Formerly `@mysten/sui.js` (deprecated). ESM only. |
 | Transactions / PTBs | `Transaction` from `@mysten/sui/transactions` | Renamed from `TransactionBlock`. This is the PTB builder. |
-| RPC client | `SuiGrpcClient` (`@mysten/sui/grpc`) preferred | `SuiClient` (JSON-RPC) still works but is legacy. `SuiGraphQLClient` for complex queries. |
+| RPC client | `SuiGrpcClient` (`@mysten/sui/grpc`) is the client | JSON-RPC is removed. All fullnode reads/writes go through gRPC. Historical queries (events, tx-history) go through `SuiGraphQLClient` (`@mysten/sui/graphql`). Never re-add `@mysten/sui/jsonRpc`. |
 | Wallet connect (phase 1) | `@suiet/wallet-kit` | `<WalletProvider>` + `<ConnectButton/>` + `useWallet`. Maintained, rides the Sui Wallet Standard. |
 | Official dApp kit | `@mysten/dapp-kit-react` + `@mysten/dapp-kit-core` | The single `@mysten/dapp-kit` is now legacy. The split packages are the current standard (gRPC based). Both kits share the same Wallet Standard, so wallets are interchangeable. |
 | Auth (login + wallet) | **Privy**: `@privy-io/react-auth` (client, + `/extended-chains`) and `@privy-io/node` (server) | Google/email login + a non-custodial embedded **ed25519 (Sui)** wallet (Tier 2). Server signs plays with Privy `rawSign` (`blake2b256`) under a session signer. Confirm the API live, the SDK moves fast. |
@@ -215,6 +215,8 @@ Durable rules distilled from the user's corrections and hard-won gotchas. Every 
 
 - Sui fullnode reads/writes go through `SuiGrpcClient` (`@mysten/sui/grpc`). Never import `@mysten/sui/jsonRpc`, `SuiJsonRpcClient`, or `getJsonRpcFullnodeUrl`, and never re-add them as a fallback. Construct with an explicit `baseUrl` (fullnode url from config); `new SuiGrpcClient({network})` alone throws `base.endsWith`. (L-001)
 - Historical queries (events, tx-history) go through `SuiGraphQLClient` (`@mysten/sui/graphql`), not gRPC. Fullnode gRPC v2 has no `queryEvents` / `queryTransactionBlocks`; any scan-by-filter is GraphQL. (L-002)
+- gRPC `getObject({objectId, include:{json:true}})` INLINES nested Move structs (no `.fields` wrapper): read `f.prices.spot`, `f.authorized_caps.contents`, NOT `.fields.*`. It THROWS "<id> not found" on a missing object (JSON-RPC returned empty data), so any "gone -> null" read must catch not-found. Dynamic-field values return as BCS from `getDynamicField`; to read json, getObject the returned `dynamicField.fieldId`. devInspect -> `simulateTransaction({transaction, include:{commandResults:true[,events:true]}, checksEnabled:false})` with the sender set; return values are `commandResults[i].returnValues[j].bcs`, events are `Transaction.events[].{eventType,json}`. (L-003)
+- Sui GraphQL URL needs the `/graphql` suffix (`https://graphql.devnet.sui.io/graphql`). Live schema: `events(filter:{type})` and `transactions(filter:{affectedObject})` (NOT `transactionBlocks`/`eventType`/`inputObject`). Newest-first = `last:N` + `before:startCursor`, but nodes come back oldest-first within a page, so iterate reversed. Read payloads from `nodes[].contents.json` + `nodes[].contents.type.repr`; tx events under `nodes[].effects.events.nodes[]`. Pass the query as a plain string and annotate the result `{ data?: unknown }` to dodge `TS7022`. (L-004)
 
 ## Continuation mode
 

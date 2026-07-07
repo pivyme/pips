@@ -15,7 +15,7 @@ This is the **PIPS** backend (gamified trading on Sui via DeepBook Predict). Rea
 **v1 build:** planned in [`../bigdev/plans/`](../bigdev/plans/). Read `05-SUI-PREDICT.md` (we publish + operate our own Predict instance: the verified bootstrap recipe, the wrappers, and the price-pusher / oracle-roll / settle workers), `02-API.md` (routes + SSE streams), `03-DATABASE.md` (schema + seed), `LUCKY.md` §6 (dev + Privy auth, the current source of truth; `04-AUTH.md` keeps the JWT plumbing + onboarding). All Sui ids come from config, never hardcode.
 
 **Sui (verified mid 2026, reconfirm before coding):**
-- Use `@mysten/sui` (v2.x, ESM only). RPC via `SuiGrpcClient` (`@mysten/sui/grpc`) preferred, `SuiClient` is legacy.
+- Use `@mysten/sui` (v2.x, ESM only). Fullnode reads/writes go through `SuiGrpcClient` (`@mysten/sui/grpc`); historical queries (events, tx-history) through `SuiGraphQLClient` (`@mysten/sui/graphql`). JSON-RPC is removed, never re-add `@mysten/sui/jsonRpc`. Both clients live in `src/lib/sui/client.ts` (built with an explicit `baseUrl` from config).
 - **Auth:** privy mode verifies the Privy access token with `@privy-io/node` `verifyAccessToken`, then mints the existing JWT. Plays are server-signed: the tx intent digest is signed via Privy `rawSign` (`blake2b256`) and wrapped with `toSerializedSignature` + `Ed25519PublicKey`. All Privy server calls funnel through `src/lib/sui/privy.ts`.
 - All Sui code lives in `src/lib/sui/`. Read package IDs and addresses from config, never hardcode (DeepBook Predict IDs are unstable pre mainnet).
 
