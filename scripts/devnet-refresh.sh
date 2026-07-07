@@ -113,10 +113,15 @@ tmo() {
 }
 
 # ---- rpc / faucet helpers --------------------------------------------------
-jrpc() { curl -s --max-time 20 -X POST "$RPC" -H 'content-type: application/json' \
-  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":${2:-[]}}" 2>/dev/null || true; }
-chain_id() { jrpc sui_getChainIdentifier | grep -oE '"result":"[^"]*"' | sed -E 's/.*:"([^"]*)"/\1/'; }
-sui_mist() { jrpc suix_getBalance "[\"$1\"]" | grep -oE '"totalBalance":"[0-9]+"' | head -1 | sed -E 's/.*:"([0-9]+)"/\1/'; }
+# Chain reads go through the gRPC helper (JSON-RPC is deprecated). Run it from backend/ so @mysten/sui
+# resolves, and pass the active RPC via SUI_FULLNODE_URL. Each helper stays quiet on failure (empty
+# stdout) so the callers' `${x:-0}`/empty-string checks behave exactly as they did over curl.
+sgrpc() { ( cd "$BACKEND" && SUI_FULLNODE_URL="$RPC" bun "$ROOT/scripts/sui-grpc.ts" "$@" 2>/dev/null ); }
+chain_id() { sgrpc chain-id; }
+sui_mist() { sgrpc balance "$1"; }
+# object_live <id>: succeeds (exit 0) only if the object still exists on chain; fails when it is
+# missing (devnet wipe) or the read errored. Replaces the inline sui_getObject existence checks.
+object_live() { local out; out="$(sgrpc object "$1")"; [ -n "$out" ] && [ "$out" != "notExists" ]; }
 # value of a top-level "key":"string" in the deployed file (first match)
 dfield()   { [ -f "$DEPLOYED" ] && grep -oE "\"$1\"[ ]*:[ ]*\"[^\"]*\"" "$DEPLOYED" | head -1 | sed -E 's/.*: *"([^"]*)"/\1/'; }
 
@@ -375,11 +380,10 @@ phase_verify() {
   if [ -f "$DEPLOYED" ]; then
     local net pkg; net="$(dfield network)"; pkg="$(dfield packageId)"
     [ "$net" = "devnet" ] && ok "deployed.devnet.json present (network=$net)" || fail "deployed file network=$net (expected devnet)"
-    local obj; obj="$(jrpc sui_getObject "[\"$pkg\",{\"showType\":true}]")"
-    if echo "$obj" | grep -q '"error"\|"notExists"' || [ -z "$obj" ]; then
-      fail "Predict package $pkg NOT live on devnet (devnet wiped? re-run 'deploy')"
-    else
+    if object_live "$pkg"; then
       ok "Predict package live on devnet ($pkg)"
+    else
+      fail "Predict package $pkg NOT live on devnet (devnet wiped? re-run 'deploy')"
     fi
   else
     warn "no deployed.devnet.json yet. Run 'deploy'."
@@ -476,21 +480,18 @@ phase_watch() {
   info "leave this running on the deploy machine (needs the sui CLI + Move sources). Ctrl-C to stop."
   phase_preflight || { fail "preflight failed; fix it before watching"; return 1; }
   while true; do
-    local pkg live obj
+    local pkg live
     pkg="$(dfield packageId)"; live="$(chain_id)"
     if [ -z "$live" ]; then
       warn "$(ask_now) devnet unreachable, retrying in ${interval}s"
     elif [ -z "$pkg" ]; then
       warn "$(ask_now) no local deploy record; running first recover"
       phase_recover
+    elif object_live "$pkg"; then
+      info "$(ask_now) ok  chain $live  pkg ${pkg:0:12}… live"
     else
-      obj="$(jrpc sui_getObject "[\"$pkg\",{\"showType\":true}]")"
-      if [ -z "$obj" ] || echo "$obj" | grep -q '"notExists"\|"error"'; then
-        warn "$(ask_now) Predict package ${pkg:0:12}… is GONE (devnet wiped). Auto-recovering."
-        phase_recover
-      else
-        info "$(ask_now) ok  chain $live  pkg ${pkg:0:12}… live"
-      fi
+      warn "$(ask_now) Predict package ${pkg:0:12}… is GONE (devnet wiped). Auto-recovering."
+      phase_recover
     fi
     sleep "$interval"
   done
