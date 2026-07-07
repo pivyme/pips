@@ -319,24 +319,45 @@ export function redeemEventAmounts(events: TradeEvent[], kind: 'binary' | 'range
 // newest-first (the lost redeem is among the most recent, settle runs seconds after expiry) and stop
 // after a bounded number of pages so a genuinely-absent record fails fast instead of paging forever.
 export type OnChainRedeem = { payout: bigint; quantity: bigint; settled: boolean; digest: string };
+export type RedeemKey = { kind: 'binary'; params: BinaryParams } | { kind: 'range'; params: RangeParams };
 
-export async function findRedeemOnChain(
-  managerId: string,
-  key: { kind: 'binary'; params: BinaryParams } | { kind: 'range'; params: RangeParams },
-): Promise<OnChainRedeem | null> {
+// Does this event json describe the exact redeem we're reconciling? A redeem is uniquely pinned by
+// oracle + strike(s) + side + quantity.
+function redeemMatches(j: Record<string, unknown>, key: RedeemKey): boolean {
+  if (j.oracle_id !== key.params.oracleId) return false;
+  if (String(j.quantity) !== key.params.quantity.toString()) return false;
+  if (key.kind === 'binary') {
+    return j.is_up === (key.params.side === 'up') && String(j.strike) === key.params.strike1e9.toString();
+  }
+  return (
+    String(j.lower_strike) === key.params.lower1e9.toString() &&
+    String(j.higher_strike) === key.params.higher1e9.toString()
+  );
+}
+
+// Scan one GraphQL tx page (oldest-first) reversed so the most recent matching redeem wins. Pure so
+// the migrated GraphQL parse is unit-testable against a captured response.
+export function matchRedeemInTxPage(nodes: TxByObjectResult['transactions']['nodes'], key: RedeemKey): OnChainRedeem | null {
   const suffix = key.kind === 'range' ? '::predict::RangeRedeemed' : '::predict::PositionRedeemed';
-  const matches = (j: Record<string, unknown>): boolean => {
-    if (j.oracle_id !== key.params.oracleId) return false;
-    if (String(j.quantity) !== key.params.quantity.toString()) return false;
-    if (key.kind === 'binary') {
-      return j.is_up === (key.params.side === 'up') && String(j.strike) === key.params.strike1e9.toString();
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const t = nodes[i];
+    for (const e of t.effects?.events?.nodes ?? []) {
+      if (!(e.contents?.type?.repr ?? '').endsWith(suffix)) continue;
+      const j = e.contents?.json ?? null;
+      if (j && redeemMatches(j, key)) {
+        return {
+          payout: BigInt(eventString(j, 'payout')),
+          quantity: BigInt(eventString(j, 'quantity')),
+          settled: j.is_settled === true,
+          digest: t.digest,
+        };
+      }
     }
-    return (
-      String(j.lower_strike) === key.params.lower1e9.toString() &&
-      String(j.higher_strike) === key.params.higher1e9.toString()
-    );
-  };
+  }
+  return null;
+}
 
+export async function findRedeemOnChain(managerId: string, key: RedeemKey): Promise<OnChainRedeem | null> {
   // Fullnode gRPC v2 has no tx-history scan, so this reconcile path uses GraphQL. `affectedObject`
   // matches every tx that used the manager (the redeem mutates it), newest-first via last/before.
   let before: string | null = null;
@@ -347,22 +368,8 @@ export async function findRedeemOnChain(
     });
     const conn = (res.data as TxByObjectResult | undefined)?.transactions;
     if (!conn) break;
-    // GraphQL returns the page oldest-first; iterate reversed so the most recent redeem wins.
-    for (let i = conn.nodes.length - 1; i >= 0; i--) {
-      const t = conn.nodes[i];
-      for (const e of t.effects?.events?.nodes ?? []) {
-        if (!(e.contents?.type?.repr ?? '').endsWith(suffix)) continue;
-        const j = e.contents?.json ?? null;
-        if (j && matches(j)) {
-          return {
-            payout: BigInt(eventString(j, 'payout')),
-            quantity: BigInt(eventString(j, 'quantity')),
-            settled: j.is_settled === true,
-            digest: t.digest,
-          };
-        }
-      }
-    }
+    const hit = matchRedeemInTxPage(conn.nodes, key);
+    if (hit) return hit;
     if (!conn.pageInfo.hasPreviousPage || !conn.pageInfo.startCursor) break;
     before = conn.pageInfo.startCursor;
   }

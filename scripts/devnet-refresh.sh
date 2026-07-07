@@ -120,7 +120,7 @@ sgrpc() { ( cd "$BACKEND" && SUI_FULLNODE_URL="$RPC" bun "$ROOT/scripts/sui-grpc
 chain_id() { sgrpc chain-id; }
 sui_mist() { sgrpc balance "$1"; }
 # object_live <id>: succeeds (exit 0) only if the object still exists on chain; fails when it is
-# missing (devnet wipe) or the read errored. Replaces the inline sui_getObject existence checks.
+# missing (devnet wipe) or the read errored. Replaces the inline object-existence curl checks.
 object_live() { local out; out="$(sgrpc object "$1")"; [ -n "$out" ] && [ "$out" != "notExists" ]; }
 # value of a top-level "key":"string" in the deployed file (first match)
 dfield()   { [ -f "$DEPLOYED" ] && grep -oE "\"$1\"[ ]*:[ ]*\"[^\"]*\"" "$DEPLOYED" | head -1 | sed -E 's/.*: *"([^"]*)"/\1/'; }

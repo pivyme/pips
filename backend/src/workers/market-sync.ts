@@ -30,12 +30,32 @@ const ACTIVATED_EVENTS_QUERY = `query($type: String!, $last: Int!, $before: Stri
 }`;
 
 type ActivatedEvent = { oracle_id: string; expiry: string; timestamp: string };
+type ActivatedNode = { contents: { json: ActivatedEvent | null } | null };
 type ActivatedEventsResult = {
   events: {
     pageInfo: { hasPreviousPage: boolean; startCursor: string | null };
-    nodes: { contents: { json: ActivatedEvent | null } | null }[];
+    nodes: ActivatedNode[];
   };
 };
+
+// Pick still-live oracle ids from one GraphQL page (oldest-first, iterated reversed for newest-first).
+// `reachedOld` flags that this page reached activations older than any live oracle, so the caller stops
+// paging. Pure so the migrated GraphQL parse is unit-testable against a captured response.
+export function selectLiveOraclesFromPage(
+  nodes: ActivatedNode[],
+  now: number,
+  cutoff: number,
+): { ids: string[]; reachedOld: boolean } {
+  const ids: string[] = [];
+  let reachedOld = false;
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const pj = nodes[i].contents?.json ?? undefined;
+    if (!pj?.oracle_id) continue;
+    if (Number(pj.timestamp) < cutoff) { reachedOld = true; continue; }
+    if (Number(pj.expiry) > now + EXPIRY_SAFETY_MS) ids.push(pj.oracle_id);
+  }
+  return { ids, reachedOld };
+}
 
 // Recent OracleActivated oracle ids whose expiry is still ahead. Walks events newest-first and stops
 // once activations predate the max oracle lifetime (those oracles are certainly expired), so the scan
@@ -51,14 +71,8 @@ async function liveCandidateIds(now: number): Promise<string[]> {
     });
     const conn = (res.data as ActivatedEventsResult | undefined)?.events;
     if (!conn) break;
-    let reachedOld = false;
-    // GraphQL returns the page oldest-first; iterate in reverse so it's newest-first like the old scan.
-    for (let i = conn.nodes.length - 1; i >= 0; i--) {
-      const pj = conn.nodes[i].contents?.json ?? undefined;
-      if (!pj?.oracle_id) continue;
-      if (Number(pj.timestamp) < cutoff) { reachedOld = true; continue; }
-      if (Number(pj.expiry) > now + EXPIRY_SAFETY_MS) ids.add(pj.oracle_id);
-    }
+    const { ids: pageIds, reachedOld } = selectLiveOraclesFromPage(conn.nodes, now, cutoff);
+    for (const id of pageIds) ids.add(id);
     if (reachedOld || !conn.pageInfo.hasPreviousPage || !conn.pageInfo.startCursor) break;
     before = conn.pageInfo.startCursor;
   }
