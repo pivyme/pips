@@ -9,11 +9,23 @@
 
 import cron from 'node-cron';
 
-import { EXPIRY_SAFETY_MS, MARKET_SYNC_CRON, OPERATOR_ENABLED, ORACLE_LIFETIME_MS } from '../config/main-config.ts';
+import { EXPIRY_SAFETY_MS, IS_REAL_PREDICT, MARKET_SYNC_CRON, OPERATOR_ENABLED, ORACLE_LIFETIME_MS } from '../config/main-config.ts';
 import { PACKAGE_ID } from '../lib/sui/config.ts';
+import { REAL_BTC_ASSET } from '../lib/sui/config-real.ts';
 import { graphqlClient } from '../lib/sui/client.ts';
 import { readOracle, readOracleGrid } from '../lib/sui/predict.ts';
+import {
+  isMinuteExpiry,
+  readActiveMarketIds,
+  readMarketCoarse,
+  readMarketEconomics,
+} from '../lib/sui/predict-real.ts';
 import { allMarkets, removeMarket, upsertMarket } from '../lib/sui/markets.ts';
+
+// Game asset symbol for the only underlying live on Mysten's testnet Predict (propbook id 1). The
+// games route every selected asset to this BTC market in real mode; discovery tags it with the symbol
+// the asset picker + assetSpot key on.
+const REAL_BTC_GAME_ASSET = 'BTC';
 
 const ORACLE_ACTIVATED_EVENT = `${PACKAGE_ID}::oracle::OracleActivated`;
 // Descending pages of activations to scan per tick. Live oracles are always the newest activations,
@@ -127,7 +139,65 @@ const sync = async (): Promise<void> => {
   }
 };
 
+// Real-mode discovery (IS_REAL_PREDICT): Mysten owns the roll schedule and there is no operator role,
+// so we always read the chain. Read the PoolVault's live market ids, keep the unsettled, unpaused, 1m
+// BTC ones with room before expiry, read each one's economics, and upsert into the same market set the
+// games read. No GraphQL event scan, no predict-server, no per-market cap.
+let realRunning = false;
+
+const realSync = async (): Promise<void> => {
+  if (realRunning) return;
+  realRunning = true;
+  try {
+    const t = Date.now();
+    const underlyingId = REAL_BTC_ASSET?.propbookUnderlyingId ?? 1;
+    const ids = await readActiveMarketIds();
+
+    await Promise.all(
+      ids.map(async (marketId) => {
+        try {
+          const c = await readMarketCoarse(marketId);
+          if (!c || c.settled || c.mintPaused) return;
+          if (c.underlyingId !== underlyingId) return;
+          if (!isMinuteExpiry(c.expiryMs)) return;
+          if (c.expiryMs - t <= EXPIRY_SAFETY_MS) return;
+          const e = await readMarketEconomics(marketId);
+          upsertMarket({
+            oracleId: marketId,
+            capId: '', // permissionless in real mode, no per-market cap
+            underlying: REAL_BTC_GAME_ASSET,
+            expiryMs: c.expiryMs,
+            minStrike: '0', // unused in real mode; the tick codec drives strikes
+            tickSize: e.tickSizeRaw.toString(),
+            settled: false,
+            admissionTickSizeRaw: e.admissionTickSizeRaw.toString(),
+            maxLeverage1e9: e.maxLeverage1e9.toString(),
+            liquidationLtv1e9: e.liquidationLtv1e9.toString(),
+          });
+        } catch {
+          // transient read error on one market; the next tick re-reads it
+        }
+      }),
+    );
+
+    for (const m of allMarkets()) {
+      if (m.settled || m.expiryMs <= t) removeMarket(m.oracleId);
+    }
+  } catch (err) {
+    console.error('[MarketSync] real tick error:', err instanceof Error ? err.message : err);
+  } finally {
+    realRunning = false;
+  }
+};
+
 export const startMarketSync = (): void => {
+  if (IS_REAL_PREDICT) {
+    // No operator role in real mode: discovery always runs, regardless of OPERATOR_ENABLED.
+    console.log(`[MarketSync] Real-Predict discovery: scheduled ${MARKET_SYNC_CRON}`);
+    cron.schedule(MARKET_SYNC_CRON, realSync);
+    realSync();
+    return;
+  }
   if (OPERATOR_ENABLED) {
     console.log('[MarketSync] Operator enabled; oracle-roll owns the market set, follower sync not scheduled');
     return;

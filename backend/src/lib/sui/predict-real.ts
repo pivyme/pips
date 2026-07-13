@@ -21,6 +21,7 @@ import {
   REAL_PREDICT_PACKAGE,
   REAL_PROTOCOL_CONFIG_ID,
   REAL_ORACLE_REGISTRY_ID,
+  REAL_POOL_VAULT_ID,
   REAL_ACCUMULATOR_ROOT,
   REAL_CLOCK,
   REAL_BTC_ASSET,
@@ -565,4 +566,86 @@ export function parseRedeem(events: RealEvent[]): RedeemResult {
     return { orderId: evBig(j, 'order_id'), payoutRaw: evBig(j, 'payout_amount'), settled: true, liquidated: false, quantityClosedRaw: evBig(j, 'quantity_closed'), replacementOrderId: null };
   }
   throw new Error('no redeem event found (Live/Settled/Liquidated)');
+}
+
+// === Discovery via chain reads (Phase 5, plp::PoolVault + expiry_market getters) ===
+//
+// No HTTP discovery API exists (L-006): the market set comes from direct chain reads. The PoolVault
+// json inlines the live market id vector (L-003, flat, no .fields); each ExpiryMarket json carries the
+// coarse routing fields (underlying, expiry, settlement, mint pause), and the economic getters
+// (tick_size, admission_tick_size, max_admission_leverage, liquidation_ltv) come from a devInspect
+// batch since max_admission_leverage is not a stored field (it delegates to strike_exposure_config).
+
+// Coarse per-market info read straight from the ExpiryMarket json (no devInspect). Enough to filter
+// to the cadence + underlying + liveness we route on before paying for the economics read.
+export type RealMarketCoarse = {
+  marketId: string;
+  underlyingId: number;
+  expiryMs: number;
+  settled: boolean;
+  mintPaused: boolean;
+};
+
+// The economic constants a play/solver needs, read via a single devInspect getter batch. All 1e9- or
+// raw-scaled per L-011; the caller keeps them on the market record so the solver never hardcodes them.
+export type RealMarketEconomics = {
+  tickSizeRaw: bigint; // raw-price tick divisor (BTC 1e7 = $0.01)
+  admissionTickSizeRaw: bigint; // coarser mint-boundary step (BTC 1e9 = $1)
+  maxLeverage1e9: bigint; // max_admission_leverage (BTC 3e9 = 3.0x)
+  liquidationLtv1e9: bigint; // liquidation_ltv (BTC 0.85e9)
+};
+
+type MarketJson = {
+  propbook_underlying_id?: string | number;
+  expiry?: string | number;
+  settlement_price?: unknown; // null while unsettled
+  mint_paused?: boolean;
+};
+
+// Read the PoolVault's live market id vector. Flat under expiry_accounting.active_expiry_markets.
+export async function readActiveMarketIds(): Promise<string[]> {
+  const res = await suiClient.core.getObject({ objectId: REAL_POOL_VAULT_ID, include: { json: true } });
+  const j = res.object?.json as { expiry_accounting?: { active_expiry_markets?: string[] } } | undefined;
+  return j?.expiry_accounting?.active_expiry_markets ?? [];
+}
+
+// Coarse read of one ExpiryMarket from its json; null if the object is gone (rare mid-roll race).
+export async function readMarketCoarse(marketId: string): Promise<RealMarketCoarse | null> {
+  try {
+    const res = await suiClient.core.getObject({ objectId: marketId, include: { json: true } });
+    const j = res.object?.json as MarketJson | undefined;
+    if (!j) return null;
+    return {
+      marketId,
+      underlyingId: Number(j.propbook_underlying_id),
+      expiryMs: Number(j.expiry),
+      settled: j.settlement_price != null,
+      mintPaused: j.mint_paused === true,
+    };
+  } catch (e) {
+    if (isNotFound(e)) return null;
+    throw e;
+  }
+}
+
+// devInspect the 4 economic getters for one market in a single simulate round trip.
+export async function readMarketEconomics(marketId: string): Promise<RealMarketEconomics> {
+  const tx = new Transaction();
+  for (const fn of ['tick_size', 'admission_tick_size', 'max_admission_leverage', 'liquidation_ltv']) {
+    tx.moveCall({ target: realTarget(REAL_PREDICT_PACKAGE, 'expiry_market', fn), arguments: [tx.object(marketId)] });
+  }
+  // Any sender works for a checks-disabled read; the market id is a valid on-chain address to use.
+  const r = await simulateRead(tx, marketId, `market economics read failed (${marketId})`);
+  return {
+    tickSizeRaw: decodeU64(r[0]?.returnValues?.[0]?.bcs ?? null),
+    admissionTickSizeRaw: decodeU64(r[1]?.returnValues?.[0]?.bcs ?? null),
+    maxLeverage1e9: decodeU64(r[2]?.returnValues?.[0]?.bcs ?? null),
+    liquidationLtv1e9: decodeU64(r[3]?.returnValues?.[0]?.bcs ?? null),
+  };
+}
+
+// Cadence classification from the expiry timestamp (market_manager's higher-rank-overlap dedup means a
+// 1m expiry never coincides with a 5m/1h one, cont/01 §4): 1h = %3_600_000, 5m = %300_000, else 1m.
+export function isMinuteExpiry(expiryMs: number): boolean {
+  return expiryMs % 300_000 !== 0 && expiryMs % 60_000 === 0;
 }

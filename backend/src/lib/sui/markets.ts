@@ -6,15 +6,20 @@
 import { ORACLES, ORACLE_CAP_IDS } from './config.ts';
 
 export type Market = {
-  oracleId: string;
-  capId: string; // the authorized cap a worker uses to push/settle this oracle
+  oracleId: string; // fork: oracle object id. real (IS_REAL_PREDICT): the ExpiryMarket object id.
+  capId: string; // fork: the authorized cap a worker pushes/settles with. real: '' (permissionless, no cap).
   underlying: string;
   expiryMs: number;
-  minStrike: string; // 1e9-scaled u64
-  tickSize: string; // 1e9-scaled u64
+  minStrike: string; // fork: 1e9-scaled grid floor. real: unused ('0'), the tick codec drives strikes.
+  tickSize: string; // fork: 1e9-scaled grid step. real: raw-price tick_size (BTC 1e7 = $0.01).
   settled: boolean;
   spot1e9?: string; // last observed spot, for /markets display
   lastPushAt?: number; // ms epoch of the last successful price push
+  // Real-mode-only economics (from readMarketEconomics), so the solver never hardcodes them. Absent in
+  // fork mode. The two runtime modes never coexist in one process, so reusing this record is safe.
+  admissionTickSizeRaw?: string; // coarser mint-boundary step (BTC 1e9 = $1)
+  maxLeverage1e9?: string; // max_admission_leverage (BTC 3e9 = 3.0x)
+  liquidationLtv1e9?: string; // liquidation_ltv (BTC 0.85e9)
 };
 
 const markets = new Map<string, Market>();
