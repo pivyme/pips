@@ -48,12 +48,6 @@ export const SUI_GRAPHQL_URL: string =
 export const TESTING_WALLET_PK: string = process.env.TESTING_WALLET_PK || '';
 export const PYTH_HERMES_URL: string = process.env.PYTH_HERMES_URL || 'https://hermes.pyth.network';
 
-// When set, market-sync discovers/prices oracles from a third-party Predict discovery API (e.g.
-// Mysten's own predict-server on their official testnet deployment) instead of our GraphQL event
-// scan + chain-read path. Only meaningful when we don't own the deployment (no AdminCap/oracle
-// caps), see market-sync.ts. Empty = use the chain-read follower path (our own deployment).
-export const PREDICT_SERVER_URL: string = (process.env.PIPS_PREDICT_SERVER_URL || '').trim().replace(/\/$/, '');
-
 // Privy (privy mode only). App id + secret authenticate the server SDK. The authorization key is
 // the app's session-signer key the user delegates to at login: its private key (P-256 PKCS8, with
 // or without the `wallet-auth:` prefix) signs each wallet API request so the server can rawSign the
@@ -346,7 +340,6 @@ export default {
   SUI_FULLNODE_URL,
   SUI_GRAPHQL_URL,
   TESTING_WALLET_PK,
-  PREDICT_SERVER_URL,
   PRIVY_APP_ID,
   PRIVY_APP_SECRET,
   PRIVY_AUTHORIZATION_KEY_ID,
