@@ -63,7 +63,9 @@ export type PlayErrorCode =
   | 'PLAY_NOT_OPEN'
   | 'INVALID_PARAMS'
   | 'MANAGER_NOT_READY'
-  | 'PREDICT_VAULT_CAPACITY';
+  | 'PREDICT_VAULT_CAPACITY'
+  | 'PLAYS_PAUSED'
+  | 'RATE_LIMITED';
 
 // Carries a friendly, client-facing code. Routes map this straight onto the error envelope.
 export class PlayError extends Error {
@@ -87,6 +89,10 @@ export const httpStatusForPlayError = (code: PlayErrorCode): number => {
     case 'PLAY_NOT_OPEN':
     case 'MANAGER_NOT_READY':
       return 409;
+    case 'RATE_LIMITED':
+      return 429;
+    case 'PLAYS_PAUSED':
+      return 503;
     case 'MINT_FAILED':
     case 'REDEEM_FAILED':
       return 502;

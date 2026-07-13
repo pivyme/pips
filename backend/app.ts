@@ -29,6 +29,7 @@ import { startDeployWatch } from './src/workers/deploy-watch.ts';
 // treasury (SUI + DUSDC reserve) wallets so plays, redeems, and chip payouts never stall.
 import { ensureOpsFunded } from './src/lib/sui/gas.ts';
 import { SPONSOR_ENABLED, ensureSponsorAccumulator } from './src/lib/sui/sponsor.ts';
+import { startSponsorMonitor } from './src/lib/sui/play-safety.ts';
 
 console.log(
   '======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n'
@@ -138,6 +139,9 @@ const start = async (): Promise<void> => {
     startMarketSync();
     // Ongoing top-up safety net for the sponsor + settlement + treasury wallets (operator only).
     startOpsFunding();
+    // Real mode (testnet): watch the sponsor's finite SUI reserve and pause new plays before it runs
+    // dry (clear user state, auto-resume on top-up), and log burn rate. No-op off testnet / no sponsor.
+    startSponsorMonitor();
     // Devnet only: keep the crucial wallets (+ extra addresses) funded from the public faucet, so a
     // low balance or a devnet wipe self-heals instead of stalling plays. No-op off devnet.
     startDevnetFaucet();

@@ -88,7 +88,9 @@ export const GAS_MIN_SUI: number = Number(process.env.PIPS_GAS_MIN_SUI) || 0.6;
 // dryRunTransactionBlock, a ~0.5-1s node round trip; pinning a generous, always-affordable budget
 // skips it (measured: sponsored build 1.13s -> 0.64s). A real Predict mint's GROSS gas is ~0.21 SUI
 // (storage-heavy, almost all rebated same-tx), so 0.5 SUI covers mint+deposit with headroom while
-// staying under the funded floor above. Sponsored, it is drawn from the sponsor (~500 SUI). Free localnet.
+// staying under the funded floor above. Sponsored, it is drawn from the sponsor. This 0.5 SUI cap is
+// already testnet-sane (well above the ~0.21 gross, so a mint never overruns it, yet a bounded ceiling
+// so a pathological tx can't drain the finite testnet sponsor); tighten via env once measured on chain.
 export const PLAY_GAS_BUDGET: bigint = BigInt(process.env.PIPS_PLAY_GAS_BUDGET || 500_000_000);
 
 // Gas sponsorship (privy mode). One dedicated wallet pays the gas for every user play, so a user
@@ -100,9 +102,26 @@ export const PLAY_GAS_BUDGET: bigint = BigInt(process.env.PIPS_PLAY_GAS_BUDGET |
 // tops up the sponsor balance from its own free localnet SUI.
 export const GAS_SPONSORSHIP_WALLET_PK: string = process.env.GAS_SPONSORSHIP_WALLET_PK || '';
 // When the sponsor's SUI dips below MIN, the operator deposits TOPUP more into its address balance.
-// Generous: localnet SUI is free and storage rebates flow back into the sponsor balance.
+// TOPUP is the working buffer moved into the gas accumulator per warm-up; the rest stays as owned SUI
+// coins (the readable reserve the pause floor watches, see play-safety.ts). Network-scoped: free
+// localnet moves a big buffer; testnet-real moves a tiny one so a hand-funded sponsor isn't drained
+// into the unreadable accumulator in one shot (leaving no readable reserve to gate on).
 export const SPONSOR_MIN_SUI: number = Number(process.env.PIPS_SPONSOR_MIN_SUI) || 50;
-export const SPONSOR_TOPUP_SUI: number = Number(process.env.PIPS_SPONSOR_TOPUP_SUI) || 500;
+export const SPONSOR_TOPUP_SUI: number =
+  Number(process.env.PIPS_SPONSOR_TOPUP_SUI) || (IS_REAL_PREDICT ? 0.2 : 500);
+
+// Real-mode (testnet) sponsor safety layer (play-safety.ts). Testnet SUI is finite and not ours to
+// faucet (L-008), so a real-mode play is guarded without ever silently dropping a legit play:
+//  - PLAY_RATE_LIMIT_MS: per-user cooldown between plays (in-memory anti-burn). 0 = off (fork default).
+//  - SPONSOR_FLOOR_SUI: when the sponsor's readable SUI reserve dips below this, PAUSE new plays with a
+//    clear user state and auto-resume when it recovers (topped up by hand on testnet, no faucet).
+//  - SPONSOR_BURN_WARN_SUI: log a warning when one monitor interval burns more than this much SUI.
+//  - SPONSOR_MONITOR_CRON: how often the monitor re-reads the reserve + logs burn (real mode only).
+export const PLAY_RATE_LIMIT_MS: number =
+  process.env.PIPS_PLAY_RATE_LIMIT_MS != null ? Number(process.env.PIPS_PLAY_RATE_LIMIT_MS) : IS_REAL_PREDICT ? 3000 : 0;
+export const SPONSOR_FLOOR_SUI: number = Number(process.env.PIPS_SPONSOR_FLOOR_SUI) || 0.5;
+export const SPONSOR_BURN_WARN_SUI: number = Number(process.env.PIPS_SPONSOR_BURN_WARN_SUI) || 0.2;
+export const SPONSOR_MONITOR_CRON: string = process.env.PIPS_SPONSOR_MONITOR_CRON || '*/30 * * * * *';
 
 // Settlement wallet. The permissionless settle-redeem sweep signs with THIS wallet instead of the
 // operator, so a slow/backed-up redeem runs on its own gas coin + serial queue and can't head-of-line
@@ -137,9 +156,12 @@ export const FAUCET_COOLDOWN_MS: number = Number(process.env.PIPS_FAUCET_COOLDOW
 export const DEMO_LUCKY_LEVERAGE: number = Number(process.env.PIPS_DEMO_LUCKY_LEVERAGE) || 0;
 export const DEMO_LUCKY_DURATION: number = Number(process.env.PIPS_DEMO_LUCKY_DURATION) || 0;
 
-// Stake bounds per play, display DUSDC. The knob and the play endpoints enforce these.
+// Stake bounds per play, display DUSDC. The knob and the play endpoints enforce these. Network-scoped:
+// testnet-real floors at the protocol's ~$1 min net premium (L-011, NOT the intake's 0.01 guess, which
+// the protocol source disproved) and caps tiny to protect finite testnet DUSDC; the fork's free
+// localnet keeps the wide band. Env overrides win in either mode.
 export const MIN_STAKE: number = Number(process.env.PIPS_MIN_STAKE) || 1;
-export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || 100;
+export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || (IS_REAL_PREDICT ? 2 : 100);
 // Game-round durations offered to the player (seconds). The on-chain expiry is the
 // oracle's; the round duration is the UX timer / when the screen auto-cashes out.
 export const GAME_DURATIONS: number[] = (process.env.PIPS_GAME_DURATIONS || '10,30,60')
@@ -361,6 +383,10 @@ export default {
   GAS_SPONSORSHIP_WALLET_PK,
   SPONSOR_MIN_SUI,
   SPONSOR_TOPUP_SUI,
+  PLAY_RATE_LIMIT_MS,
+  SPONSOR_FLOOR_SUI,
+  SPONSOR_BURN_WARN_SUI,
+  SPONSOR_MONITOR_CRON,
   SETTLEMENT_WALLET_PK,
   SETTLEMENT_MIN_SUI,
   SETTLEMENT_TOPUP_SUI,

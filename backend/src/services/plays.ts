@@ -41,6 +41,7 @@ import {
   readWrapper,
 } from '../lib/sui/predict-real.ts';
 import { operatorCaps } from '../lib/sui/signer.ts';
+import { checkPlayAllowed, recordPlay, clearPlay } from '../lib/sui/play-safety.ts';
 import { gameSpot } from '../lib/game-price.ts';
 import { executeForUser, executeAsOperator, executeAsSettlement, userContext } from '../lib/sui/execute.ts';
 import {
@@ -222,24 +223,35 @@ const isOracleGone = (e: unknown): boolean => {
 // play SSE. Pre-deal failures (bad params, no market, plainly insufficient) still throw here so the
 // client gets a clean error and shows no reel; only the rare post-deal mint failure is async.
 export async function createPlay(user: User, input: CreatePlayInput): Promise<CreateResult> {
-  const stakeRaw = parseStake(input.stake);
-  if (!user.predictManagerId) throw new PlayError('MANAGER_NOT_READY', 'Your account is still getting ready');
+  // Real-mode safety gate (no-op in fork mode): refuse when the gas sponsor is paused (reserve below
+  // floor) with a clear code, and rate-limit per user so finite testnet gas isn't burned by a spammer.
+  const block = checkPlayAllowed(user.id);
+  if (block) throw new PlayError(block.code, block.message);
+  recordPlay(user.id); // reserve the cooldown slot so a double-tap can't slip two plays past the gate
 
-  // Fast affordability gate: reject only when a FRESH cached total is confidently short, so the hot
-  // path takes no ~1.5s manager devInspect. Anything else proceeds; the background mint reads the
-  // real balance and is the source of truth (a wrong guess there just re-racks, gracefully).
-  const cached = balCache.get(user.id);
-  if (cached && Date.now() - cached.at < BAL_TTL_MS && cached.total < stakeRaw) {
-    throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that bet');
+  try {
+    const stakeRaw = parseStake(input.stake);
+    if (!user.predictManagerId) throw new PlayError('MANAGER_NOT_READY', 'Your account is still getting ready');
+
+    // Fast affordability gate: reject only when a FRESH cached total is confidently short, so the hot
+    // path takes no ~1.5s manager devInspect. Anything else proceeds; the background mint reads the
+    // real balance and is the source of truth (a wrong guess there just re-racks, gracefully).
+    const cached = balCache.get(user.id);
+    if (cached && Date.now() - cached.at < BAL_TTL_MS && cached.total < stakeRaw) {
+      throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that bet');
+    }
+
+    // Resolve + price the deal off the live oracle (honest multiplier). The player waits only on this.
+    const resolved = await resolveByGame(input, stakeRaw);
+    const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw) });
+
+    // Mint behind the spin animation; mintPending never throws (it marks the play 'error' on failure).
+    void withUserLock(user.id, () => mintPending(user, resolved, stakeRaw, play.id, input));
+    return { play: await toPlayDTO(play) };
+  } catch (e) {
+    clearPlay(user.id); // the play never landed (bad params / no market); don't hold the cooldown
+    throw e;
   }
-
-  // Resolve + price the deal off the live oracle (honest multiplier). The player waits only on this.
-  const resolved = await resolveByGame(input, stakeRaw);
-  const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw) });
-
-  // Mint behind the spin animation; mintPending never throws (it marks the play 'error' on failure).
-  void withUserLock(user.id, () => mintPending(user, resolved, stakeRaw, play.id, input));
-  return { play: await toPlayDTO(play) };
 }
 
 // Funding plan for one mint: how much to deposit given the freshly read balances. Funds a bit above
