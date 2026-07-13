@@ -73,8 +73,11 @@ export const PRIVY_JWT_VERIFICATION_KEY: string = process.env.PRIVY_JWT_VERIFICA
 export const WALLET_AUTH_ENABLED: boolean = process.env.PIPS_WALLET_AUTH_ENABLED === 'true';
 export const WALLET_ENCRYPTION_KEY: string = process.env.PIPS_WALLET_ENCRYPTION_KEY || '';
 
-// Free DUSDC starting balance per new user, in display units (6dp DUSDC).
-export const STARTING_BALANCE: number = Number(process.env.PIPS_STARTING_BALANCE) || 1000;
+// DUSDC starting balance per new user, display units (6dp DUSDC). Network-scoped: the fork mints freely
+// on localnet so it hands out a fat stack; testnet-real chips come only from a hand-funded treasury
+// (L-008, never a mint), so a new user gets just enough for a couple of real plays (the protocol floors
+// a mint at ~$1, L-011), keeping the finite reserve from draining on the first login.
+export const STARTING_BALANCE: number = Number(process.env.PIPS_STARTING_BALANCE) || (IS_REAL_PREDICT ? 3 : 1000);
 
 // Free SUI for gas on localnet. The operator funds each user once at onboarding (so a privy
 // user can pay their own play gas) and tops up whenever the balance dips below the floor, so
@@ -140,12 +143,17 @@ export const SETTLEMENT_TOPUP_SUI: number = Number(process.env.PIPS_SETTLEMENT_T
 export const TREASURY_WALLET_PK: string = process.env.TREASURY_WALLET_PK || '';
 export const TREASURY_MIN_SUI: number = Number(process.env.PIPS_TREASURY_MIN_SUI) || 20;
 export const TREASURY_TOPUP_SUI: number = Number(process.env.PIPS_TREASURY_TOPUP_SUI) || 200;
-export const TREASURY_MIN_DUSDC: number = Number(process.env.PIPS_TREASURY_MIN_DUSDC) || 1_000_000;
+// Treasury DUSDC reserve floor. Network-scoped: the fork keeps a huge minted reserve; testnet-real
+// holds only what a human transferred in (L-008), so the floor is a tiny dollar figure and TOPUP is
+// inert (DUSDC is not mintable in real mode, so ensureTreasuryFunded just warns to top up by hand).
+export const TREASURY_MIN_DUSDC: number = Number(process.env.PIPS_TREASURY_MIN_DUSDC) || (IS_REAL_PREDICT ? 5 : 1_000_000);
 export const TREASURY_TOPUP_DUSDC: number = Number(process.env.PIPS_TREASURY_TOPUP_DUSDC) || 5_000_000;
 
 // Request DUSDC faucet. Each tap sends FAUCET_AMOUNT display DUSDC to the user, rate-limited to one
-// tap per FAUCET_COOLDOWN_MS per user (in-memory, anti-spam, not security-critical on free localnet).
-export const FAUCET_AMOUNT: number = Number(process.env.PIPS_FAUCET_AMOUNT) || 500;
+// tap per FAUCET_COOLDOWN_MS per user (in-memory, anti-spam). Network-scoped amount: big on the free
+// fork, tiny on testnet-real (the treasury is hand-funded and finite, so a tap tops the user up for one
+// more real play, not a windfall).
+export const FAUCET_AMOUNT: number = Number(process.env.PIPS_FAUCET_AMOUNT) || (IS_REAL_PREDICT ? 2 : 500);
 export const FAUCET_COOLDOWN_MS: number = Number(process.env.PIPS_FAUCET_COOLDOWN_MS) || 60_000;
 
 // Demo override, OFF by default. When set to a valid leverage bucket (2/5/10/25/100), I Feel

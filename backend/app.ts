@@ -28,8 +28,10 @@ import { startDeployWatch } from './src/workers/deploy-watch.ts';
 // Ops-wallet funding (operator-driven): seeds/tops up the sponsor (SUI), settlement (SUI), and
 // treasury (SUI + DUSDC reserve) wallets so plays, redeems, and chip payouts never stall.
 import { ensureOpsFunded } from './src/lib/sui/gas.ts';
-import { SPONSOR_ENABLED, ensureSponsorAccumulator } from './src/lib/sui/sponsor.ts';
+import { SPONSOR_ENABLED, sponsorAddress, ensureSponsorAccumulator } from './src/lib/sui/sponsor.ts';
+import { treasuryAddress } from './src/lib/sui/signer.ts';
 import { startSponsorMonitor } from './src/lib/sui/play-safety.ts';
+import { SPONSOR_FLOOR_SUI, TREASURY_MIN_DUSDC } from './src/config/main-config.ts';
 
 console.log(
   '======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n'
@@ -105,6 +107,13 @@ const start = async (): Promise<void> => {
       void verifyRealDeployment().catch((e) =>
         console.warn('[predict-real] deployment verify errored:', e instanceof Error ? e.message : e),
       );
+      // Real-mode wallets are hand-funded (no faucet, no DUSDC mint, L-008). Print the exact addresses
+      // to top up so funding is never a guessing game: treasury holds the DUSDC chip reserve, sponsor
+      // holds the SUI that pays every play's gas. Both auto-recover once funded (treasury payout retries,
+      // sponsor monitor resumes plays), so this is the whole manual-funding runbook in one log line.
+      console.log('[predict-real] hand-funded wallets (transfer testnet funds to these to enable plays):');
+      console.log(`  treasury (DUSDC chips, keep >= ${TREASURY_MIN_DUSDC} DUSDC): ${treasuryAddress || '(TREASURY_WALLET_PK unset -> chips fall back to operator)'}`);
+      console.log(`  sponsor  (SUI gas,     keep >= ${SPONSOR_FLOOR_SUI} SUI)  : ${sponsorAddress || '(GAS_SPONSORSHIP_WALLET_PK unset -> plays not sponsored)'}`);
     }
 
     // Ops wallets: the operator seeds/tops up the sponsor (SUI), settlement (SUI), and treasury
