@@ -29,7 +29,8 @@ model User {
   walletAuthAddress String?  @unique
   playWalletSecret  String?
 
-  predictManagerId String?                     // their PredictManager object id (lazily created)
+  predictManagerId String?                     // fork (localnet/devnet): their PredictManager object id (lazily created)
+  predictWrapperId String?                     // real (testnet): their derived account::AccountWrapper id (hot-path cache over the derived address; self-heals if gone)
   dusdcFunded      Boolean   @default(false)   // free starting USDC chips minted
   suiGasFunded     Boolean   @default(false)   // free SUI for gas transferred (localnet)
 
