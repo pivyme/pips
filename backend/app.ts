@@ -2,8 +2,9 @@ import './dotenv.ts';
 
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import FastifyCors from '@fastify/cors';
-import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, OPERATOR_ENABLED } from './src/config/main-config.ts';
-import { NETWORK, PACKAGE_ID, PREDICT_ID, DUSDC_TYPE } from './src/lib/sui/config.ts';
+import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, OPERATOR_ENABLED, IS_REAL_PREDICT } from './src/config/main-config.ts';
+import { NETWORK, PUBLIC_PREDICT_PACKAGE, PUBLIC_PREDICT_OBJECT, DUSDC_TYPE } from './src/lib/sui/config.ts';
+import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
 
 // Routes
 import { exampletRoute } from './src/routes/exampleRoutes.ts';
@@ -73,8 +74,8 @@ fastify.get('/config', async (_request: FastifyRequest, reply: FastifyReply) => 
     error: null,
     data: {
       network: NETWORK,
-      predictPackageId: PACKAGE_ID,
-      predictId: PREDICT_ID,
+      predictPackageId: PUBLIC_PREDICT_PACKAGE,
+      predictId: PUBLIC_PREDICT_OBJECT,
       dusdcType: DUSDC_TYPE,
     },
   });
@@ -95,6 +96,15 @@ const start = async (): Promise<void> => {
   try {
     // Start workers
     startErrorLogCleanupWorker();
+
+    // Real mode (testnet): confirm Mysten's configured Predict objects still exist before serving, so
+    // a Mysten redeploy shows a clear STALE ID error in the logs instead of every play failing opaquely.
+    // Non-fatal: the app still boots (demo mode survives) and the log points at the fix.
+    if (IS_REAL_PREDICT) {
+      void verifyRealDeployment().catch((e) =>
+        console.warn('[predict-real] deployment verify errored:', e instanceof Error ? e.message : e),
+      );
+    }
 
     // Ops wallets: the operator seeds/tops up the sponsor (SUI), settlement (SUI), and treasury
     // (SUI + DUSDC reserve) on boot so the first play, redeem, and chip payout don't stall. Behind

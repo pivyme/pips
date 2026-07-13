@@ -33,8 +33,13 @@ export const ALLOWED_ORIGIN: string = process.env.ALLOWED_ORIGIN || '';
 export type AuthMode = 'dev' | 'privy';
 export const AUTH_MODE: AuthMode = process.env.PIPS_AUTH_MODE === 'privy' ? 'privy' : 'dev';
 
-// Sui. Testnet only pre-mainnet. The dev key doubles as the Predict operator.
+// Sui network. localnet/devnet run OUR vendored Predict fork; testnet is Mysten's OFFICIAL Predict
+// deployment (never our fork again, L-005). The dev key doubles as the fork operator on localnet/devnet.
 export const SUI_NETWORK: string = process.env.SUI_NETWORK || 'testnet';
+// The one dispatch seam for the real protocol. When true, plays/discovery/settle route through the
+// real-protocol path (predict-real.ts + config-real.ts + real-mode market-sync); when false the fork
+// path (predict.ts + config.ts) runs unchanged. No third mode/flag: testnet always means real.
+export const IS_REAL_PREDICT: boolean = SUI_NETWORK === 'testnet';
 export const SUI_FULLNODE_URL: string = process.env.SUI_FULLNODE_URL || '';
 // GraphQL endpoint for historical queries (events / tx-history) that fullnode gRPC v2 can't serve.
 // Defaults per network; override with SUI_GRAPHQL_URL. Mysten hosts one per public network.
@@ -337,6 +342,7 @@ export default {
   MAX_STAKE,
   GAME_DURATIONS,
   SUI_NETWORK,
+  IS_REAL_PREDICT,
   SUI_FULLNODE_URL,
   SUI_GRAPHQL_URL,
   TESTING_WALLET_PK,

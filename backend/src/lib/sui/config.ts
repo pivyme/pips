@@ -6,7 +6,13 @@
 import fs from 'fs';
 import path from 'path';
 
-import { SUI_NETWORK } from '../../config/main-config.ts';
+import { SUI_NETWORK, IS_REAL_PREDICT } from '../../config/main-config.ts';
+import {
+  REAL_DUSDC_TYPE,
+  REAL_DUSDC_PACKAGE_ID,
+  REAL_PREDICT_PACKAGE,
+  REAL_POOL_VAULT_ID,
+} from './config-real.ts';
 
 // Pure money math lives in math.ts (chain-free, unit-tested). Re-exported here so the
 // rest of the backend keeps importing scaling helpers from the one Sui config surface.
@@ -48,9 +54,12 @@ type Deployed = {
   bootstrappedAt: string;
 };
 
-// Per-network deployment record. testnet keeps the committed `deployed.json`; localnet (and
-// any other chain) reads its own `deployed.<network>.json`, so switching networks never
+// Per-network FORK deployment record (localnet/devnet only). testnet no longer uses a fork file at
+// all (it runs Mysten's real Predict via config-real.ts, so loadDeployed is never called in real
+// mode); localnet/devnet each read their own `deployed.<network>.json`, so switching networks never
 // clobbers another network's ids. The bootstrap writes the matching file.
+// HARVEST TODO (Phase 17): the committed fork-on-testnet `deployed.json` is dead once the real path
+// ships; delete it and drop the `=== 'testnet'` branch here.
 const DEPLOYED_FILE = SUI_NETWORK === 'testnet' ? 'deployed.json' : `deployed.${SUI_NETWORK}.json`;
 const DEPLOYED_PATH = path.resolve(import.meta.dir, DEPLOYED_FILE);
 
@@ -88,23 +97,34 @@ function loadDeployed(): Deployed {
   return d;
 }
 
-const deployed = loadDeployed();
+// In real mode (testnet = Mysten's official Predict) config.ts's FORK ids are unused: predict-real.ts
+// + config-real.ts own the real path. We surface only the real DUSDC type/package here so the shared
+// balance/treasury code and the /config endpoint work; every fork-only id stays empty so a stray fork
+// call fails loud instead of hitting a wrong object. localnet/devnet load the fork record as before.
+const deployed: Deployed | null = IS_REAL_PREDICT ? null : loadDeployed();
 
-export const NETWORK = deployed.network;
-export const PACKAGE_ID = deployed.packageId;
-export const UPGRADE_CAP_ID = deployed.upgradeCapId;
-export const ADMIN_CAP_ID = deployed.adminCapId;
-export const REGISTRY_ID = deployed.registryId;
-export const PREDICT_ID = deployed.predictId;
-export const PLP_TREASURY_CAP_ID = deployed.plpTreasuryCapId;
+export const NETWORK = IS_REAL_PREDICT ? 'testnet' : deployed!.network;
+export const PACKAGE_ID = deployed?.packageId ?? '';
+export const UPGRADE_CAP_ID = deployed?.upgradeCapId ?? '';
+export const ADMIN_CAP_ID = deployed?.adminCapId ?? '';
+export const REGISTRY_ID = deployed?.registryId ?? '';
+export const PREDICT_ID = deployed?.predictId ?? '';
+export const PLP_TREASURY_CAP_ID = deployed?.plpTreasuryCapId ?? '';
 
-export const DUSDC_TYPE = deployed.dusdc.type;
-export const DUSDC_PACKAGE_ID = deployed.dusdc.packageId;
-export const DUSDC_TREASURY_CAP_ID = deployed.dusdc.treasuryCapId;
-export const DUSDC_CURRENCY_ID = deployed.dusdc.currencyId;
+export const DUSDC_TYPE = IS_REAL_PREDICT ? REAL_DUSDC_TYPE : deployed!.dusdc.type;
+export const DUSDC_PACKAGE_ID = IS_REAL_PREDICT ? REAL_DUSDC_PACKAGE_ID : deployed!.dusdc.packageId;
+// Never own the DUSDC TreasuryCap on a deployment we don't operate, so minting stays impossible in
+// real mode (DUSDC_MINTABLE is derived from this). Fork keeps its own cap.
+export const DUSDC_TREASURY_CAP_ID = IS_REAL_PREDICT ? '' : deployed!.dusdc.treasuryCapId;
+export const DUSDC_CURRENCY_ID = deployed?.dusdc.currencyId ?? '';
 
-export const ORACLE_CAP_IDS = deployed.oracleCapIds;
-export const ORACLES = deployed.oracles;
+export const ORACLE_CAP_IDS = deployed?.oracleCapIds ?? [];
+export const ORACLES = deployed?.oracles ?? [];
+
+// Public-facing Predict ids for the /config endpoint + explorer links, mode-aware: the real predict
+// package + PoolVault in real mode, the fork package + Predict object otherwise.
+export const PUBLIC_PREDICT_PACKAGE = IS_REAL_PREDICT ? REAL_PREDICT_PACKAGE : PACKAGE_ID;
+export const PUBLIC_PREDICT_OBJECT = IS_REAL_PREDICT ? REAL_POOL_VAULT_ID : PREDICT_ID;
 
 // Swap a rotated oracle cap into the live set and persist it. oracle-roll calls this when a cap's
 // registry bookkeeping vector (Registry.oracle_ids[cap], an unbounded vector<ID>) fills to Sui's
@@ -116,7 +136,7 @@ export function replaceOracleCap(fullCapId: string, freshCapId: string): void {
   const idx = ORACLE_CAP_IDS.indexOf(fullCapId);
   if (idx >= 0) ORACLE_CAP_IDS[idx] = freshCapId;
   else ORACLE_CAP_IDS.push(freshCapId);
-  if (!deployedFromFile) return;
+  if (!deployed || !deployedFromFile) return; // fork-only (oracle-roll); real mode has no caps to persist
   deployed.oracleCapIds = ORACLE_CAP_IDS;
   fs.writeFileSync(DEPLOYED_PATH, JSON.stringify(deployed, null, 2) + '\n');
 }

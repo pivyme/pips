@@ -9,7 +9,7 @@
 // the boot hook before config is allowed to load, so it stays on prisma + main-config only.
 
 import { prismaQuery } from './prisma.ts';
-import { SUI_NETWORK } from '../config/main-config.ts';
+import { SUI_NETWORK, IS_REAL_PREDICT } from '../config/main-config.ts';
 
 const keyFor = (network: string): string => `deployment.${network}`;
 
@@ -54,6 +54,9 @@ export async function writeDeploymentRecord(value: string, network: string = SUI
 // config.ts loads the live ids (DB wins over a stale env/file). MUST run before anything imports
 // src/lib/sui/config.ts. No-op when the table/record is absent (env/file path takes over).
 export async function hydrateDeploymentFromDB(): Promise<void> {
+  // Real mode (testnet) uses Mysten's fixed deployment (config-real.ts), not a self-published fork
+  // record, so a stale fork "deployment.testnet" row in the DB must not hijack PIPS_DEPLOYED_JSON.
+  if (IS_REAL_PREDICT) return;
   const raw = await readDeploymentRecord();
   if (!raw) return;
   try {
