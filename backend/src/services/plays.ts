@@ -38,6 +38,7 @@ import {
   buildRedeemLivePlay,
   decodeOrderId,
   findRealRedeem,
+  LEVERAGE_ONE,
   parseMint,
   parseRedeem,
   readMarketSettlement,
@@ -445,6 +446,15 @@ const isRealMarketGone = (e: unknown): boolean =>
 const isWrapperGone = (e: unknown): boolean =>
   /not found|does not exist|no such object|deleted|notexist/i.test(e instanceof Error ? e.message : String(e));
 
+// A leverage/probability/premium admission abort from strike_exposure_config (LUCKY.md §5b): the
+// requested leverage exceeds the tier's probability-gated cap, the strike's probability is out of
+// bounds, the net premium is below $1, or the position would open below the liquidation threshold. The
+// fallback drops leverage to 1x (the closest achievable tier) and retries the same strike.
+const isAdmissionAbort = (e: unknown): boolean =>
+  /strike_exposure_config|ELeverageAboveAdmission|EInvalidLeverage|EEntryProbabilityOutOfBounds|ENetPremiumBelowMinimum|EOrderBelowLiquidationThreshold/i.test(
+    e instanceof Error ? e.message : String(e),
+  );
+
 async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: bigint, playId: string, input: CreatePlayInput): Promise<void> {
   let cur = resolved;
   let acct = user; // may lose a stale wrapper-id cache mid-flight (self-heal)
@@ -501,6 +511,7 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
             marketKey: mint.orderId.toString(), // the settle worker's key (decodeOrderId derives the close qty)
             entryCost: mint.costRaw,
             multiplier: actualMultiplier,
+            leverage: Number(mint.leverage1e9 / 1_000_000_000n), // the REAL admitted leverage (may be trimmed from the request)
             openedAt: new Date(),
           },
         });
@@ -521,6 +532,15 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
           if (!next) throw e;
           cur = next;
           await prismaQuery.play.update({ where: { id: playId }, data: realMarketFieldsOf(next) });
+          continue;
+        }
+        // Requested leverage exceeds the tier's (unreadable pre-mint) probability-gated admission cap,
+        // or the strike/premium lands outside the admission band (LUCKY.md §5b). Drop to leverage 1 and
+        // retry the same strike, the closest achievable tier. If already at 1x it's a genuinely
+        // unmintable strike, so let it fall through to error (chips safe), never loop a doomed mint.
+        if (isAdmissionAbort(e) && cur.leverage1e9 > LEVERAGE_ONE) {
+          cur = { ...cur, leverage1e9: LEVERAGE_ONE };
+          await prismaQuery.play.update({ where: { id: playId }, data: { leverage: 1 } }).catch(() => {});
           continue;
         }
         if (isRetriableMint(e)) continue; // transient owned-coin version race: rebuild + resubmit

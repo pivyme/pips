@@ -581,26 +581,56 @@ function realMarket(roundMs: number): Market {
 
 // A market's raw economics (1e9- / raw-scaled) pulled off the record market-sync stamped (never
 // hardcoded). Throws if a fork-shaped record slipped through (real economics absent).
-function realEcon(m: Market): { spot1e9: bigint; tickSize: bigint; admissionTickSize: bigint } {
+function realEcon(m: Market): { spot1e9: bigint; tickSize: bigint; admissionTickSize: bigint; maxLeverage1e9: bigint } {
   if (!m.spot1e9 || !m.admissionTickSizeRaw) throw new PlayError('ORACLE_STALE', 'Market has no price yet');
-  return { spot1e9: BigInt(m.spot1e9), tickSize: BigInt(m.tickSize), admissionTickSize: BigInt(m.admissionTickSizeRaw) };
+  return {
+    spot1e9: BigInt(m.spot1e9),
+    tickSize: BigInt(m.tickSize),
+    admissionTickSize: BigInt(m.admissionTickSizeRaw),
+    maxLeverage1e9: m.maxLeverage1e9 ? BigInt(m.maxLeverage1e9) : LEVERAGE_ONE,
+  };
 }
 
-// The strike distance off spot for a leverage-1 binary tier. Higher tier sits further OTM (lower ask,
-// higher chain-priced multiplier); floored at LUCKY_MIN_TARGET_FRAC so even the low tiers are a real,
-// visible move and capped so the strike stays inside a mintable band. Interim (Phase 12 uses leverage).
-function binaryOffsetFrac(tier: number): number {
-  return Math.min(0.03, Math.max(LUCKY_MIN_TARGET_FRAC, LUCKY_MIN_TARGET_FRAC * tier));
+// The strike distance off spot for a binary whose STRIKE must carry a `strikeTier` multiple (= tier/L,
+// LUCKY.md §5b). Higher strikeTier sits further OTM (lower win odds, bigger 1/p); floored at
+// LUCKY_MIN_TARGET_FRAC so even a near-ATM leveraged strike is a real, visible move, and capped so it
+// stays inside a mintable band. Leverage carries the rest of the multiple, so a leveraged tier resolves
+// to a smaller offset (closer to ATM, more winnable) than its unleveraged equivalent.
+function binaryOffsetFrac(strikeTier: number): number {
+  return Math.min(0.03, Math.max(LUCKY_MIN_TARGET_FRAC, LUCKY_MIN_TARGET_FRAC * strikeTier));
+}
+
+// Per-tier target leverage for LUCKY (1e9-scaled), clamped to the market's admission cap. Leverage is
+// probability-gated on chain (admitted_leverage_cap, LUCKY.md §5b), so far-OTM high tiers can't take
+// much and the mint-abort fallback (mintPendingReal) trims this to 1x when the real probability admits
+// less than requested. A modest boost pulls the winnable tiers toward ATM without inviting easy
+// mid-round liquidation. MOONSHOT stays at leverage 1 (player-directed reach). Tunable at QA (Phase 16).
+const LUCKY_LEVERAGE_1E9: Record<number, bigint> = {
+  2: 1_500_000_000n, // 1.5x
+  3: 1_800_000_000n, // 1.8x
+  5: 2_000_000_000n, // 2.0x
+  10: 2_000_000_000n, // 2.0x (low real probability caps it on chain; fallback trims to 1x if needed)
+};
+function luckyLeverage(tier: number, maxLeverage1e9: bigint): bigint {
+  const want = LUCKY_LEVERAGE_1E9[tier] ?? LEVERAGE_ONE;
+  const capped = want < maxLeverage1e9 ? want : maxLeverage1e9;
+  return capped > LEVERAGE_ONE ? capped : LEVERAGE_ONE;
 }
 
 const premiumBudget = (stakeRaw: bigint): bigint => (stakeRaw * (100n - REAL_FEE_HEADROOM_PCT)) / 100n;
 const realFmt = (v: bigint): string => String(Number(v) / 1e9);
 
-// Resolve a binary play (LUCKY / MOONSHOT) on the real BTC market at leverage 1.
+// Resolve a binary play on the real BTC market. LUCKY decomposes the dealt tier into strike distance x
+// leverage (LUCKY.md §5b): leverage carries part of the multiple so the strike sits closer to ATM
+// (higher win odds) for the same payout, then the mint snaps the reel to the real multiplier. MOONSHOT
+// is player-directed and stays at leverage 1 (the reach IS the strike tier). The mint-abort fallback
+// trims leverage if the tier's real (unreadable pre-mint) probability admits less than requested.
 function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: Side, tier: number, seed?: string): ResolvedReal {
   const market = realMarket(LUCKY_ROUND_MS);
-  const { spot1e9, tickSize, admissionTickSize } = realEcon(market);
-  const off = BigInt(Math.round(binaryOffsetFrac(tier) * 1e9));
+  const { spot1e9, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
+  const leverage1e9 = game === 'lucky' ? luckyLeverage(tier, maxLeverage1e9) : LEVERAGE_ONE;
+  const strikeTier = tier / (Number(leverage1e9) / 1e9); // the multiple the STRIKE must carry (M/L)
+  const off = BigInt(Math.round(binaryOffsetFrac(strikeTier) * 1e9));
   const strike1e9 = side === 'up' ? (spot1e9 * (FLOAT_SCALING + off)) / FLOAT_SCALING : (spot1e9 * (FLOAT_SCALING - off)) / FLOAT_SCALING;
   const { lowerTick, higherTick } = ticksForBinary(side, strike1e9, tickSize, admissionTickSize);
   return {
@@ -610,7 +640,7 @@ function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: S
     asset: REAL_BTC_GAME_ASSET,
     lowerTick,
     higherTick,
-    leverage1e9: LEVERAGE_ONE,
+    leverage1e9,
     amountRaw: premiumBudget(stakeRaw),
     depositCeilRaw: stakeRaw,
     minQuantityRaw: POSITION_LOT_SIZE,
