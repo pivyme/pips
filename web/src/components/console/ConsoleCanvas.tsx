@@ -21,8 +21,13 @@ import {
 } from './consoleElements'
 import { createAudio } from './consoleAudio'
 import { unlockAudio } from '@/lib/sound'
+import { haptic } from '@/lib/haptics'
+import type { HapticPreset } from '@/lib/haptics'
 import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
 import { themeBackdrop, type ConsoleTheme } from './themes'
+
+// Main / Action1 / Action2 / MenuTab / HomeTab, matching ConsoleShell's DOM equivalents.
+const BTN_HAPTIC: HapticPreset[] = ['rigid', 'medium', 'medium', 'selection', 'selection']
 
 // The 3D handheld, driven by the console controls registry. A game registers its bindings via
 // useConsoleControls(); this paints live labels on the buttons + knob and dispatches the physical
@@ -120,6 +125,13 @@ export default function ConsoleCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hintRef = useRef<HTMLDivElement>(null)
   const screenLayerRef = useRef<HTMLDivElement>(null)
+  // Real DOM overlays for the 5 physical buttons (Main/Action1/Action2/MenuTab/HomeTab), positioned
+  // over their projected on-screen rects. iOS Safari only grants its native Taptic tick to a genuine
+  // physical tap on a real switch-type element, never a script-triggered one (closed in 26.5), and
+  // these buttons are raycast-picked canvas pixels with no DOM element under the finger otherwise.
+  // See overlayPressRef below (assigned inside the scene effect) and the JSX render at the bottom.
+  const btnOverlayRefs = useRef<Array<HTMLInputElement | null>>([null, null, null, null, null])
+  const overlayPressRef = useRef<((bi: number) => void) | null>(null)
 
   // Fresh per render so the scene's input handlers never read a stale binding.
   const propsRef = useRef({ handlers, onNav, onOutroComplete, onWelcomeComplete, onWelcomeArrived })
@@ -2065,6 +2077,57 @@ export default function ConsoleCanvas({
       el.style.setProperty('--screen-rim', `${Math.round(rimPx / contentScale)}px`)
       const notchPx = Math.max(0, Math.round(maxY + M - notchTopY))
       el.style.setProperty('--screen-notch', `${Math.round(notchPx / contentScale)}px`)
+
+      projectButtonOverlay()
+    }
+
+    // The 4 corners of button i in the same device-local, DEVICE_Z-baked convention as screenWorldPts,
+    // so the projection loop below can reuse the exact same strip-and-reapply trick.
+    function buttonWorldCorners(i: number): Array<THREE.Vector3> {
+      const b = buttons[i]
+      const cx = wx(BTN_PX[i].x) + b.dx
+      const cy = wy(BTN_PX[i].y) + b.dy
+      const z = DEVICE_Z + b.baseZ
+      const hw = b.w / 2
+      const hh = b.h / 2
+      return [
+        new THREE.Vector3(cx - hw, cy - hh, z),
+        new THREE.Vector3(cx + hw, cy - hh, z),
+        new THREE.Vector3(cx + hw, cy + hh, z),
+        new THREE.Vector3(cx - hw, cy + hh, z),
+      ]
+    }
+
+    // Glue the 5 invisible haptic-overlay inputs onto their button meshes' live projected rects, same
+    // technique as projectScreenLayer. Button screen position only moves on resize/camera moves (never
+    // per-frame during normal play), so piggybacking on projectScreenLayer's call sites is enough.
+    function projectButtonOverlay() {
+      if (viewW === 0 || viewH === 0) return
+      device.updateWorldMatrix(true, false)
+      for (let i = 0; i < 5; i++) {
+        const el = btnOverlayRefs.current[i]
+        if (!el) continue
+        let minX = Infinity,
+          minY = Infinity,
+          maxX = -Infinity,
+          maxY = -Infinity
+        for (const v of buttonWorldCorners(i)) {
+          const n = screenScratch
+            .set(v.x, v.y, v.z - DEVICE_Z)
+            .applyMatrix4(device.matrixWorld)
+            .project(camera)
+          const x = (n.x * 0.5 + 0.5) * viewW
+          const y = (-n.y * 0.5 + 0.5) * viewH
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+        }
+        el.style.left = `${minX}px`
+        el.style.top = `${minY}px`
+        el.style.width = `${maxX - minX}px`
+        el.style.height = `${maxY - minY}px`
+      }
     }
 
     // Measure the live content's vertical overflow and fold it into screenFitScale so a too-tall screen
@@ -2511,6 +2574,32 @@ export default function ConsoleCanvas({
       pressTimers.push(t)
       dirty = true
     }
+
+    // Fired by the real DOM haptic-overlay switches (see the JSX render + btnOverlayRefs above), a
+    // genuine physical tap having landed on one of them. Mirrors the button branch of onPointerDown:
+    // same press visuals/audio/dispatch, no pointer capture needed since release() below is a
+    // window-level listener keyed off the module-scoped `active` mesh, not the original event target.
+    function overlayPress(bi: number) {
+      if (customize) return
+      const btn = bm[bi]
+      if (!btn) return
+      if ((bi === 3 || bi === 4) && liveStage === 'hero') return
+      audio.resumeAudio()
+      unlockAudio()
+      if (hint) hint.style.opacity = '0'
+      btn.userData.pressed = true
+      btn.userData.pressedAt = performance.now()
+      btn.userData.glow = Math.max(btn.userData.glow, 0.001)
+      active = btn
+      if (bi === 0) audio.playSfx('mainPress', 'main')
+      else if (bi === 1) audio.playSfx('actionPress', 'action1')
+      else if (bi === 2) audio.playSfx('actionPress', 'action2')
+      else if (bi === 3) audio.playSfx('pillPress', 'menu')
+      else if (bi === 4) audio.playSfx('pillPress', 'home')
+      dispatch(bi)
+      dirty = true
+    }
+    overlayPressRef.current = overlayPress
 
     const onKeyDown = (e: KeyboardEvent) => {
       // Map the keyboard to the physical buttons: Enter = main, ArrowLeft/Right = the two action caps.
@@ -3002,6 +3091,7 @@ export default function ConsoleCanvas({
       applyThemeRef.current = () => {}
       applyOutroRef.current = () => {}
       applyActiveRef.current = () => {}
+      overlayPressRef.current = null
       applyStageRef.current = () => {}
       gui?.destroy()
       disposeActionScreens()
@@ -3139,6 +3229,43 @@ export default function ConsoleCanvas({
           }}
         ></div>
       </div>
+
+      {/* Real DOM haptic overlays for the 5 physical buttons, glued onto their projected on-screen
+          rects by projectButtonOverlay() above. iOS only grants its native Taptic tick to a genuine
+          physical tap on a real switch element, so these have to be actual DOM elements the finger
+          touches, not the canvas raycast the buttons otherwise use. Above the canvas (zIndex) so the
+          real tap lands here first; overlayPress() then replays the exact same press the raycast
+          branch would have. Knob/number-wheel stay raycast+drag only, no discrete tap to hook. */}
+      {!customize && !exportMode && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 11, pointerEvents: 'none' }}>
+          {BTN_HAPTIC.map((preset, i) => (
+            <input
+              key={i}
+              ref={(el) => {
+                btnOverlayRefs.current[i] = el
+              }}
+              type="checkbox"
+              {...{ switch: '' }}
+              aria-hidden="true"
+              tabIndex={-1}
+              onChange={() => {
+                haptic(preset)
+                overlayPressRef.current?.(i)
+              }}
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                width: 0,
+                height: 0,
+                appearance: 'none',
+                opacity: 0,
+                pointerEvents: 'auto',
+              }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -10,6 +10,7 @@ import ConsoleCanvas from './ConsoleCanvas'
 import { THEMES, THEME_BY_ID } from './themes'
 import type { ConsoleTheme } from './themes'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 
@@ -121,13 +122,16 @@ export function CustomizeStudio({
               <X className="h-6 w-6" strokeWidth={2.6} />
             </CircleButton>
 
-            <button
-              type="button"
-              onClick={commit}
-              className="h-[58px] flex-1 rounded-full bg-white text-[19px] font-extrabold text-black shadow-[0_10px_30px_-10px_rgba(0,0,0,0.9)] transition-transform active:scale-[0.97]"
-            >
-              Done
-            </button>
+            <div className="relative h-[58px] flex-1">
+              <button
+                type="button"
+                onClick={commit}
+                className="pointer-events-none h-[58px] w-full rounded-full bg-white text-[19px] font-extrabold text-black shadow-[0_10px_30px_-10px_rgba(0,0,0,0.9)] transition-transform active:scale-[0.97]"
+              >
+                Done
+              </button>
+              <HapticOverlay className="absolute inset-0 rounded-full" preset="success" silent onTap={commit} />
+            </div>
 
             <CircleButton
               label="Share"

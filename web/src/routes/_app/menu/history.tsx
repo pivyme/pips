@@ -6,6 +6,7 @@ import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
 import { api, type Game, type LuckyParams, type PlayDTO, type RangeParams } from '@/lib/api'
 import { explorerObjectUrl, explorerTxUrl } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { cnm } from '@/utils/style'
 import { formatExactDecimal } from '@/utils/format'
 
@@ -66,20 +67,27 @@ function HistoryPage() {
       <div className="flex flex-col gap-4">
         <div className="flex gap-2">
           {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => {
-                haptic('selection')
-                setFilter(f.key)
-              }}
-              className={cnm(
-                'rounded-full px-4 py-2 text-xs font-extrabold uppercase tracking-wide transition-colors',
-                filter === f.key ? 'bg-white/[0.92] text-black' : 'surface-skeuo text-text-2',
-              )}
-            >
-              {f.label}
-            </button>
+            <div key={f.key} className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  haptic('selection')
+                  setFilter(f.key)
+                }}
+                className={cnm(
+                  'pointer-events-none rounded-full px-4 py-2 text-xs font-extrabold uppercase tracking-wide transition-colors',
+                  filter === f.key ? 'bg-white/[0.92] text-black' : 'surface-skeuo text-text-2',
+                )}
+              >
+                {f.label}
+              </button>
+              <HapticOverlay
+                className="absolute inset-0 rounded-full"
+                preset="selection"
+                silent
+                onTap={() => setFilter(f.key)}
+              />
+            </div>
           ))}
         </div>
 
@@ -151,36 +159,39 @@ function HistoryRow({ play }: { play: PlayDTO }) {
 
   return (
     <div className="surface-skeuo rounded-card">
-      <button
-        type="button"
-        onClick={() => {
-          haptic('selection')
-          setOpen((o) => !o)
-        }}
-        className="flex w-full items-start justify-between gap-3 p-4 text-left transition-transform active:scale-[0.99]"
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-[15px] font-bold capitalize">{play.game}</span>
-            <span className="rounded-full bg-white/[0.06] px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-text-2">{asset}</span>
-          </div>
-          <div className="mt-1 flex items-center gap-2 text-[13px] text-text-2">
-            <span>{line}</span>
-            <span className="text-text-3">·</span>
-            <span>Cost ${money(play.entryValue)}</span>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-start gap-2">
-          <div className="text-right">
-            <div className={cnm('text-[11px] font-bold uppercase tracking-wide', positive ? 'text-up' : 'text-down')}>{label}</div>
-            <div className={cnm('tnum text-[17px] font-extrabold leading-tight', pnl >= 0 ? 'text-up' : 'text-down')}>
-              {pnl >= 0 ? '+' : '-'}${money(play.pnl, true)}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => {
+            haptic('selection')
+            setOpen((o) => !o)
+          }}
+          className="pointer-events-none flex w-full items-start justify-between gap-3 p-4 text-left transition-transform active:scale-[0.99]"
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[15px] font-bold capitalize">{play.game}</span>
+              <span className="rounded-full bg-white/[0.06] px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-text-2">{asset}</span>
             </div>
-            <div className="mt-0.5 text-[11px] text-text-3">{timeAgo(play.settledAt ?? play.openedAt)}</div>
+            <div className="mt-1 flex items-center gap-2 text-[13px] text-text-2">
+              <span>{line}</span>
+              <span className="text-text-3">·</span>
+              <span>Cost ${money(play.entryValue)}</span>
+            </div>
           </div>
-          <ChevronDown className={cnm('mt-0.5 h-5 w-5 shrink-0 text-text-3 transition-transform', open && 'rotate-180')} strokeWidth={2.4} />
-        </div>
-      </button>
+          <div className="flex shrink-0 items-start gap-2">
+            <div className="text-right">
+              <div className={cnm('text-[11px] font-bold uppercase tracking-wide', positive ? 'text-up' : 'text-down')}>{label}</div>
+              <div className={cnm('tnum text-[17px] font-extrabold leading-tight', pnl >= 0 ? 'text-up' : 'text-down')}>
+                {pnl >= 0 ? '+' : '-'}${money(play.pnl, true)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-text-3">{timeAgo(play.settledAt ?? play.openedAt)}</div>
+            </div>
+            <ChevronDown className={cnm('mt-0.5 h-5 w-5 shrink-0 text-text-3 transition-transform', open && 'rotate-180')} strokeWidth={2.4} />
+          </div>
+        </button>
+        <HapticOverlay className="absolute inset-0" preset="selection" silent onTap={() => setOpen((o) => !o)} />
+      </div>
 
       {open && (
         <div className="border-t border-white/[0.06] px-4 pb-4 pt-3">
@@ -212,18 +223,25 @@ function HistoryRow({ play }: { play: PlayDTO }) {
 // One labelled explorer link row (a tx digest or an object id), styled like the readout rows.
 function LinkRow({ label, id, href }: { label: string; id: string; href: string }) {
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      onClick={() => haptic('selection')}
-      className="flex items-center justify-between gap-2 rounded-xl bg-white/[0.04] px-3 py-2 transition-colors active:bg-white/[0.08]"
-    >
-      <span className="font-mono text-[11px] uppercase tracking-wide text-text-3">{label}</span>
-      <span className="flex items-center gap-1.5 font-mono text-[12px] text-text">
-        {shortId(id)}
-        <ExternalLink className="h-3.5 w-3.5 text-text-3" strokeWidth={2.4} />
-      </span>
-    </a>
+    <div className="relative">
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        onClick={() => haptic('selection')}
+        className="pointer-events-none flex items-center justify-between gap-2 rounded-xl bg-white/[0.04] px-3 py-2 transition-colors active:bg-white/[0.08]"
+      >
+        <span className="font-mono text-[11px] uppercase tracking-wide text-text-3">{label}</span>
+        <span className="flex items-center gap-1.5 font-mono text-[12px] text-text">
+          {shortId(id)}
+          <ExternalLink className="h-3.5 w-3.5 text-text-3" strokeWidth={2.4} />
+        </span>
+      </a>
+      <HapticOverlay
+        className="absolute inset-0 rounded-xl"
+        preset="selection"
+        onTap={() => window.open(href, '_blank', 'noreferrer')}
+      />
+    </div>
   )
 }

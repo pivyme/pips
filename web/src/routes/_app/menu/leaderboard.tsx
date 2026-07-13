@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react'
 import { MenuScreen, ScreenError } from '@/components/menu/shared'
 import { api, type Game, type GlobalLeaderboard, type LeaderboardGameEntry, type Minigame, type MinigameLeaderboard } from '@/lib/api'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { cnm } from '@/utils/style'
 import { displayHandle, formatExactDecimal } from '@/utils/format'
 
@@ -40,20 +41,27 @@ function LeaderboardScreen() {
       <div className="flex flex-col gap-4">
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => {
-                haptic('selection')
-                setTab(t.key)
-              }}
-              className={cnm(
-                'shrink-0 rounded-full px-4 py-2 text-[13px] font-bold uppercase tracking-wide transition-colors',
-                tab === t.key ? 'bg-brand-500 text-black' : 'bg-white/[0.06] text-text-2',
-              )}
-            >
-              {t.label}
-            </button>
+            <div key={t.key} className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  haptic('selection')
+                  setTab(t.key)
+                }}
+                className={cnm(
+                  'pointer-events-none rounded-full px-4 py-2 text-[13px] font-bold uppercase tracking-wide transition-colors',
+                  tab === t.key ? 'bg-brand-500 text-black' : 'bg-white/[0.06] text-text-2',
+                )}
+              >
+                {t.label}
+              </button>
+              <HapticOverlay
+                className="absolute inset-0 rounded-full"
+                preset="selection"
+                silent
+                onTap={() => setTab(t.key)}
+              />
+            </div>
           ))}
         </div>
 

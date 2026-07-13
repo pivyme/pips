@@ -4,6 +4,7 @@ import { MenuScreen, prepareMenuTransition } from '@/components/menu/shared'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 
 // Change your handle. A plain App-Surface input page in the drawer (reached from the pen on the
 // Player Card), not the device screen: type a new handle, Save, and pop back to the menu.
@@ -87,13 +88,22 @@ function UsernameScreen() {
           </div>
         </div>
 
-        <button
-          onClick={save}
-          disabled={saving || !valid || !dirty}
-          className="btn-primary flex h-12 items-center justify-center rounded-card text-[15px] font-semibold disabled:opacity-50"
-        >
-          {saving ? 'Saving…' : 'Save handle'}
-        </button>
+        <div className="relative h-12">
+          <button
+            onClick={save}
+            disabled={saving || !valid || !dirty}
+            className="btn-primary pointer-events-none flex h-12 w-full items-center justify-center rounded-card text-[15px] font-semibold disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save handle'}
+          </button>
+          <HapticOverlay
+            className="absolute inset-0 rounded-card"
+            preset="medium"
+            disabled={saving || !valid || !dirty}
+            silent
+            onTap={() => void save()}
+          />
+        </div>
       </div>
     </MenuScreen>
   )

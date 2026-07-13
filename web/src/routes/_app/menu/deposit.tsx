@@ -115,16 +115,23 @@ function DepositScreen() {
 
         {/* Open the address on the Sui devnet explorer in a new tab. */}
         {address && (
-          <a
-            href={explorerAddressUrl(address)}
-            target="_blank"
-            rel="noreferrer"
-            onClick={() => haptic('selection')}
-            className="surface-skeuo flex items-center justify-center gap-2 rounded-card p-4 text-[14px] font-semibold text-text transition-transform active:scale-[0.99]"
-          >
-            <ExternalLink className="h-[18px] w-[18px] text-text-2" strokeWidth={2.4} />
-            Check on explorer
-          </a>
+          <div className="relative">
+            <a
+              href={explorerAddressUrl(address)}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => haptic('selection')}
+              className="pointer-events-none surface-skeuo flex items-center justify-center gap-2 rounded-card p-4 text-[14px] font-semibold text-text transition-transform active:scale-[0.99]"
+            >
+              <ExternalLink className="h-[18px] w-[18px] text-text-2" strokeWidth={2.4} />
+              Check on explorer
+            </a>
+            <HapticOverlay
+              className="absolute inset-0 rounded-card"
+              preset="selection"
+              onTap={() => window.open(explorerAddressUrl(address), '_blank', 'noreferrer')}
+            />
+          </div>
         )}
 
         <p className="px-1 text-[13px] leading-snug text-text-3">

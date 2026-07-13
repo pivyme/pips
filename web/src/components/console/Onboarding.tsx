@@ -11,6 +11,7 @@ import { useConsoleControls } from './controls'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { welcomeJingle } from '@/lib/sound'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
@@ -199,13 +200,16 @@ export function ThemePicker({
             }}
           />
 
-          <button
-            type="button"
-            onClick={commit}
-            className="btn-primary mt-4 flex h-14 w-full items-center justify-center rounded-full text-base"
-          >
-            Continue
-          </button>
+          <div className="relative mt-4 h-14 w-full">
+            <button
+              type="button"
+              onClick={commit}
+              className="btn-primary pointer-events-none flex h-14 w-full items-center justify-center rounded-full text-base"
+            >
+              Continue
+            </button>
+            <HapticOverlay className="absolute inset-0 rounded-full" preset="rigid" silent onTap={commit} />
+          </div>
         </motion.div>
       </div>
     </div>

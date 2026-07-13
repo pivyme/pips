@@ -60,13 +60,21 @@ export function InstallGate({ ctx, canPrompt, promptInstall, skip }: InstallGate
           <span className="text-[13.5px] font-semibold text-text-3">Don't show this again</span>
         </label>
 
-        <button
-          type="button"
-          onClick={() => skip(dontShowAgain)}
-          className="mt-4 h-12 w-full max-w-xs rounded-full border border-line-strong bg-surface-2 text-[14.5px] font-semibold text-text-2 transition-colors hover:bg-surface hover:text-text active:scale-[0.98]"
-        >
-          Continue in browser
-        </button>
+        <div className="relative mt-4 w-full max-w-xs">
+          <button
+            type="button"
+            onClick={() => skip(dontShowAgain)}
+            className="pointer-events-none h-12 w-full rounded-full border border-line-strong bg-surface-2 text-[14.5px] font-semibold text-text-2 transition-colors hover:bg-surface hover:text-text active:scale-[0.98]"
+          >
+            Continue in browser
+          </button>
+          <HapticOverlay
+            className="absolute inset-0 rounded-full"
+            preset="selection"
+            silent
+            onTap={() => skip(dontShowAgain)}
+          />
+        </div>
       </div>
 
       {ctx === 'ios-safari' && (
@@ -93,14 +101,22 @@ function Panel({
   if (ctx === 'android-prompt') {
     return canPrompt ? (
       <>
-        <button
-          type="button"
-          onClick={() => void promptInstall()}
-          className="btn-primary flex h-14 w-full items-center justify-center gap-2 rounded-full text-[16px]"
-        >
-          <PlusSquareGlyph className="h-5 w-5" />
-          Add to Home Screen
-        </button>
+        <div className="relative h-14 w-full">
+          <button
+            type="button"
+            onClick={() => void promptInstall()}
+            className="btn-primary pointer-events-none flex h-14 w-full items-center justify-center gap-2 rounded-full text-[16px]"
+          >
+            <PlusSquareGlyph className="h-5 w-5" />
+            Add to Home Screen
+          </button>
+          <HapticOverlay
+            className="absolute inset-0 rounded-full"
+            preset="rigid"
+            silent
+            onTap={() => void promptInstall()}
+          />
+        </div>
         <p className="mt-3 text-[13px] text-text-3">One tap, and PIPS lands on your home screen.</p>
       </>
     ) : (
