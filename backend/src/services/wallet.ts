@@ -6,15 +6,21 @@
 //
 // Deposits need no endpoint: the user's address simply receives DUSDC, which shows up in the balance.
 
-import { Transaction, coinWithBalance } from '@mysten/sui/transactions';
+import { Transaction, coinWithBalance, type TransactionObjectArgument } from '@mysten/sui/transactions';
 import { isValidSuiAddress, normalizeSuiAddress } from '@mysten/sui/utils';
 
 import type { User } from '../../prisma/generated/client.js';
 import { DUSDC_TYPE, toDusdcRaw } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw, transferDusdc } from '../lib/sui/dusdc.ts';
 import { buildManagerWithdraw, getManagerBalanceRaw } from '../lib/sui/predict.ts';
+import {
+  buildAuth,
+  buildWithdrawFunds,
+  readWrapperBalanceRaw,
+  resolveWrapper,
+} from '../lib/sui/predict-real.ts';
 import { executeForUser, userContext } from '../lib/sui/execute.ts';
-import { FAUCET_AMOUNT, FAUCET_COOLDOWN_MS } from '../config/main-config.ts';
+import { FAUCET_AMOUNT, FAUCET_COOLDOWN_MS, IS_REAL_PREDICT } from '../config/main-config.ts';
 import { withUserLock, invalidateBal } from './plays.ts';
 import { toUserDTO } from './auth.ts';
 import type { UserDTO } from '../types/api.ts';
@@ -81,9 +87,6 @@ export async function withdrawDusdc(
   recipientInput: string,
   amountInput: string | number,
 ): Promise<WithdrawResult> {
-  const managerId = user.predictManagerId;
-  if (!managerId) throw new WalletError('MANAGER_NOT_READY', 'Your account is still getting ready');
-
   // Recipient must be a valid Sui address. Normalize so a short 0x form is accepted and stored padded.
   const trimmed = typeof recipientInput === 'string' ? recipientInput.trim() : '';
   if (!trimmed || !/^0x[0-9a-fA-F]+$/.test(trimmed) || !isValidSuiAddress(normalizeSuiAddress(trimmed))) {
@@ -94,54 +97,96 @@ export async function withdrawDusdc(
   // Amount must be positive. Parse leniently (the client may send a comma-grouped string).
   const amount = typeof amountInput === 'number' ? amountInput : parseFloat(String(amountInput).replace(/,/g, ''));
   if (!Number.isFinite(amount) || amount <= 0) throw new WalletError('INVALID_AMOUNT', 'Enter an amount to withdraw');
-  let amountRaw = toDusdcRaw(amount);
+  const amountRaw = toDusdcRaw(amount);
   if (amountRaw <= 0n) throw new WalletError('INVALID_AMOUNT', 'Enter an amount to withdraw');
 
-  return withUserLock(user.id, async () => {
-    // Read both sides fresh; this is off the hot path so the manager devInspect cost is fine.
-    const [walletRaw, managerRaw] = await Promise.all([
-      getDusdcBalanceRaw(user.address),
-      getManagerBalanceRaw(managerId),
-    ]);
-    const total = walletRaw + managerRaw;
+  return withUserLock(user.id, () =>
+    IS_REAL_PREDICT ? withdrawRealLocked(user, recipient, amountRaw) : withdrawForkLocked(user, recipient, amountRaw),
+  );
+}
 
-    if (amountRaw > total) {
-      if (amountRaw - total > DUST_TOLERANCE_RAW) {
-        throw new WalletError('INSUFFICIENT_DUSDC', 'Not enough balance to withdraw that much');
-      }
-      amountRaw = total; // a Max withdraw rounded a hair high: send exactly what's on chain
+// Fork path (localnet/devnet): chips live in the per-user PredictManager. Pull the shortfall out of the
+// manager (owner-gated) and pay the rest from wallet coins, all in one PTB.
+async function withdrawForkLocked(user: User, recipient: string, wantRaw: bigint): Promise<WithdrawResult> {
+  const managerId = user.predictManagerId;
+  if (!managerId) throw new WalletError('MANAGER_NOT_READY', 'Your account is still getting ready');
+
+  // Read both sides fresh; this is off the hot path so the manager devInspect cost is fine.
+  const [walletRaw, managerRaw] = await Promise.all([getDusdcBalanceRaw(user.address), getManagerBalanceRaw(managerId)]);
+  const amountRaw = clampWithdraw(wantRaw, walletRaw + managerRaw);
+
+  const tx = new Transaction();
+  if (amountRaw <= walletRaw) {
+    // Wallet coins alone cover it: split exactly `amountRaw` and send. Manager untouched.
+    const coin = coinWithBalance({ type: DUSDC_TYPE, balance: amountRaw })(tx);
+    tx.transferObjects([coin], tx.pure.address(recipient));
+  } else {
+    // Need manager chips too: pull the shortfall out of the manager, merge in all wallet DUSDC,
+    // and send the exact total as one coin.
+    const mgrCoin = buildManagerWithdraw(tx, managerId, amountRaw - walletRaw);
+    payShortfall(tx, mgrCoin, walletRaw, recipient);
+  }
+  return execWithdraw(user, tx);
+}
+
+// Real path (testnet, Mysten Predict): chips live in the wallet + the per-owner AccountWrapper's
+// internal balance (a cash-out credits it there, same as the fork keeps chips in the manager). Pull the
+// shortfall out of the wrapper via withdraw_funds (owner-authed, fresh Auth) and pay the rest from
+// wallet coins, one PTB. Off the hot path, so resolve the wrapper straight from chain (no cache).
+async function withdrawRealLocked(user: User, recipient: string, wantRaw: bigint): Promise<WithdrawResult> {
+  const w = await resolveWrapper(user.address);
+  const [walletRaw, wrapperRaw] = await Promise.all([
+    getDusdcBalanceRaw(user.address),
+    w.exists ? readWrapperBalanceRaw(w.wrapperId, user.address) : Promise.resolve(0n),
+  ]);
+  const amountRaw = clampWithdraw(wantRaw, walletRaw + wrapperRaw);
+
+  const tx = new Transaction();
+  if (amountRaw <= walletRaw) {
+    const coin = coinWithBalance({ type: DUSDC_TYPE, balance: amountRaw })(tx);
+    tx.transferObjects([coin], tx.pure.address(recipient));
+  } else {
+    const wrapperCoin = buildWithdrawFunds(tx, tx.object(w.wrapperId), buildAuth(tx), amountRaw - walletRaw);
+    payShortfall(tx, wrapperCoin, walletRaw, recipient);
+  }
+  return execWithdraw(user, tx);
+}
+
+// Clamp a requested withdrawal to the true on-chain total. `user.balance` is a 2dp display string, so a
+// "Max" withdraw can land a sub-cent above it: treat an overshoot within one cent as "withdraw
+// everything"; a larger request is a genuine shortfall.
+function clampWithdraw(wantRaw: bigint, totalRaw: bigint): bigint {
+  let amountRaw = wantRaw;
+  if (amountRaw > totalRaw) {
+    if (amountRaw - totalRaw > DUST_TOLERANCE_RAW) {
+      throw new WalletError('INSUFFICIENT_DUSDC', 'Not enough balance to withdraw that much');
     }
-    if (amountRaw <= 0n) throw new WalletError('INSUFFICIENT_DUSDC', 'Not enough balance to withdraw that much');
+    amountRaw = totalRaw; // a Max withdraw rounded a hair high: send exactly what's on chain
+  }
+  if (amountRaw <= 0n) throw new WalletError('INSUFFICIENT_DUSDC', 'Not enough balance to withdraw that much');
+  return amountRaw;
+}
 
-    const tx = new Transaction();
-    if (amountRaw <= walletRaw) {
-      // Wallet coins alone cover it: split exactly `amountRaw` and send. Manager untouched.
-      const coin = coinWithBalance({ type: DUSDC_TYPE, balance: amountRaw })(tx);
-      tx.transferObjects([coin], tx.pure.address(recipient));
-    } else {
-      // Need manager chips too: pull the shortfall out of the manager, merge in all wallet DUSDC,
-      // and send the exact total as one coin.
-      const fromManager = amountRaw - walletRaw;
-      const mgrCoin = buildManagerWithdraw(tx, managerId, fromManager);
-      if (walletRaw > 0n) {
-        const walletCoin = coinWithBalance({ type: DUSDC_TYPE, balance: walletRaw })(tx);
-        tx.mergeCoins(walletCoin, [mgrCoin]);
-        tx.transferObjects([walletCoin], tx.pure.address(recipient));
-      } else {
-        tx.transferObjects([mgrCoin], tx.pure.address(recipient));
-      }
-    }
+// Merge any wallet coins into the coin peeled from the chips store, then send the exact total as one coin.
+function payShortfall(tx: Transaction, chipCoin: TransactionObjectArgument, walletRaw: bigint, recipient: string): void {
+  if (walletRaw > 0n) {
+    const walletCoin = coinWithBalance({ type: DUSDC_TYPE, balance: walletRaw })(tx);
+    tx.mergeCoins(walletCoin, [chipCoin]);
+    tx.transferObjects([walletCoin], tx.pure.address(recipient));
+  } else {
+    tx.transferObjects([chipCoin], tx.pure.address(recipient));
+  }
+}
 
-    let digest: string;
-    try {
-      const exec = await executeForUser(tx, userContext(user));
-      digest = exec.digest;
-    } catch (e) {
-      console.error('[wallet] withdraw failed:', e instanceof Error ? e.message : e);
-      throw new WalletError('WITHDRAW_FAILED', 'Could not complete the withdrawal. Your funds are safe. Try again.');
-    }
-
-    invalidateBal(user.id); // wallet + manager just changed; the next play gate must re-read
-    return { user: await toUserDTO(user), digest };
-  });
+async function execWithdraw(user: User, tx: Transaction): Promise<WithdrawResult> {
+  let digest: string;
+  try {
+    const exec = await executeForUser(tx, userContext(user));
+    digest = exec.digest;
+  } catch (e) {
+    console.error('[wallet] withdraw failed:', e instanceof Error ? e.message : e);
+    throw new WalletError('WITHDRAW_FAILED', 'Could not complete the withdrawal. Your funds are safe. Try again.');
+  }
+  invalidateBal(user.id); // wallet + chips just changed; the next play gate must re-read
+  return { user: await toUserDTO(user), digest };
 }

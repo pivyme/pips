@@ -386,20 +386,21 @@ export type MintPlayParams = {
   marketId: string;
   wrapperId: string; // the derived wrapper id (== derived address)
   wrapperExists: boolean; // false -> new+share is folded into this PTB
-  stakeRaw: bigint; // DUSDC deposited into the wrapper (chips the sender holds)
-  amountRaw: bigint; // net-premium budget for mint_exact_amount (<= stake, leaving fee headroom)
+  depositRaw: bigint; // wallet DUSDC to fold into the internal balance first (0 = mint from existing chips)
+  amountRaw: bigint; // net-premium budget for mint_exact_amount (<= internal balance, leaving fee headroom)
   minQuantityRaw: bigint;
   leverage1e9: bigint;
   lowerTick: bigint;
   higherTick: bigint;
 };
 
-// Assemble the whole mint play into ONE PTB: [create wrapper] -> deposit stake -> load Pricer -> mint.
-// A first-ever play threads the freshly `new`'d wrapper value through deposit + mint and shares it
-// last (a same-PTB shared object cannot be re-referenced by id, but the value can be used by-ref then
-// shared). A returning play passes the existing shared wrapper by id. Signing/sponsorship + event
-// parsing are the caller's (Phase 8/10); this only builds the PTB. Each account op takes its OWN fresh
-// Auth (generate_auth is cheap and never reused).
+// Assemble the whole mint play into ONE PTB: [create wrapper] -> [deposit shortfall] -> load Pricer ->
+// mint. A first-ever play threads the freshly `new`'d wrapper value through deposit + mint and shares
+// it last (a same-PTB shared object cannot be re-referenced by id, but the value can be used by-ref
+// then shared). A returning play passes the existing shared wrapper by id. mint_exact_amount draws
+// from the wrapper's INTERNAL balance, so the deposit only tops up the shortfall (depositRaw); a wrapper
+// already holding chips from a prior cash-out mints with no deposit at all. Signing/sponsorship + event
+// parsing are the caller's; this only builds the PTB. Each account op takes its OWN fresh Auth.
 export function buildMintPlay(tx: Transaction, p: MintPlayParams): void {
   const wrapper: TransactionObjectArgument = p.wrapperExists
     ? tx.object(p.wrapperId)
@@ -408,8 +409,10 @@ export function buildMintPlay(tx: Transaction, p: MintPlayParams): void {
         arguments: [tx.object(REAL_ACCOUNT_REGISTRY_ID)],
       });
 
-  const coin = coinWithBalance({ type: DUSDC_TYPE, balance: p.stakeRaw })(tx);
-  buildDepositFunds(tx, wrapper, buildAuth(tx), coin);
+  if (p.depositRaw > 0n) {
+    const coin = coinWithBalance({ type: DUSDC_TYPE, balance: p.depositRaw })(tx);
+    buildDepositFunds(tx, wrapper, buildAuth(tx), coin);
+  }
 
   const pricer = buildLoadPricer(tx, p.marketId);
   buildMintExactAmount(tx, {
@@ -454,6 +457,14 @@ export function buildWithdrawToWallet(
 ): void {
   const coin = buildWithdrawFunds(tx, tx.object(p.wrapperId), buildAuth(tx), p.amountRaw);
   tx.transferObjects([coin], tx.pure.address(p.to));
+}
+
+// The user's chips held inside their wrapper (6dp), 0 if the wrapper was never created (first play).
+// Resolves the wrapper (cache-aware) then reads its internal balance; the DTO sums this with the wallet.
+export async function readUserChipsRaw(owner: string, cachedWrapperId?: string | null): Promise<bigint> {
+  const w = await resolveWrapper(owner, cachedWrapperId);
+  if (!w.exists) return 0n;
+  return readWrapperBalanceRaw(w.wrapperId, owner);
 }
 
 // Read the wrapper's total DUSDC (stored + unsettled accumulator funds), 6dp. Sums with the wallet

@@ -168,8 +168,10 @@ export const DEMO_LUCKY_DURATION: number = Number(process.env.PIPS_DEMO_LUCKY_DU
 // testnet-real floors at the protocol's ~$1 min net premium (L-011, NOT the intake's 0.01 guess, which
 // the protocol source disproved) and caps tiny to protect finite testnet DUSDC; the fork's free
 // localnet keeps the wide band. Env overrides win in either mode.
-export const MIN_STAKE: number = Number(process.env.PIPS_MIN_STAKE) || 1;
-export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || (IS_REAL_PREDICT ? 2 : 100);
+// testnet-real MIN is sized so the net-premium budget (stake minus the ~12% fee headroom the mint
+// charges on top) still clears the protocol's $1 min-net-premium floor: 1.5 * 0.88 = $1.32 >= $1.
+export const MIN_STAKE: number = Number(process.env.PIPS_MIN_STAKE) || (IS_REAL_PREDICT ? 1.5 : 1);
+export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || (IS_REAL_PREDICT ? 3 : 100);
 // Game-round durations offered to the player (seconds). The on-chain expiry is the
 // oracle's; the round duration is the UX timer / when the screen auto-cashes out.
 export const GAME_DURATIONS: number[] = (process.env.PIPS_GAME_DURATIONS || '10,30,60')

@@ -9,7 +9,7 @@ import { coinWithBalance } from '@mysten/sui/transactions';
 
 import type { Play, User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
-import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS, OPERATOR_ENABLED } from '../config/main-config.ts';
+import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS, OPERATOR_ENABLED, IS_REAL_PREDICT } from '../config/main-config.ts';
 import { DUSDC_TYPE, fromDusdcRaw, multiplier as multiplierOf, usd1e9 } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import {
@@ -34,11 +34,16 @@ import {
 import { getMarket, removeMarket } from '../lib/sui/markets.ts';
 import {
   buildRedeemSettled,
+  buildMintPlay,
+  buildRedeemLivePlay,
   decodeOrderId,
   findRealRedeem,
+  parseMint,
   parseRedeem,
   readMarketSettlement,
   readWrapper,
+  readWrapperBalanceRaw,
+  resolveWrapper,
 } from '../lib/sui/predict-real.ts';
 import { operatorCaps } from '../lib/sui/signer.ts';
 import { checkPlayAllowed, recordPlay, clearPlay } from '../lib/sui/play-safety.ts';
@@ -48,10 +53,12 @@ import {
   resolveLucky,
   resolveMoonshot,
   resolveRange,
+  resolveReal,
   parseStake,
   PlayError,
   type PlayErrorCode,
   type Resolved,
+  type ResolvedReal,
 } from './games.ts';
 import { recordSettlement } from './stats.ts';
 import { evaluateAndUnlock } from './achievements.ts';
@@ -231,27 +238,40 @@ export async function createPlay(user: User, input: CreatePlayInput): Promise<Cr
 
   try {
     const stakeRaw = parseStake(input.stake);
-    if (!user.predictManagerId) throw new PlayError('MANAGER_NOT_READY', 'Your account is still getting ready');
-
     // Fast affordability gate: reject only when a FRESH cached total is confidently short, so the hot
-    // path takes no ~1.5s manager devInspect. Anything else proceeds; the background mint reads the
+    // path takes no ~1.5s balance devInspect. Anything else proceeds; the background mint reads the
     // real balance and is the source of truth (a wrong guess there just re-racks, gracefully).
     const cached = balCache.get(user.id);
     if (cached && Date.now() - cached.at < BAL_TTL_MS && cached.total < stakeRaw) {
       throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that bet');
     }
-
-    // Resolve + price the deal off the live oracle (honest multiplier). The player waits only on this.
-    const resolved = await resolveByGame(input, stakeRaw);
-    const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw) });
-
-    // Mint behind the spin animation; mintPending never throws (it marks the play 'error' on failure).
-    void withUserLock(user.id, () => mintPending(user, resolved, stakeRaw, play.id, input));
-    return { play: await toPlayDTO(play) };
+    return IS_REAL_PREDICT ? await createPlayReal(user, input, stakeRaw) : await createPlayFork(user, input, stakeRaw);
   } catch (e) {
     clearPlay(user.id); // the play never landed (bad params / no market); don't hold the cooldown
     throw e;
   }
+}
+
+// Fork path (localnet/devnet): per-user PredictManager, direct-coin mint via predict.ts, unchanged.
+async function createPlayFork(user: User, input: CreatePlayInput, stakeRaw: bigint): Promise<CreateResult> {
+  if (!user.predictManagerId) throw new PlayError('MANAGER_NOT_READY', 'Your account is still getting ready');
+  // Resolve + price the deal off the live oracle (honest multiplier). The player waits only on this.
+  const resolved = await resolveByGame(input, stakeRaw);
+  const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw) });
+  // Mint behind the spin animation; mintPending never throws (it marks the play 'error' on failure).
+  void withUserLock(user.id, () => mintPending(user, resolved, stakeRaw, play.id, input));
+  return { play: await toPlayDTO(play) };
+}
+
+// Real path (testnet, Mysten Predict): per-owner AccountWrapper, the internal-balance deposit->mint
+// dance in one sponsored PTB. Same optimistic shape as the fork: resolve the deal (the only thing the
+// player waits on), persist it 'pending' with the market id in oracleId, return so the reel snaps, then
+// mint in the background (mintPendingReal fills in the order id + the REAL minted multiplier).
+async function createPlayReal(user: User, input: CreatePlayInput, stakeRaw: bigint): Promise<CreateResult> {
+  const resolved = resolveReal(input, stakeRaw);
+  const play = await prismaQuery.play.create({ data: mapRealResolvedToPlay(user.id, resolved, stakeRaw) });
+  void withUserLock(user.id, () => mintPendingReal(user, resolved, stakeRaw, play.id, input));
+  return { play: await toPlayDTO(play) };
 }
 
 // Funding plan for one mint: how much to deposit given the freshly read balances. Funds a bit above
@@ -373,6 +393,148 @@ function mapResolvedToPlay(userId: string, r: Resolved, stakeRaw: bigint) {
   return { userId, game: r.game, status: 'pending', stake: stakeRaw, ...seed, ...marketFieldsOf(r) };
 }
 
+// === Real-mode create / mint (IS_REAL_PREDICT) ===
+//
+// Same optimistic shape as the fork mint but against the real protocol: resolve to ticks + a premium
+// budget, then in the background ensure the wrapper, deposit the shortfall, and mint in ONE sponsored
+// PTB. The order id (settle's key) and the REAL minted multiplier are only known post-mint, so the
+// pending play carries a placeholder (order id '', reel-tier multiplier) that mintPendingReal fills in.
+
+// The real-play market/pricing fields a resolve produces (re-route overwrites exactly these).
+function realMarketFieldsOf(r: ResolvedReal) {
+  const base = { asset: r.asset, oracleId: r.marketId, durationSec: r.duration, expiry: BigInt(r.expiryMs), entrySpot: r.entrySpot };
+  if (r.kind === 'binary') return { ...base, side: r.side, strike: r.strikeDisplay };
+  return { ...base, lower: r.lowerDisplay, upper: r.upperDisplay, widthPct: r.widthPct ?? null };
+}
+
+function mapRealResolvedToPlay(userId: string, r: ResolvedReal, stakeRaw: bigint) {
+  const seed = r.game === 'lucky' && r.seed ? { rngSeed: r.seed } : {};
+  return {
+    userId,
+    game: r.game,
+    status: 'pending',
+    stake: stakeRaw,
+    marketKey: '', // real: filled with the u256 order id after mint (settle reads this)
+    entryCost: r.amountRaw, // provisional budget; snapped to the real all-in cost after mint
+    multiplier: r.tierMultiplier, // reel estimate; snapped to the real minted multiplier after mint
+    leverage: Number(r.leverage1e9 / 1_000_000_000n), // 1 this wave (Phase 12 gives LUCKY real leverage)
+    ...seed,
+    ...realMarketFieldsOf(r),
+  };
+}
+
+// A fresh real resolve on a live market for the same bet, to re-route a mint whose market expired
+// mid-flight. Lucky keeps its seed (the reels already snapped to the dealt draw); null if none is live.
+function reResolveReal(input: CreatePlayInput, stakeRaw: bigint, prev: ResolvedReal): ResolvedReal | null {
+  try {
+    return resolveReal(input, stakeRaw, prev.game === 'lucky' ? prev.seed : undefined);
+  } catch {
+    return null;
+  }
+}
+
+// The market expired/settled or paused mid mint/redeem: the live pricer can't load or the mint isn't
+// allowed. Re-route (mint) / lock-in (cash-out) rather than retry the dead market.
+const isRealMarketGone = (e: unknown): boolean =>
+  /assert_live_mint|assert_quoteable|EMarket|EOracle|expired|settled|mint_paused|not live|load_live_pricer/i.test(
+    e instanceof Error ? e.message : String(e),
+  );
+
+// The cached wrapper id is stale (a devnet wipe deleted the shared object): the mint aborts on a
+// missing input object. Only meaningful when a cache exists; a first play derives + creates fresh.
+const isWrapperGone = (e: unknown): boolean =>
+  /not found|does not exist|no such object|deleted|notexist/i.test(e instanceof Error ? e.message : String(e));
+
+async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: bigint, playId: string, input: CreatePlayInput): Promise<void> {
+  let cur = resolved;
+  let acct = user; // may lose a stale wrapper-id cache mid-flight (self-heal)
+  try {
+    const MAX_ATTEMPTS = 3;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const w = await resolveWrapper(acct.address, acct.predictWrapperId);
+      // mint draws from the wrapper's internal balance, so total spendable = wallet + internal chips.
+      const wrapperBal = w.exists ? await readWrapperBalanceRaw(w.wrapperId, acct.address).catch(() => 0n) : 0n;
+      const wallet = await getDusdcBalanceRaw(acct.address);
+      const total = wallet + wrapperBal;
+      seedBalCache(acct.id, total);
+      if (total < stakeRaw) {
+        await prismaQuery.play.update({ where: { id: playId }, data: { status: 'error' } });
+        return;
+      }
+      // Top the internal balance up to the full stake from the wallet; reuse existing chips (deposit 0
+      // when the wrapper already holds enough). The shortfall is <= wallet whenever total >= stake.
+      const depositRaw = cur.depositCeilRaw > wrapperBal ? cur.depositCeilRaw - wrapperBal : 0n;
+
+      const tx = new Transaction();
+      buildMintPlay(tx, {
+        marketId: cur.marketId,
+        wrapperId: w.wrapperId,
+        wrapperExists: w.exists,
+        depositRaw,
+        amountRaw: cur.amountRaw,
+        minQuantityRaw: cur.minQuantityRaw,
+        leverage1e9: cur.leverage1e9,
+        lowerTick: cur.lowerTick,
+        higherTick: cur.higherTick,
+      });
+
+      try {
+        const exec = await executeForUser(tx, userCtx(acct));
+        const mint = parseMint(exec.events);
+        // Cache the derived wrapper id after a first-ever create so later plays skip the derive read.
+        if (!w.exists && !acct.predictWrapperId) {
+          await prismaQuery.user.update({ where: { id: acct.id }, data: { predictWrapperId: w.wrapperId } }).catch(() => {});
+        }
+        const actualMultiplier = multiplierOf(mint.costRaw, mint.quantityRaw);
+        roundLog(
+          `[Round OPEN]   ${cur.game.padEnd(5)} BTC  ` +
+          (cur.kind === 'binary' ? `${(cur.side ?? '').toUpperCase().padEnd(4)} strike=${cur.strikeDisplay}` : `band=(${cur.lowerDisplay}, ${cur.upperDisplay}]`) +
+          `  x${actualMultiplier.toFixed(2)}  lev=${Number(cur.leverage1e9) / 1e9}  entry=$${fromDusdcRaw(mint.costRaw).toFixed(2)}` +
+          `  order=${mint.orderId.toString().slice(0, 10)}…  expires in ${Math.max(0, Math.round((cur.expiryMs - Date.now()) / 1000))}s @${hhmmss()} tx=${exec.digest.slice(0, 8)}`,
+        );
+        await prismaQuery.play.update({
+          where: { id: playId },
+          data: {
+            status: 'open',
+            txMint: exec.digest,
+            marketKey: mint.orderId.toString(), // the settle worker's key (decodeOrderId derives the close qty)
+            entryCost: mint.costRaw,
+            multiplier: actualMultiplier,
+            openedAt: new Date(),
+          },
+        });
+        invalidateBal(acct.id);
+        return;
+      } catch (e) {
+        lastErr = e;
+        if (attempt >= MAX_ATTEMPTS - 1) throw e;
+        // Stale wrapper-id cache (devnet wipe): drop it and re-derive on the next attempt.
+        if (acct.predictWrapperId && isWrapperGone(e)) {
+          await prismaQuery.user.update({ where: { id: acct.id }, data: { predictWrapperId: null } }).catch(() => {});
+          acct = { ...acct, predictWrapperId: null };
+          continue;
+        }
+        // Routed market expired/settled mid-mint: re-route to a fresh live one (keeps the dealt draw).
+        if (isRealMarketGone(e)) {
+          const next = reResolveReal(input, stakeRaw, cur);
+          if (!next) throw e;
+          cur = next;
+          await prismaQuery.play.update({ where: { id: playId }, data: realMarketFieldsOf(next) });
+          continue;
+        }
+        if (isRetriableMint(e)) continue; // transient owned-coin version race: rebuild + resubmit
+        throw e;
+      }
+    }
+    throw lastErr;
+  } catch (e) {
+    console.error(`[plays] real mint failed for ${playId}:`, e instanceof Error ? e.message : e);
+    await prismaQuery.play.update({ where: { id: playId }, data: { status: 'error' } }).catch(() => {});
+    invalidateBal(acct.id);
+  }
+}
+
 // A fresh resolve on a NEW oracle for the same bet, used to re-route a mint whose routed oracle
 // expired mid-flight. Lucky reuses the original seed so the dealt asset/side/tier (already on the
 // reels) stay identical; range re-derives from the same asset + band width. The strike/quantity/
@@ -388,7 +550,32 @@ function reResolve(input: CreatePlayInput, stakeRaw: bigint, prev: Resolved): Pr
 export type CashoutResult = { play: PlayDTO; unlocked: string[] };
 
 export function cashoutPlay(user: User, playId: string): Promise<CashoutResult> {
-  return withUserLock(user.id, () => cashoutPlayLocked(user, playId));
+  return withUserLock(user.id, () => (IS_REAL_PREDICT ? cashoutRealLocked(user, playId) : cashoutPlayLocked(user, playId)));
+}
+
+// Real-mode live cash-out: redeem_live (owner-authed, mark-to-market) closes the full position; the
+// payout is credited into the wrapper's internal balance (the user's chips), same as the fork keeps it
+// in the manager. The close quantity is decoded from the packed order id, so no extra column.
+async function cashoutRealLocked(user: User, playId: string): Promise<CashoutResult> {
+  const play = await prismaQuery.play.findFirst({ where: { id: playId, userId: user.id } });
+  if (!play) throw new PlayError('PLAY_NOT_OPEN', 'Play not found');
+  if (play.status !== 'open') throw new PlayError('PLAY_NOT_OPEN', 'This play is not open');
+  if (!play.marketKey) throw new PlayError('PLAY_NOT_OPEN', 'Play is still opening');
+
+  const w = await resolveWrapper(user.address, user.predictWrapperId);
+  const { orderId, quantityRaw } = realOrderOf(play);
+  const tx = new Transaction();
+  buildRedeemLivePlay(tx, { marketId: play.oracleId, wrapperId: w.wrapperId, orderId, closeQuantityRaw: quantityRaw });
+  try {
+    const exec = await executeForUser(tx, userCtx(user));
+    const r = parseRedeem(exec.events);
+    return finalizeCashout(play, r.payoutRaw, exec.digest);
+  } catch (e) {
+    // Buzzer beat the cash-out: past expiry the market is no longer quoteable for a live sell, so the
+    // position settles to its win/loss. Surface that plainly; the settle worker finalizes it shortly.
+    if (isOracleExpiredAbort(e) || isRealMarketGone(e)) throw new PlayError('PLAY_NOT_OPEN', 'Round is settling, your result is locking in');
+    throw asPlayError(e, 'REDEEM_FAILED', 'Could not cash out right now. Try again.');
+  }
 }
 
 async function cashoutPlayLocked(user: User, playId: string): Promise<CashoutResult> {
@@ -932,6 +1119,10 @@ export async function settleDuePlaysReal(): Promise<void> {
 // stored payout. The raw read is a ~1.5s devInspect on the remote node.
 export async function getLiveMarkRaw(play: Play): Promise<bigint> {
   if (play.status !== 'open') return play.payout ?? play.markValue ?? 0n;
+  // Real mode: the live P/L is chart-synced on the client (lesson pips-lucky-directional), and a
+  // backend redeem_live devInspect needs a funded wrapper + a same-PTB pricer, so we don't poll a
+  // server mark. Return the entry as a neutral mark; the client draws the live swing off the chart.
+  if (IS_REAL_PREDICT) return play.markValue ?? play.entryCost;
   const key = deserializeKey(play);
   const user = await prismaQuery.user.findUnique({
     where: { id: play.userId },
@@ -978,6 +1169,13 @@ function paramsDTO(play: Play): PlayDTO['params'] {
 async function lockPriceOf(play: Play): Promise<string | undefined> {
   if (play.status !== 'open') return undefined;
   if (Date.now() < Number(play.expiry)) return undefined;
+  if (IS_REAL_PREDICT) {
+    // Real mode: read the ExpiryMarket's frozen settlement_price (Mysten/Pyth settle it), null until frozen.
+    const ms = await readMarketSettlement(play.oracleId).catch(() => null);
+    if (!ms?.settled || ms.settlementPrice1e9 == null) return undefined;
+    const px = Number(ms.settlementPrice1e9) / 1e9;
+    return px > 0 ? String(px) : undefined;
+  }
   const oracle = await readOracle(play.oracleId).catch(() => null);
   if (!oracle?.settled || oracle.settlementPrice1e9 == null) return undefined;
   const px = Number(oracle.settlementPrice1e9) / 1e9;
@@ -988,7 +1186,13 @@ export async function toPlayDTO(play: Play, liveMark?: bigint): Promise<PlayDTO>
   const settled = play.status !== 'open' && play.status !== 'pending';
   const markRaw = settled ? (play.payout ?? 0n) : (liveMark ?? play.markValue ?? play.entryCost);
   const pnlRaw = play.pnl ?? markRaw - play.entryCost;
-  const key = deserializeKey(play);
+  // Max payout = the position quantity ($1 each at settle). Real mode packs it into the order id (empty
+  // until the mint lands), so decode it there; fork mode reads it off the serialized redeem key.
+  const maxPayoutRaw = IS_REAL_PREDICT
+    ? play.marketKey
+      ? decodeOrderId(BigInt(play.marketKey)).quantityRaw
+      : play.stake
+    : deserializeKey(play).params.quantity;
 
   return {
     id: play.id,
@@ -1008,7 +1212,7 @@ export async function toPlayDTO(play: Play, liveMark?: bigint): Promise<PlayDTO>
     markValue: money(markRaw),
     pnl: money(pnlRaw),
     multiplier: play.multiplier ?? 0,
-    maxPayout: money(key.params.quantity),
+    maxPayout: money(maxPayoutRaw),
     payout: play.payout != null ? money(play.payout) : undefined,
     entrySpot: play.entrySpot ?? undefined,
     settlePrice: play.settlePrice ?? undefined,

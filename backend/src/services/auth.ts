@@ -9,7 +9,7 @@ import { normalizeSuiAddress } from '@mysten/sui/utils';
 
 import type { User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
-import { AUTH_MODE, JWT_SECRET, JWT_EXPIRES_IN, STARTING_BALANCE } from '../config/main-config.ts';
+import { AUTH_MODE, JWT_SECRET, JWT_EXPIRES_IN, STARTING_BALANCE, IS_REAL_PREDICT } from '../config/main-config.ts';
 import { transferDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { ensureSuiGas } from '../lib/sui/gas.ts';
 import { SPONSOR_ENABLED } from '../lib/sui/sponsor.ts';
@@ -17,6 +17,7 @@ import { generateCustodialWallet } from '../lib/sui/custodial.ts';
 import { executeAsOperator, executeForUser, userContext } from '../lib/sui/execute.ts';
 import { isChainUnavailableError } from '../lib/sui/client.ts';
 import { buildCreateManager, getManagerBalanceRaw, managerExists } from '../lib/sui/predict.ts';
+import { readUserChipsRaw } from '../lib/sui/predict-real.ts';
 import { fromDusdcRaw } from '../lib/sui/config.ts';
 import type { UserDTO } from '../types/api.ts';
 
@@ -127,6 +128,11 @@ export async function provisionUser(user: User): Promise<User> {
     user = await prismaQuery.user.update({ where: { id: user.id }, data: { suiGasFunded: true } });
   }
 
+  // Real mode (testnet): there is no PredictManager. The per-owner AccountWrapper is derived + created
+  // lazily inside the first mint (buildMintPlay folds new+share), self-heals a stale cache, and its id
+  // is cached on User.predictWrapperId after that first create, so onboarding does no wrapper work here.
+  if (IS_REAL_PREDICT) return user;
+
   // Self-heal a dead manager. A devnet reset/redeploy deletes the user's PredictManager while the
   // republished package survives, leaving a stale id in the DB. Left alone, every login crashes in
   // toUserDTO's balance read against an object that no longer exists (the AUTH_VERIFY_FAILED "Object
@@ -199,14 +205,17 @@ export async function userFromToken(token: string): Promise<User | null> {
 export async function toUserDTO(user: User): Promise<UserDTO> {
   const [wallet, manager] = await Promise.all([
     getDusdcBalanceRaw(user.address),
-    // Tolerate a manager that vanished on-chain (devnet reset): count it as 0 here instead of 500ing
-    // /me or /settings mid-session. The stale id is cleared and re-minted on the next login/heal.
-    user.predictManagerId
-      ? getManagerBalanceRaw(user.predictManagerId).catch((e) => {
-          if (isChainUnavailableError(e)) return 0n;
-          throw e;
-        })
-      : Promise.resolve(0n),
+    // Real mode: chips live in the wrapper's internal balance (0 until the first play creates it); fork
+    // mode: in the PredictManager. Tolerate a vanished object (devnet reset): count it as 0 here instead
+    // of 500ing /me mid-session; the stale id is cleared + re-provisioned on the next login/heal.
+    IS_REAL_PREDICT
+      ? readUserChipsRaw(user.address, user.predictWrapperId).catch(() => 0n)
+      : user.predictManagerId
+        ? getManagerBalanceRaw(user.predictManagerId).catch((e) => {
+            if (isChainUnavailableError(e)) return 0n;
+            throw e;
+          })
+        : Promise.resolve(0n),
   ]);
   return {
     id: user.id,
@@ -217,7 +226,9 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
     provider: user.provider === 'privy' || user.provider === 'wallet' ? user.provider : 'dev',
     walletAuthAddress: user.walletAuthAddress ?? undefined,
     balance: fromDusdcRaw(wallet + manager).toFixed(2),
-    managerReady: Boolean(user.predictManagerId),
+    // Real mode: the wrapper is created lazily + self-heals on the first play, so the account is always
+    // ready to play (no manager to provision first). Fork mode: ready once the PredictManager exists.
+    managerReady: IS_REAL_PREDICT ? true : Boolean(user.predictManagerId),
     settings: {
       sound: user.soundEnabled,
       haptics: user.hapticsEnabled,

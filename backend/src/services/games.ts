@@ -5,6 +5,7 @@
 
 import {
   EXPIRY_SAFETY_MS,
+  IS_REAL_PREDICT,
   LUCKY_ROUND_MS,
   LUCKY_MIN_ORACLE_LIFE_MS,
   LUCKY_MIN_TARGET_FRAC,
@@ -33,8 +34,14 @@ import {
   type TradeAmounts,
 } from '../lib/sui/predict.ts';
 import { solveStrike, type BatchPreviewFn, type ScanCurve } from '../lib/sui/solver.ts';
+import {
+  ticksForBinary,
+  ticksForRange,
+  POSITION_LOT_SIZE,
+  LEVERAGE_ONE,
+} from '../lib/sui/predict-real.ts';
 import { newSeed, seedFloat, pickTier } from './rng.ts';
-import type { RangeQuoteDTO as RangeQuote } from '../types/api.ts';
+import type { Game, RangeQuoteDTO as RangeQuote } from '../types/api.ts';
 
 // Cache the dense strike-price curve per (oracle, side) for a short TTL. The curve only drifts as
 // spot moves (price-pusher every ~2s), so within the TTL a play reuses it and skips the scan round
@@ -477,6 +484,14 @@ export async function resolveRange(stakeRaw: bigint, asset: string, widthPct: nu
 // total. The UI fetches this once on select and caches it, so the pre-PLAY "Pays" is the real locked
 // multiple for every band size, never a blind estimate. No solver loop, no DB, no mint.
 export async function quoteRangeBatch(asset: string, widthPcts: number[]): Promise<RangeQuote[]> {
+  // Real mode (testnet, Mysten Predict): the real protocol has no read-only band pricer we can reach
+  // from a PTB (pricing::range_price is public(package), only current_nav is public), and a mint
+  // simulate needs a funded wrapper. So we serve no server quote here (never call the fork's predict.ts
+  // preview against the real market set). The Range screen falls back to its labelled client estimate
+  // for the idle preview and snaps the REAL multiplier in from the mint's OrderMinted event, which is
+  // the source of truth. Returning an empty ladder keeps that fallback clean (no fabricated number).
+  if (IS_REAL_PREDICT) return [];
+
   const widths = widthPcts.filter((w) => w > 0 && w <= 10);
   if (widths.length === 0) throw new PlayError('INVALID_PARAMS', 'No valid band widths');
 
@@ -507,3 +522,155 @@ export async function quoteRangeBatch(asset: string, widthPcts: number[]): Promi
     widthPct: b.widthPct,
   }));
 }
+
+// === Real-mode resolution (IS_REAL_PREDICT, Mysten's testnet Predict) ===
+//
+// The real protocol sizes the position itself: mint_exact_amount takes a net-premium BUDGET and a
+// leverage, and returns the largest lot-aligned position that fits (chain-side), so the fork's
+// iterative quantity solver + preview scan are unnecessary here. Every game resolves to a
+// (marketId, lower_tick, higher_tick, leverage, premium-budget) tuple against the ONE live BTC market
+// (only BTC_USD is live on testnet; the asset picker still shows ETH/SUI and we silently route to BTC).
+// The reel shows the dealt tier optimistically; the REAL minted multiplier is read from the OrderMinted
+// event and snapped in after the mint (never a fabricated number, mirrors the fork's actualMultiplier).
+//
+// LUCKY/MOONSHOT run at leverage 1 in this wave (Phase 10): the tier/reach sets the strike distance
+// off spot and the chain prices the resulting multiplier honestly. LUCKY's precise tier -> multiplier
+// via real continuous leverage is the Phase 11-12 redesign; this leverage-1 strike map is the interim.
+
+// Game asset for the only live real underlying. The picker keys markets on this; games route here.
+const REAL_BTC_GAME_ASSET = 'BTC';
+// Fraction of the stake reserved as fee headroom: the deposited chips must cover net premium PLUS the
+// trading/builder/penalty fees charged on top (expiry_market.mint_exact_amount), so the premium budget
+// is a touch under the stake. The real protocol also hard-floors net premium at $1 (L-011), so the
+// stake band (MIN_STAKE) is sized so budget = stake*(1-headroom) clears $1.
+const REAL_FEE_HEADROOM_PCT = 12n;
+
+export type ResolvedReal = {
+  game: Game;
+  kind: 'binary' | 'range';
+  marketId: string;
+  asset: string; // the asset the player picked (shown); the market underneath is always BTC
+  lowerTick: bigint;
+  higherTick: bigint;
+  leverage1e9: bigint;
+  amountRaw: bigint; // net-premium budget passed to mint_exact_amount (stake minus fee headroom)
+  depositCeilRaw: bigint; // top the wrapper's internal balance up to this from the wallet before minting
+  minQuantityRaw: bigint;
+  expiryMs: number;
+  duration: number;
+  entrySpot: string; // display
+  tierMultiplier: number; // the reel's dealt tier / requested reach (snapped to the real mint after)
+  side?: Side; // binary
+  strikeDisplay?: string; // binary
+  lowerDisplay?: string; // range
+  upperDisplay?: string; // range
+  widthPct?: number; // range
+  seed?: string; // lucky (fairness / re-route)
+};
+
+// Pick the live BTC market whose expiry sits nearest `roundMs` out. Real 1m markets are spaced ~60s,
+// so this lands a round of ~roundMs..60s. Throws a friendly error when none is live (Mysten controls
+// the roll; the games then show the existing "no live market" empty state).
+function realMarket(roundMs: number): Market {
+  const t = now();
+  const live = liveByAsset(REAL_BTC_GAME_ASSET, t, EXPIRY_SAFETY_MS);
+  if (live.length === 0) throw new PlayError('MARKET_UNAVAILABLE', 'No live market right now');
+  const target = t + roundMs;
+  return live.reduce((best, m) => (Math.abs(m.expiryMs - target) < Math.abs(best.expiryMs - target) ? m : best));
+}
+
+// A market's raw economics (1e9- / raw-scaled) pulled off the record market-sync stamped (never
+// hardcoded). Throws if a fork-shaped record slipped through (real economics absent).
+function realEcon(m: Market): { spot1e9: bigint; tickSize: bigint; admissionTickSize: bigint } {
+  if (!m.spot1e9 || !m.admissionTickSizeRaw) throw new PlayError('ORACLE_STALE', 'Market has no price yet');
+  return { spot1e9: BigInt(m.spot1e9), tickSize: BigInt(m.tickSize), admissionTickSize: BigInt(m.admissionTickSizeRaw) };
+}
+
+// The strike distance off spot for a leverage-1 binary tier. Higher tier sits further OTM (lower ask,
+// higher chain-priced multiplier); floored at LUCKY_MIN_TARGET_FRAC so even the low tiers are a real,
+// visible move and capped so the strike stays inside a mintable band. Interim (Phase 12 uses leverage).
+function binaryOffsetFrac(tier: number): number {
+  return Math.min(0.03, Math.max(LUCKY_MIN_TARGET_FRAC, LUCKY_MIN_TARGET_FRAC * tier));
+}
+
+const premiumBudget = (stakeRaw: bigint): bigint => (stakeRaw * (100n - REAL_FEE_HEADROOM_PCT)) / 100n;
+const realFmt = (v: bigint): string => String(Number(v) / 1e9);
+
+// Resolve a binary play (LUCKY / MOONSHOT) on the real BTC market at leverage 1.
+function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: Side, tier: number, seed?: string): ResolvedReal {
+  const market = realMarket(LUCKY_ROUND_MS);
+  const { spot1e9, tickSize, admissionTickSize } = realEcon(market);
+  const off = BigInt(Math.round(binaryOffsetFrac(tier) * 1e9));
+  const strike1e9 = side === 'up' ? (spot1e9 * (FLOAT_SCALING + off)) / FLOAT_SCALING : (spot1e9 * (FLOAT_SCALING - off)) / FLOAT_SCALING;
+  const { lowerTick, higherTick } = ticksForBinary(side, strike1e9, tickSize, admissionTickSize);
+  return {
+    game,
+    kind: 'binary',
+    marketId: market.oracleId,
+    asset: REAL_BTC_GAME_ASSET,
+    lowerTick,
+    higherTick,
+    leverage1e9: LEVERAGE_ONE,
+    amountRaw: premiumBudget(stakeRaw),
+    depositCeilRaw: stakeRaw,
+    minQuantityRaw: POSITION_LOT_SIZE,
+    expiryMs: market.expiryMs,
+    duration: Math.max(1, Math.round((market.expiryMs - now()) / 1000)),
+    entrySpot: realFmt(spot1e9),
+    tierMultiplier: tier,
+    side,
+    strikeDisplay: realFmt(strike1e9),
+    seed,
+  };
+}
+
+// Resolve a RANGE play on the real BTC market at leverage 1: a band [spot*(1-w/2), spot*(1+w/2)].
+function resolveRealRange(stakeRaw: bigint, widthPct: number): ResolvedReal {
+  if (!(widthPct > 0) || widthPct > 10) throw new PlayError('INVALID_PARAMS', 'Band width out of range');
+  const market = realMarket(Math.round((RANGE_MIN_ORACLE_LIFE_MS + RANGE_MAX_ORACLE_LIFE_MS) / 2));
+  const { spot1e9, tickSize, admissionTickSize } = realEcon(market);
+  const half = (spot1e9 * BigInt(Math.round((widthPct / 100 / 2) * 1e9))) / FLOAT_SCALING;
+  const { lowerTick, higherTick } = ticksForRange(spot1e9 - half, spot1e9 + half, tickSize, admissionTickSize);
+  return {
+    game: 'range',
+    kind: 'range',
+    marketId: market.oracleId,
+    asset: REAL_BTC_GAME_ASSET,
+    lowerTick,
+    higherTick,
+    leverage1e9: LEVERAGE_ONE,
+    amountRaw: premiumBudget(stakeRaw),
+    depositCeilRaw: stakeRaw,
+    minQuantityRaw: POSITION_LOT_SIZE,
+    expiryMs: market.expiryMs,
+    duration: Math.max(1, Math.round((market.expiryMs - now()) / 1000)),
+    entrySpot: realFmt(spot1e9),
+    tierMultiplier: 0,
+    lowerDisplay: realFmt(spot1e9 - half),
+    upperDisplay: realFmt(spot1e9 + half),
+    widthPct,
+  };
+}
+
+// The real-mode counterpart to resolveByGame: LUCKY deals via the same fair RNG, MOONSHOT/RANGE are
+// player-directed. All route to the live BTC market. `seed` lets a re-route keep LUCKY's dealt draw.
+export function resolveReal(input: CreatePlayInputShape, stakeRaw: bigint, seed?: string): ResolvedReal {
+  if (input.game === 'lucky') {
+    const s = seed ?? newSeed();
+    const side: Side = seedFloat(s, 1) < 0.5 ? 'up' : 'down';
+    const tier = pickTier(seedFloat(s, 2));
+    return resolveRealBinary('lucky', stakeRaw, side, tier, s);
+  }
+  if (input.game === 'moonshot') {
+    if (input.side !== 'up' && input.side !== 'down') throw new PlayError('INVALID_PARAMS', 'Pick a direction');
+    if (!Number.isFinite(input.reach)) throw new PlayError('INVALID_PARAMS', 'Pick a reach');
+    return resolveRealBinary('moonshot', stakeRaw, input.side, Math.max(2, Math.min(25, input.reach)));
+  }
+  return resolveRealRange(stakeRaw, input.widthPct);
+}
+
+// The shape resolveReal reads (mirrors plays.CreatePlayInput without importing it, to avoid a cycle).
+export type CreatePlayInputShape =
+  | { game: 'lucky'; stake: string | number }
+  | { game: 'range'; stake: string | number; asset: string; widthPct: number }
+  | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number };
