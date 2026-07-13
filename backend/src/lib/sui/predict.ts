@@ -7,7 +7,7 @@
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
 
-import { suiClient, graphqlClient } from './client.ts';
+import { suiClient, graphqlClient, grpcErrorText } from './client.ts';
 import { operatorAddress } from './signer.ts';
 import {
   ADMIN_CAP_ID,
@@ -130,9 +130,9 @@ type OracleFields = {
 };
 
 // gRPC throws "<id> not found" where JSON-RPC returned empty object data. Reads that mean
-// "gone -> null" catch this and return null instead of surfacing the throw.
-const isNotFound = (e: unknown): boolean =>
-  (e instanceof Error ? e.message : String(e)).toLowerCase().includes('not found');
+// "gone -> null" catch this and return null instead of surfacing the throw. grpcErrorText decodes
+// the percent-encoded transport message (the simulate path returns "Object%20..%20not%20found").
+const isNotFound = (e: unknown): boolean => grpcErrorText(e).includes('not found');
 
 // Run a read-only PTB via gRPC simulate (the devInspect replacement). Sets the sender, disables
 // validation checks (so non-entry getters return values just like devInspect did), and throws a
@@ -435,6 +435,21 @@ async function tradeAmounts(buildKey: (tx: Transaction) => TransactionObjectArgu
 // The user's playable chips live in the PredictManager's inner BalanceManager: mint debits
 // it, redeem credits it. Read that balance (6dp) so the wallet + manager sum is the true
 // spendable balance, and so the funding step only tops up the shortfall before a mint.
+// True iff the PredictManager object still exists on-chain. A devnet reset/redeploy can delete a
+// user's manager while the freshly republished package survives, leaving a dead id in the DB;
+// onboarding uses this to detect that and recreate. Uses getObject (clean not-found) rather than the
+// balance simulate, and rethrows any non-not-found error so a real node/chain outage isn't misread
+// as "gone" and doesn't trigger a needless recreate.
+export async function managerExists(managerId: string): Promise<boolean> {
+  try {
+    await suiClient.getObject({ objectId: managerId, include: { json: true } });
+    return true;
+  } catch (e) {
+    if (isNotFound(e)) return false;
+    throw e;
+  }
+}
+
 export async function getManagerBalanceRaw(managerId: string): Promise<bigint> {
   const tx = new Transaction();
   tx.moveCall({

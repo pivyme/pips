@@ -160,6 +160,29 @@
   -webkit-touch-callout: default;
 }
 
+/* App-surface dialogs (the menu drawer and modal overlays) should behave like normal web content:
+   users can long-press/select copyable text there, while the hardware-feeling console behind them
+   still suppresses callouts. Controls inside those dialogs stay no-select so taps and drags keep
+   feeling like controls, not text highlights. */
+.app-shell [role='dialog'],
+.app-shell [role='dialog'] * {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.app-shell [role='dialog'] button,
+.app-shell [role='dialog'] a,
+.app-shell [role='dialog'] label,
+.app-shell [role='dialog'] summary,
+.app-shell [role='dialog'] input[type='checkbox'],
+.app-shell [role='dialog'] input[type='radio'],
+.app-shell [role='dialog'] .select-none {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 .app-shell img {
   -webkit-user-drag: none;
   user-drag: none;

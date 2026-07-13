@@ -15,7 +15,8 @@ import { ensureSuiGas } from '../lib/sui/gas.ts';
 import { SPONSOR_ENABLED } from '../lib/sui/sponsor.ts';
 import { generateCustodialWallet } from '../lib/sui/custodial.ts';
 import { executeAsOperator, executeForUser, userContext } from '../lib/sui/execute.ts';
-import { buildCreateManager, getManagerBalanceRaw } from '../lib/sui/predict.ts';
+import { isChainUnavailableError } from '../lib/sui/client.ts';
+import { buildCreateManager, getManagerBalanceRaw, managerExists } from '../lib/sui/predict.ts';
 import { fromDusdcRaw } from '../lib/sui/config.ts';
 import type { UserDTO } from '../types/api.ts';
 
@@ -126,6 +127,16 @@ export async function provisionUser(user: User): Promise<User> {
     user = await prismaQuery.user.update({ where: { id: user.id }, data: { suiGasFunded: true } });
   }
 
+  // Self-heal a dead manager. A devnet reset/redeploy deletes the user's PredictManager while the
+  // republished package survives, leaving a stale id in the DB. Left alone, every login crashes in
+  // toUserDTO's balance read against an object that no longer exists (the AUTH_VERIFY_FAILED "Object
+  // 0x.. not found" loop). Detect the gone manager and clear it so the create block below re-mints a
+  // fresh one. managerExists rethrows a real node/chain outage, so we only null on a true not-found.
+  if (user.predictManagerId && !(await managerExists(user.predictManagerId))) {
+    console.warn(`[auth] stale manager ${user.predictManagerId} gone on-chain for ${user.provider} ${user.address}, recreating`);
+    user = await prismaQuery.user.update({ where: { id: user.id }, data: { predictManagerId: null } });
+  }
+
   // PredictManager. dev creates it eagerly (operator-owned + signed). privy/wallet need a user-signed
   // tx, so they require their signer ready (see managerReadyToCreate); if not yet, leave it null and
   // retry on the next login.
@@ -174,7 +185,14 @@ export async function userFromToken(token: string): Promise<User | null> {
 export async function toUserDTO(user: User): Promise<UserDTO> {
   const [wallet, manager] = await Promise.all([
     getDusdcBalanceRaw(user.address),
-    user.predictManagerId ? getManagerBalanceRaw(user.predictManagerId) : Promise.resolve(0n),
+    // Tolerate a manager that vanished on-chain (devnet reset): count it as 0 here instead of 500ing
+    // /me or /settings mid-session. The stale id is cleared and re-minted on the next login/heal.
+    user.predictManagerId
+      ? getManagerBalanceRaw(user.predictManagerId).catch((e) => {
+          if (isChainUnavailableError(e)) return 0n;
+          throw e;
+        })
+      : Promise.resolve(0n),
   ]);
   return {
     id: user.id,

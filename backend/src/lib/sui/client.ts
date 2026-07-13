@@ -33,6 +33,21 @@ export const explorerTxUrl = (digest: string): string => `${EXPLORER_BASE}/tx/${
 export const explorerObjectUrl = (id: string): string => `${EXPLORER_BASE}/object/${id}`;
 export const explorerAddressUrl = (address: string): string => `${EXPLORER_BASE}/account/${address}`;
 
+// Normalized, lowercased text of a Sui error for matching. The gRPC-web transport surfaces the
+// status message percent-encoded (spaces as %20, e.g. "Object%200x..%20not%20found"), because the
+// grpc-message trailer is percent-encoded per spec and the transport doesn't decode it. Matchers
+// that look for literal "not found" would miss that, so decode first. Safe on already-plain text.
+export function grpcErrorText(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    // malformed % sequence, keep the raw string
+  }
+  return decoded.toLowerCase();
+}
+
 // True when an error means our deployed Predict instance is no longer on the chain: the package,
 // the DUSDC treasury cap, the vault, or a user's manager can't be found. Sui Devnet (not testnet)
 // gets reset roughly weekly, which deletes every object we published, so the ids in config point at
@@ -42,7 +57,7 @@ export const explorerAddressUrl = (address: string): string => `${EXPLORER_BASE}
 // can tell the user we're refreshing and point them at demo mode, instead of a generic "try again".
 // Scoped to missing-resource signals only: an empty gas coin or a transient node hiccup is NOT this.
 export function isChainUnavailableError(e: unknown): boolean {
-  const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  const m = grpcErrorText(e);
   if (!m) return false;
   return (
     m.includes('package object does not exist') ||
