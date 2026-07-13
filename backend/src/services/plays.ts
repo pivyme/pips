@@ -32,6 +32,14 @@ import {
   type RangeParams,
 } from '../lib/sui/predict.ts';
 import { getMarket, removeMarket } from '../lib/sui/markets.ts';
+import {
+  buildRedeemSettled,
+  decodeOrderId,
+  findRealRedeem,
+  parseRedeem,
+  readMarketSettlement,
+  readWrapper,
+} from '../lib/sui/predict-real.ts';
 import { operatorCaps } from '../lib/sui/signer.ts';
 import { gameSpot } from '../lib/game-price.ts';
 import { executeForUser, executeAsOperator, executeAsSettlement, userContext } from '../lib/sui/execute.ts';
@@ -786,6 +794,124 @@ async function reconcileAlreadyRedeemed(play: Play, key: PlayKey, settlement1e9:
   await recordSettlement(play.userId);
   await evaluateAndUnlock(play.userId);
   console.log(`\x1b[33m[Settle] reconciled ${play.id}: already ${status} on-chain, payout=$${fromDusdcRaw(onChain.payout).toFixed(2)} (recovered lost write)\x1b[0m`);
+}
+
+// === Real-mode settlement (IS_REAL_PREDICT, worker: settleDuePlaysReal) ===
+//
+// Mysten's testnet Predict settles a market from Pyth-at-expiry, not from a price we push, so real mode
+// has no operator nudge. We resolve each open real play by calling redeem_settled (permissionless,
+// full-close): that call drives ensure_settled (settling the market if a Pyth exact-at-expiry price
+// exists) then pays $1*qty or 0 into the user's wrapper. Self-healing like the fork's settleDuePlays:
+// it reads the chain, reconciles an already-closed position against its on-chain redeem event (a live
+// cash-out or a prior settle whose DB write was lost), and gives up ONLY on a provably-stuck/gone
+// market, never on elapsed time alone (lessons pips-settle-abort1/abort6). In real mode a play stores
+// the ExpiryMarket id in `oracleId` and the u256 order id in `marketKey`; quantity is decoded from the
+// order id (order.move packs it), so no extra column is needed.
+
+// Full close quantity for a real play, decoded from its packed order id.
+const realOrderOf = (play: Play): { orderId: bigint; quantityRaw: bigint } => {
+  const orderId = BigInt(play.marketKey);
+  return { orderId, quantityRaw: decodeOrderId(orderId).quantityRaw };
+};
+
+// Resolve the user's wrapper id for a settle: the cached column, else the deterministic derived address.
+async function wrapperIdForUser(userId: string): Promise<string | null> {
+  const user = await prismaQuery.user.findUnique({ where: { id: userId }, select: { predictWrapperId: true, address: true } });
+  if (user?.predictWrapperId) return user.predictWrapperId;
+  if (!user?.address) return null;
+  return (await readWrapper(user.address)).wrapperId;
+}
+
+// Write the resolved outcome for a real play. A settled win pays into the wrapper internal balance, so
+// invalidate the balance gate; a loss/liquidation pays 0. Mirrors settleOnePlay's terminal write.
+async function finalizeRealSettle(
+  play: Play,
+  outcome: { payoutRaw: bigint; status: PlayStatus; settlePrice1e9: bigint | null; digest?: string },
+): Promise<void> {
+  const won = outcome.status === 'won';
+  const pnl = outcome.payoutRaw - play.entryCost;
+  await prismaQuery.play.update({
+    where: { id: play.id },
+    data: {
+      status: outcome.status,
+      payout: outcome.payoutRaw,
+      markValue: outcome.payoutRaw,
+      pnl,
+      settlePrice: outcome.settlePrice1e9 != null ? String(Number(outcome.settlePrice1e9) / 1e9) : play.settlePrice,
+      txRedeem: outcome.digest ?? play.txRedeem,
+      settledAt: new Date(),
+    },
+  });
+  if (won || outcome.status === 'cashed_out') invalidateBal(play.userId);
+  await recordSettlement(play.userId);
+  await evaluateAndUnlock(play.userId);
+}
+
+// Reconcile a real play whose redeem_settled failed. Order of evidence: (1) the position is already
+// redeemed on chain (recover the true payout, never invent money), (2) the market is not settleable
+// yet (retry next tick), (3) provably gone/stuck for far longer than any settle (give up -> error, kept
+// out of the PnL ledger). Returns nothing; leaves the play 'open' when a later tick can still resolve it.
+async function reconcileRealSettle(play: Play, wrapperId: string, orderId: bigint, now: number, err: unknown): Promise<void> {
+  const onChain = await findRealRedeem(wrapperId, orderId).catch(() => null);
+  if (onChain) {
+    const status: PlayStatus = onChain.liquidated ? 'lost' : onChain.settled ? (onChain.payoutRaw > 0n ? 'won' : 'lost') : 'cashed_out';
+    const settle = onChain.settled ? await readMarketSettlement(play.oracleId).catch(() => null) : null;
+    await finalizeRealSettle(play, { payoutRaw: onChain.payoutRaw, status, settlePrice1e9: settle?.settlementPrice1e9 ?? null, digest: onChain.digest });
+    console.log(`\x1b[33m[Settle] reconciled real ${play.id}: already ${status} on-chain, payout=$${fromDusdcRaw(onChain.payoutRaw).toFixed(2)}\x1b[0m`);
+    return;
+  }
+  const ms = await readMarketSettlement(play.oracleId).catch(() => null);
+  const unreadable = ms === null;
+  const cutoff = BigInt(now - (unreadable ? ORPHAN_GIVEUP_MS : UNSETTLEABLE_MS));
+  if (play.expiry < cutoff) {
+    await prismaQuery.play.update({ where: { id: play.id }, data: { status: 'error', settledAt: new Date() } });
+    console.warn(`[Settle] real ${play.id} unsettleable (${unreadable ? 'market gone' : 'not settled'}); marked error`);
+    return;
+  }
+  // Market not settled yet, or a transient tx failure: leave 'open' to retry on a later tick.
+  console.error(`[Settle] real ${play.id} redeem_settled failed, will retry:`, err instanceof Error ? err.message : err);
+}
+
+// Settle one open real play. Returns true iff it spent a redeem tx (for the per-tick budget); a
+// not-yet-settleable play returns false so it doesn't burn the budget.
+async function settleOnePlayReal(play: Play, now: number): Promise<boolean> {
+  const wrapperId = await wrapperIdForUser(play.userId);
+  if (!wrapperId) {
+    console.error(`[Settle] real ${play.id}: user has no wrapper; will retry`);
+    return false;
+  }
+  const { orderId, quantityRaw } = realOrderOf(play);
+  const lagS = Math.round((now - Number(play.expiry)) / 1000);
+  try {
+    const tx = new Transaction();
+    buildRedeemSettled(tx, { marketId: play.oracleId, wrapperId, orderId, closeQuantityRaw: quantityRaw });
+    const exec = await executeAsSettlement(tx, `settle-redeem-real ${play.id}`, { retries: SETTLE_STALE_RETRIES, freshFirst: true });
+    const r = parseRedeem(exec.events);
+    const status: PlayStatus = r.liquidated ? 'lost' : r.payoutRaw > 0n ? 'won' : 'lost';
+    roundLog(`[Round SETTLE] ${play.game.padEnd(5)} ${play.asset.padEnd(4)} real order=${orderId.toString().slice(0, 8)}… ${status === 'won' ? 'WIN ' : 'LOSS'} payout=$${fromDusdcRaw(r.payoutRaw).toFixed(2)} (expired ${lagS}s ago) @${hhmmss()}`);
+    await finalizeRealSettle(play, { payoutRaw: r.payoutRaw, status, settlePrice1e9: r.settlementPrice1e9, digest: exec.digest });
+    return true;
+  } catch (e) {
+    await reconcileRealSettle(play, wrapperId, orderId, now, e);
+    return false;
+  }
+}
+
+// Settle every open real play whose 1m round has expired, budget-capped per tick like the fork.
+export async function settleDuePlaysReal(): Promise<void> {
+  await sweepStuckPendings();
+  const due = await prismaQuery.play.findMany({ where: { status: 'open', expiry: { lte: BigInt(Date.now()) } } });
+  if (due.length === 0) return;
+  const now = Date.now();
+  let redeems = 0;
+  for (const play of due) {
+    if (redeems >= SETTLE_MAX_REDEEMS_PER_TICK) break;
+    try {
+      if (await settleOnePlayReal(play, now)) redeems++;
+    } catch (e) {
+      console.error(`[Settle] real play ${play.id} settle failed:`, e instanceof Error ? e.message : e);
+    }
+  }
 }
 
 // === Reads / DTO ===

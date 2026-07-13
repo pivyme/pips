@@ -23,6 +23,7 @@ import {
   EXPIRY_SAFETY_MS,
   ORACLE_ROLL_CRON,
   OPERATOR_ENABLED,
+  IS_REAL_PREDICT,
 } from '../config/main-config.ts';
 import { gridForSpot, usd1e9, replaceOracleCap } from '../lib/sui/config.ts';
 import { operatorCaps } from '../lib/sui/signer.ts';
@@ -227,6 +228,12 @@ const rollLadder = async (): Promise<void> => {
 };
 
 export const startOracleRoll = (): void => {
+  if (IS_REAL_PREDICT) {
+    // Mysten owns the market roll schedule in real mode and we hold no MarketLifecycleCap; discovery
+    // only (market-sync). Never create or roll a market.
+    console.log('[OracleRoll] Real Predict mode (Mysten rolls markets), not scheduling');
+    return;
+  }
   if (!OPERATOR_ENABLED) {
     console.log('[OracleRoll] Operator disabled (PIPS_OPERATOR_ENABLED != true), not scheduling');
     return;

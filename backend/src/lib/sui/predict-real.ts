@@ -13,7 +13,7 @@
 import { Transaction, coinWithBalance, type TransactionObjectArgument } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
 
-import { suiClient, grpcErrorText } from './client.ts';
+import { suiClient, graphqlClient, grpcErrorText } from './client.ts';
 import { DUSDC_TYPE } from './config.ts';
 import {
   REAL_ACCOUNT_PACKAGE,
@@ -535,6 +535,7 @@ export type RedeemResult = {
   liquidated: boolean;
   quantityClosedRaw: bigint;
   replacementOrderId: bigint | null;
+  settlementPrice1e9: bigint | null; // only on a settled redeem (SettledOrderRedeemed.settlement_price)
 };
 
 // Parse whichever redeem event fired. Live redeem -> LiveOrderRedeemed (redeem_amount minus fees);
@@ -542,13 +543,20 @@ export type RedeemResult = {
 // (zero payout). Both redeem paths can emit the liquidated variant for a knocked-out order.
 export function parseRedeem(events: RealEvent[]): RedeemResult {
   const liq = events.find((x) => x.type.endsWith(LiquidatedRedeemedSuffix));
-  if (liq?.parsedJson) {
-    const j = liq.parsedJson;
-    return { orderId: evBig(j, 'order_id'), payoutRaw: 0n, settled: false, liquidated: true, quantityClosedRaw: evBig(j, 'quantity_closed'), replacementOrderId: null };
-  }
+  if (liq?.parsedJson) return redeemFromJson(liq.parsedJson, 'liquidated');
   const live = events.find((x) => x.type.endsWith(LiveRedeemedSuffix));
-  if (live?.parsedJson) {
-    const j = live.parsedJson;
+  if (live?.parsedJson) return redeemFromJson(live.parsedJson, 'live');
+  const settled = events.find((x) => x.type.endsWith(SettledRedeemedSuffix));
+  if (settled?.parsedJson) return redeemFromJson(settled.parsedJson, 'settled');
+  throw new Error('no redeem event found (Live/Settled/Liquidated)');
+}
+
+// One parser for all three redeem event shapes (shared by parseRedeem + the GraphQL reconcile scan).
+function redeemFromJson(j: Record<string, unknown>, kind: 'live' | 'settled' | 'liquidated'): RedeemResult {
+  if (kind === 'liquidated') {
+    return { orderId: evBig(j, 'order_id'), payoutRaw: 0n, settled: false, liquidated: true, quantityClosedRaw: evBig(j, 'quantity_closed'), replacementOrderId: null, settlementPrice1e9: null };
+  }
+  if (kind === 'live') {
     const gross = evBig(j, 'redeem_amount');
     const fees = evBig(j, 'trading_fee') + evBig(j, 'builder_fee') + evBig(j, 'penalty_fee');
     return {
@@ -558,14 +566,18 @@ export function parseRedeem(events: RealEvent[]): RedeemResult {
       liquidated: false,
       quantityClosedRaw: evBig(j, 'quantity_closed'),
       replacementOrderId: evOpt(j, 'replacement_order_id'),
+      settlementPrice1e9: null,
     };
   }
-  const settled = events.find((x) => x.type.endsWith(SettledRedeemedSuffix));
-  if (settled?.parsedJson) {
-    const j = settled.parsedJson;
-    return { orderId: evBig(j, 'order_id'), payoutRaw: evBig(j, 'payout_amount'), settled: true, liquidated: false, quantityClosedRaw: evBig(j, 'quantity_closed'), replacementOrderId: null };
-  }
-  throw new Error('no redeem event found (Live/Settled/Liquidated)');
+  return {
+    orderId: evBig(j, 'order_id'),
+    payoutRaw: evBig(j, 'payout_amount'),
+    settled: true,
+    liquidated: false,
+    quantityClosedRaw: evBig(j, 'quantity_closed'),
+    replacementOrderId: null,
+    settlementPrice1e9: evBig(j, 'settlement_price'),
+  };
 }
 
 // === Discovery via chain reads (Phase 5, plp::PoolVault + expiry_market getters) ===
@@ -673,4 +685,105 @@ export async function readBtcSpot(): Promise<SpotRead | null> {
     if (isNotFound(e)) return null;
     throw e;
   }
+}
+
+// === Settle support (Phase 7): order-id decode, market settlement read, redeem reconcile ===
+//
+// The u256 order id is a packed record (order.move), so quantity + strike ticks are decodable from it
+// alone: no separate column, the settle worker reads the stored order id and derives the full-close
+// quantity. redeem_settled is permissionless + full-close (a co-operator or a prior tick may have
+// beaten us), so a failed settle reconciles against the chain's own redeem event, mirroring the fork's
+// self-healing settleDuePlays (lessons pips-settle-abort1/abort6) instead of looping a doomed retry.
+
+// order.move packed-id layout (offsets/masks copied from the source, do not re-derive).
+const ORDER_QUANTITY_LOTS_OFFSET = 164n;
+const ORDER_LOWER_TICK_OFFSET = 70n;
+const ORDER_HIGHER_TICK_OFFSET = 40n;
+const TICK_MASK = (1n << 30n) - 1n;
+const U32_MASK = (1n << 32n) - 1n;
+
+export type DecodedOrder = { quantityRaw: bigint; lowerTick: bigint; higherTick: bigint };
+
+// Decode the immutable terms from a packed order id. quantity is stored as a complemented lot count
+// (U32_MASK - lots), so undo that then scale by position_lot_size. Ticks are plain masked fields.
+export function decodeOrderId(orderId: bigint): DecodedOrder {
+  const quantityLots = U32_MASK - ((orderId >> ORDER_QUANTITY_LOTS_OFFSET) & U32_MASK);
+  return {
+    quantityRaw: quantityLots * POSITION_LOT_SIZE,
+    lowerTick: (orderId >> ORDER_LOWER_TICK_OFFSET) & TICK_MASK,
+    higherTick: (orderId >> ORDER_HIGHER_TICK_OFFSET) & TICK_MASK,
+  };
+}
+
+// Read a market's settlement state from json (settlement_price is null until frozen). Null if the
+// market object is gone (an orphaned play whose market was cleaned up), so the caller can give up.
+export type MarketSettlement = { settled: boolean; settlementPrice1e9: bigint | null };
+export async function readMarketSettlement(marketId: string): Promise<MarketSettlement | null> {
+  try {
+    const res = await suiClient.core.getObject({ objectId: marketId, include: { json: true } });
+    const j = res.object?.json as { settlement_price?: string | null } | undefined;
+    if (!j) return null;
+    return { settled: j.settlement_price != null, settlementPrice1e9: j.settlement_price != null ? BigInt(j.settlement_price) : null };
+  } catch (e) {
+    if (isNotFound(e)) return null;
+    throw e;
+  }
+}
+
+// Find the on-chain redeem for one order id on a wrapper. The settle backstop uses this to recover the
+// true payout when redeem_settled aborts because the position is already gone (a live cash-out or a
+// prior settle whose DB write was lost). An order id pins the position uniquely, so scan the wrapper's
+// txs newest-first (the lost redeem is recent, settle runs seconds after expiry) and stop after a
+// bounded number of pages. Fullnode gRPC v2 has no tx-history scan, so this is GraphQL (L-002).
+const TX_BY_OBJECT_QUERY = `query($obj: SuiAddress!, $last: Int!, $before: String) {
+  transactions(last: $last, before: $before, filter: { affectedObject: $obj }) {
+    pageInfo { hasPreviousPage startCursor }
+    nodes { digest effects { events { nodes { contents { json type { repr } } } } } }
+  }
+}`;
+type TxScanResult = {
+  transactions: {
+    pageInfo: { hasPreviousPage: boolean; startCursor: string | null };
+    nodes: { digest: string; effects: { events: { nodes: { contents: { json: Record<string, unknown> | null; type: { repr: string } | null } | null }[] } | null } | null }[];
+  };
+};
+
+export type OnChainRedeem = { payoutRaw: bigint; settled: boolean; liquidated: boolean; digest: string };
+
+// Scan one GraphQL tx page (oldest-first) reversed so the most recent matching redeem wins. Pure so the
+// GraphQL parse is unit-testable against a captured response.
+export function matchRealRedeemInPage(nodes: TxScanResult['transactions']['nodes'], orderId: bigint): OnChainRedeem | null {
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const t = nodes[i];
+    for (const e of t.effects?.events?.nodes ?? []) {
+      const repr = e.contents?.type?.repr ?? '';
+      const kind: 'settled' | 'live' | 'liquidated' | null = repr.endsWith(SettledRedeemedSuffix)
+        ? 'settled'
+        : repr.endsWith(LiveRedeemedSuffix)
+          ? 'live'
+          : repr.endsWith(LiquidatedRedeemedSuffix)
+            ? 'liquidated'
+            : null;
+      const j = e.contents?.json ?? null;
+      if (!kind || !j) continue;
+      if (String(j.order_id) !== orderId.toString()) continue;
+      const r = redeemFromJson(j, kind);
+      return { payoutRaw: r.payoutRaw, settled: r.settled, liquidated: r.liquidated, digest: t.digest };
+    }
+  }
+  return null;
+}
+
+export async function findRealRedeem(wrapperId: string, orderId: bigint): Promise<OnChainRedeem | null> {
+  let before: string | null = null;
+  for (let page = 0; page < 6; page++) {
+    const res: { data?: unknown } = await graphqlClient.query({ query: TX_BY_OBJECT_QUERY, variables: { obj: wrapperId, last: 50, before } });
+    const conn = (res.data as TxScanResult | undefined)?.transactions;
+    if (!conn) break;
+    const hit = matchRealRedeemInPage(conn.nodes, orderId);
+    if (hit) return hit;
+    if (!conn.pageInfo.hasPreviousPage || !conn.pageInfo.startCursor) break;
+    before = conn.pageInfo.startCursor;
+  }
+  return null;
 }

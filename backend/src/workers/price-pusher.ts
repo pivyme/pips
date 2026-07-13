@@ -6,7 +6,7 @@
 
 import cron from 'node-cron';
 
-import { EXPIRY_SAFETY_MS, OPERATOR_ENABLED, PRICE_PUSH_CRON } from '../config/main-config.ts';
+import { EXPIRY_SAFETY_MS, IS_REAL_PREDICT, OPERATOR_ENABLED, PRICE_PUSH_CRON } from '../config/main-config.ts';
 import { usd1e9 } from '../lib/sui/config.ts';
 import { executeAsOperator } from '../lib/sui/execute.ts';
 import { appendPriceUpdate } from '../lib/sui/predict.ts';
@@ -71,6 +71,11 @@ const pushPrices = async (): Promise<void> => {
 };
 
 export const startPricePusher = (): void => {
+  if (IS_REAL_PREDICT) {
+    // Real mode reads external Propbook feeds (Pyth/Block Scholes); we never push a price on chain.
+    console.log('[PricePusher] Real Predict mode (external feeds), not scheduling');
+    return;
+  }
   if (!OPERATOR_ENABLED) {
     console.log('[PricePusher] Operator disabled (PIPS_OPERATOR_ENABLED != true), not scheduling');
     return;

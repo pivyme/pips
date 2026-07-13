@@ -8,9 +8,9 @@
 
 import cron from 'node-cron';
 
-import { OPERATOR_ENABLED, SETTLE_CRON } from '../config/main-config.ts';
+import { IS_REAL_PREDICT, OPERATOR_ENABLED, SETTLE_CRON } from '../config/main-config.ts';
 import { allMarkets, removeMarket } from '../lib/sui/markets.ts';
-import { settleDuePlays } from '../services/plays.ts';
+import { settleDuePlays, settleDuePlaysReal } from '../services/plays.ts';
 
 let isRunning = false;
 
@@ -23,7 +23,10 @@ const settleTick = async (): Promise<void> => {
   if (isRunning) return;
   isRunning = true;
   try {
-    await settleDuePlays();
+    // Real mode: redeem_settled per expired play (no operator nudge; Mysten/Pyth settle the market).
+    // Fork mode: the self-healing operator/follower settle. Both prune the retired market cache.
+    if (IS_REAL_PREDICT) await settleDuePlaysReal();
+    else await settleDuePlays();
     pruneRetiredOracles();
   } catch (err) {
     console.error('[Settle] tick error:', err instanceof Error ? err.message : err);
@@ -47,7 +50,11 @@ export const startSettleWorker = (): void => {
   // Phase 1); a follower skips the nudge and only finalizes its OWN database's plays against the
   // oracles the leader settles on the shared chain. Without this, a follower's plays (separate DB,
   // invisible to the deployed operator) sit on SETTLING forever. settleDuePlays gates per phase.
-  const role = OPERATOR_ENABLED ? 'operator' : 'follower: settle-only, no oracle nudge';
+  const role = IS_REAL_PREDICT
+    ? 'real: redeem_settled per play'
+    : OPERATOR_ENABLED
+      ? 'operator'
+      : 'follower: settle-only, no oracle nudge';
   console.log(`[Settle] Scheduled: ${SETTLE_CRON} (${role})`);
   cron.schedule(SETTLE_CRON, settleTick);
   settleTick();
