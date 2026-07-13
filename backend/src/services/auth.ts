@@ -133,8 +133,22 @@ export async function provisionUser(user: User): Promise<User> {
   // 0x.. not found" loop). Detect the gone manager and clear it so the create block below re-mints a
   // fresh one. managerExists rethrows a real node/chain outage, so we only null on a true not-found.
   if (user.predictManagerId && !(await managerExists(user.predictManagerId))) {
-    console.warn(`[auth] stale manager ${user.predictManagerId} gone on-chain for ${user.provider} ${user.address}, recreating`);
-    user = await prismaQuery.user.update({ where: { id: user.id }, data: { predictManagerId: null } });
+    // A manager is only ever deleted by a devnet reset/redeploy, never by gameplay (deposit/withdraw
+    // keep it), so a gone manager is a reliable, un-farmable "this whole deploy is stale" signal. Null
+    // it so the block below re-mints one on the live deploy. If the user's starting DUSDC died with
+    // that deploy too (wallet now reads 0 on the live coin type), clear dusdcFunded/suiGasFunded so
+    // the chips + gas re-mint as well. Gate that on an actually-empty wallet: a user whose chips
+    // survived the redeploy (they were minted on the current DUSDC package, so still read > 0) keeps
+    // them and is not double-funded. Safe against farming because a live manager, held by a player who
+    // merely lost every chip, is never deleted, so this branch can't fire from gameplay.
+    const chipsGone = (await getDusdcBalanceRaw(user.address)) === 0n;
+    console.warn(
+      `[auth] stale manager ${user.predictManagerId} gone for ${user.provider} ${user.address}, re-provisioning${chipsGone ? ' + re-funding chips' : ''}`,
+    );
+    user = await prismaQuery.user.update({
+      where: { id: user.id },
+      data: { predictManagerId: null, ...(chipsGone ? { dusdcFunded: false, suiGasFunded: false } : {}) },
+    });
   }
 
   // PredictManager. dev creates it eagerly (operator-owned + signed). privy/wallet need a user-signed
