@@ -649,3 +649,28 @@ export async function readMarketEconomics(marketId: string): Promise<RealMarketE
 export function isMinuteExpiry(expiryMs: number): boolean {
   return expiryMs % 300_000 !== 0 && expiryMs % 60_000 === 0;
 }
+
+// === Live spot for the chart (Phase 6) ===
+//
+// We never push prices in real mode (L-006): Mysten/Block Scholes push the Propbook feeds, we READ
+// them. The chart line must be the price the round is marked against, so we read the live Block Scholes
+// spot (the same feed load_live_pricer marks against) each poll and stamp it on the market set, and
+// game-price.ts eases that on-chain spot as the chart feed in BOTH modes (lesson pips-chart-oracle-feed).
+// The BS spot feed json exposes lane.latest.value.spot (1e9-scaled, matches spot1e9) + a freshness ms.
+
+export type SpotRead = { spot1e9: bigint; updatedMs: number };
+
+// Read the live BTC BS spot (1e9-scaled) + its on-chain update timestamp; null if the feed has no
+// reading yet or is unreachable (the caller keeps the last known spot rather than dropping the market).
+export async function readBtcSpot(): Promise<SpotRead | null> {
+  try {
+    const res = await suiClient.core.getObject({ objectId: btcFeeds().bsSpot, include: { json: true } });
+    const latest = (res.object?.json as { lane?: { latest?: { value?: { spot?: string }; update_timestamp_ms?: string } } } | undefined)?.lane?.latest;
+    const spot = latest?.value?.spot;
+    if (spot == null) return null;
+    return { spot1e9: BigInt(spot), updatedMs: Number(latest?.update_timestamp_ms ?? 0) };
+  } catch (e) {
+    if (isNotFound(e)) return null;
+    throw e;
+  }
+}
