@@ -2576,12 +2576,16 @@ export default function ConsoleCanvas({
     window.addEventListener('pointercancel', release)
     window.addEventListener('keydown', onKeyDown)
     // Returning to the tab can drop the drawing buffer; force one repaint so the device never
-    // shows a blank frame after we have been idle (not rendering).
+    // shows a blank frame after we have been idle (not rendering). Backgrounding a standalone
+    // PWA also leaves the device SFX AudioContext suspended/interrupted, so re-arm it here too
+    // instead of waiting on the next tap (sound.ts self-heals its own context the same way).
     const onVisible = () => {
       dirty = true
+      if (document.visibilityState === 'visible') audio.resumeAudio()
     }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('focus', onVisible)
+    window.addEventListener('pageshow', onVisible)
 
     /* resize — fits the device to the container, then projects the cutout onto the screen layer */
     function resize() {
@@ -2989,6 +2993,7 @@ export default function ConsoleCanvas({
       window.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('focus', onVisible)
+      window.removeEventListener('pageshow', onVisible)
       ro.disconnect()
       contentObserver.disconnect()
       if (fitRaf) cancelAnimationFrame(fitRaf)

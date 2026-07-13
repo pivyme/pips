@@ -17,6 +17,7 @@ import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { displayHandle, formatStringToNumericDecimals } from '@/utils/format'
 import { cnm } from '@/utils/style'
 
@@ -69,17 +70,20 @@ function MenuHome() {
           />
         </div>
         <AchievementsSection />
-        <Button
-          variant="danger"
-          onClick={() => {
-            haptic('rigid')
-            signOut()
-          }}
-          className="mt-16 h-14 w-full rounded-card text-sm"
-        >
-          <LogOut className="h-5 w-5" strokeWidth={2.4} />
-          Log out
-        </Button>
+        <div className="relative mt-16 w-full">
+          <Button
+            variant="danger"
+            onClick={() => {
+              haptic('rigid')
+              signOut()
+            }}
+            className="pointer-events-none h-14 w-full rounded-card text-sm"
+          >
+            <LogOut className="h-5 w-5" strokeWidth={2.4} />
+            Log out
+          </Button>
+          <HapticOverlay className="absolute inset-0 rounded-card" preset="rigid" silent onTap={signOut} />
+        </div>
       </div>
     </div>
   )
@@ -89,7 +93,12 @@ function MenuHome() {
 // push to their own screens with the native menu transition.
 function BalanceHero() {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const balance = formatStringToNumericDecimals(user?.balance ?? '0', 2)
+  const goTo = (to: string) => {
+    prepareMenuTransition('forward')
+    void navigate({ to, viewTransition: true })
+  }
 
   return (
     <div className="card-neo rounded-card p-5">
@@ -112,30 +121,46 @@ function BalanceHero() {
         </div>
       </div>
       <div className="mt-5 grid grid-cols-2 gap-3">
-        <Link
-          to="/menu/deposit"
-          viewTransition
-          onClick={() => {
-            prepareMenuTransition('forward')
-            haptic('selection')
-          }}
-          className="btn-primary flex h-12 items-center justify-center gap-2 rounded-md text-sm font-extrabold uppercase tracking-wide"
-        >
-          <ArrowDownToLine className="h-4 w-4" strokeWidth={2.6} />
-          Deposit
-        </Link>
-        <Link
-          to="/menu/withdraw"
-          viewTransition
-          onClick={() => {
-            prepareMenuTransition('forward')
-            haptic('selection')
-          }}
-          className="flex h-12 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/[0.05] text-sm font-extrabold uppercase tracking-wide text-text transition-transform active:scale-[0.98]"
-        >
-          <ArrowUpFromLine className="h-4 w-4" strokeWidth={2.6} />
-          Withdraw
-        </Link>
+        <div className="relative h-12">
+          <Link
+            to="/menu/deposit"
+            viewTransition
+            onClick={() => {
+              prepareMenuTransition('forward')
+              haptic('selection')
+            }}
+            className="btn-primary pointer-events-none flex h-12 w-full items-center justify-center gap-2 rounded-md text-sm font-extrabold uppercase tracking-wide"
+          >
+            <ArrowDownToLine className="h-4 w-4" strokeWidth={2.6} />
+            Deposit
+          </Link>
+          <HapticOverlay
+            className="absolute inset-0 rounded-md"
+            preset="selection"
+            silent
+            onTap={() => goTo('/menu/deposit')}
+          />
+        </div>
+        <div className="relative h-12">
+          <Link
+            to="/menu/withdraw"
+            viewTransition
+            onClick={() => {
+              prepareMenuTransition('forward')
+              haptic('selection')
+            }}
+            className="pointer-events-none flex h-12 w-full items-center justify-center gap-2 rounded-md border border-white/10 bg-white/[0.05] text-sm font-extrabold uppercase tracking-wide text-text transition-transform active:scale-[0.98]"
+          >
+            <ArrowUpFromLine className="h-4 w-4" strokeWidth={2.6} />
+            Withdraw
+          </Link>
+          <HapticOverlay
+            className="absolute inset-0 rounded-md"
+            preset="selection"
+            silent
+            onTap={() => goTo('/menu/withdraw')}
+          />
+        </div>
       </div>
     </div>
   )
@@ -164,24 +189,35 @@ function StatsSection() {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[15px] font-bold">{displayHandle(user)}</span>
-            <button
-              type="button"
-              onClick={editHandle}
-              aria-label="Change your handle"
-              className="shrink-0 text-text-3 transition active:scale-90"
-            >
-              <Pencil className="h-3.5 w-3.5" strokeWidth={2.4} />
-            </button>
+            <div className="relative h-[1.375rem] w-[1.375rem] shrink-0">
+              <button
+                type="button"
+                onClick={editHandle}
+                aria-label="Change your handle"
+                className="pointer-events-none flex h-full w-full items-center justify-center text-text-3 transition active:scale-90"
+              >
+                <Pencil className="h-3.5 w-3.5" strokeWidth={2.4} />
+              </button>
+              <HapticOverlay className="absolute inset-0" preset="selection" silent onTap={editHandle} />
+            </div>
           </div>
           <div className="text-sm text-text-3">No plays yet. Make your first play.</div>
         </div>
-        <Link
-          to="/games"
-          onClick={() => haptic('medium')}
-          className="btn-primary rounded-full px-4 py-2 text-xs font-extrabold uppercase tracking-wide"
-        >
-          Play
-        </Link>
+        <div className="relative">
+          <Link
+            to="/games"
+            onClick={() => haptic('medium')}
+            className="pointer-events-none btn-primary flex rounded-full px-4 py-2 text-xs font-extrabold uppercase tracking-wide"
+          >
+            Play
+          </Link>
+          <HapticOverlay
+            className="absolute inset-0 rounded-full"
+            preset="medium"
+            silent
+            onTap={() => void navigate({ to: '/games' })}
+          />
+        </div>
       </div>
     )
   }
@@ -229,6 +265,15 @@ function AchievementsSection() {
           <AchievementCard key={a.slug} a={a} />
         ))}
       </div>
+      <AllAchievementsRow />
+    </section>
+  )
+}
+
+function AllAchievementsRow() {
+  const navigate = useNavigate()
+  return (
+    <div className="relative">
       <Link
         to="/menu/achievements"
         viewTransition
@@ -236,13 +281,23 @@ function AchievementsSection() {
           prepareMenuTransition('forward')
           haptic('selection')
         }}
+        className="pointer-events-none block"
       >
         <div className="surface-skeuo flex items-center justify-between rounded-card p-4 transition-transform active:scale-[0.99]">
           <span className="text-[15px] font-bold">All Achievements</span>
           <span className="text-lg text-text-3">›</span>
         </div>
       </Link>
-    </section>
+      <HapticOverlay
+        className="absolute inset-0 rounded-card"
+        preset="selection"
+        silent
+        onTap={() => {
+          prepareMenuTransition('forward')
+          void navigate({ to: '/menu/achievements', viewTransition: true })
+        }}
+      />
+    </div>
   )
 }
 
@@ -352,38 +407,51 @@ function MenuRow({
   launch?: boolean
 }): ReactNode {
   const drawer = useMenuDrawer()
+  const navigate = useNavigate()
+  const activate = () => {
+    if (launch && drawer) {
+      drawer.closeTo(to)
+      return
+    }
+    prepareMenuTransition('forward')
+    haptic('selection')
+    void navigate({ to, viewTransition: true })
+  }
   return (
-    <Link
-      to={to}
-      viewTransition={!launch}
-      onClick={(e) => {
-        if (launch && drawer) {
-          e.preventDefault()
-          drawer.closeTo(to)
-          return
-        }
-        prepareMenuTransition('forward')
-        haptic('selection')
-      }}
-      className="surface-skeuo flex min-h-24 items-center gap-3 rounded-card px-3 py-1 transition-transform active:scale-[0.99]"
-    >
-      {illo ? (
-        <div className="flex h-20 w-20 shrink-0 items-center justify-center">
-          <Illo name={illo} size={64} />
+    <div className="relative">
+      <Link
+        to={to}
+        viewTransition={!launch}
+        onClick={(e) => {
+          if (launch && drawer) {
+            e.preventDefault()
+            drawer.closeTo(to)
+            return
+          }
+          prepareMenuTransition('forward')
+          haptic('selection')
+        }}
+        className="pointer-events-none surface-skeuo flex min-h-24 items-center gap-3 rounded-card px-3 py-1 transition-transform active:scale-[0.99]"
+      >
+        {illo ? (
+          <div className="flex h-20 w-20 shrink-0 items-center justify-center">
+            <Illo name={illo} size={64} />
+          </div>
+        ) : (
+          <img
+            src={icon}
+            alt=""
+            className="h-20 w-20 shrink-0 object-contain"
+            draggable={false}
+          />
+        )}
+        <div className="ml-1 min-w-0 flex-1">
+          <span className="text-xl font-bold">{title}</span>
+          <div className="text-[15px] text-text-2">{sub}</div>
         </div>
-      ) : (
-        <img
-          src={icon}
-          alt=""
-          className="h-20 w-20 shrink-0 object-contain"
-          draggable={false}
-        />
-      )}
-      <div className="ml-1 min-w-0 flex-1">
-        <span className="text-xl font-bold">{title}</span>
-        <div className="text-[15px] text-text-2">{sub}</div>
-      </div>
-      <span className="pr-2 text-3xl text-text-3">›</span>
-    </Link>
+        <span className="pr-2 text-3xl text-text-3">›</span>
+      </Link>
+      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={activate} />
+    </div>
   )
 }

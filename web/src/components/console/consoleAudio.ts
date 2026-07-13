@@ -165,6 +165,12 @@ export function createAudio() {
   }
 
   function resumeAudio() {
+    // Backgrounding a standalone PWA can drain the context to 'closed' under memory pressure;
+    // a stale closed context would sit here forever producing silent no-ops.
+    if (actx && actx.state === 'closed') {
+      actx = null
+      master = null
+    }
     if (!actx) {
       actx = new AudioContext()
       master = actx.createGain()
@@ -172,7 +178,10 @@ export function createAudio() {
       master.connect(actx.destination)
       loadSfx()
     }
-    if (actx.state === 'suspended') actx.resume()
+    // iOS Safari has a non-standard 'interrupted' state on backgrounding that the spec's
+    // 'suspended'/'running'/'closed' enum doesn't cover; only checking 'suspended' left it
+    // silently stuck interrupted until the app was force-quit and reopened.
+    if (actx.state !== 'running') actx.resume().catch(() => {})
   }
 
   function tone(freq: number, vol: number, type: OscillatorType = 'square') {

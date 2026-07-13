@@ -34,6 +34,12 @@ const saveToken = (token: string | null): void => {
     // private mode / storage disabled: token just stays in memory for the session
   }
 }
+export const clearStoredSession = (): void => {
+  saveToken(null)
+  setAuthToken(null)
+}
+
+export const isSessionRejected = (e: unknown): e is ApiError => e instanceof ApiError && e.status === 401
 
 type AuthStatus = 'loading' | 'authed' | 'anon' | 'error'
 
@@ -145,8 +151,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('[auth] privy logout failed', e)
       }
     }
-    saveToken(null)
-    setAuthToken(null)
+    clearStoredSession()
     setUser(null)
     move('anon')
   }, [move])
@@ -180,9 +185,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       move('authed')
       if (managerLost(u)) void recoverSession() // re-armed session: heal in the background, stay in
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        saveToken(null)
-        setAuthToken(null)
+      if (isSessionRejected(e)) {
+        clearStoredSession()
         setUser(null)
         move('anon')
       }
@@ -191,6 +195,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = useCallback(async () => {
     setError(null) // a fresh attempt clears the last failure so the error sheet drops
+    // A failed Privy verify can leave the provider session alive while our own app session never
+    // lands. The next "login" is then not a real restart, Privy just says the user is already in.
+    // Tear the provider session down on retry so START always means a fresh auth pass.
+    if (isPrivy && status === 'error' && privyControl.current) {
+      try {
+        await privyControl.current.signOut()
+      } catch (e) {
+        console.error('[auth] privy reset before retry failed', e)
+      }
+    }
+    // A new sign-in should never inherit a JWT from an older local backend/env.
+    clearStoredSession()
     if (isDemo()) {
       apply('demo-token', demoUser())
       return
@@ -200,8 +216,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return
     }
     // privy: the bridge owns the Privy login modal + the verify handshake.
-    if (privyControl.current) await privyControl.current.signIn()
-  }, [apply, devLogin])
+    if (privyControl.current) {
+      move('loading')
+      await privyControl.current.signIn()
+    }
+  }, [apply, devLogin, move, status])
 
   // Wallet-connect: connect -> ask the backend for a nonce -> sign it with the wallet -> verify ->
   // apply the session. Demo never uses this (the door hides it). No bridge needed, the Wallet
@@ -303,12 +322,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (managerLost(u)) void recoverSession() // re-armed since last visit: heal in the background
           return
         } catch (e) {
-          if (!(e instanceof ApiError && e.status === 401)) {
+          if (!isSessionRejected(e)) {
             fail(e)
             return
           }
-          saveToken(null)
-          setAuthToken(null)
+          clearStoredSession()
         }
       }
 

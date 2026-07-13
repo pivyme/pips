@@ -2,10 +2,11 @@
 // chrome (status strip, action buttons, knob, Menu/Games tabs) stays put and
 // is driven by whatever screen registered via useConsoleControls().
 // CSS/SVG fidelity for now; a 3D pass comes later (docs/DESIGN.md "The Device").
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { cnm } from '@/utils/style'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { useAuth } from '@/lib/auth'
 import { isDemo } from '@/lib/demo'
 import { formatStringToNumericDecimals } from '@/utils/format'
@@ -35,18 +36,25 @@ function ActionButton({
 }) {
   const unavailable = !spec
   return (
-    <button
-      type="button"
-      disabled={unavailable}
-      onPointerDown={() => !unavailable && haptic('medium')}
-      onClick={() => !unavailable && onPress()}
-      className={cnm(
-        'flex h-full w-full items-center justify-center whitespace-pre-line rounded-md text-center text-sm font-bold uppercase leading-tight tracking-wide transition-transform',
-        unavailable ? 'bg-surface/40 text-text-3 border border-line' : colorClasses(spec.color),
-      )}
-    >
-      {spec?.label ?? ''}
-    </button>
+    <div className="relative h-full w-full">
+      <button
+        type="button"
+        disabled={unavailable}
+        onClick={() => !unavailable && onPress()}
+        className={cnm(
+          'pointer-events-none flex h-full w-full items-center justify-center whitespace-pre-line rounded-md text-center text-sm font-bold uppercase leading-tight tracking-wide transition-transform',
+          unavailable ? 'bg-surface/40 text-text-3 border border-line' : colorClasses(spec.color),
+        )}
+      >
+        {spec?.label ?? ''}
+      </button>
+      <HapticOverlay
+        className="absolute inset-0"
+        preset="medium"
+        disabled={unavailable}
+        onTap={onPress}
+      />
+    </div>
   )
 }
 
@@ -59,18 +67,25 @@ function MainButton({
 }) {
   const unavailable = !spec
   return (
-    <button
-      type="button"
-      disabled={unavailable}
-      onPointerDown={() => !unavailable && haptic('rigid')}
-      onClick={() => !unavailable && onPress()}
-      className={cnm(
-        'flex h-[68px] w-full items-center justify-center rounded-card text-center text-base font-extrabold uppercase tracking-wide transition-transform',
-        unavailable ? 'bg-surface/40 text-text-3 border border-line' : colorClasses(spec.color ?? 'amber'),
-      )}
-    >
-      {spec?.loading ? '···' : (spec?.label ?? 'PLAY')}
-    </button>
+    <div className="relative w-full">
+      <button
+        type="button"
+        disabled={unavailable}
+        onClick={() => !unavailable && onPress()}
+        className={cnm(
+          'pointer-events-none flex h-[68px] w-full items-center justify-center rounded-card text-center text-base font-extrabold uppercase tracking-wide transition-transform',
+          unavailable ? 'bg-surface/40 text-text-3 border border-line' : colorClasses(spec.color ?? 'amber'),
+        )}
+      >
+        {spec?.loading ? '···' : (spec?.label ?? 'PLAY')}
+      </button>
+      <HapticOverlay
+        className="absolute inset-0"
+        preset="rigid"
+        disabled={unavailable}
+        onTap={onPress}
+      />
+    </div>
   )
 }
 
@@ -118,6 +133,7 @@ function StatusStrip({ status, balance }: { status: ConsoleView['status']; balan
 export function ConsoleShell({ children }: { children: ReactNode }) {
   const { view, handlers } = useConsoleView()
   const { user } = useAuth()
+  const navigate = useNavigate()
 
   return (
     <div className="flex h-full w-full select-none flex-col bg-black">
@@ -137,12 +153,36 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             <ActionButton spec={view.action2} onPress={() => handlers.current.action2?.()} />
           </div>
           <div className="flex gap-2">
-            <Link to="/menu" activeOptions={{ exact: false }} onClick={() => haptic('selection')} className="flex-1">
-              {({ isActive }) => <TabPill label="Menu" active={isActive} />}
-            </Link>
-            <Link to="/games" activeOptions={{ exact: false }} onClick={() => haptic('selection')} className="flex-1">
-              {({ isActive }) => <TabPill label="Home" active={isActive} />}
-            </Link>
+            <div className="relative flex-1">
+              <Link
+                to="/menu"
+                activeOptions={{ exact: false }}
+                onClick={() => haptic('selection')}
+                className="pointer-events-none block"
+              >
+                {({ isActive }) => <TabPill label="Menu" active={isActive} />}
+              </Link>
+              <HapticOverlay
+                className="absolute inset-0"
+                preset="selection"
+                onTap={() => navigate({ to: '/menu' })}
+              />
+            </div>
+            <div className="relative flex-1">
+              <Link
+                to="/games"
+                activeOptions={{ exact: false }}
+                onClick={() => haptic('selection')}
+                className="pointer-events-none block"
+              >
+                {({ isActive }) => <TabPill label="Home" active={isActive} />}
+              </Link>
+              <HapticOverlay
+                className="absolute inset-0"
+                preset="selection"
+                onTap={() => navigate({ to: '/games' })}
+              />
+            </div>
           </div>
         </div>
 

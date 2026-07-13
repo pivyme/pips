@@ -14,6 +14,7 @@ import {
 import { useRouter, useRouterState } from '@tanstack/react-router'
 import type { AnimationEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 // Lets a menu item slide the drawer away before navigating (e.g. Customize handing off to its
@@ -249,9 +250,9 @@ export function MenuDrawer({
       <div
         ref={scrimRef}
         className="drawer-scrim absolute inset-0 bg-black/22 backdrop-blur-[9px]"
-        onClick={close}
         aria-hidden
       />
+      <HapticOverlay className="absolute inset-0" preset="selection" silent onTap={close} />
 
       <div
         ref={sheetRef}

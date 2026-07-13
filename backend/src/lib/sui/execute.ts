@@ -166,6 +166,42 @@ async function refGasPrice(): Promise<bigint> {
   return price;
 }
 
+// A sponsored play draws gas from the sponsor's SUI address balance (empty gas payment). Sui's
+// replay protection then requires the tx to carry EITHER an address-owned input OR a ValidDuring
+// expiration (at most two epochs wide). Every Predict tx we build is all shared-object inputs
+// (manager, predict, oracle, clock, plus the freshly created manager), so it has no owned input,
+// and unlike the generic core resolver the gRPC client's resolver does NOT auto-add the expiration
+// at build(). Without it the node rejects at input-object check: "Invalid transaction expiration:
+// Transactions must either have address-owned inputs, or a ValidDuring expiration with at most two
+// epochs of validity", which was looping manager creation (and would block every sponsored play).
+// So we set a fresh single-epoch ValidDuring ourselves. Epoch + chain id are cached: devnet/localnet
+// epochs are long, and a stale-by-one epoch stays valid because the window spans [epoch, epoch+1].
+let chainCtxCache: { epoch: bigint; chain: string; at: number } | null = null;
+async function chainCtx(): Promise<{ epoch: bigint; chain: string }> {
+  const now = Date.now();
+  if (chainCtxCache && now - chainCtxCache.at < 30_000) return chainCtxCache;
+  const [state, id] = await Promise.all([
+    suiClient.core.getCurrentSystemState(),
+    suiClient.core.getChainIdentifier(),
+  ]);
+  chainCtxCache = { epoch: BigInt(state.systemState.epoch), chain: id.chainIdentifier, at: now };
+  return chainCtxCache;
+}
+
+async function applySponsorExpiration(tx: Transaction): Promise<void> {
+  const { epoch, chain } = await chainCtx();
+  tx.setExpiration({
+    ValidDuring: {
+      minEpoch: epoch.toString(),
+      maxEpoch: (epoch + 1n).toString(),
+      minTimestamp: null,
+      maxTimestamp: null,
+      chain,
+      nonce: (Math.random() * 0x100000000) >>> 0,
+    },
+  });
+}
+
 // Tagged so callers can tell a budget overrun (the call may still be completing on the node) apart
 // from a real rejection (a clean revert that definitively did not land). The message format is kept
 // identical to the previous generic Error, so any message-based matching still works.
@@ -308,7 +344,10 @@ export async function executeForUser(tx: Transaction, ctx: UserContext): Promise
   // Gas sponsorship: name the sponsor as gas owner with an empty payment, so gas is drawn from the
   // sponsor's SUI address balance and the user needs zero SUI. The sponsor co-signs the same bytes
   // below. Off (no sponsor key) leaves the user as their own gas payer (funded at onboarding).
-  if (SPONSOR_ENABLED) applySponsorGas(tx);
+  if (SPONSOR_ENABLED) {
+    applySponsorGas(tx);
+    await applySponsorExpiration(tx); // empty-payment gas needs a ValidDuring expiration (see above)
+  }
   tx.setGasBudget(PLAY_GAS_BUDGET); // pin a generous budget so tx.build skips its gas-sizing dry-run (~0.5s)
   // Hard timeouts so a stalled node/Privy connection surfaces a clean error instead of leaving the
   // play pending forever. Build/sign make no chain change, so their timeouts are unambiguous failures.
@@ -337,7 +376,10 @@ async function executeAsCustodialWallet(tx: Transaction, ctx: UserContext): Prom
   const keypair = loadCustodialKeypair(ctx.playWalletSecret);
   tx.setSender(ctx.address);
   tx.setGasPrice(await refGasPrice());
-  if (SPONSOR_ENABLED) applySponsorGas(tx);
+  if (SPONSOR_ENABLED) {
+    applySponsorGas(tx);
+    await applySponsorExpiration(tx); // empty-payment gas needs a ValidDuring expiration (see above)
+  }
   tx.setGasBudget(PLAY_GAS_BUDGET);
   const txBytes = await withTimeout(tx.build({ client: suiClient }), 15_000, 'tx build');
   const { signature: userSig } = await keypair.signTransaction(txBytes);

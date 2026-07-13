@@ -5,8 +5,10 @@
 // EMPTY gas payment, so gas is drawn from the wallet's SUI address balance (an accumulator), not an
 // owned gas coin. With no owned gas coin in the tx, concurrent plays from different users share zero
 // owned objects and can never equivocate (the classic single-gas-coin failure that freezes a coin
-// until epoch end). Our localnet has enable_address_balance_gas_payments=true, and the SDK resolves
-// the required single-epoch expiration automatically at build() when the payment is empty.
+// until epoch end). Our localnet has enable_address_balance_gas_payments=true. Address-balance gas
+// with no owned input needs a ValidDuring expiration for replay protection; the gRPC client's
+// resolver does NOT add it at build() (only the generic core resolver does), so execute.ts sets one
+// explicitly via applySponsorExpiration on every sponsored tx.
 //
 // The sponsor only ever signs as the gas owner, so it can authorize gas but never move a user's
 // funds. Keep this address single-purpose (gas only) per Sui guidance, so nothing else contends for

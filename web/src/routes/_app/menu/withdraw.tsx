@@ -8,6 +8,7 @@ import { Button } from '@/ui/Button'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import {
   formatStringToNumericDecimals,
   serializeFormattedStringToFloat,
@@ -74,12 +75,15 @@ function WithdrawScreen() {
             <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">
               Amount
             </span>
-            <button
-              onClick={setMax}
-              className="rounded-full bg-white/[0.06] px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-500 transition-transform active:scale-95"
-            >
-              Max
-            </button>
+            <div className="relative inline-block">
+              <button
+                onClick={setMax}
+                className="pointer-events-none rounded-full bg-white/[0.06] px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-500 transition-transform active:scale-95"
+              >
+                Max
+              </button>
+              <HapticOverlay className="absolute inset-0 rounded-full" preset="selection" silent onTap={setMax} />
+            </div>
           </div>
           <div className="mt-2 flex items-baseline gap-1">
             <span className="text-2xl font-black text-text-3">$</span>
@@ -127,17 +131,26 @@ function WithdrawScreen() {
           )}
         </div>
 
-        <Button
-          onClick={submit}
-          disabled={!canSubmit}
-          loading={submitting}
-          className="h-14 w-full rounded-card"
-        >
-          <ArrowUpFromLine className="h-5 w-5" strokeWidth={2.6} />
-          {amountOk
-            ? `Withdraw $${formatStringToNumericDecimals(String(amountNum), 2)}`
-            : 'Withdraw'}
-        </Button>
+        <div className="relative h-14 w-full">
+          <Button
+            onClick={submit}
+            disabled={!canSubmit}
+            loading={submitting}
+            className="pointer-events-none h-14 w-full rounded-card"
+          >
+            <ArrowUpFromLine className="h-5 w-5" strokeWidth={2.6} />
+            {amountOk
+              ? `Withdraw $${formatStringToNumericDecimals(String(amountNum), 2)}`
+              : 'Withdraw'}
+          </Button>
+          <HapticOverlay
+            className="absolute inset-0 rounded-card"
+            preset="medium"
+            disabled={!canSubmit}
+            silent
+            onTap={() => void submit()}
+          />
+        </div>
 
         <p className="px-1 text-[13px] leading-snug text-text-3">
           Sends DUSDC from your balance to any PIPS-network Sui address. Check

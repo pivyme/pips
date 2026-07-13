@@ -11,7 +11,7 @@ import { PrivyProvider, useLogin, usePrivy } from '@privy-io/react-auth'
 import { env } from '@/env'
 import { api, setAuthToken } from '@/lib/api'
 import { isDemo } from '@/lib/demo'
-import { loadToken, toAuthError, useAuthControl } from '@/lib/auth'
+import { clearStoredSession, isSessionRejected, loadToken, toAuthError, useAuthControl } from '@/lib/auth'
 
 // Privy is active only in privy mode with an app id configured, and never in demo mode.
 export const PRIVY_ENABLED = env.VITE_AUTH_MODE === 'privy' && Boolean(env.VITE_PRIVY_APP_ID) && !isDemo()
@@ -87,7 +87,8 @@ function PrivyBridge() {
             authedFor.current = user?.id ?? ''
             control.apply(existing, u)
             return
-          } catch {
+          } catch (e) {
+            if (isSessionRejected(e)) clearStoredSession()
             // expired/invalid: mint a fresh one below
           }
         }
@@ -104,6 +105,8 @@ function PrivyBridge() {
         authedFor.current = user?.id ?? ''
         control.apply(appToken, u)
       } catch (e) {
+        authedFor.current = null
+        clearStoredSession()
         console.error('[privy] sign-in failed', e)
         control.setStatus('error', toAuthError(e))
       } finally {

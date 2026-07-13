@@ -8,6 +8,7 @@ import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { isDemo, resetDemo } from '@/lib/demo'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 
 // Sound, haptics, reduced motion. No save button: each toggle persists immediately (PATCH
 // /settings) with a haptic tick, no confirm. Reduced motion flows back through the auth user, so
@@ -83,17 +84,28 @@ function SettingsScreen() {
               Play money, nothing on chain. Reset to restore the starting
               balance and record.
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                haptic('rigid')
-                resetDemo()
-                window.location.reload()
-              }}
-              className="mt-3 rounded-full border border-line bg-surface px-4 py-1.5 text-xs font-bold uppercase tracking-wide text-text-2 active:scale-[0.97]"
-            >
-              Reset demo data
-            </button>
+            <div className="relative mt-3 inline-block">
+              <button
+                type="button"
+                onClick={() => {
+                  haptic('rigid')
+                  resetDemo()
+                  window.location.reload()
+                }}
+                className="pointer-events-none rounded-full border border-line bg-surface px-4 py-1.5 text-xs font-bold uppercase tracking-wide text-text-2 active:scale-[0.97]"
+              >
+                Reset demo data
+              </button>
+              <HapticOverlay
+                className="absolute inset-0 rounded-full"
+                preset="rigid"
+                silent
+                onTap={() => {
+                  resetDemo()
+                  window.location.reload()
+                }}
+              />
+            </div>
           </div>
         )}
       </div>

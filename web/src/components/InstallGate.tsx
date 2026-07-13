@@ -8,6 +8,7 @@ import type { ReactNode } from 'react'
 import { motion } from 'motion/react'
 import toast from 'react-hot-toast'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { cnm } from '@/utils/style'
 import type { InstallContext, InstallGateState } from '@/lib/platform'
 
@@ -193,7 +194,6 @@ function Step({ n, children }: { n: number; children: ReactNode }) {
 
 function CopyLinkButton() {
   const copy = async () => {
-    haptic('rigid')
     try {
       await navigator.clipboard.writeText(window.location.href)
       toast.success('Link copied')
@@ -202,14 +202,17 @@ function CopyLinkButton() {
     }
   }
   return (
-    <button
-      type="button"
-      onClick={() => void copy()}
-      className="btn-primary mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-full text-[15px]"
-    >
-      <LinkGlyph className="h-[18px] w-[18px]" />
-      Copy link
-    </button>
+    <div className="relative mt-5 w-full">
+      <button
+        type="button"
+        onClick={() => void copy()}
+        className="btn-primary pointer-events-none flex h-12 w-full items-center justify-center gap-2 rounded-full text-[15px]"
+      >
+        <LinkGlyph className="h-[18px] w-[18px]" />
+        Copy link
+      </button>
+      <HapticOverlay className="absolute inset-0 rounded-full" preset="rigid" onTap={() => void copy()} />
+    </div>
   )
 }
 

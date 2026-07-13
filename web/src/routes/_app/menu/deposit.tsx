@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth'
 import { api, ApiError } from '@/lib/api'
 import { explorerAddressUrl } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 
 // Receive DUSDC. Pure address screen, no chain call: anything sent to this address lands in the
 // balance. We poll /auth/me lightly while it's open so an incoming deposit shows up on its own.

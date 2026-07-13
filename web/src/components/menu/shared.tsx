@@ -1,9 +1,10 @@
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronLeft } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Illo } from '@/ui/Illo'
 import { Button } from '@/ui/Button'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { cnm } from '@/utils/style'
 
 export function prepareMenuTransition(direction: 'forward' | 'back') {
@@ -67,21 +68,29 @@ export function MenuHeader({
   title: string
   showBack?: boolean
 }) {
+  const navigate = useNavigate()
+  const goBack = () => {
+    prepareMenuTransition('back')
+    void navigate({ to: '/menu', viewTransition: true })
+  }
   return (
     <header className="sticky top-0 z-30 -mx-4 h-[76px] bg-[linear-gradient(180deg,#000_0%,#000_52%,rgba(0,0,0,0.72)_72%,rgba(0,0,0,0)_100%)]">
       {showBack && (
-        <Link
-          to="/menu"
-          viewTransition
-          onClick={() => {
-            prepareMenuTransition('back')
-            haptic('selection')
-          }}
-          aria-label="Back to menu"
-          className="absolute left-4 top-1 flex h-12 w-12 items-center justify-center rounded-full border border-white/[0.09] bg-white/[0.12] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_10px_28px_-14px_rgba(0,0,0,1)] backdrop-blur-sm transition-transform active:scale-95"
-        >
-          <ChevronLeft className="h-7 w-7" strokeWidth={3} />
-        </Link>
+        <div className="absolute left-4 top-1 h-12 w-12">
+          <Link
+            to="/menu"
+            viewTransition
+            onClick={() => {
+              prepareMenuTransition('back')
+              haptic('selection')
+            }}
+            aria-label="Back to menu"
+            className="pointer-events-none flex h-12 w-12 items-center justify-center rounded-full border border-white/[0.09] bg-white/[0.12] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_10px_28px_-14px_rgba(0,0,0,1)] backdrop-blur-sm transition-transform active:scale-95"
+          >
+            <ChevronLeft className="h-7 w-7" strokeWidth={3} />
+          </Link>
+          <HapticOverlay className="absolute inset-0 rounded-full" preset="selection" silent onTap={goBack} />
+        </div>
       )}
       <h1
         className={

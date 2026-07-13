@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'motion/react'
 import { config } from '@/config'
 import { env } from '@/env'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { isDemo, setDemoOverride } from '@/lib/demo'
 import { accessGuardEnabled, isUnlocked, tryUnlock } from '@/lib/accessGuard'
 import { cnm } from '@/utils/style'
@@ -211,14 +212,23 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
           </span>
         )}
 
-        <button
-          type="button"
-          onClick={() => void onCta()}
-          disabled={busy}
-          className="btn-primary pointer-events-auto mt-6 flex h-14 w-full items-center justify-center rounded-full text-lg disabled:opacity-70"
-        >
-          {label}
-        </button>
+        <div className="relative pointer-events-auto mt-6 w-full">
+          <button
+            type="button"
+            onClick={() => void onCta()}
+            disabled={busy}
+            className="btn-primary pointer-events-none flex h-14 w-full items-center justify-center rounded-full text-lg disabled:opacity-70"
+          >
+            {label}
+          </button>
+          <HapticOverlay
+            className="absolute inset-0 rounded-full"
+            preset="rigid"
+            disabled={busy}
+            silent
+            onTap={() => void onCta()}
+          />
+        </div>
 
         {/* Connect Sui Wallet button hidden for now. Uncomment to bring native wallet connect back.
         {walletEnabled && (
@@ -234,13 +244,16 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
         )}
         */}
 
-        <button
-          type="button"
-          onClick={() => toggleDemo(!demo)}
-          className="pointer-events-auto mt-3.5 text-sm font-semibold text-text-3 underline underline-offset-4 transition-colors hover:text-text-2"
-        >
-          {demo ? 'Connect for real instead' : 'Just exploring? Try demo mode'}
-        </button>
+        <div className="relative pointer-events-auto mt-3.5 inline-block">
+          <button
+            type="button"
+            onClick={() => toggleDemo(!demo)}
+            className="pointer-events-none text-sm font-semibold text-text-3 underline underline-offset-4 transition-colors hover:text-text-2"
+          >
+            {demo ? 'Connect for real instead' : 'Just exploring? Try demo mode'}
+          </button>
+          <HapticOverlay className="absolute inset-0" preset="selection" silent onTap={() => toggleDemo(!demo)} />
+        </div>
 
         <div className="mt-5 flex flex-col items-center gap-1.5">
           <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-3">
@@ -350,16 +363,23 @@ function SignInErrorSheet({
                   >
                     Try again
                   </button>
-                  <a
-                    href={config.links.support}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => haptic('rigid')}
-                    className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-full border border-line-strong bg-canvas text-[14px] font-bold text-text transition-colors hover:bg-surface-2"
-                  >
-                    <TelegramGlyph className="size-4" />
-                    Telegram
-                  </a>
+                  <div className="relative h-11 flex-1">
+                    <a
+                      href={config.links.support}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => haptic('rigid')}
+                      className="pointer-events-none flex h-11 w-full items-center justify-center gap-1.5 rounded-full border border-line-strong bg-canvas text-[14px] font-bold text-text transition-colors hover:bg-surface-2"
+                    >
+                      <TelegramGlyph className="size-4" />
+                      Telegram
+                    </a>
+                    <HapticOverlay
+                      className="absolute inset-0 rounded-full"
+                      preset="rigid"
+                      onTap={() => window.open(config.links.support, '_blank', 'noopener,noreferrer')}
+                    />
+                  </div>
                 </div>
               </>
             ) : (
@@ -382,16 +402,23 @@ function SignInErrorSheet({
                   </div>
                 )}
 
-                <a
-                  href={config.links.support}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => haptic('rigid')}
-                  className="btn-primary mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-full text-[15px]"
-                >
-                  <TelegramGlyph className="size-4.5" />
-                  Message us on Telegram
-                </a>
+                <div className="relative mt-5 w-full">
+                  <a
+                    href={config.links.support}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => haptic('rigid')}
+                    className="btn-primary pointer-events-none flex h-12 w-full items-center justify-center gap-2 rounded-full text-[15px]"
+                  >
+                    <TelegramGlyph className="size-4.5" />
+                    Message us on Telegram
+                  </a>
+                  <HapticOverlay
+                    className="absolute inset-0 rounded-full"
+                    preset="rigid"
+                    onTap={() => window.open(config.links.support, '_blank', 'noopener,noreferrer')}
+                  />
+                </div>
 
                 <div className="mt-2.5 flex items-center gap-2">
                   <button
@@ -517,14 +544,23 @@ function AccessCodeSheet({
               <p className="mt-2 text-center text-[12.5px] font-semibold text-down">That code didn't work.</p>
             )}
 
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!code.trim()}
-              className="btn-primary mt-4 flex h-12 w-full items-center justify-center rounded-full text-[15px] disabled:opacity-50"
-            >
-              Unlock
-            </button>
+            <div className="relative mt-4 w-full">
+              <button
+                type="button"
+                onClick={submit}
+                disabled={!code.trim()}
+                className="btn-primary pointer-events-none flex h-12 w-full items-center justify-center rounded-full text-[15px] disabled:opacity-50"
+              >
+                Unlock
+              </button>
+              <HapticOverlay
+                className="absolute inset-0 rounded-full"
+                preset="rigid"
+                disabled={!code.trim()}
+                silent
+                onTap={submit}
+              />
+            </div>
           </motion.div>
         </motion.div>
       )}

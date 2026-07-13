@@ -12,8 +12,22 @@ function audio(): AudioContext | null {
   if (typeof window === 'undefined') return null
   const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!Ctx) return null
+  // Backgrounding a standalone PWA can leave the context 'closed'. A stale closed context would
+  // otherwise sit here forever producing silent no-ops, so drop it and build a fresh one.
+  if (ctx && ctx.state === 'closed') {
+    ctx = null
+    synthBus = null
+  }
   if (!ctx) ctx = new Ctx()
   return ctx
+}
+
+// iOS Safari has a non-standard 'interrupted' state (backgrounding a standalone PWA) that the
+// spec's 'suspended'/'running'/'closed' enum doesn't cover. Code that only checked for
+// 'suspended' never resumed an interrupted context, so it stayed silent until the whole app was
+// killed and reopened. Treat anything other than 'running' as needing a resume.
+function ensureRunning(ac: AudioContext): void {
+  if (ac.state !== 'running') ac.resume().catch(() => {})
 }
 
 // Master level for all synth voices (one-shots + BGM). The device SFX in consoleAudio.ts decode at
@@ -49,7 +63,19 @@ export function setSoundEnabled(value: boolean): void {
 // SFX unlock) so the context is live before any sound is asked for.
 export function unlockAudio(): void {
   const ac = audio()
-  if (ac && ac.state === 'suspended') void ac.resume()
+  if (ac) ensureRunning(ac)
+}
+
+// Re-arm the synth context when the app returns to the foreground. A backgrounded standalone PWA
+// on iOS drops the AudioContext into 'interrupted' (or drains it to 'closed' under memory
+// pressure); without this, sound/music stayed dead until the whole app was force-quit and
+// reopened, because nothing ever prompted a resume until the next sound happened to fire.
+if (typeof document !== 'undefined') {
+  const onForeground = () => {
+    if (document.visibilityState === 'visible') unlockAudio()
+  }
+  document.addEventListener('visibilitychange', onForeground)
+  window.addEventListener('pageshow', onForeground)
 }
 
 // A short percussive blip at a frequency, shaped by a quick attack + exponential decay.
@@ -104,7 +130,7 @@ export function welcomeJingle(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   // A rising spread, each note a touch behind the last, decaying long so they ring together.
   const climb: Array<[number, number, number]> = [
@@ -130,7 +156,7 @@ export function achievementUnlock(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
 
   // Bass foundation: a deep sub plus a filtered low octave for body. Swells in soft, holds, fades long,
@@ -179,7 +205,7 @@ export function sound(kind: Sound): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   if (kind === 'win') {
     // Rising major third: a small, satisfying "ding".
@@ -202,7 +228,7 @@ export function slotSpin(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const src = ac.createBufferSource()
   src.buffer = noise(ac)
@@ -230,7 +256,7 @@ export function slotTick(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const src = ac.createBufferSource()
   src.buffer = noise(ac)
@@ -254,7 +280,7 @@ export function slotLock(step: number, last = false): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   // warm body thunk
   const o = ac.createOscillator()
@@ -292,7 +318,7 @@ export function slotPick(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   bell(ac, 987.77, t, 0.16, 0.045) // B5
   bell(ac, 1318.51, t + 0.06, 0.18, 0.05) // E6
@@ -416,7 +442,7 @@ export function startLuckyBgm(): void {
   if (!enabled || luckyTimer) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const bus = ac.createGain()
   bus.gain.setValueAtTime(0.0001, ac.currentTime)
   bus.gain.exponentialRampToValueAtTime(0.24, ac.currentTime + 0.5) // a touch more present, room for the bass
@@ -425,7 +451,7 @@ export function startLuckyBgm(): void {
   luckyStepIdx = 0
   luckyNext = ac.currentTime + 0.08
   luckyTimer = setInterval(() => {
-    if (!ac || !luckyBus) return
+    if (!ac || !luckyBus || ac.state !== 'running') return
     while (luckyNext < ac.currentTime + 0.1) {
       luckyStepAt(ac, luckyBus, luckyStepIdx, luckyNext)
       luckyNext += LUCKY_STEP
@@ -458,7 +484,7 @@ export function luckyWin(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -483,7 +509,7 @@ export function luckyCashout(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -507,7 +533,7 @@ export function luckyLose(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -645,7 +671,7 @@ export function startBgm(): void {
   if (!enabled || bgmTimer) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const bus = ac.createGain()
   bus.gain.setValueAtTime(0.0001, ac.currentTime)
   bus.gain.exponentialRampToValueAtTime(0.3, ac.currentTime + 0.6) // ease the bed in (kept low: it's a bed)
@@ -654,7 +680,7 @@ export function startBgm(): void {
   bgmStepIdx = 0
   bgmNext = ac.currentTime + 0.08
   bgmTimer = setInterval(() => {
-    if (!ac || !bgmBus) return
+    if (!ac || !bgmBus || ac.state !== 'running') return
     while (bgmNext < ac.currentTime + 0.1) {
       bgmStepAt(ac, bgmBus, bgmStepIdx, bgmNext)
       bgmNext += BGM_STEP
@@ -697,7 +723,7 @@ export function hopScore(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const climb = Math.min(hopCombo, HOP_CAP) / HOP_CAP
   const base = HOP_BASE * Math.pow(2, HOP_RANGE * climb)
@@ -722,7 +748,7 @@ export function hopLose(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const f = ac.createBiquadFilter()
   f.type = 'lowpass'
@@ -856,7 +882,7 @@ export function startRangeBgm(): void {
   if (!enabled || rangeTimer) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const bus = ac.createGain()
   bus.gain.setValueAtTime(0.0001, ac.currentTime)
   bus.gain.exponentialRampToValueAtTime(0.26, ac.currentTime + 0.4)
@@ -865,7 +891,7 @@ export function startRangeBgm(): void {
   rangeStepIdx = 0
   rangeNext = ac.currentTime + 0.08
   rangeTimer = setInterval(() => {
-    if (!ac || !rangeBus) return
+    if (!ac || !rangeBus || ac.state !== 'running') return
     while (rangeNext < ac.currentTime + 0.1) {
       rangeStepAt(ac, rangeBus, rangeStepIdx, rangeNext)
       rangeNext += RANGE_STEP
@@ -895,7 +921,7 @@ export function rangeLock(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -918,7 +944,7 @@ export function rangeCross(inside: boolean): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -943,7 +969,7 @@ export function rangeBuzzer(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const src = ac.createBufferSource()
   src.buffer = noise(ac)
@@ -978,7 +1004,7 @@ export function rangeWin(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -1001,7 +1027,7 @@ export function rangeLose(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -1238,7 +1264,7 @@ export function startMoonshotBgm(): void {
   if (!enabled || moonTimer) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const bus = ac.createGain()
   bus.gain.setValueAtTime(0.0001, ac.currentTime)
   bus.gain.exponentialRampToValueAtTime(0.26, ac.currentTime + 0.5) // driving, present, but still a bed
@@ -1247,7 +1273,7 @@ export function startMoonshotBgm(): void {
   moonStepIdx = 0
   moonNext = ac.currentTime + 0.08
   moonTimer = setInterval(() => {
-    if (!ac || !moonBus) return
+    if (!ac || !moonBus || ac.state !== 'running') return
     while (moonNext < ac.currentTime + 0.1) {
       moonStepAt(ac, moonBus, moonStepIdx, moonNext)
       moonNext += MOON_STEP
@@ -1278,7 +1304,7 @@ export function moonshotFire(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   // launch thump
   const o = ac.createOscillator()
@@ -1318,7 +1344,7 @@ export function moonshotFlip(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const src = ac.createBufferSource()
   src.buffer = noise(ac)
@@ -1341,7 +1367,7 @@ export function moonshotWin(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -1366,7 +1392,7 @@ export function moonshotCashout(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -1390,7 +1416,7 @@ export function moonshotLose(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -1571,7 +1597,7 @@ export function startRideBgm(): void {
   if (!enabled || rideTimer) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const bus = ac.createGain()
   bus.gain.setValueAtTime(0.0001, ac.currentTime)
   bus.gain.exponentialRampToValueAtTime(0.2, ac.currentTime + 0.8) // ease in, dreamy (it's a bed)
@@ -1588,7 +1614,7 @@ export function startRideBgm(): void {
   rideStepIdx = 0
   rideNext = ac.currentTime + 0.1
   rideTimer = setInterval(() => {
-    if (!ac || !rideBedBus) return
+    if (!ac || !rideBedBus || ac.state !== 'running') return
     while (rideNext < ac.currentTime + 0.1) {
       rideStepAt(ac, rideBedBus, rideStepIdx, rideNext)
       rideNext += RIDE_STEP
@@ -1639,7 +1665,7 @@ export function rideStart(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const src = ac.createBufferSource()
   src.buffer = noise(ac)
@@ -1665,7 +1691,7 @@ export function rideCrash(): void {
   if (!enabled) return
   const ac = audio()
   if (!ac) return
-  if (ac.state === 'suspended') void ac.resume()
+  ensureRunning(ac)
   const t = ac.currentTime
   const o = ac.createOscillator()
   const g = ac.createGain()
