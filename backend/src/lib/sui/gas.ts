@@ -7,7 +7,7 @@ import { Transaction } from '@mysten/sui/transactions';
 
 import { suiClient } from './client.ts';
 import { executeAsOperator } from './execute.ts';
-import { mintDusdc, getDusdcBalanceRaw } from './dusdc.ts';
+import { mintDusdc, getDusdcBalanceRaw, DUSDC_MINTABLE } from './dusdc.ts';
 import { operatorAddress, settlementAddress, SETTLEMENT_ENABLED, treasuryAddress, TREASURY_ENABLED } from './signer.ts';
 import { SPONSOR_ENABLED, ensureSponsorAccumulator } from './sponsor.ts';
 import {
@@ -98,8 +98,12 @@ export async function ensureTreasuryFunded(): Promise<void> {
     console.log(`[treasury] funded ${TREASURY_TOPUP_SUI} SUI to ${treasuryAddress}`);
   }
   if ((await getDusdcBalanceRaw(treasuryAddress)) < TREASURY_MIN_DUSDC_RAW) {
-    await mintDusdc(treasuryAddress, TREASURY_TOPUP_DUSDC);
-    console.log(`[treasury] minted ${TREASURY_TOPUP_DUSDC} DUSDC to ${treasuryAddress}`);
+    if (!DUSDC_MINTABLE) {
+      console.warn(`[treasury] DUSDC below floor and not mintable on this deployment; needs a manual top-up to ${treasuryAddress}`);
+    } else {
+      await mintDusdc(treasuryAddress, TREASURY_TOPUP_DUSDC);
+      console.log(`[treasury] minted ${TREASURY_TOPUP_DUSDC} DUSDC to ${treasuryAddress}`);
+    }
   }
 }
 

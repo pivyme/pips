@@ -9,10 +9,11 @@
 
 import cron from 'node-cron';
 
-import { EXPIRY_SAFETY_MS, MARKET_SYNC_CRON, OPERATOR_ENABLED, ORACLE_LIFETIME_MS } from '../config/main-config.ts';
-import { PACKAGE_ID } from '../lib/sui/config.ts';
+import { EXPIRY_SAFETY_MS, MARKET_SYNC_CRON, OPERATOR_ENABLED, ORACLE_LIFETIME_MS, PREDICT_SERVER_URL } from '../config/main-config.ts';
+import { PACKAGE_ID, PREDICT_ID } from '../lib/sui/config.ts';
 import { graphqlClient } from '../lib/sui/client.ts';
 import { readOracle, readOracleGrid } from '../lib/sui/predict.ts';
+import { listActiveOracles, getOracleSpot } from '../lib/sui/predict-server.ts';
 import { allMarkets, removeMarket, upsertMarket } from '../lib/sui/markets.ts';
 
 const ORACLE_ACTIVATED_EVENT = `${PACKAGE_ID}::oracle::OracleActivated`;
@@ -79,12 +80,48 @@ async function liveCandidateIds(now: number): Promise<string[]> {
   return [...ids];
 }
 
+// Discovery via a third-party Predict discovery server (PREDICT_SERVER_URL set): used when we don't
+// own this deployment's AdminCap/oracle caps, so we can't assume its internal grid object layout.
+// The server already returns min_strike/tick_size/expiry/status per oracle directly, and a live
+// spot per oracle via /state, both already 1e9-scaled to match our Market shape.
+const syncFromPredictServer = async (): Promise<void> => {
+  const t = Date.now();
+  const active = await listActiveOracles(PREDICT_ID);
+  await Promise.all(
+    active.map(async (o) => {
+      if (o.expiry - t <= EXPIRY_SAFETY_MS) return;
+      try {
+        const spot = await getOracleSpot(o.oracle_id);
+        upsertMarket({
+          oracleId: o.oracle_id,
+          capId: o.oracle_cap_id, // informational only, we never push/settle with it
+          underlying: o.underlying_asset,
+          expiryMs: o.expiry,
+          minStrike: String(o.min_strike),
+          tickSize: String(o.tick_size),
+          settled: false,
+          spot1e9: spot != null ? String(spot) : undefined,
+          lastPushAt: t,
+        });
+      } catch {
+        // transient fetch error on one oracle; the next tick re-reads it
+      }
+    }),
+  );
+  const liveIds = new Set(active.map((o) => o.oracle_id));
+  for (const m of allMarkets()) {
+    if (m.settled || m.expiryMs <= t || !liveIds.has(m.oracleId)) removeMarket(m.oracleId);
+  }
+};
+
 let isRunning = false;
 
 const sync = async (): Promise<void> => {
   if (isRunning) return;
   isRunning = true;
   try {
+    if (PREDICT_SERVER_URL) return await syncFromPredictServer();
+
     const t = Date.now();
     const ids = await liveCandidateIds(t);
 

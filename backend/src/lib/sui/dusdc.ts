@@ -9,11 +9,17 @@ import { executeAsOperator, executeAsTreasury } from './execute.ts';
 import { TREASURY_ENABLED } from './signer.ts';
 import { DUSDC_TYPE, DUSDC_TREASURY_CAP_ID, toDusdcRaw } from './config.ts';
 
+// True only when we actually own the DUSDC TreasuryCap for this deployment (our own vendored
+// Predict instance). False against a deployment we don't operate (e.g. Mysten's official testnet
+// Predict), where DUSDC can only come from a manually-funded treasury wallet, never a mint.
+export const DUSDC_MINTABLE = Boolean(DUSDC_TREASURY_CAP_ID);
+
 // Mint `amount` DUSDC (display units) and send it to `to`. Returns the tx digest. Routes
 // through the operator executor (not a direct sign) so it shares the same gas coin + queue as
 // the workers and never desyncs their object cache.
 export async function mintDusdc(to: string, amount: number): Promise<string> {
   if (amount <= 0) throw new Error('mintDusdc: amount must be positive');
+  if (!DUSDC_MINTABLE) throw new Error('mintDusdc: this deployment\'s DUSDC TreasuryCap is not ours, cannot mint');
 
   const tx = new Transaction();
   const coin = tx.moveCall({
@@ -27,13 +33,17 @@ export async function mintDusdc(to: string, amount: number): Promise<string> {
 }
 
 // Pay `amount` DUSDC (display units) to `to`. Prefers the treasury wallet: a plain transfer from its
-// pre-minted reserve, which keeps chips OFF the operator key (a follower never signs an operator tx,
-// and the operator's gas coin never churns on a mint). Falls back to an operator mint when no treasury
-// is configured, or, on the operator only, if the treasury transfer fails so onboarding/faucet never
-// hard-fail during a top-up gap. Returns the tx digest.
+// pre-minted (or, on a deployment we don't operate, manually human-funded) reserve, which keeps
+// chips OFF the operator key (a follower never signs an operator tx, and the operator's gas coin
+// never churns on a mint). Falls back to an operator mint only when we actually own the TreasuryCap
+// (DUSDC_MINTABLE) — on a deployment we don't operate there is no mint to fall back to, so an empty
+// treasury fails loudly instead of attempting an impossible mint. Returns the tx digest.
 export async function transferDusdc(to: string, amount: number): Promise<string> {
   if (amount <= 0) throw new Error('transferDusdc: amount must be positive');
-  if (!TREASURY_ENABLED) return mintDusdc(to, amount);
+  if (!TREASURY_ENABLED) {
+    if (!DUSDC_MINTABLE) throw new Error('transferDusdc: no treasury configured and DUSDC is not mintable on this deployment');
+    return mintDusdc(to, amount);
+  }
 
   const tx = new Transaction();
   const coin = coinWithBalance({ type: DUSDC_TYPE, balance: toDusdcRaw(amount) })(tx);
@@ -41,6 +51,11 @@ export async function transferDusdc(to: string, amount: number): Promise<string>
   try {
     return (await executeAsTreasury(tx, 'transferDusdc')).digest;
   } catch (e) {
+    if (!DUSDC_MINTABLE) {
+      throw new Error(
+        `transferDusdc: treasury payout failed and DUSDC is not mintable on this deployment (needs a manual top-up): ${e instanceof Error ? e.message : e}`,
+      );
+    }
     // Treasury unfunded (e.g. before the operator's first top-up) or briefly unreachable: fall back to
     // a direct mint so onboarding/faucet never hard-fail. The operator owns the TreasuryCap and every
     // backend holds that key, so the mint always works. Rare and self-healing: once the operator funds
