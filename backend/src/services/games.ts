@@ -489,12 +489,12 @@ export async function resolveRange(stakeRaw: bigint, asset: string, widthPct: nu
 // multiple for every band size, never a blind estimate. No solver loop, no DB, no mint.
 export async function quoteRangeBatch(asset: string, widthPcts: number[]): Promise<RangeQuote[]> {
   // Real mode (testnet, Mysten Predict): the real protocol has no read-only band pricer we can reach
-  // from a PTB (pricing::range_price is public(package), only current_nav is public), and a mint
-  // simulate needs a funded wrapper. So we serve no server quote here (never call the fork's predict.ts
-  // preview against the real market set). The Range screen falls back to its labelled client estimate
-  // for the idle preview and snaps the REAL multiplier in from the mint's OrderMinted event, which is
-  // the source of truth. Returning an empty ladder keeps that fallback clean (no fabricated number).
-  if (IS_REAL_PREDICT) return [];
+  // from a PTB (pricing::range_price is public(package), only current_nav is public). But the mint
+  // prices a range purely off its win probability (no leverage, no liquidation), so 1/p is the honest
+  // multiplier the band will pay, and we compute p from the SAME sigma + max-prob clamp resolveRealRange
+  // sizes with. That makes the pre-PLAY "Pays" match the mint (no more 6x->1.2x snap), still a real
+  // number derived from the resolver's own model rather than the old client estimate's fork-scale sigma.
+  if (IS_REAL_PREDICT) return quoteRangeBatchReal(widthPcts);
 
   const widths = widthPcts.filter((w) => w > 0 && w <= 10);
   if (widths.length === 0) throw new PlayError('INVALID_PARAMS', 'No valid band widths');
@@ -537,9 +537,11 @@ export async function quoteRangeBatch(asset: string, widthPcts: number[]): Promi
 // The reel shows the dealt tier optimistically; the REAL minted multiplier is read from the OrderMinted
 // event and snapped in after the mint (never a fabricated number, mirrors the fork's actualMultiplier).
 //
-// LUCKY/MOONSHOT run at leverage 1 in this wave (Phase 10): the tier/reach sets the strike distance
-// off spot and the chain prices the resulting multiplier honestly. LUCKY's precise tier -> multiplier
-// via real continuous leverage is the Phase 11-12 redesign; this leverage-1 strike map is the interim.
+// LUCKY hits its tier via "leverage at the money" (luckyLeverage): L = tier/2 anchors the strike at
+// p ~ 0.5, where the multiplier M ~ L/p ~ tier is robust to our unreadable-vol estimate, instead of a
+// deep-ITM strike that collapsed the real multiple to ~leverage. MOONSHOT stays at leverage 1 (the
+// player-dialed reach IS the strike tier, an OTM directional bet). Both snap the reel to the real
+// minted multiplier from the OrderMinted event; the mint-abort fallback trims leverage on the top tier.
 
 // Game asset for the only live real underlying. The picker keys markets on this; games route here.
 const REAL_BTC_GAME_ASSET = 'BTC';
@@ -625,6 +627,25 @@ function roundSigmaFrac(seconds: number): number {
   return REAL_BTC_ANNUAL_VOL * Math.sqrt(Math.max(1, seconds) / SECONDS_PER_YEAR);
 }
 
+// Standard normal CDF (Zelen & Severo rational approx, abs err < 7.5e-8). The forward partner to probit,
+// used to price a RANGE band's win probability P(-h < return < h) = 2*Φ(h/sigma) - 1 for the honest
+// pre-mint quote. Pure math, no deps.
+function normCdf(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989422804014327 * Math.exp((-x * x) / 2);
+  const p = d * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return x >= 0 ? 1 - p : p;
+}
+
+// A RANGE band's real win probability on the live BTC market: P(settlement lands in the centered band)
+// under the same sigma the resolver sizes with, capped at REAL_RANGE_MAX_PROB (a wide band on a short
+// market is near-certain, which the resolver clamps so the mint clears max_entry_probability). This IS
+// the number the mint prices against, so 1/p is the honest multiplier the band will actually pay.
+function rangeWinProb(halfFrac: number, sigma: number): number {
+  const p = 2 * normCdf(halfFrac / Math.max(sigma, 1e-9)) - 1;
+  return Math.min(REAL_RANGE_MAX_PROB, Math.max(0.02, p));
+}
+
 // The strike distance off spot (fraction, signed: <0 = in-the-money) for a binary whose STRIKE must
 // carry a `strikeTier` multiple (= tier/L, LUCKY.md §5b). We target win probability p = 1/strikeTier and
 // place the strike at z(p)*sigma off spot, so the strike's entry probability lands inside the chain's
@@ -637,20 +658,18 @@ export function binaryOffsetFrac(strikeTier: number, seconds: number): number {
   return Math.max(-REAL_STRIKE_MAX_OFFSET_FRAC, Math.min(REAL_STRIKE_MAX_OFFSET_FRAC, off));
 }
 
-// Per-tier target leverage for LUCKY (1e9-scaled), clamped to the market's admission cap. Leverage is
-// probability-gated on chain (admitted_leverage_cap, LUCKY.md §5b), so far-OTM high tiers can't take
-// much and the mint-abort fallback (mintPendingReal) trims this to 1x when the real probability admits
-// less than requested. A modest boost pulls the winnable tiers toward ATM without inviting easy
-// mid-round liquidation. MOONSHOT stays at leverage 1 (player-directed reach). Tunable at QA (Phase 16).
-const LUCKY_LEVERAGE_1E9: Record<number, bigint> = {
-  2: 1_500_000_000n, // 1.5x
-  3: 1_800_000_000n, // 1.8x
-  5: 2_000_000_000n, // 2.0x
-  10: 2_000_000_000n, // 2.0x (low real probability caps it on chain; fallback trims to 1x if needed)
-};
+// LUCKY "leverage at the money" (the QA-chosen mechanic). Hit the dealt tier via leverage anchored ~at
+// spot instead of a deep-ITM strike, which is what collapsed the real multiplier to ~leverage (a "2x"
+// minting ~1.5x). The chain prices M ≈ L / p_entry, so to land M = tier we set L = tier/2: that puts the
+// strike at p = L/tier = 0.5 (at the money) for every tier up to 2*maxLev, where p is ~0.5 regardless of
+// our (unreadable, vol-estimated) entry probability, so the multiplier is robust. The top tier caps at
+// maxLev and leans out of the money (p < 0.5); if it lands wide the mint-abort fallback trims leverage.
+// The strike offset is derived downstream from strikeTier = tier/L (binaryOffsetFrac), so this leverage
+// alone drives the ATM anchor. Higher leverage carries real mid-round liquidation risk, which is what
+// keeps the odds honest at the bigger multiples. MOONSHOT stays at leverage 1 (player-directed reach).
 function luckyLeverage(tier: number, maxLeverage1e9: bigint): bigint {
-  const want = LUCKY_LEVERAGE_1E9[tier] ?? LEVERAGE_ONE;
-  const capped = want < maxLeverage1e9 ? want : maxLeverage1e9;
+  const want1e9 = BigInt(Math.round((tier / 2) * 1e9));
+  const capped = want1e9 < maxLeverage1e9 ? want1e9 : maxLeverage1e9;
   return capped > LEVERAGE_ONE ? capped : LEVERAGE_ONE;
 }
 
@@ -726,6 +745,40 @@ function resolveRealRange(stakeRaw: bigint, widthPct: number): ResolvedReal {
     upperDisplay: realFmt(spot1e9 + half),
     widthPct,
   };
+}
+
+// Small conservative haircut on the analytic RANGE quote for the spread + trading/builder fees the mint
+// charges on top of the fair premium. Biased so the pre-PLAY estimate reads a touch UNDER the mint, so
+// the snap on open is a pleasant tick up rather than a letdown.
+const REAL_RANGE_QUOTE_HAIRCUT = 0.04;
+
+// Honest real-mode RANGE ladder: price each band off its win probability against the live BTC market,
+// mirroring resolveRealRange exactly (same market pick, sigma, and max-prob clamp) so the quoted
+// multiplier is what the band actually mints. No mint, no wrapper, no devInspect: pure analytic, one
+// spot read. Empty if no market is live (the screen keeps its existing no-market state).
+function quoteRangeBatchReal(widthPcts: number[]): RangeQuote[] {
+  const widths = widthPcts.filter((w) => w > 0 && w <= 10);
+  if (widths.length === 0) return [];
+  // Any pricing hiccup (no live market, no spot yet) falls back to an empty ladder, so the screen keeps
+  // its client estimate for the idle preview rather than 500-ing the quotes endpoint.
+  try {
+    const market = realMarket(Math.round((RANGE_MIN_ORACLE_LIFE_MS + RANGE_MAX_ORACLE_LIFE_MS) / 2));
+    const { spot1e9 } = realEcon(market);
+    const spot = Number(spot1e9) / 1e9;
+    const secs = Math.max(1, (market.expiryMs - now()) / 1000);
+    const sigma = roundSigmaFrac(secs);
+    const maxHalfFrac = probit((1 + REAL_RANGE_MAX_PROB) / 2) * sigma;
+    const duration = Math.max(1, Math.round(secs));
+    return widths.map((w) => {
+      const halfFrac = Math.min(w / 100 / 2, maxHalfFrac); // clamp identical to resolveRealRange
+      const p = rangeWinProb(halfFrac, sigma);
+      const mult = Math.max(1.01, (1 / p) * (1 - REAL_RANGE_QUOTE_HAIRCUT));
+      const half = spot * halfFrac;
+      return { multiplier: mult, lower: String(spot - half), upper: String(spot + half), entrySpot: String(spot), duration, widthPct: w };
+    });
+  } catch {
+    return [];
+  }
 }
 
 // The real-mode counterpart to resolveByGame: LUCKY deals via the same fair RNG, MOONSHOT/RANGE are

@@ -29,7 +29,7 @@ import {
 } from '@/lib/sound'
 import { api, streamPlay } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
-import { betLadder } from '@/lib/sui/config'
+import { NETWORK, betLadder } from '@/lib/sui/config'
 import { rangeDebug, type RangeEntryIntent } from '@/lib/rangeDebug'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
@@ -50,8 +50,15 @@ export const Route = createFileRoute('/_app/games/range')({
 // Shared persisted stake index (Lucky + the home idle wheel write the same key), so the chosen chip
 // stays put across navigation and reloads instead of resetting to a default each mount.
 const STAKE_KEY = 'pips_stake_idx'
-// Band ladder: the ± half-band sizes the knob steps through (percent). Tighter pays more.
-const BAND_LADDER = [0.1, 0.2, 0.5, 1, 1.5] as const
+// Band ladder: the ± half-band sizes the knob steps through (percent). Tighter pays more. Real testnet
+// BTC over a ~20-33s round moves only ~0.05% (1-sigma), so the fork's ±0.1-1.5% bands are all near-certain
+// to contain settlement and honestly pay the same floor (~1.18x, capped by REAL_RANGE_MAX_PROB). Real mode
+// therefore steps through much tighter bands so the knob actually varies the multiplier; the tightest
+// still sits well above the mint's min entry probability, so it never aborts. Exact values are calibrated
+// to REAL_BTC_ANNUAL_VOL and want a live-mint tuning pass. Fork mode keeps its wide ladder.
+const BAND_LADDER: Array<number> = NETWORK === 'testnet' ? [0.02, 0.035, 0.05, 0.08, 0.15] : [0.1, 0.2, 0.5, 1, 1.5]
+// Default band the knob lands on at mount: a middle rung in each ladder (fork ±1.0%, real ±0.05%).
+const DEFAULT_WIDTH_IDX = NETWORK === 'testnet' ? 2 : 3
 const FALLBACK_ASSETS = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
 const TOKEN_LOGOS: Record<string, string> = {
   BTC: '/assets/images/coins/btc-logo.png',
@@ -103,9 +110,14 @@ const compact = (n: number): string =>
 const priceLabel = (p: number): string =>
   `$${p.toLocaleString('en-US', { maximumFractionDigits: p >= 1000 ? 0 : p >= 1 ? 2 : 4 })}`
 
-// Rough, monotonic estimate so the readout responds as the knob turns. Real value lands on mint.
+// Rough, monotonic estimate so the readout responds as the knob turns. Only a cold-start fallback: the
+// backend serves the real per-band quote (fork = live ask, real = the resolver's win-prob model) and the
+// UI prefers it. The 1-sigma % move is mode-specific: a fork localnet oracle walks ~0.6%/30s, but a real
+// testnet BTC round moves only ~0.05%/30s, so a fork-scale sigma here would read a wide band as a fake 6x
+// for the brief moment before the quote loads. Match the backend's real sigma so the flash is honest.
+const IS_REAL = NETWORK === 'testnet'
 function estimateMultiplier(halfPct: number, durationSec: number): number {
-  const sigma = 0.6 * Math.sqrt(durationSec / 30) // ~1-sigma % move, scales with sqrt(T)
+  const sigma = (IS_REAL ? 0.05 : 0.6) * Math.sqrt(durationSec / 30) // ~1-sigma % move, scales with sqrt(T)
   const ratio = halfPct / sigma
   const prob = 1 - Math.exp(-ratio)
   return Math.max(1.05, Math.min(0.97 / Math.max(prob, 0.03), 99))
@@ -127,7 +139,7 @@ export function RangeScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
 
-  const [widthIdx, setWidthIdx] = useState(3) // knob index into BAND_LADDER (default ±1.0%)
+  const [widthIdx, setWidthIdx] = useState(DEFAULT_WIDTH_IDX) // knob index into BAND_LADDER
   // One persistent stake shared with Lucky + the home wheel (same ladder), so it stays put across nav.
   const [stakeIdx, setStakeIdx] = useLocalStorage(STAKE_KEY, 2)
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null) // the player's pick, by symbol
