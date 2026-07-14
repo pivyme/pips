@@ -2,9 +2,9 @@
 // the number the UI showed next to the value the chain actually recorded, plus the delta, so a devnet
 // round can be checked end to end against Predict. Every "On-chain" column is sourced from the chain:
 // entrySpot = the oracle read at entry, multiplier + cost = the mint receipt, lock/settle = the oracle
-// settlement price, payout = the redeem event. The feed offset (the deliberate chart<->oracle
-// alignment shift the UI applies so overlays sit on the line) is surfaced too, so it isn't mistaken
-// for drift. On by default; silence with `localStorage.pips_range_debug = '0'` (re-enable with '1').
+// settlement price, payout = the redeem event. The backend price bus now pins the chart line to the
+// oracle level, so overlays are drawn raw (no client feed offset) and the UI value == the on-chain one.
+// On by default; silence with `localStorage.pips_range_debug = '0'` (re-enable with '1').
 
 import type { PlayDTO } from './api'
 
@@ -81,13 +81,9 @@ export function entry(it: RangeEntryIntent): void {
 }
 
 // OPEN: the mint confirmed. Compare the entry, multiplier, and cost the UI promised against what
-// minted on-chain, and show the on-chain band (raw) vs the shifted band the chart draws.
-export function open(
-  play: PlayDTO,
-  it: RangeEntryIntent | null,
-  feedOffset: number,
-  chartPriceAtOpen: number,
-): void {
+// minted on-chain. Overlays are drawn raw (the backend pins the line to the oracle), so the on-chain
+// band IS what the chart shows.
+export function open(play: PlayDTO, it: RangeEntryIntent | null): void {
   if (!enabled()) return
   const entry = num(play.entrySpot)
   const lower = num(play.market.lower)
@@ -111,15 +107,13 @@ export function open(
       `$${money(cost)}`,
       Number.isFinite(cost) && stake ? `${cost - stake >= 0 ? '+' : ''}$${money(cost - stake)} (${(((cost - stake) / stake) * 100).toFixed(1)}% of stake)` : '—',
     ),
-    r('Band lower', Number.isFinite(lower) ? px(lower + feedOffset) : '—', px(lower), ''),
-    r('Band upper', Number.isFinite(upper) ? px(upper + feedOffset) : '—', px(upper), ''),
+    r('Band', Number.isFinite(lower) ? `(${px(lower)}, ${px(upper)}]` : '—', `(${px(lower)}, ${px(upper)}]`, ''),
     r(
       'Band width',
       it ? `${(it.halfPct * 2).toFixed(2)}%` : '—',
       Number.isFinite(widthPct) ? `${widthPct.toFixed(3)}%` : '—',
       '',
     ),
-    r('Feed offset', px(feedOffset), `chart ${px(chartPriceAtOpen)} − entry ${px(entry)}`, ''),
   ]
   console.groupCollapsed(`%cRANGE ▸ OPEN%c  ${recapOf(play)}`, pill(AMBER), '')
   table(rows)
@@ -131,15 +125,14 @@ export function open(
 // walking, so show how far the live line has drifted from the locked value and the predicted verdict.
 export function lock(
   play: PlayDTO,
-  opts: { feedOffset: number; uiLivePrice: number; predictedInZone: boolean | null },
+  opts: { uiLivePrice: number; predictedInZone: boolean | null },
 ): void {
   if (!enabled()) return
   const locked = num(play.lockPrice)
-  const lockedShown = Number.isFinite(locked) ? locked + opts.feedOffset : NaN
-  const drift = Number.isFinite(lockedShown) && opts.uiLivePrice > 0 ? opts.uiLivePrice - lockedShown : NaN
+  const drift = Number.isFinite(locked) && opts.uiLivePrice > 0 ? opts.uiLivePrice - locked : NaN
 
   const rows: TRow[] = [
-    r('Settle (locked)', px(lockedShown), px(locked), Number.isFinite(opts.feedOffset) ? `offset ${px(opts.feedOffset)}` : ''),
+    r('Settle (locked)', px(locked), px(locked), ''),
     r('Live chart now', px(opts.uiLivePrice), '—', Number.isFinite(drift) ? `drift ${px(drift)} past locked` : ''),
     r(
       'Predicted',
@@ -159,7 +152,6 @@ export function lock(
 export function result(
   play: PlayDTO,
   opts: {
-    feedOffset: number
     predictedInZone: boolean | null
     previewMult?: number
     stake: number
@@ -207,9 +199,9 @@ export function result(
   rows.push(
     r(
       cashed ? 'Exit price' : 'Settle price',
-      Number.isFinite(settle) ? px(settle + opts.feedOffset) : '—',
+      Number.isFinite(settle) ? px(settle) : '—',
       px(settle),
-      Number.isFinite(opts.feedOffset) ? `offset ${px(opts.feedOffset)}` : '',
+      '',
     ),
   )
   if (!cashed) {

@@ -164,13 +164,6 @@ export function RangeScreen() {
   const balanceSyncedPlayId = useRef<string | null>(null)
   const wasInside = useRef<boolean | null>(null) // last in/out band state, for the crossing tick
   const zoneRef = useRef<boolean | null>(null) // mirrors zoneLive so the rAF only re-renders on a real flip
-  // Chart<->oracle feed alignment. The chart line and the oracle (band/entry/settlement) are slightly
-  // different samples of the same price, so the oracle values sit ~0.1% off the line and a tight band's
-  // ENTRY/edges visibly float away from it. We capture the gap ONCE at open (chart price - oracle entry)
-  // and shift every oracle-space overlay by it, so they sit exactly on the line. It is a uniform shift,
-  // so inside/outside (and the real win/lose, which comes from the chain) are unchanged.
-  const feedOffsetRef = useRef(0)
-  const offsetPlayId = useRef<string | null>(null)
   // The chart's eased leading price (the active dot), written every frame by the Chart. The live P/L
   // reads it to track the line at 60fps instead of the laggy ~2s backend mark.
   const livePriceRef = useRef(0)
@@ -261,30 +254,13 @@ export function RangeScreen() {
   // is gated on the phase (roundLive, defined above), not just on `play`, because `play` lingers after
   // a settle; without the gate the band would freeze at the finished round's bounds instead of
   // resuming the live preview.
-  // Capture the chart<->oracle feed offset ONCE per round, the first open render where both the chart
-  // price and the oracle entry are known. Done in render (guarded + idempotent per play id) so the shift
-  // is applied on the same frame the band appears, with no flash of the unaligned position.
+  // The backend price bus pins the chart line to the oracle level, so oracle-space overlays (band /
+  // entry / settle) sit on the line when drawn RAW, no client feed offset needed.
   const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
-  if (play && phase === 'open' && offsetPlayId.current !== play.id) {
-    const ec = livePriceRef.current
-    if (Number.isFinite(entrySpotNum) && entrySpotNum > 0 && ec > 0) {
-      offsetPlayId.current = play.id
-      // The offset only corrects a ~0.1% chart-vs-oracle sampling gap. If the chart price ref is
-      // momentarily from a just-switched asset (a cross-coin gap of tens of percent), refuse it: a
-      // bogus offset would shove the band/entry thousands off and flatten the whole frame. 2% is
-      // ~20x the real gap, so it cleanly separates a true sample gap from a stale wrong-asset read.
-      const gap = ec - entrySpotNum
-      feedOffsetRef.current = Math.abs(gap) <= entrySpotNum * 0.02 ? gap : 0
-    }
-  }
-  const feedOffset = play && phase !== 'idle' ? feedOffsetRef.current : 0
 
-  // Band bounds, shifted onto the chart by the feed offset so the band sits on the live line. The raw
-  // oracle bounds still drive the real settlement; this is purely the on-screen alignment.
-  const lower =
-    play?.market.lower != null ? parseFloat(play.market.lower) + feedOffset : null
-  const upper =
-    play?.market.upper != null ? parseFloat(play.market.upper) + feedOffset : null
+  // Band bounds, drawn raw. These oracle bounds drive the real settlement and now also sit on the line.
+  const lower = play?.market.lower != null ? parseFloat(play.market.lower) : null
+  const upper = play?.market.upper != null ? parseFloat(play.market.upper) : null
   // While PLAY is resolving (placing) we do NOT paint a guessed band: the chart keeps the live ±halfPct
   // preview (which simply tracks the line, never claims a fixed level), then snaps to the real bounds
   // when the play opens. The LOCKING IN readout + the press haptic/sound carry the "it registered"
@@ -301,13 +277,11 @@ export function RangeScreen() {
         : undefined
   const showBand = phase !== 'result' || play != null
 
-  // ENTRY line at the chart price the round opened on (oracle entry + the feed offset), so it sits ON the
-  // live line instead of floating ~0.1% off it. Falls back to the band center if entry is somehow missing.
+  // ENTRY line at the oracle entry price the round opened on (drawn raw, sits on the pinned line).
+  // Falls back to the band center if entry is somehow missing.
   const bandCenter = lower != null && upper != null ? (lower + upper) / 2 : null
   const entryLevel =
-    Number.isFinite(entrySpotNum) && entrySpotNum > 0
-      ? entrySpotNum + feedOffset
-      : bandCenter
+    Number.isFinite(entrySpotNum) && entrySpotNum > 0 ? entrySpotNum : bandCenter
   const showEntryLine = entryLevel != null && roundLive
 
   // Phase machine, derived from the live status + the countdown. The settlement price freezes
@@ -334,10 +308,9 @@ export function RangeScreen() {
   const cashing = phase === 'cashing'
 
   // Exact on-chain settlement price, available only after the settlement transaction has populated
-  // oracle.settlement_price. Shift it into the chart feed's display space.
+  // oracle.settlement_price. Drawn raw, it sits on the pinned line.
   const lockNum = lockPrice ? parseFloat(lockPrice) : null
-  const lockDisp = lockNum != null && lockNum > 0 ? lockNum + feedOffset : null
-  const settleLine = settling && lockDisp != null ? lockDisp : undefined
+  const settleLine = settling && lockNum != null && lockNum > 0 ? lockNum : undefined
 
   const clearResetTimer = () => {
     if (resetTimer.current) clearTimeout(resetTimer.current)
@@ -452,8 +425,6 @@ export function RangeScreen() {
     finalized.current = false
     wasInside.current = null
     setLockPrice(null)
-    feedOffsetRef.current = 0
-    offsetPlayId.current = null
     // Drop the previous round's play before placing the next one. It lingers after a result (the
     // overlay reads it), and leaving it set through 'placing' is what let the screen snap back to the
     // old coin + stale band while the new mint resolved. A clean slate keeps placing on the new pick.
@@ -579,7 +550,7 @@ export function RangeScreen() {
   useEffect(() => {
     if (!play || live?.status !== 'open' || dbgStage.current.open) return
     dbgStage.current.open = true
-    rangeDebug.open(play, entryIntentRef.current, feedOffsetRef.current, livePriceRef.current)
+    rangeDebug.open(play, entryIntentRef.current)
   }, [play, live?.status])
 
   // LOCK: once the chain freezes the settlement price (the round entered the expiry window). The lock
@@ -588,7 +559,6 @@ export function RangeScreen() {
     if (!play || !lockPrice || dbgStage.current.lock) return
     dbgStage.current.lock = true
     rangeDebug.lock(play, {
-      feedOffset: feedOffsetRef.current,
       uiLivePrice: livePriceRef.current,
       predictedInZone: predictedInZone(play, lockPrice),
     })
@@ -600,7 +570,6 @@ export function RangeScreen() {
     dbgStage.current.result = true
     const intent = entryIntentRef.current
     rangeDebug.result(play, {
-      feedOffset: feedOffsetRef.current,
       predictedInZone: predictedInZone(play, lockPrice),
       previewMult: intent?.previewMult,
       stake: intent?.stake ?? parseFloat(play.stake),
@@ -936,9 +905,7 @@ export function RangeScreen() {
         </div>
       )}
 
-      {phase === 'result' && play && (
-        <RangeResult play={play} feedOffset={feedOffset} />
-      )}
+      {phase === 'result' && play && <RangeResult play={play} />}
       {overlay === 'howto' && (
         <InstructionOverlay
           lines={[

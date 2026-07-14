@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyReque
 import { handleError } from '../utils/errorHandler.ts';
 import { PLAY_STREAM_INTERVAL_MS } from '../config/main-config.ts';
 import { userFromToken } from '../services/auth.ts';
-import { gameSpot } from '../lib/game-price.ts';
+import { displaySpot } from '../lib/price-bus.ts';
 import { getLiveMarkCached, toPlayDTO } from '../services/plays.ts';
 import { prismaQuery } from '../lib/prisma.ts';
 import { PYTH_FEED_IDS } from '../lib/pyth.ts';
@@ -62,7 +62,10 @@ function openStream(reply: FastifyReply, request: FastifyRequest): { send: (data
 }
 
 export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
-  // Chart price feed for one asset. ~1s server cadence; the client interpolates to 60fps.
+  // Chart price feed for one asset. ~1s server cadence; the client interpolates to 60fps. Serves the
+  // display bus (Binance motion pinned to the on-chain oracle in real mode, gameSpot in fork mode), a
+  // cosmetic feed only, every truthful number reads the chain (L-015). The WS hub (/ws) supersedes this
+  // at 10Hz; this SSE route stays as the flagged fallback for one release.
   app.get('/prices', async (request: FastifyRequest, reply: FastifyReply) => {
     const { asset, t } = request.query as { asset?: string; t?: string };
     if (!asset || !PYTH_FEED_IDS[asset]) return handleError(reply, 400, 'Unknown asset', 'VALIDATION_ERROR');
@@ -71,7 +74,7 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
 
     const { send, onClose } = openStream(reply, request);
     const tick = async (): Promise<void> => {
-      const spot = await gameSpot(asset);
+      const spot = await displaySpot(asset);
       if (spot) send({ price: String(spot.price), ts: spot.ts });
     };
     void tick();

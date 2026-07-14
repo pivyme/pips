@@ -45,13 +45,7 @@ export function RangePnl({
   )
 }
 
-export function RangeResult({
-  play,
-  feedOffset,
-}: {
-  play: PlayDTO
-  feedOffset: number
-}) {
+export function RangeResult({ play }: { play: PlayDTO }) {
   const reduced = useReducedMotion()
   const pnl = parseFloat(play.pnl)
   const won = play.status === 'won'
@@ -59,9 +53,11 @@ export function RangeResult({
   const lost = play.status === 'lost'
   const positive = won || (cashed && pnl > 0)
   const head = won ? 'IN THE ZONE' : cashed ? 'CASHED OUT' : 'OUT OF RANGE'
-  const lo = play.market.lower ? parseFloat(play.market.lower) + feedOffset : null
-  const hi = play.market.upper ? parseFloat(play.market.upper) + feedOffset : null
-  const settled = play.settlePrice ? parseFloat(play.settlePrice) + feedOffset : null
+  // Overlays are drawn raw: the backend price bus pins the chart line to the oracle level, so the
+  // on-chain band + settle price already sit on the line (no client feed offset).
+  const lo = play.market.lower ? parseFloat(play.market.lower) : null
+  const hi = play.market.upper ? parseFloat(play.market.upper) : null
+  const settled = play.settlePrice ? parseFloat(play.settlePrice) : null
   const hasGauge =
     !cashed &&
     lo != null &&
