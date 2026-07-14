@@ -172,6 +172,26 @@ export const DEMO_LUCKY_DURATION: number = Number(process.env.PIPS_DEMO_LUCKY_DU
 // charges on top) still clears the protocol's $1 min-net-premium floor: 1.5 * 0.88 = $1.32 >= $1.
 export const MIN_STAKE: number = Number(process.env.PIPS_MIN_STAKE) || (IS_REAL_PREDICT ? 1.5 : 1);
 export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || (IS_REAL_PREDICT ? 3 : 100);
+
+// Real-mode (testnet Predict) strike sizing. On the real protocol a mint is rejected if the strike's
+// entry probability falls outside [min_entry_probability, max_entry_probability]
+// (strike_exposure_config, abort code 1). On a 20-60s BTC market a fixed-percentage strike (the fork's
+// 0.15%+ target) sits several sigma OTM, so its probability is ~0 and every mint aborts. We instead
+// size the strike off spot as z(p)*sigma, where sigma is the per-round BTC move (annual vol scaled by
+// sqrt(time to expiry)) and p is the tier's target win probability, keeping the strike inside the band.
+// The band edges are unreadable pre-mint (up_price/range_price are package-private, L-012), so these are
+// conservative estimates; the mint-abort fallback pulls the strike toward ATM if one still lands wide.
+export const REAL_BTC_ANNUAL_VOL: number = Number(process.env.PIPS_REAL_BTC_ANNUAL_VOL) || 0.55;
+// Floor on the target win probability we ask for (kept safely above the chain's unreadable
+// min_entry_probability). Caps how far OTM a high tier / long reach may sit: p never drops below this,
+// so the strike never lands below the admissible band. Multiplier tops out near 1/this before leverage.
+export const REAL_STRIKE_MIN_PROB: number = Number(process.env.PIPS_REAL_STRIKE_MIN_PROB) || 0.06;
+// Absolute guard cap on the strike offset (fraction of spot), in case the vol estimate runs hot.
+export const REAL_STRIKE_MAX_OFFSET_FRAC: number = Number(process.env.PIPS_REAL_STRIKE_MAX_OFFSET_FRAC) || 0.006;
+// Upper target probability for a RANGE band. A wide centered band on a 1m BTC market is near-certain to
+// contain settlement (probability ~1), which trips max_entry_probability; cap the half-width so the
+// band's probability stays under this. A too-tight user band is left as-is (it only lowers probability).
+export const REAL_RANGE_MAX_PROB: number = Number(process.env.PIPS_REAL_RANGE_MAX_PROB) || 0.85;
 // Game-round durations offered to the player (seconds). The on-chain expiry is the
 // oracle's; the round duration is the UX timer / when the screen auto-cashes out.
 export const GAME_DURATIONS: number[] = (process.env.PIPS_GAME_DURATIONS || '10,30,60')

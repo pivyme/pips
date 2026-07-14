@@ -13,6 +13,10 @@ import {
   RANGE_MAX_ORACLE_LIFE_MS,
   MIN_STAKE,
   MAX_STAKE,
+  REAL_BTC_ANNUAL_VOL,
+  REAL_STRIKE_MIN_PROB,
+  REAL_STRIKE_MAX_OFFSET_FRAC,
+  REAL_RANGE_MAX_PROB,
 } from '../config/main-config.ts';
 import {
   DUSDC_DECIMALS,
@@ -591,13 +595,46 @@ function realEcon(m: Market): { spot1e9: bigint; tickSize: bigint; admissionTick
   };
 }
 
-// The strike distance off spot for a binary whose STRIKE must carry a `strikeTier` multiple (= tier/L,
-// LUCKY.md §5b). Higher strikeTier sits further OTM (lower win odds, bigger 1/p); floored at
-// LUCKY_MIN_TARGET_FRAC so even a near-ATM leveraged strike is a real, visible move, and capped so it
-// stays inside a mintable band. Leverage carries the rest of the multiple, so a leveraged tier resolves
-// to a smaller offset (closer to ATM, more winnable) than its unleveraged equivalent.
-function binaryOffsetFrac(strikeTier: number): number {
-  return Math.min(0.03, Math.max(LUCKY_MIN_TARGET_FRAC, LUCKY_MIN_TARGET_FRAC * strikeTier));
+const SECONDS_PER_YEAR = 365.25 * 24 * 3600;
+
+// Inverse standard-normal CDF (Acklam's rational approximation, abs error < 1.2e-9 over 0<p<1). Used
+// to size a strike off spot by a target win probability: z = probit(1-p) is how many sigmas OTM the
+// strike sits for a p-probability finish. Pure math, no deps. Exported for the strike-sizing test.
+export function probit(p: number): number {
+  const a = [-3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.38357751867269e2, -3.066479806614716e1, 2.506628277459239];
+  const b = [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1];
+  const c = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416];
+  const lo = 0.02425;
+  if (p < lo) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  if (p <= 1 - lo) {
+    const q = p - 0.5, r = q * q;
+    return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  }
+  const q = Math.sqrt(-2 * Math.log(1 - p));
+  return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+}
+
+// Per-round BTC 1-sigma move as a fraction of spot: annual vol scaled by sqrt(time to expiry). On a
+// 20-60s market this is tiny (~0.04-0.08% of spot at 55% annual vol), which is exactly why a fixed
+// percentage strike (the fork's 0.15%+) lands several sigma OTM and every real mint aborts.
+function roundSigmaFrac(seconds: number): number {
+  return REAL_BTC_ANNUAL_VOL * Math.sqrt(Math.max(1, seconds) / SECONDS_PER_YEAR);
+}
+
+// The strike distance off spot (fraction, signed: <0 = in-the-money) for a binary whose STRIKE must
+// carry a `strikeTier` multiple (= tier/L, LUCKY.md §5b). We target win probability p = 1/strikeTier and
+// place the strike at z(p)*sigma off spot, so the strike's entry probability lands inside the chain's
+// (unreadable) [min,max] admission band instead of the fixed-percentage strike that always aborts on a
+// short market. p is floored at REAL_STRIKE_MIN_PROB (never far enough OTM to fall below the band's min)
+// and mirrored under 1-that (never so deep ITM it trips the max); the absolute offset is guard-capped.
+export function binaryOffsetFrac(strikeTier: number, seconds: number): number {
+  const p = Math.min(1 - REAL_STRIKE_MIN_PROB, Math.max(REAL_STRIKE_MIN_PROB, 1 / strikeTier));
+  const off = probit(1 - p) * roundSigmaFrac(seconds);
+  return Math.max(-REAL_STRIKE_MAX_OFFSET_FRAC, Math.min(REAL_STRIKE_MAX_OFFSET_FRAC, off));
 }
 
 // Per-tier target leverage for LUCKY (1e9-scaled), clamped to the market's admission cap. Leverage is
@@ -628,9 +665,11 @@ const realFmt = (v: bigint): string => String(Number(v) / 1e9);
 function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: Side, tier: number, seed?: string): ResolvedReal {
   const market = realMarket(LUCKY_ROUND_MS);
   const { spot1e9, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
+  const secs = Math.max(1, (market.expiryMs - now()) / 1000);
   const leverage1e9 = game === 'lucky' ? luckyLeverage(tier, maxLeverage1e9) : LEVERAGE_ONE;
   const strikeTier = tier / (Number(leverage1e9) / 1e9); // the multiple the STRIKE must carry (M/L)
-  const off = BigInt(Math.round(binaryOffsetFrac(strikeTier) * 1e9));
+  // Signed offset (may be ITM for a low leveraged tier); a negative bigint moves the strike below spot.
+  const off = BigInt(Math.round(binaryOffsetFrac(strikeTier, secs) * 1e9));
   const strike1e9 = side === 'up' ? (spot1e9 * (FLOAT_SCALING + off)) / FLOAT_SCALING : (spot1e9 * (FLOAT_SCALING - off)) / FLOAT_SCALING;
   const { lowerTick, higherTick } = ticksForBinary(side, strike1e9, tickSize, admissionTickSize);
   return {
@@ -645,7 +684,7 @@ function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: S
     depositCeilRaw: stakeRaw,
     minQuantityRaw: POSITION_LOT_SIZE,
     expiryMs: market.expiryMs,
-    duration: Math.max(1, Math.round((market.expiryMs - now()) / 1000)),
+    duration: Math.max(1, Math.round(secs)),
     entrySpot: realFmt(spot1e9),
     tierMultiplier: tier,
     side,
@@ -654,12 +693,19 @@ function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: S
   };
 }
 
-// Resolve a RANGE play on the real BTC market at leverage 1: a band [spot*(1-w/2), spot*(1+w/2)].
+// Resolve a RANGE play on the real BTC market at leverage 1: a band [spot*(1-h), spot*(1+h)]. On a
+// 20-33s market a wide centered band is near-certain to contain settlement (probability ~1), which trips
+// max_entry_probability, so the half-width is capped to keep the band's win probability under
+// REAL_RANGE_MAX_PROB (h_max = probit((1+maxProb)/2)*sigma). A tighter user band only lowers probability
+// and is left as-is; the reel's real multiplier snaps off the OrderMinted event after the mint (L-012).
 function resolveRealRange(stakeRaw: bigint, widthPct: number): ResolvedReal {
   if (!(widthPct > 0) || widthPct > 10) throw new PlayError('INVALID_PARAMS', 'Band width out of range');
   const market = realMarket(Math.round((RANGE_MIN_ORACLE_LIFE_MS + RANGE_MAX_ORACLE_LIFE_MS) / 2));
   const { spot1e9, tickSize, admissionTickSize } = realEcon(market);
-  const half = (spot1e9 * BigInt(Math.round((widthPct / 100 / 2) * 1e9))) / FLOAT_SCALING;
+  const secs = Math.max(1, (market.expiryMs - now()) / 1000);
+  const maxHalfFrac = probit((1 + REAL_RANGE_MAX_PROB) / 2) * roundSigmaFrac(secs);
+  const halfFrac = Math.min(widthPct / 100 / 2, maxHalfFrac);
+  const half = (spot1e9 * BigInt(Math.round(halfFrac * 1e9))) / FLOAT_SCALING;
   const { lowerTick, higherTick } = ticksForRange(spot1e9 - half, spot1e9 + half, tickSize, admissionTickSize);
   return {
     game: 'range',
@@ -673,7 +719,7 @@ function resolveRealRange(stakeRaw: bigint, widthPct: number): ResolvedReal {
     depositCeilRaw: stakeRaw,
     minQuantityRaw: POSITION_LOT_SIZE,
     expiryMs: market.expiryMs,
-    duration: Math.max(1, Math.round((market.expiryMs - now()) / 1000)),
+    duration: Math.max(1, Math.round(secs)),
     entrySpot: realFmt(spot1e9),
     tierMultiplier: 0,
     lowerDisplay: realFmt(spot1e9 - half),
