@@ -59,7 +59,7 @@ model Play {
 
   asset        String                          // 'BTC' | 'ETH' | 'SOL' | 'SUI'
   oracleId     String                          // our oracle object for this market
-  marketKey    String                          // serialized MarketKey/RangeKey for redeem (base64 BCS)
+  marketKey    String                          // fork: JSON-serialized MarketKey/RangeKey. real: decimal order id string, '' until minted
   side         String?                         // 'up' | 'down' (binary games)
   leverage     Int?                            // lucky strike-distance bucket (2/5/10/25/100)
   strike       String?                         // binary strike (display units)

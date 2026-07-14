@@ -1206,15 +1206,29 @@ async function lockPriceOf(play: Play): Promise<string | undefined> {
   return px > 0 ? String(px) : undefined;
 }
 
+// Real mode's marketKey is a decimal order id, but plays created before the fork->real-Predict switch
+// stored a JSON fork key there instead. Parse defensively so listing old plays doesn't 500.
+function parseOrderId(marketKey: string): bigint | null {
+  if (!marketKey) return null;
+  try {
+    return BigInt(marketKey);
+  } catch {
+    return null;
+  }
+}
+
 export async function toPlayDTO(play: Play, liveMark?: bigint): Promise<PlayDTO> {
   const settled = play.status !== 'open' && play.status !== 'pending';
   const markRaw = settled ? (play.payout ?? 0n) : (liveMark ?? play.markValue ?? play.entryCost);
   const pnlRaw = play.pnl ?? markRaw - play.entryCost;
   // Max payout = the position quantity ($1 each at settle). Real mode packs it into the order id (empty
   // until the mint lands), so decode it there; fork mode reads it off the serialized redeem key.
+  // Legacy plays created before the fork->real-Predict switch stored a JSON fork key in this column
+  // (not a decimal order id), so guard the parse and fall back to stake for those.
+  const realOrderId = IS_REAL_PREDICT ? parseOrderId(play.marketKey) : null;
   const maxPayoutRaw = IS_REAL_PREDICT
-    ? play.marketKey
-      ? decodeOrderId(BigInt(play.marketKey)).quantityRaw
+    ? realOrderId != null
+      ? decodeOrderId(realOrderId).quantityRaw
       : play.stake
     : deserializeKey(play).params.quantity;
 

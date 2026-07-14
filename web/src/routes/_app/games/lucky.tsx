@@ -1,23 +1,31 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
-import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
-import { Chart, type ChartOverlays } from '@/components/game/Chart'
-import { Cell, GameScreen, ScreenMessage, ScreenOverlay } from '@/components/game/screen'
 import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
+import {
+  FooterStatusPanel,
+  InstructionOverlay,
+  LiveValuePanel,
+  ResultOverlay,
+} from '@/components/game/gamePanels'
+import { GameScreen, ScreenMessage } from '@/components/game/screen'
+import { LuckyCharts, Reel } from '@/components/game/lucky/LuckyReels'
+import {
+  usePhaseElapsed,
+  usePlayResolutionWatch,
+  useRoundCountdown,
+} from '@/hooks/useGameRound'
 import { haptic } from '@/lib/haptics'
-import { slotSpin, slotTick, slotLock, slotPick, startLuckyBgm, stopLuckyBgm, luckyWin, luckyCashout, luckyLose } from '@/lib/sound'
-import { api, streamPlay, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
+import { slotSpin, slotTick, slotPick, startLuckyBgm, stopLuckyBgm, luckyWin, luckyCashout, luckyLose } from '@/lib/sound'
+import { api, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
-import { cnm } from '@/utils/style'
 import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
 // LUCKY, the hero. Hit SPIN: three reels (asset, direction, multiplier) snap to a server-dealt slot
@@ -97,10 +105,6 @@ export function LuckyScreen() {
   const [live, setLive] = useState<Live | null>(null)
   const [spot, setSpot] = useState<number | null>(null)
   const [entryPrice, setEntryPrice] = useState<number | null>(null)
-  const [secsLeft, setSecsLeft] = useState<number | null>(null)
-  const [settleMs, setSettleMs] = useState(0)
-  const [cashMs, setCashMs] = useState(0) // drives the cash-out settling bar
-  const [closeLocked, setCloseLocked] = useState(false) // cash-out disarmed in the final beat before expiry
   const [overlay, setOverlay] = useState<Overlay>('none')
   // Which stacked chart is lit while the reels spin (the slot picking an asset). Locks to the dealt
   // asset on open, then that chart expands.
@@ -195,6 +199,14 @@ export function LuckyScreen() {
     showEntry && entryVal != null
       ? { entry: entryVal, ...(strike != null && lp ? { target: { price: strike, side: lp.side } } : {}) }
       : undefined
+  const { secsLeft, remainingMs, settleMs } = useRoundCountdown({
+    enabled: phase === 'open',
+    play,
+    fallbackDurationSec: ROUND_SEC,
+  })
+  const cashMs = usePhaseElapsed(phase === 'cashing')
+  const closeLocked =
+    phase === 'open' && remainingMs != null && remainingMs <= CASHOUT_LOCKOUT_MS
   // The mint is still landing: reels snapped on the dealt deal, the position is not open on-chain yet.
   const opening = phase === 'open' && live?.status === 'pending'
   // The round hit the buzzer and we are waiting on the on-chain settle (won/lost) frame.
@@ -272,72 +284,24 @@ export function LuckyScreen() {
     [finishResult],
   )
 
-  // Live PnL while a play is open. The play comes back 'pending' the instant it's dealt (the reels
-  // snap right away); the real Predict mint lands a moment later and the stream flips it to 'open',
-  // then to a terminal frame at the buzzer settle.
-  useEffect(() => {
-    if (!play || phase !== 'open') return
-    const id = play.id
-    return streamPlay(
-      id,
-      (tick) => {
-        setLive({
-          markValue: tick.markValue,
-          pnl: tick.pnl,
-          multiplier: tick.multiplier,
-          entryValue: tick.entryValue,
-          maxPayout: tick.maxPayout,
-          status: tick.status,
-        })
-        if (tick.status === 'open' && balanceSyncedPlayId.current !== id) {
-          balanceSyncedPlayId.current = id
-          void refresh()
-        }
-        resolveTerminal(tick.status, id)
-      },
-      () => {
-        // SSE dropped: keep the last readout. EventSource retries, and the watchdog below still resolves.
-      },
-    )
-  }, [play, phase, resolveTerminal])
-
-  // Watchdog: poll the play directly on a steady cadence, independent of the SSE socket. This is what
-  // makes OPENING / SETTLING deterministic, the result lands even if the stream silently died. Reads
-  // are cheap (the backend caches the live mark and skips it entirely once past the buzzer).
-  useEffect(() => {
-    if (!play || phase !== 'open') return
-    const id = play.id
-    let stopped = false
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async (): Promise<void> => {
-      if (stopped || finalized.current) return
-      try {
-        const { play: cur } = await api.getPlay(id)
-        if (stopped || finalized.current) return
-        setLive({
-          markValue: cur.markValue,
-          pnl: cur.pnl,
-          multiplier: cur.multiplier,
-          entryValue: cur.entryValue,
-          maxPayout: cur.maxPayout,
-          status: cur.status,
-        })
-        if (cur.status === 'open' && balanceSyncedPlayId.current !== id) {
-          balanceSyncedPlayId.current = id
-          void refresh()
-        }
-        resolveTerminal(cur.status, id)
-      } catch {
-        // transient; the next tick retries
-      }
-      if (!stopped && !finalized.current) timer = setTimeout(() => void poll(), WATCHDOG_MS)
-    }
-    timer = setTimeout(() => void poll(), WATCHDOG_MS)
-    return () => {
-      stopped = true
-      clearTimeout(timer)
-    }
-  }, [play, phase, resolveTerminal])
+  usePlayResolutionWatch({
+    enabled: phase === 'open',
+    playId: play?.id,
+    finalizedRef: finalized,
+    watchdogMs: WATCHDOG_MS,
+    syncedOpenPlayIdRef: balanceSyncedPlayId,
+    refreshOnOpen: refresh,
+    onSnapshot: (snapshot) =>
+      setLive({
+        markValue: snapshot.markValue,
+        pnl: snapshot.pnl,
+        multiplier: snapshot.multiplier,
+        entryValue: snapshot.entryValue,
+        maxPayout: snapshot.maxPayout,
+        status: snapshot.status,
+      }),
+    onTerminal: resolveTerminal,
+  })
 
   useEffect(() => () => clearResetTimer(), [])
 
@@ -512,44 +476,6 @@ export function LuckyScreen() {
     setPhase('idle')
   }, [])
 
-  // Round countdown for the TIME readout. At the buzzer the settle worker (or the demo stream)
-  // produces the terminal frame; the stream effect above catches it. No auto-cash here.
-  useEffect(() => {
-    if (phase !== 'open' || !play) {
-      setSecsLeft(null)
-      setSettleMs(0)
-      setCloseLocked(false)
-      return
-    }
-    // Count down to the real on-chain buzzer (the oracle expiry the round settles at), not
-    // openedAt+duration: the mint lands a beat after the reels snap, so openedAt+duration runs PAST
-    // the real expiry and left the timer showing seconds that no longer existed. At 0 it flips to SETTLING.
-    const endAt = play.market.expiry || Date.now() + ROUND_SEC * 1000
-    const tick = () => {
-      const remaining = endAt - Date.now()
-      setSecsLeft(Math.max(0, Math.ceil(remaining / 1000)))
-      // Time spent past the buzzer drives the deterministic settle progress (so it never looks frozen).
-      setSettleMs(remaining < 0 ? -remaining : 0)
-      // Disarm cash-out a tx round-trip before the buzzer so a redeem can't land in the settling gap.
-      setCloseLocked(remaining <= CASHOUT_LOCKOUT_MS)
-    }
-    tick()
-    const iv = setInterval(tick, 250)
-    return () => clearInterval(iv)
-  }, [phase, play])
-
-  // Cash-out settling beat: a deterministic progress bar for the brief window the redeem is in flight,
-  // so a mid-round CASH OUT plays the same settling animation as the buzzer.
-  useEffect(() => {
-    if (phase !== 'cashing') {
-      setCashMs(0)
-      return
-    }
-    const start = Date.now()
-    const iv = setInterval(() => setCashMs(Date.now() - start), 100)
-    return () => clearInterval(iv)
-  }, [phase])
-
   const toggleHowto = useCallback(() => {
     haptic('selection')
     setOverlay((o) => (o === 'howto' ? 'none' : 'howto'))
@@ -722,26 +648,19 @@ export function LuckyScreen() {
                 the fallback before the canvas has projected. */}
             <div className="max-w-[60%]">
               {opening ? (
-                <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Opening</div>
-                  <div className="text-[30px] font-extrabold leading-none text-brand-500">OPENING</div>
-                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">{dealLine}</div>
-                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
-                    <div className="bar-sweep h-full w-1/3 bg-brand-500" />
-                  </div>
-                </>
+                <FooterStatusPanel
+                  kicker="Opening"
+                  head="OPENING"
+                  recap={dealLine}
+                  sweep
+                />
               ) : settling ? (
-                <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Settling · {settleSecs}s</div>
-                  <div className="text-[30px] font-extrabold leading-none text-brand-500">SETTLING</div>
-                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">{dealLine}</div>
-                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
-                    <div
-                      className="h-full bg-brand-500 transition-[width] duration-300 ease-out"
-                      style={{ width: `${Math.min(94, (settleMs / SETTLE_EXPECT_MS) * 100)}%` }}
-                    />
-                  </div>
-                </>
+                <FooterStatusPanel
+                  kicker={`Settling · ${settleSecs}s`}
+                  head="SETTLING"
+                  recap={dealLine}
+                  progress={Math.min(94, (settleMs / SETTLE_EXPECT_MS) * 100)}
+                />
               ) : cashingOut ? (
                 <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Cashing out</div>
@@ -757,15 +676,13 @@ export function LuckyScreen() {
                   </div>
                 </>
               ) : showReadouts ? (
-                <>
-                  <LivePnl
-                    key={play?.id}
-                    markValue={live?.markValue ?? play?.markValue ?? '0'}
-                    pnl={live?.pnl ?? play?.pnl ?? '0'}
-                    entryValue={live?.entryValue ?? play?.entryValue ?? '0'}
-                    maxPayout={live?.maxPayout ?? play?.maxPayout ?? '0'}
-                  />
-                </>
+                <LiveValuePanel
+                  key={play?.id}
+                  markValue={live?.markValue ?? play?.markValue ?? '0'}
+                  pnl={live?.pnl ?? play?.pnl ?? '0'}
+                  entryValue={live?.entryValue ?? play?.entryValue ?? '0'}
+                  maxPayout={live?.maxPayout ?? play?.maxPayout ?? '0'}
+                />
               ) : reelsCycling ? (
                 <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Dealing</div>
@@ -792,333 +709,26 @@ export function LuckyScreen() {
         </div>
       )}
 
-      {phase === 'result' && play && <LuckyResult play={play} streak={streak} />}
-      {overlay === 'howto' && <HowTo />}
+      {phase === 'result' && play && (
+        <ResultOverlay
+          play={play}
+          streak={streak}
+          winTitle="YOU WON"
+          cashoutTitle="CASHED OUT"
+          loseTitle="MISSED"
+        />
+      )}
+      {overlay === 'howto' && (
+        <InstructionOverlay
+          lines={[
+            ['SPIN', 'Deals an asset, a direction (up or down), and a multiplier.'],
+            ['TARGET', 'The price to reach, in your direction. A 2x sits just past your entry, so a small move your way wins. Bigger multipliers sit further out.'],
+            ['WIN', 'Land past the target at the buzzer to win bet x multiplier. A touch on the way does not count, only where it ends.'],
+            ['CASH OUT', 'Take the live value any time before the buzzer. Ahead? Cash out to lock it in before it can turn.'],
+          ]}
+        />
+      )}
       {overlay === 'board' && <GameLeaderboardOverlay game="lucky" title="Lucky" />}
     </GameScreen>
-  )
-}
-
-// One reel. It flickers through its pool the whole time the deal is in flight (`cycling`, which
-// covers both the server round trip and the spin window), so SPIN feels instant even while the
-// backend resolves. Once the play lands and the reels are `landing`, it snaps to the dealt target
-// at its staggered stop time with a haptic tick. Sits flush in the connected slot strip (shared
-// hairline dividers), big and punchy (docs/SCREEN.md, no rounded cards).
-function Reel({
-  index,
-  label,
-  pool,
-  target,
-  cycling,
-  landing,
-  stopAt,
-  accent,
-  last = false,
-}: {
-  index: number
-  label: string
-  pool: string[]
-  target?: string
-  cycling: boolean
-  landing: boolean
-  stopAt: number
-  accent?: 'amber' | 'up' | 'down'
-  last?: boolean
-}) {
-  const [shown, setShown] = useState<string>('?')
-  const poolRef = useRef(pool)
-  poolRef.current = pool
-
-  useEffect(() => {
-    if (!cycling) {
-      setShown(target ?? '?')
-      return
-    }
-    let stopped = false
-    // Step straight through the pool (offset per reel so the three aren't in lockstep). Sequential,
-    // not random, so every tick changes the value, never freezing on the same item twice in a row.
-    let i = index % poolRef.current.length
-    const iv = setInterval(() => {
-      if (!stopped) {
-        const p = poolRef.current
-        i = (i + 1) % p.length
-        setShown(p[i])
-      }
-    }, 60)
-    // Only schedule the snap once we know the dealt target and the spin window has begun.
-    const to =
-      landing && target
-        ? setTimeout(() => {
-          stopped = true
-          clearInterval(iv)
-          setShown(target)
-          haptic('rigid')
-          slotLock(index, last)
-        }, stopAt)
-        : undefined
-    return () => {
-      clearInterval(iv)
-      if (to) clearTimeout(to)
-    }
-  }, [cycling, landing, target, stopAt, index, last])
-
-  // Role palette: each window owns one tone, shared across the locked value, its halo, the foot bar,
-  // and a faint cell wash, so the slot reads in color instead of three plain black boxes. Neutral
-  // (the asset window, anything undealt) stays white-on-black.
-  const palette =
-    accent === 'amber'
-      ? { text: 'text-brand-500', bar: 'bg-brand-500', wash: 'bg-brand-500/10', glow: 'var(--color-brand-500)' }
-      : accent === 'up'
-        ? { text: 'text-up', bar: 'bg-up', wash: 'bg-up/10', glow: 'var(--color-up)' }
-        : accent === 'down'
-          ? { text: 'text-down', bar: 'bg-down', wash: 'bg-down/10', glow: 'var(--color-down)' }
-          : { text: 'text-text', bar: 'bg-text-3', wash: '', glow: 'var(--color-text)' }
-  const locked = !cycling && shown !== '?'
-  return (
-    <div
-      className={cnm(
-        'relative flex flex-1 flex-col items-center justify-center gap-2 overflow-hidden border-l border-line-strong bg-black px-2 py-4 first:border-l-0',
-        locked && palette.wash,
-      )}
-    >
-      <span className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-text-3">{label}</span>
-      <span
-        className={cnm('tnum text-[28px] font-extrabold leading-none transition-colors duration-200', cycling ? 'text-text-2' : palette.text)}
-        style={locked ? { textShadow: `0 0 16px ${palette.glow}` } : undefined}
-      >
-        {shown}
-      </span>
-      {/* foot bar: the slot band's colored baseline, lit when the window lands. */}
-      <span className={cnm('absolute inset-x-0 bottom-0 h-[3px] transition-opacity duration-200', palette.bar, locked ? 'opacity-100' : 'opacity-25')} />
-    </div>
-  )
-}
-
-// The asset panel: up to three live markets stacked as charts. At rest they share the height, each
-// tabbed with its symbol + live price. A spin hides the tabs and flicks a lit highlight across them
-// (the slot picking an asset). When the reels land, the dealt chart holds a beat lit + flashed (the
-// "lock-in"), THEN expands to fill while the others collapse, so the pick reads as a moment instead of
-// an instant cut. The entry/target overlays and the 60fps live price only attach to the dealt chart.
-// Each row keeps its own SSE the whole time, so an expand/collapse is a pure height ease (no
-// re-subscribe), and returning to idle is instant.
-function LuckyCharts({
-  assets,
-  focusAsset,
-  selectedAsset,
-  expanded,
-  selecting,
-  highlightAsset,
-  overlays,
-  livePriceRef,
-  initialPrices,
-  onPrice,
-}: {
-  assets: Array<string>
-  focusAsset: string
-  selectedAsset: string | null
-  expanded: boolean
-  selecting: boolean
-  highlightAsset: string | null
-  overlays: ChartOverlays | undefined
-  livePriceRef: { current: number }
-  initialPrices: Record<string, number>
-  onPrice: (asset: string, price: number) => void
-}) {
-  // The beat between "reels landed on this asset" and "chart expands": the winner sits lit + flashed
-  // at equal height while the losers dim, then it grows.
-  const locking = selectedAsset != null && !expanded
-  return (
-    <div className="absolute inset-0 flex flex-col">
-      {assets.map((a, i) => {
-        const isSel = a === selectedAsset
-        // Collapsing rows ease flex-grow 1 -> 0; the selected one holds at 1 and absorbs the room.
-        const grow = !expanded ? 1 : isSel ? 1 : 0
-        const lit = !expanded && selecting && a === highlightAsset // scan highlight while the reels cycle
-        const winner = locking && isSel // the locked pick, emphasized before it expands
-        return (
-          <div
-            key={a}
-            style={{ flexGrow: grow }}
-            className={cnm(
-              'relative min-h-0 basis-0 overflow-hidden transition-[flex-grow] duration-[600ms] ease-[cubic-bezier(0.22,1,0.36,1)]',
-              i > 0 && !expanded && 'border-t border-line-strong',
-            )}
-          >
-            <ChartRow
-              asset={a}
-              // Tabs stay through the idle stack and the scan, so each market keeps its name + price
-              // while the slot picks. They drop only once a chart is locked (selectedAsset set), since
-              // from there the header carries the symbol + price and the on-chart tab would duplicate it.
-              showLabel={selectedAsset == null}
-              reveal={isSel}
-              lit={lit}
-              winner={winner}
-              dimmed={(selecting && !lit) || (locking && !isSel)}
-              overlays={isSel ? overlays : undefined}
-              livePriceRef={a === focusAsset ? livePriceRef : undefined}
-              initialPrice={initialPrices[a]}
-              onPrice={onPrice}
-            />
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// One row of the asset panel: a live chart with a symbol + price tab top-left. Holds its own label
-// price so a tick repaints just the tab, never the parent. Reports every tick up so the panel can
-// track the dealt asset and the debug log can read it.
-function ChartRow({
-  asset,
-  showLabel,
-  reveal,
-  lit,
-  winner,
-  dimmed,
-  overlays,
-  livePriceRef,
-  initialPrice,
-  onPrice,
-}: {
-  asset: string
-  showLabel: boolean
-  reveal: boolean
-  lit: boolean
-  winner: boolean
-  dimmed: boolean
-  overlays?: ChartOverlays
-  livePriceRef?: { current: number }
-  initialPrice?: number
-  onPrice: (asset: string, price: number) => void
-}) {
-  const [price, setPrice] = useState<number | null>(null)
-  return (
-    <div className="relative h-full w-full">
-      <Chart
-        asset={asset}
-        overlays={overlays}
-        livePriceRef={livePriceRef}
-        initialPrice={initialPrice}
-        showPriceTag={reveal}
-        onPrice={(p) => {
-          setPrice(p)
-          onPrice(asset, p)
-        }}
-        className="absolute inset-0"
-      />
-      {/* spin spotlight: every chart dims, the lit one lifts with an amber frame. Both eased so the
-          highlight glides down the stack as it scans, never snaps. */}
-      <div className={cnm('pointer-events-none absolute inset-0 bg-black transition-opacity duration-150', dimmed ? 'opacity-[0.55]' : 'opacity-0')} />
-      <div className={cnm('pointer-events-none absolute inset-0 border border-brand-500 bg-brand-500/[0.06] transition-opacity duration-150', lit ? 'opacity-100' : 'opacity-0')} />
-      {/* lock-in: the dealt chart snaps to a bright amber frame and flashes once, the "this one" beat
-          before it expands. Fades out on its own as the expand takes over. */}
-      <div className={cnm('pointer-events-none absolute inset-0 border-2 border-brand-500 bg-brand-500/[0.14] transition-opacity duration-200', winner ? 'opacity-100 lucky-lock' : 'opacity-0')} />
-      {showLabel && (
-        // The stack labels show the real market + price (only the header big number stays masked).
-        <div className="pointer-events-none absolute left-[var(--screen-rim,24px)] top-2.5 flex items-baseline gap-2">
-          <span className="font-mono text-[13px] font-bold uppercase tracking-[0.16em] text-text-2">{asset}</span>
-          <span className="tnum text-[15px] font-bold leading-none text-text">{price != null ? priceLabel(price) : '—'}</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// The win/loss/cash-out moment. Flat full-screen wash (docs/SCREEN.md: big, flat, momentary, no blur):
-// the §10 copy, the signed amount, the streak on a win. A pure readout, no tap target and no tx detail,
-// it is dismissed from any console button (CONTINUE), which drops straight back to the default screen.
-function LuckyResult({ play, streak }: { play: PlayDTO; streak: number }) {
-  const reduced = useReducedMotion()
-  const pnl = parseFloat(play.pnl ?? '0')
-  const won = play.status === 'won'
-  const cashed = play.status === 'cashed_out'
-  const lost = play.status === 'lost'
-  const positive = won || (cashed && pnl > 0)
-  const head = won ? 'YOU WON' : cashed ? 'CASHED OUT' : 'MISSED'
-  const pop = reduced
-    ? {}
-    : { initial: { scale: 0.7, opacity: 0 }, animate: { scale: 1, opacity: 1 }, transition: { type: 'spring' as const, stiffness: 440, damping: 24 } }
-  return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/90 text-center">
-      <div className={cnm('font-mono text-[13px] font-bold uppercase tracking-[0.2em]', positive ? 'text-up' : 'text-down')}>{head}</div>
-      <motion.div
-        {...pop}
-        style={{ textShadow: '0 0 28px currentColor' }}
-        className={cnm('tnum text-[56px] font-extrabold leading-none', positive ? 'text-up' : 'text-down')}
-      >
-        {/* A settled loss pays $0, not minus the bet. Wins + cash-outs keep their real signed net. */}
-        {lost
-          ? `$${formatExactDecimal('0')}`
-          : `${pnl >= 0 ? '+' : '-'}$${formatExactDecimal(play.pnl, { absolute: true })}`}
-      </motion.div>
-      <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
-        Payout ${formatExactDecimal(play.payout ?? '0')} · Cost ${formatExactDecimal(play.entryValue)}
-      </div>
-      {won && streak > 0 && (
-        <div className="mt-1 inline-flex items-center border border-brand-500/60 px-2 py-0.5 font-mono text-[12px] font-bold uppercase tracking-[0.1em] text-brand-500">
-          Streak {streak}
-        </div>
-      )}
-      <span className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">Any button to continue</span>
-    </div>
-  )
-}
-
-// The live readout is the actual Predict redeem quote returned by the backend's on-chain devInspect.
-// The chart price is visual context only, it never fabricates cash-out value or PnL.
-function LivePnl({
-  markValue,
-  pnl,
-  entryValue,
-  maxPayout,
-}: {
-  markValue: string
-  pnl: string
-  entryValue: string
-  maxPayout: string
-}) {
-  const pnlNumber = parseFloat(pnl) || 0
-  const positive = pnlNumber >= 0
-
-  return (
-    <>
-      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Cash out now</div>
-      <div className="tnum text-[40px] font-extrabold leading-none text-text">
-        ${formatExactDecimal(markValue)}
-      </div>
-      <div className="mt-1 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-text-3">
-        If you cash out now{' '}
-        <span className={cnm('tnum', positive ? 'text-up' : 'text-down')}>
-          {pnlNumber >= 0 ? '+' : '-'}${formatExactDecimal(pnl, { absolute: true })}
-        </span>
-      </div>
-      <div className="mt-2.5 grid grid-cols-2 gap-x-3">
-        <Cell label="Cost" value={`$${formatExactDecimal(entryValue)}`} />
-        <Cell label="Win" value={`$${formatExactDecimal(maxPayout)}`} />
-      </div>
-    </>
-  )
-}
-
-// HOW TO: a flat in-screen card of the rules. Plain terminology only, no banned words.
-function HowTo() {
-  const lines: Array<[string, string]> = [
-    ['SPIN', 'Deals an asset, a direction (up or down), and a multiplier.'],
-    ['TARGET', 'The price to reach, in your direction. A 2x sits just past your entry, so a small move your way wins. Bigger multipliers sit further out.'],
-    ['WIN', 'Land past the target at the buzzer to win bet x multiplier. A touch on the way does not count, only where it ends.'],
-    ['CASH OUT', 'Take the live value any time before the buzzer. Ahead? Cash out to lock it in before it can turn.'],
-  ]
-  return (
-    <ScreenOverlay title="How to play">
-      <div className="flex w-full flex-col gap-4">
-        {lines.map(([k, v]) => (
-          <div key={k}>
-            <div className="font-mono text-[16px] font-bold uppercase tracking-[0.12em] text-text">{k}</div>
-            <div className="mt-1 text-[15px] leading-snug text-text-2">{v}</div>
-          </div>
-        ))}
-      </div>
-    </ScreenOverlay>
   )
 }

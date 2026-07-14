@@ -1,22 +1,26 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { motion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import type { BandOverlay } from '@/components/game/Chart'
 import type { PlayDTO, PlayStatus } from '@/lib/api'
 import { useConsoleControls } from '@/components/console/controls'
 import { Chart } from '@/components/game/Chart'
+import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
+import { FooterStatusPanel, InstructionOverlay } from '@/components/game/gamePanels'
+import { RangePnl, RangeResult } from '@/components/game/range/RangePanels'
 import {
   Cell,
   GameScreen,
   ScreenMessage,
-  ScreenOverlay,
 } from '@/components/game/screen'
-import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
-import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
+import {
+  usePhaseElapsed,
+  usePlayResolutionWatch,
+  useRoundCountdown,
+} from '@/hooks/useGameRound'
 import { haptic } from '@/lib/haptics'
 import {
   rangeBuzzer,
@@ -27,7 +31,7 @@ import {
   startRangeBgm,
   stopRangeBgm,
 } from '@/lib/sound'
-import { api, streamPlay } from '@/lib/api'
+import { api } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
 import { NETWORK, betLadder } from '@/lib/sui/config'
 import { rangeDebug, type RangeEntryIntent } from '@/lib/rangeDebug'
@@ -147,9 +151,6 @@ export function RangeScreen() {
   const [play, setPlay] = useState<PlayDTO | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [spot, setSpot] = useState<number | null>(null)
-  const [secsLeft, setSecsLeft] = useState<number | null>(null)
-  const [remainingMs, setRemainingMs] = useState<number | null>(null) // ms to the real buzzer, drives the lock/settle states
-  const [settleMs, setSettleMs] = useState(0) // time past the buzzer, drives the SETTLING progress bar
   const [overlay, setOverlay] = useState<Overlay>('none')
   // In/out of the band is visual context from the same eased price the chart paints. Money values are
   // independent and come from the on-chain redeem quote.
@@ -159,7 +160,6 @@ export function RangeScreen() {
   const [lockPrice, setLockPrice] = useState<string | null>(null)
 
   const finalized = useRef(false)
-  const watchdogRun = useRef(0)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const balanceSyncedPlayId = useRef<string | null>(null)
   const wasInside = useRef<boolean | null>(null) // last in/out band state, for the crossing tick
@@ -249,6 +249,12 @@ export function RangeScreen() {
       ? quotedMult
       : estimateMultiplier(halfPct, NOMINAL_ROUND_SEC)
   const mult = liveMult ?? idleMult
+  const { secsLeft, remainingMs, settleMs } = useRoundCountdown({
+    enabled: phase === 'open',
+    play,
+    fallbackDurationSec: NOMINAL_ROUND_SEC,
+  })
+  const cashMs = usePhaseElapsed(phase === 'cashing')
 
   // Band overlay: a live ±halfPct preview while idle (the chart centers it on the smoothed price and
   // it tracks the live edge), locked to the play's strike bounds only while a round is live. The lock
@@ -341,7 +347,6 @@ export function RangeScreen() {
   const finishResult = useCallback(
     (final: PlayDTO) => {
       finalized.current = true
-      watchdogRun.current += 1
       wasInside.current = null
       setPlay(final)
       setLive({
@@ -375,7 +380,6 @@ export function RangeScreen() {
       if (finalized.current) return
       if (status === 'error') {
         finalized.current = true
-        watchdogRun.current += 1
         toast.error(
           'Could not open that play. Your chips are safe, play again.',
           { id: 'range-play-error' },
@@ -388,7 +392,6 @@ export function RangeScreen() {
       }
       if (RESULT_TERMINAL.has(status)) {
         finalized.current = true
-        watchdogRun.current += 1
         void api
           .getPlay(playId)
           .then(({ play: final }) => finishResult(final))
@@ -398,75 +401,26 @@ export function RangeScreen() {
     [finishResult],
   )
 
-  // Live value while a play is open. The play comes back 'pending' the instant it's placed; the real
-  // mint_range lands a moment later and the stream flips it to 'open', then to a terminal frame at the
-  // buzzer settle.
-  useEffect(() => {
-    if (!play || phase !== 'open') return
-    const id = play.id
-    return streamPlay(
-      id,
-      (tick) => {
-        setLive({
-          markValue: tick.markValue,
-          pnl: tick.pnl,
-          multiplier: tick.multiplier,
-          entryValue: tick.entryValue,
-          maxPayout: tick.maxPayout,
-          status: tick.status,
-        })
-        if (tick.status === 'open' && balanceSyncedPlayId.current !== id) {
-          balanceSyncedPlayId.current = id
-          void refresh()
-        }
-        // Present only after the oracle settlement transaction has set a real settlement_price.
-        setLockPrice(tick.lockPrice ?? null)
-        resolveTerminal(tick.status, id)
-      },
-      () => {
-        // SSE dropped: keep the last readout. EventSource retries, and the watchdog below still resolves.
-      },
-    )
-  }, [play, phase, resolveTerminal])
-
-  // Watchdog: poll the play directly on a steady cadence, independent of the SSE socket. This is what
-  // makes OPENING / SETTLING deterministic, the result lands even if the stream silently died. Reads are
-  // cheap (the backend caches the live mark and skips it entirely once past the buzzer). Mirrors Lucky.
-  useEffect(() => {
-    if (!play || phase !== 'open') return
-    const id = play.id
-    const run = ++watchdogRun.current
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async (): Promise<void> => {
-      if (run !== watchdogRun.current || finalized.current) return
-      try {
-        const { play: cur } = await api.getPlay(id)
-        if (run !== watchdogRun.current) return
-        setLive({
-          markValue: cur.markValue,
-          pnl: cur.pnl,
-          multiplier: cur.multiplier,
-          entryValue: cur.entryValue,
-          maxPayout: cur.maxPayout,
-          status: cur.status,
-        })
-        if (cur.status === 'open' && balanceSyncedPlayId.current !== id) {
-          balanceSyncedPlayId.current = id
-          void refresh()
-        }
-        resolveTerminal(cur.status, id)
-      } catch {
-        // transient; the next tick retries
-      }
-      if (run === watchdogRun.current)
-        timer = setTimeout(() => void poll(), WATCHDOG_MS)
-    }
-    timer = setTimeout(() => void poll(), WATCHDOG_MS)
-    return () => {
-      if (watchdogRun.current === run) watchdogRun.current += 1
-      clearTimeout(timer)
-    }
-  }, [play, phase, resolveTerminal])
+  usePlayResolutionWatch({
+    enabled: phase === 'open',
+    playId: play?.id,
+    finalizedRef: finalized,
+    watchdogMs: WATCHDOG_MS,
+    syncedOpenPlayIdRef: balanceSyncedPlayId,
+    refreshOnOpen: refresh,
+    onSnapshot: (snapshot) => {
+      setLive({
+        markValue: snapshot.markValue,
+        pnl: snapshot.pnl,
+        multiplier: snapshot.multiplier,
+        entryValue: snapshot.entryValue,
+        maxPayout: snapshot.maxPayout,
+        status: snapshot.status,
+      })
+      setLockPrice(snapshot.lockPrice ?? null)
+    },
+    onTerminal: resolveTerminal,
+  })
 
   useEffect(() => () => clearResetTimer(), [])
 
@@ -586,32 +540,6 @@ export function RangeScreen() {
     haptic('selection')
     setPhase('idle')
   }, [])
-
-  // Round countdown to the real on-chain buzzer (play.market.expiry, the oracle expiry the round settles
-  // at), not openedAt+duration: the mint lands a beat after PLAY, so openedAt+duration runs PAST the real
-  // expiry and showed phantom seconds. Drives the lock-in window + the SETTLING progress off remainingMs.
-  // At 0 it flips to SETTLING and the settle worker drives the win/lose; the streams above catch it.
-  useEffect(() => {
-    if (phase !== 'open' || !play) {
-      setSecsLeft(null)
-      setRemainingMs(null)
-      setSettleMs(0)
-      return
-    }
-    const endAt =
-      play.market.expiry ||
-      (play.openedAt ? Date.parse(play.openedAt) : Date.now()) +
-        (play.params.duration || NOMINAL_ROUND_SEC) * 1000
-    const tick = () => {
-      const remaining = endAt - Date.now()
-      setSecsLeft(Math.max(0, Math.ceil(remaining / 1000)))
-      setRemainingMs(remaining)
-      setSettleMs(remaining < 0 ? -remaining : 0)
-    }
-    tick()
-    const iv = setInterval(tick, 250)
-    return () => clearInterval(iv)
-  }, [phase, play])
 
   // Track in/out off the 60fps eased chart price. Only re-render on a real flip. This is visual context,
   // not PnL. Once cash-out closes near expiry, the pill is hidden.
@@ -902,94 +830,44 @@ export function RangeScreen() {
           <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5 min-h-[var(--screen-notch,21%)]">
             <div className="max-w-[60%]">
               {phase === 'placing' ? (
-                <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                    Locking band
-                  </div>
-                  <div className="text-[30px] font-extrabold leading-none text-brand-500">
-                    LOCKING IN
-                  </div>
-                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
-                    {recap}
-                  </div>
-                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
-                    <div className="bar-sweep h-full w-1/3 bg-brand-500" />
-                  </div>
-                </>
+                <FooterStatusPanel
+                  kicker="Locking band"
+                  head="LOCKING IN"
+                  recap={recap}
+                  sweep
+                />
               ) : opening ? (
-                <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                    Opening
-                  </div>
-                  <div className="text-[30px] font-extrabold leading-none text-brand-500">
-                    OPENING
-                  </div>
-                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
-                    {recap}
-                  </div>
-                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
-                    <div className="bar-sweep h-full w-1/3 bg-brand-500" />
-                  </div>
-                </>
+                <FooterStatusPanel
+                  kicker="Opening"
+                  head="OPENING"
+                  recap={recap}
+                  sweep
+                />
               ) : settling ? (
-                <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                    Settling · {settleSecs}s
-                  </div>
-                  <div className="text-[30px] font-extrabold leading-none text-brand-500">
-                    SETTLING
-                  </div>
-                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
-                    {recap}
-                  </div>
-                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
-                    <div
-                      className="h-full bg-brand-500 transition-[width] duration-300 ease-out"
-                      style={{
-                        width: `${Math.min(94, (settleMs / SETTLE_EXPECT_MS) * 100)}%`,
-                      }}
-                    />
-                  </div>
-                </>
+                <FooterStatusPanel
+                  kicker={`Settling · ${settleSecs}s`}
+                  head="SETTLING"
+                  recap={recap}
+                  progress={Math.min(94, (settleMs / SETTLE_EXPECT_MS) * 100)}
+                />
               ) : sealing ? (
-                <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                    Cash out closed · settles in {secsLeft ?? 0}s
-                  </div>
-                  <div className="text-[30px] font-extrabold leading-none text-brand-500">
-                    FINAL SECONDS
-                  </div>
-                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
-                    {recap}
-                  </div>
-                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
-                    <div
-                      className="h-full bg-brand-500 transition-[width] duration-300 ease-out"
-                      style={{
-                        width: `${Math.min(
-                          96,
-                          ((SETTLE_LOCK_MS - remainingMs) / SETTLE_LOCK_MS) *
-                            100,
-                        )}%`,
-                      }}
-                    />
-                  </div>
-                </>
+                <FooterStatusPanel
+                  kicker={`Cash out closed · settles in ${secsLeft ?? 0}s`}
+                  head="FINAL SECONDS"
+                  recap={recap}
+                  progress={Math.min(
+                    96,
+                    ((SETTLE_LOCK_MS - (remainingMs ?? 0)) / SETTLE_LOCK_MS) * 100,
+                  )}
+                />
               ) : cashing ? (
-                <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                    Cashing out
-                  </div>
-                  <div className="text-[30px] font-extrabold leading-none text-up">
-                    CASHING OUT
-                  </div>
-                  <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
-                    {recap}
-                  </div>
-                  <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
-                    <div className="bar-sweep h-full w-1/3 bg-up" />
-                  </div>
-                </>
+                <FooterStatusPanel
+                  kicker="Cashing out"
+                  head="CASHING OUT"
+                  recap={recap}
+                  tone="up"
+                  progress={Math.min(92, (cashMs / CASHOUT_SETTLE_MS) * 100)}
+                />
               ) : showReadouts ? (
                 <>
                   <div className="flex items-center gap-2">
@@ -1061,220 +939,19 @@ export function RangeScreen() {
       {phase === 'result' && play && (
         <RangeResult play={play} feedOffset={feedOffset} />
       )}
-      {overlay === 'howto' && <HowTo />}
+      {overlay === 'howto' && (
+        <InstructionOverlay
+          lines={[
+            ['BAND', 'Turn the knob to size your price band. Tighter pays more.'],
+            ['PLAY', 'Locks the band around the live price.'],
+            ['WIN', 'Land inside the band at the buzzer to win stake × multiple.'],
+            ['CASH OUT', 'Take the live value any time before the buzzer.'],
+          ]}
+        />
+      )}
       {overlay === 'board' && (
         <GameLeaderboardOverlay game="range" title="Range" />
       )}
     </GameScreen>
-  )
-}
-
-// Payout-forward live readout. The big number is the prize you'd collect if the round settled right
-// now: the full payout while the live price sits in the band (green), $0 while it's out (red). The
-// caption carries the early-exit value, the real net you'd lock in by cashing out this instant, from
-// the on-chain redeem quote (markValue - cost), so it reads minus when you're underwater. The in/out
-// call rides `inside` (the same 60fps chart-synced zone the pill + band use), so the headline flips
-// the instant the line crosses an edge; the payout itself comes from the chain.
-function RangePnl({
-  inside,
-  payout,
-  cashoutPnl,
-}: {
-  inside: boolean | null
-  payout: string
-  cashoutPnl: string
-}) {
-  const up = inside !== false // null (pre-first-sample, at the band center) and true read as in-zone
-  const neg = cashoutPnl.trim().startsWith('-')
-  return (
-    <>
-      <div
-        className={cnm(
-          'tnum text-[40px] font-extrabold leading-none',
-          up ? 'text-up' : 'text-down',
-        )}
-      >
-        {up ? `+$${formatExactDecimal(payout, { absolute: true })}` : '$0.00'}
-      </div>
-      <div className="mt-1 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-text-3">
-        If you cash out now {neg ? '-' : '+'}${formatExactDecimal(cashoutPnl, { absolute: true })}
-      </div>
-    </>
-  )
-}
-
-// The win/loss/cash-out moment. The verdict comes from the settled play status. The gauge only explains
-// where the backend's frozen settlement price landed relative to the actual on-chain band.
-function RangeResult({ play, feedOffset }: { play: PlayDTO; feedOffset: number }) {
-  const reduced = useReducedMotion()
-  const pnl = parseFloat(play.pnl)
-  const won = play.status === 'won'
-  const cashed = play.status === 'cashed_out'
-  const lost = play.status === 'lost'
-  const positive = won || (cashed && pnl > 0)
-  const head = won ? 'IN THE ZONE' : cashed ? 'CASHED OUT' : 'OUT OF RANGE'
-  // Shift the gauge by the same feed offset the chart used, so the band + settle price the player sees
-  // here match the line and the RESULT marker they just watched (a uniform shift, verdict unchanged).
-  const lo = play.market.lower ? parseFloat(play.market.lower) + feedOffset : null
-  const hi = play.market.upper ? parseFloat(play.market.upper) + feedOffset : null
-  const settled = play.settlePrice ? parseFloat(play.settlePrice) + feedOffset : null
-  const hasGauge =
-    !cashed &&
-    lo != null &&
-    hi != null &&
-    settled != null &&
-    Number.isFinite(lo) &&
-    Number.isFinite(hi) &&
-    Number.isFinite(settled) &&
-    hi > lo
-  // The inside/outside call follows the settled VERDICT (won == inside, lost == outside), the on-chain
-  // truth, not a float price compare that can disagree right on a band edge and contradict the headline.
-  // The price still places the marker + names which side. A cash-out has no band verdict, so it reads the
-  // exit price directly (and a lost play that rounds onto the band is pushed to the nearer edge).
-  const relation: 'below' | 'inside' | 'above' = !hasGauge
-    ? 'inside'
-    : won
-      ? 'inside'
-      : settled <= lo
-        ? 'below'
-        : settled > hi
-          ? 'above'
-          : cashed
-            ? 'inside'
-            : settled <= (lo + hi) / 2
-              ? 'below'
-              : 'above'
-  const pop = reduced
-    ? {}
-    : {
-        initial: { scale: 0.7, opacity: 0 },
-        animate: { scale: 1, opacity: 1 },
-        transition: { type: 'spring' as const, stiffness: 440, damping: 24 },
-      }
-  return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/90 text-center">
-      <div
-        className={cnm(
-          'font-mono text-[13px] font-bold uppercase tracking-[0.2em]',
-          positive ? 'text-up' : 'text-down',
-        )}
-      >
-        {head}
-      </div>
-      <motion.div
-        {...pop}
-        style={{ textShadow: '0 0 28px currentColor' }}
-        className={cnm(
-          'tnum text-[56px] font-extrabold leading-none',
-          positive ? 'text-up' : 'text-down',
-        )}
-      >
-        {/* A settled loss pays $0, not minus the stake. Wins + cash-outs keep their real signed net. */}
-        {lost
-          ? `$${formatExactDecimal('0')}`
-          : `${pnl >= 0 ? '+' : '-'}$${formatExactDecimal(play.pnl, { absolute: true })}`}
-      </motion.div>
-      <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
-        Payout ${formatExactDecimal(play.payout ?? '0')} · Cost ${formatExactDecimal(play.entryValue)}
-      </div>
-      {hasGauge ? (
-        <SettlementGauge
-          lower={lo}
-          upper={hi}
-          price={settled}
-          relation={relation}
-          label={cashed ? 'Exit' : 'Settled'}
-        />
-      ) : (
-        lo != null &&
-        hi != null && (
-          <div className="font-mono text-[12px] uppercase tracking-[0.12em] text-text-3">
-            Band {compact(lo)} – {compact(hi)}
-          </div>
-        )
-      )}
-      <span className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">
-        Any button to continue
-      </span>
-    </div>
-  )
-}
-
-function SettlementGauge({
-  lower,
-  upper,
-  price,
-  relation,
-  label,
-}: {
-  lower: number
-  upper: number
-  price: number
-  relation: 'below' | 'inside' | 'above'
-  label: 'Exit' | 'Settled'
-}) {
-  const span = upper - lower
-  // The band owns the middle half of the gauge. Far misses clamp to an edge, while the exact price
-  // remains visible in the label below.
-  const pricePct = Math.max(4, Math.min(96, 25 + ((price - lower) / span) * 50))
-  const inside = relation === 'inside'
-  const relationCopy = inside
-    ? `${label} inside your band`
-    : `${label} ${relation} your band`
-
-  // Colored by `relation` so the marker's color, its position, and the copy always agree. For a settled
-  // win/loss `relation` is the verdict (won -> inside, lost -> a side), so this matches the headline; for
-  // a cash-out it reflects where the exit price actually sat (a green dot can never float in the red zone).
-  return (
-    <div className="mt-3 w-[280px] max-w-[72%]">
-      <div className="relative h-5 border-y border-line-strong">
-        <div className="absolute inset-y-0 left-1/4 w-1/2 bg-brand-500/20" />
-        <div className="absolute inset-y-0 left-1/4 w-px bg-brand-500" />
-        <div className="absolute inset-y-0 left-3/4 w-px bg-brand-500" />
-        <div
-          className={cnm(
-            'absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 border-2 border-black',
-            inside ? 'bg-up' : 'bg-down',
-          )}
-          style={{ left: `${pricePct}%` }}
-        />
-      </div>
-      <div className="mt-1 flex justify-between font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-text-3">
-        <span>{compact(lower)}</span>
-        <span>{compact(upper)}</span>
-      </div>
-      <div
-        className={cnm(
-          'mt-2 font-mono text-[11px] font-bold uppercase tracking-[0.1em]',
-          inside ? 'text-up' : 'text-down',
-        )}
-      >
-        {relationCopy} · {priceLabel(price)}
-      </div>
-    </div>
-  )
-}
-
-// HOW TO: a flat in-screen card of the rules. Plain terminology only, no banned words.
-function HowTo() {
-  const lines: Array<[string, string]> = [
-    ['BAND', 'Turn the knob to size your price band. Tighter pays more.'],
-    ['PLAY', 'Locks the band around the live price.'],
-    ['WIN', 'Land inside the band at the buzzer to win stake × multiple.'],
-    ['CASH OUT', 'Take the live value any time before the buzzer.'],
-  ]
-  return (
-    <ScreenOverlay title="How to play">
-      <div className="flex w-full flex-col gap-4">
-        {lines.map(([k, v]) => (
-          <div key={k}>
-            <div className="font-mono text-[16px] font-bold uppercase tracking-[0.12em] text-text">
-              {k}
-            </div>
-            <div className="mt-1 text-[15px] leading-snug text-text-2">{v}</div>
-          </div>
-        ))}
-      </div>
-    </ScreenOverlay>
   )
 }

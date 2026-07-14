@@ -1,16 +1,25 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { motion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import type { ChartOverlays } from '@/components/game/Chart'
 import { Chart } from '@/components/game/Chart'
-import { Cell, GameScreen, ScreenMessage, ScreenOverlay } from '@/components/game/screen'
 import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
+import {
+  FooterStatusPanel,
+  InstructionOverlay,
+  LiveValuePanel,
+  ResultOverlay,
+} from '@/components/game/gamePanels'
+import { GameScreen, ScreenMessage, Cell } from '@/components/game/screen'
 import { useConsoleControls } from '@/components/console/controls'
-import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
+import {
+  usePhaseElapsed,
+  usePlayResolutionWatch,
+  useRoundCountdown,
+} from '@/hooks/useGameRound'
 import { haptic } from '@/lib/haptics'
 import {
   moonshotCashout,
@@ -21,7 +30,7 @@ import {
   startMoonshotBgm,
   stopMoonshotBgm,
 } from '@/lib/sound'
-import { api, streamPlay, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
+import { api, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
 import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
@@ -106,14 +115,9 @@ export function MoonshotScreen() {
   const [play, setPlay] = useState<PlayDTO | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [spot, setSpot] = useState<number | null>(null)
-  const [secsLeft, setSecsLeft] = useState<number | null>(null)
-  const [remainingMs, setRemainingMs] = useState<number | null>(null)
-  const [settleMs, setSettleMs] = useState(0)
-  const [cashMs, setCashMs] = useState(0)
   const [overlay, setOverlay] = useState<Overlay>('none')
 
   const finalized = useRef(false)
-  const watchdogRun = useRef(0)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const balanceSyncedPlayId = useRef<string | null>(null)
   const livePriceRef = useRef(0)
@@ -172,6 +176,12 @@ export function MoonshotScreen() {
     : (phase === 'idle' || phase === 'placing') && previewTarget != null
       ? { target: { price: previewTarget, side } }
       : undefined
+  const { secsLeft, remainingMs, settleMs } = useRoundCountdown({
+    enabled: phase === 'open',
+    play,
+    fallbackDurationSec: NOMINAL_ROUND_SEC,
+  })
+  const cashMs = usePhaseElapsed(phase === 'cashing')
 
   // Phase machine off the live status + the countdown (mirrors Range).
   const confirmed = live?.status === 'open'
@@ -191,7 +201,6 @@ export function MoonshotScreen() {
   const finishResult = useCallback(
     (final: PlayDTO) => {
       finalized.current = true
-      watchdogRun.current += 1
       setPlay(final)
       setLive({
         markValue: final.markValue,
@@ -220,7 +229,6 @@ export function MoonshotScreen() {
       if (finalized.current) return
       if (status === 'error') {
         finalized.current = true
-        watchdogRun.current += 1
         toast.error('Could not open that play. Your chips are safe, fire again.', { id: 'moonshot-play-error' })
         clearResetTimer()
         setPlay(null)
@@ -230,7 +238,6 @@ export function MoonshotScreen() {
       }
       if (RESULT_TERMINAL.has(status)) {
         finalized.current = true
-        watchdogRun.current += 1
         void api
           .getPlay(playId)
           .then(({ play: final }) => finishResult(final))
@@ -240,70 +247,24 @@ export function MoonshotScreen() {
     [finishResult],
   )
 
-  // Live value while a play is open. Comes back 'pending' the instant it's placed; the real mint lands
-  // a beat later and the stream flips it to 'open', then to a terminal frame at the buzzer settle.
-  useEffect(() => {
-    if (!play || phase !== 'open') return
-    const id = play.id
-    return streamPlay(
-      id,
-      (tick) => {
-        setLive({
-          markValue: tick.markValue,
-          pnl: tick.pnl,
-          multiplier: tick.multiplier,
-          entryValue: tick.entryValue,
-          maxPayout: tick.maxPayout,
-          status: tick.status,
-        })
-        if (tick.status === 'open' && balanceSyncedPlayId.current !== id) {
-          balanceSyncedPlayId.current = id
-          void refresh()
-        }
-        resolveTerminal(tick.status, id)
-      },
-      () => {
-        // SSE dropped: keep the last readout. EventSource retries, and the watchdog below still resolves.
-      },
-    )
-  }, [play, phase, resolveTerminal])
-
-  // Watchdog: poll the play on a steady cadence, independent of the SSE socket, so the terminal frame
-  // always lands even if the stream silently dies. Mirrors Lucky / Range.
-  useEffect(() => {
-    if (!play || phase !== 'open') return
-    const id = play.id
-    const run = ++watchdogRun.current
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async (): Promise<void> => {
-      if (run !== watchdogRun.current || finalized.current) return
-      try {
-        const { play: cur } = await api.getPlay(id)
-        if (run !== watchdogRun.current) return
-        setLive({
-          markValue: cur.markValue,
-          pnl: cur.pnl,
-          multiplier: cur.multiplier,
-          entryValue: cur.entryValue,
-          maxPayout: cur.maxPayout,
-          status: cur.status,
-        })
-        if (cur.status === 'open' && balanceSyncedPlayId.current !== id) {
-          balanceSyncedPlayId.current = id
-          void refresh()
-        }
-        resolveTerminal(cur.status, id)
-      } catch {
-        // transient; the next tick retries
-      }
-      if (run === watchdogRun.current) timer = setTimeout(() => void poll(), WATCHDOG_MS)
-    }
-    timer = setTimeout(() => void poll(), WATCHDOG_MS)
-    return () => {
-      if (watchdogRun.current === run) watchdogRun.current += 1
-      clearTimeout(timer)
-    }
-  }, [play, phase, resolveTerminal])
+  usePlayResolutionWatch({
+    enabled: phase === 'open',
+    playId: play?.id,
+    finalizedRef: finalized,
+    watchdogMs: WATCHDOG_MS,
+    syncedOpenPlayIdRef: balanceSyncedPlayId,
+    refreshOnOpen: refresh,
+    onSnapshot: (snapshot) =>
+      setLive({
+        markValue: snapshot.markValue,
+        pnl: snapshot.pnl,
+        multiplier: snapshot.multiplier,
+        entryValue: snapshot.entryValue,
+        maxPayout: snapshot.maxPayout,
+        status: snapshot.status,
+      }),
+    onTerminal: resolveTerminal,
+  })
 
   useEffect(() => () => clearResetTimer(), [])
 
@@ -417,40 +378,6 @@ export function MoonshotScreen() {
     setOverlay((o) => (o === 'none' ? 'howto' : o === 'howto' ? 'board' : 'none'))
   }, [])
   const infoLabel = overlay === 'none' ? 'HOW TO' : overlay === 'howto' ? 'RANKS' : 'GAME'
-
-  // Countdown to the real on-chain buzzer (play.market.expiry), driving the lock-in window + the
-  // SETTLING progress off remainingMs. Mirrors Range.
-  useEffect(() => {
-    if (phase !== 'open' || !play) {
-      setSecsLeft(null)
-      setRemainingMs(null)
-      setSettleMs(0)
-      return
-    }
-    const endAt =
-      play.market.expiry ||
-      (play.openedAt ? Date.parse(play.openedAt) : Date.now()) + (play.params.duration || NOMINAL_ROUND_SEC) * 1000
-    const tick = () => {
-      const remaining = endAt - Date.now()
-      setSecsLeft(Math.max(0, Math.ceil(remaining / 1000)))
-      setRemainingMs(remaining)
-      setSettleMs(remaining < 0 ? -remaining : 0)
-    }
-    tick()
-    const iv = setInterval(tick, 250)
-    return () => clearInterval(iv)
-  }, [phase, play])
-
-  // Cash-out settling beat: a deterministic progress bar for the brief window the redeem is in flight.
-  useEffect(() => {
-    if (phase !== 'cashing') {
-      setCashMs(0)
-      return
-    }
-    const start = Date.now()
-    const iv = setInterval(() => setCashMs(Date.now() - start), 100)
-    return () => clearInterval(iv)
-  }, [phase])
 
   const isResult = phase === 'result'
   const resultPositive =
@@ -574,22 +501,22 @@ export function MoonshotScreen() {
           <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5 min-h-[var(--screen-notch,21%)]">
             <div className="max-w-[60%]">
               {phase === 'placing' ? (
-                <FooterStatus kicker="Launching" head="FIRING" recap={recap} sweep />
+                <FooterStatusPanel kicker="Launching" head="FIRING" recap={recap} sweep />
               ) : opening ? (
-                <FooterStatus kicker="Opening" head="OPENING" recap={recap} sweep />
+                <FooterStatusPanel kicker="Opening" head="OPENING" recap={recap} sweep />
               ) : settling ? (
-                <FooterStatus kicker={`Settling · ${settleSecs}s`} head="SETTLING" recap={recap} progress={Math.min(94, (settleMs / SETTLE_EXPECT_MS) * 100)} />
+                <FooterStatusPanel kicker={`Settling · ${settleSecs}s`} head="SETTLING" recap={recap} progress={Math.min(94, (settleMs / SETTLE_EXPECT_MS) * 100)} />
               ) : sealing ? (
-                <FooterStatus
+                <FooterStatusPanel
                   kicker={`Cash out closed · settles in ${secsLeft ?? 0}s`}
                   head="FINAL SECONDS"
                   recap={recap}
                   progress={Math.min(96, ((SETTLE_LOCK_MS - (remainingMs ?? 0)) / SETTLE_LOCK_MS) * 100)}
                 />
               ) : cashing ? (
-                <FooterStatus kicker="Cashing out" head="CASHING OUT" tone="up" recap={recap} progress={Math.min(92, (cashMs / CASHOUT_SETTLE_MS) * 100)} />
+                <FooterStatusPanel kicker="Cashing out" head="CASHING OUT" tone="up" recap={recap} progress={Math.min(92, (cashMs / CASHOUT_SETTLE_MS) * 100)} />
               ) : showReadouts ? (
-                <LivePnl
+                <LiveValuePanel
                   key={play?.id}
                   markValue={live?.markValue ?? play?.markValue ?? '0'}
                   pnl={live?.pnl ?? play?.pnl ?? '0'}
@@ -628,122 +555,27 @@ export function MoonshotScreen() {
         </div>
       )}
 
-      {phase === 'result' && play && <MoonshotResult play={play} streak={streak} />}
-      {overlay === 'howto' && <HowTo />}
+      {phase === 'result' && play && (
+        <ResultOverlay
+          play={play}
+          streak={streak}
+          winTitle="YOU CALLED IT"
+          cashoutTitle="CASHED OUT"
+          loseTitle="MISSED"
+        />
+      )}
+      {overlay === 'howto' && (
+        <InstructionOverlay
+          compact
+          lines={[
+            ['AIM', 'Knob up to go LONG, down to go SHORT. Further out, bigger target and multiple.'],
+            ['MARKET', 'Right button switches the market you call.'],
+            ['WIN', 'End past your target at the buzzer to win bet × multiple.'],
+            ['CASH OUT', 'Take the live value any time before the buzzer.'],
+          ]}
+        />
+      )}
       {overlay === 'board' && <GameLeaderboardOverlay game="moonshot" title="Moonshot" />}
     </GameScreen>
-  )
-}
-
-// One shared in-flight footer panel (FIRING / OPENING / SETTLING / FINAL / CASHING OUT): a kicker, a
-// big headline, the play recap, and an optional progress bar (a determinate width or an indeterminate
-// sweep). Keeps the five transient states identical instead of five near-copies.
-function FooterStatus({
-  kicker,
-  head,
-  recap,
-  progress,
-  sweep,
-  tone = 'brand',
-}: {
-  kicker: string
-  head: string
-  recap: string
-  progress?: number
-  sweep?: boolean
-  tone?: 'brand' | 'up'
-}) {
-  const ink = tone === 'up' ? 'text-up' : 'text-brand-500'
-  const bar = tone === 'up' ? 'bg-up' : 'bg-brand-500'
-  return (
-    <>
-      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">{kicker}</div>
-      <div className={cnm('text-[30px] font-extrabold leading-none', ink)}>{head}</div>
-      <div className="mt-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">{recap}</div>
-      <div className="mt-3 h-1 w-[200px] max-w-full overflow-hidden bg-line-strong">
-        {sweep ? (
-          <div className={cnm('bar-sweep h-full w-1/3', bar)} />
-        ) : (
-          <div className={cnm('h-full transition-[width] duration-300 ease-out', bar)} style={{ width: `${progress ?? 0}%` }} />
-        )}
-      </div>
-    </>
-  )
-}
-
-// The live readout while a round runs: the on-chain redeem quote (cash-out-now value) + the signed
-// if-you-cash-out P/L, plus Cost / Win cells. The chart price is context only; money comes from the chain.
-function LivePnl({ markValue, pnl, entryValue, maxPayout }: { markValue: string; pnl: string; entryValue: string; maxPayout: string }) {
-  const pnlNumber = parseFloat(pnl) || 0
-  const positive = pnlNumber >= 0
-  return (
-    <>
-      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Cash out now</div>
-      <div className="tnum text-[40px] font-extrabold leading-none text-text">${formatExactDecimal(markValue)}</div>
-      <div className="mt-1 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-text-3">
-        If you cash out now{' '}
-        <span className={cnm('tnum', positive ? 'text-up' : 'text-down')}>
-          {pnlNumber >= 0 ? '+' : '-'}${formatExactDecimal(pnl, { absolute: true })}
-        </span>
-      </div>
-      <div className="mt-2.5 grid grid-cols-2 gap-x-3">
-        <Cell label="Cost" value={`$${formatExactDecimal(entryValue)}`} />
-        <Cell label="Win" value={`$${formatExactDecimal(maxPayout)}`} />
-      </div>
-    </>
-  )
-}
-
-// The win/miss/cash-out moment. Flat full-screen wash (docs/SCREEN.md): the verdict, the signed amount,
-// the streak on a win. A pure readout, dismissed from any console button (CONTINUE).
-function MoonshotResult({ play, streak }: { play: PlayDTO; streak: number }) {
-  const reduced = useReducedMotion()
-  const pnl = parseFloat(play.pnl ?? '0')
-  const won = play.status === 'won'
-  const cashed = play.status === 'cashed_out'
-  const lost = play.status === 'lost'
-  const positive = won || (cashed && pnl > 0)
-  const head = won ? 'YOU CALLED IT' : cashed ? 'CASHED OUT' : 'MISSED'
-  const pop = reduced
-    ? {}
-    : { initial: { scale: 0.7, opacity: 0 }, animate: { scale: 1, opacity: 1 }, transition: { type: 'spring' as const, stiffness: 440, damping: 24 } }
-  return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/90 text-center">
-      <div className={cnm('font-mono text-[13px] font-bold uppercase tracking-[0.2em]', positive ? 'text-up' : 'text-down')}>{head}</div>
-      <motion.div {...pop} style={{ textShadow: '0 0 28px currentColor' }} className={cnm('tnum text-[56px] font-extrabold leading-none', positive ? 'text-up' : 'text-down')}>
-        {lost ? `$${formatExactDecimal('0')}` : `${pnl >= 0 ? '+' : '-'}$${formatExactDecimal(play.pnl, { absolute: true })}`}
-      </motion.div>
-      <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
-        Payout ${formatExactDecimal(play.payout ?? '0')} · Cost ${formatExactDecimal(play.entryValue)}
-      </div>
-      {won && streak > 0 && (
-        <div className="mt-1 inline-flex items-center border border-brand-500/60 px-2 py-0.5 font-mono text-[12px] font-bold uppercase tracking-[0.1em] text-brand-500">
-          Streak {streak}
-        </div>
-      )}
-      <span className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-text-3">Any button to continue</span>
-    </div>
-  )
-}
-
-// HOW TO: a flat in-screen card of the rules. Plain terminology only, no banned words.
-function HowTo() {
-  const lines: Array<[string, string]> = [
-    ['AIM', 'Knob up to go LONG, down to go SHORT. Further out, bigger target and multiple.'],
-    ['MARKET', 'Right button switches the market you call.'],
-    ['WIN', 'End past your target at the buzzer to win bet × multiple.'],
-    ['CASH OUT', 'Take the live value any time before the buzzer.'],
-  ]
-  return (
-    <ScreenOverlay title="How to play">
-      <div className="flex w-full flex-col gap-3">
-        {lines.map(([k, v]) => (
-          <div key={k}>
-            <div className="font-mono text-[13px] font-bold uppercase tracking-[0.12em] text-text">{k}</div>
-            <div className="mt-0.5 text-[13px] leading-snug text-text-2">{v}</div>
-          </div>
-        ))}
-      </div>
-    </ScreenOverlay>
   )
 }
