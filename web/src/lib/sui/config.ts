@@ -18,18 +18,57 @@ export const PREDICT_ID = env.VITE_PREDICT_OBJECT_ID ?? ''
 // (predict.ts reads it inside its functions) pick up the new value with no extra plumbing.
 export let DUSDC_TYPE = env.VITE_DUSDC_TYPE ?? ''
 
-// Pull the live deploy ids from the backend and adopt the current DUSDC coin type. Fire-and-forget at
-// app boot; on any failure (no backend, demo mode, offline) we keep the compile-time fallback above.
+// Stake band the backend enforces per play. Defaulted synchronously from the active network so the bet
+// wheel is correct on first render (testnet = real Predict, floored at the protocol's ~$1 min-net-premium
+// -> 1.5..3; anything else is the free fork's wide 1..100). /config makes it authoritative if the backend
+// runs with custom PIPS_MIN_STAKE/PIPS_MAX_STAKE overrides. Mirrors backend IS_REAL_PREDICT (SUI_NETWORK==='testnet').
+let STAKE_MIN = NETWORK === 'testnet' ? 1.5 : 1
+let STAKE_MAX = NETWORK === 'testnet' ? 3 : 100
+
+// Pull the live deploy ids from the backend and adopt the current DUSDC coin type + stake band.
+// Fire-and-forget at app boot; on any failure (no backend, demo mode, offline) we keep the defaults above.
 export async function refreshDeployedConfig(): Promise<void> {
   try {
     const res = await fetch(`${env.VITE_API_URL}/config`, { signal: AbortSignal.timeout(5000) })
     if (!res.ok) return
-    const body = (await res.json()) as { data?: { dusdcType?: string } }
+    const body = (await res.json()) as {
+      data?: { dusdcType?: string; minStake?: number; maxStake?: number }
+    }
     const live = body?.data?.dusdcType
     if (live && live !== DUSDC_TYPE) DUSDC_TYPE = live
+    const min = body?.data?.minStake
+    const max = body?.data?.maxStake
+    if (typeof min === 'number' && min > 0) STAKE_MIN = min
+    if (typeof max === 'number' && max >= STAKE_MIN) STAKE_MAX = max
   } catch {
-    // keep the VITE fallback
+    // keep the defaults
   }
+}
+
+// The curated tiers we prefer when the band is wide enough (the free fork). A tight real band gets even rungs.
+const CURATED_TIERS = [1, 5, 10, 25, 50, 100]
+
+function buildBetLadder(min: number, max: number): number[] {
+  const inside = CURATED_TIERS.filter((v) => v >= min && v <= max)
+  const rungs = [...new Set([min, ...inside, max])].sort((a, b) => a - b)
+  if (rungs.length >= 4) return rungs
+  // Too tight for the curated tiers (e.g. 1.5..3): 4 even rungs spanning the band, rounded to a cent.
+  const steps = 4
+  const out: number[] = []
+  for (let i = 0; i < steps; i += 1) {
+    out.push(Math.round((min + ((max - min) * i) / (steps - 1)) * 100) / 100)
+  }
+  return [...new Set(out)]
+}
+
+// One shared bet ladder for every game + the home idle wheel, sized to the live [min, max] band so the
+// wheel never offers an out-of-band bet. Cached by band so the reference is stable across renders.
+let ladderCache: { min: number; max: number; ladder: number[] } | null = null
+export function betLadder(): number[] {
+  if (!ladderCache || ladderCache.min !== STAKE_MIN || ladderCache.max !== STAKE_MAX) {
+    ladderCache = { min: STAKE_MIN, max: STAKE_MAX, ladder: buildBetLadder(STAKE_MIN, STAKE_MAX) }
+  }
+  return ladderCache.ladder
 }
 
 export const DUSDC_DECIMALS = 1_000_000

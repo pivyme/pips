@@ -29,6 +29,7 @@ import {
 } from '@/lib/sound'
 import { api, streamPlay } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
+import { betLadder } from '@/lib/sui/config'
 import { rangeDebug, type RangeEntryIntent } from '@/lib/rangeDebug'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
@@ -45,8 +46,7 @@ export const Route = createFileRoute('/_app/games/range')({
   component: RangeScreen,
 })
 
-// Stake ladder, scrubbed on the number wheel and clamped to the live balance (within MIN/MAX_STAKE).
-const STAKE_LADDER = [1, 5, 10, 25, 50, 100] as const
+// Stake ladder is sized to the live stake band (betLadder(), read inside the component).
 // Shared persisted stake index (Lucky + the home idle wheel write the same key), so the chosen chip
 // stays put across navigation and reloads instead of resetting to a default each mount.
 const STAKE_KEY = 'pips_stake_idx'
@@ -197,6 +197,7 @@ export function RangeScreen() {
       : activeAsset
 
   // BET clamps to what the balance affords, so the wheel never offers an unplayable bet.
+  const STAKE_LADDER = betLadder()
   const balance = parseFloat(user?.balance ?? '0') || 0
   const maxBetIdx = Math.max(
     0,

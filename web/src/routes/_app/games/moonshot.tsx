@@ -23,6 +23,7 @@ import {
 } from '@/lib/sound'
 import { api, streamPlay, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
+import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
@@ -39,8 +40,8 @@ import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/forma
 // one amber accent, green/red for facts.
 export const Route = createFileRoute('/_app/games/moonshot')({ component: MoonshotScreen })
 
-// Stake ladder, scrubbed on the number wheel, shared with Lucky + Range + the home wheel (same key).
-const STAKE_LADDER = [1, 5, 10, 25, 50, 100] as const
+// Stake ladder is sized to the live stake band (betLadder(), read inside the component), shared with
+// Lucky + Range + the home wheel (same key).
 const STAKE_KEY = 'pips_stake_idx'
 // AIM ladder = the knob. Scroll up to go LONG, down to go SHORT: the index climbs bottom->top, so the
 // deepest SHORT sits at the floor, the deepest LONG at the ceiling, and crossing the middle flips the
@@ -141,6 +142,7 @@ export function MoonshotScreen() {
   const reach = Math.abs(aim)
 
   // BET clamps to what the balance affords, so the wheel never offers an unplayable bet.
+  const STAKE_LADDER = betLadder()
   const balance = parseFloat(user?.balance ?? '0') || 0
   const maxBetIdx = Math.max(0, STAKE_LADDER.reduce((acc, v, i) => (v <= balance ? i : acc), 0))
   const safeBetIdx = Math.min(stakeIdx, maxBetIdx)

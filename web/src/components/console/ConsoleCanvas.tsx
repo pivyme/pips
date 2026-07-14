@@ -25,6 +25,7 @@ import { haptic } from '@/lib/haptics'
 import type { HapticPreset } from '@/lib/haptics'
 import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
 import { themeBackdrop, type ConsoleTheme } from './themes'
+import { betLadder } from '@/lib/sui/config'
 
 // Main / Action1 / Action2 / MenuTab / HomeTab, matching ConsoleShell's DOM equivalents.
 const BTN_HAPTIC: HapticPreset[] = ['rigid', 'medium', 'medium', 'selection', 'selection']
@@ -1459,7 +1460,7 @@ export default function ConsoleCanvas({
     let numberWheelTarget = 0
     let numberWheelInitialized = false
     let debugNumberValue = 1
-    const idleStakes = [1, 5, 10, 25, 50, 100]
+    const idleStakes = betLadder()
     // The home wheel shares one persisted stake with the games (same ladder), so the value the user
     // leaves it on stays put across navigation instead of resetting to a sample.
     const STAKE_KEY = 'pips_stake_idx'

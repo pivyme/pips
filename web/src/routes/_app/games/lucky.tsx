@@ -14,6 +14,7 @@ import { haptic } from '@/lib/haptics'
 import { slotSpin, slotTick, slotLock, slotPick, startLuckyBgm, stopLuckyBgm, luckyWin, luckyCashout, luckyLose } from '@/lib/sound'
 import { api, streamPlay, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
+import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
@@ -28,8 +29,7 @@ import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/forma
 // mono labels, one amber accent, green/red for facts.
 export const Route = createFileRoute('/_app/games/lucky')({ component: LuckyScreen })
 
-// BET ladder, scrubbed on the number wheel and clamped to the live DUSDC balance.
-const BET_LADDER = [1, 5, 10, 25, 50, 100] as const
+// BET ladder is sized to the live stake band (betLadder(), read inside the component).
 // Shared persisted stake index (home idle wheel writes the same key, see ConsoleCanvas).
 const STAKE_KEY = 'pips_stake_idx'
 // Reel cycle pools (cosmetic blur before the snap). The real targets come from the dealt play.
@@ -139,6 +139,7 @@ export function LuckyScreen() {
   const streak = statsQ.data?.stats.currentStreak ?? 0
 
   // BET clamps to what the balance affords, so the wheel never offers an unplayable bet.
+  const BET_LADDER = betLadder()
   const balance = parseFloat(user?.balance ?? '0') || 0
   const maxBetIdx = Math.max(0, BET_LADDER.reduce((acc, v, i) => (v <= balance ? i : acc), 0))
   const safeBetIdx = Math.min(betIdx, maxBetIdx)

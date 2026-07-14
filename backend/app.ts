@@ -31,7 +31,7 @@ import { ensureOpsFunded } from './src/lib/sui/gas.ts';
 import { SPONSOR_ENABLED, sponsorAddress, ensureSponsorAccumulator } from './src/lib/sui/sponsor.ts';
 import { treasuryAddress } from './src/lib/sui/signer.ts';
 import { startSponsorMonitor } from './src/lib/sui/play-safety.ts';
-import { SPONSOR_FLOOR_SUI, TREASURY_MIN_DUSDC } from './src/config/main-config.ts';
+import { SPONSOR_FLOOR_SUI, TREASURY_MIN_DUSDC, MIN_STAKE, MAX_STAKE } from './src/config/main-config.ts';
 
 console.log(
   '======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n'
@@ -80,6 +80,10 @@ fastify.get('/config', async (_request: FastifyRequest, reply: FastifyReply) => 
       predictPackageId: PUBLIC_PREDICT_PACKAGE,
       predictId: PUBLIC_PREDICT_OBJECT,
       dusdcType: DUSDC_TYPE,
+      // Stake band the play endpoints enforce. The client sizes its bet ladder to this so it never
+      // offers an out-of-band bet (testnet-real is a tight 1.5..3, the fork is a wide 1..100).
+      minStake: MIN_STAKE,
+      maxStake: MAX_STAKE,
     },
   });
 });
