@@ -53,6 +53,28 @@ export const SUI_GRAPHQL_URL: string =
 export const TESTING_WALLET_PK: string = process.env.TESTING_WALLET_PK || '';
 export const PYTH_HERMES_URL: string = process.env.PYTH_HERMES_URL || 'https://hermes.pyth.network';
 
+// Realtime chart display feed (Binance). Real mode (testnet) + mainnet only: the chart LINE gets its
+// MOTION from a single shared Binance aggTrade websocket (many ticks/sec), while its LEVEL stays
+// EMA-pinned to the on-chain oracle in price-bus.ts. Strictly display-only, it never records or settles
+// anything (L-015). In fork mode the socket never opens and displaySpot falls straight through to the
+// on-chain gameSpot, byte-identical to before. A geo-block or outage just drops to that same fallback.
+export const BINANCE_ENABLED: boolean = process.env.PIPS_BINANCE_ENABLED !== 'false';
+// Combined-stream base URL; the `?streams=` query is built from BINANCE_SYMBOLS. Point this at
+// binance.us or a small relay if the deploy region is geo-blocked (the fallback ladder makes a block
+// non-fatal either way, so this is an upside knob, not a hard dependency).
+export const BINANCE_WS_URL: string = process.env.PIPS_BINANCE_WS_URL || 'wss://stream.binance.com:9443/stream';
+// No aggTrade message for this long marks the feed stale, so the ladder falls back to the on-chain spot.
+export const BINANCE_STALE_MS: number = Number(process.env.PIPS_BINANCE_STALE_MS) || 5000;
+// asset -> Binance stream symbol (lowercase). Drives which combined streams we subscribe to and the
+// reverse lookup on each message. Format: 'BTC:btcusdt,ETH:ethusdt,SUI:suiusdt'.
+export const BINANCE_SYMBOLS: Record<string, string> = Object.fromEntries(
+  (process.env.PIPS_BINANCE_SYMBOLS || 'BTC:btcusdt,ETH:ethusdt,SUI:suiusdt')
+    .split(',')
+    .map((pair) => pair.split(':').map((s) => s.trim()))
+    .filter(([asset, sym]) => asset && sym)
+    .map(([asset, sym]) => [asset.toUpperCase(), sym.toLowerCase()]),
+);
+
 // Privy (privy mode only). App id + secret authenticate the server SDK. The authorization key is
 // the app's session-signer key the user delegates to at login: its private key (P-256 PKCS8, with
 // or without the `wallet-auth:` prefix) signs each wallet API request so the server can rawSign the
@@ -398,6 +420,10 @@ export default {
   SUI_FULLNODE_URL,
   SUI_GRAPHQL_URL,
   TESTING_WALLET_PK,
+  BINANCE_ENABLED,
+  BINANCE_WS_URL,
+  BINANCE_STALE_MS,
+  BINANCE_SYMBOLS,
   PRIVY_APP_ID,
   PRIVY_APP_SECRET,
   PRIVY_AUTHORIZATION_KEY_ID,

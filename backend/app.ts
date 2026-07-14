@@ -24,6 +24,7 @@ import { startMarketSync } from './src/workers/market-sync.ts';
 import { startOpsFunding } from './src/workers/ops-funding.ts';
 import { startDevnetFaucet } from './src/workers/devnet-faucet.ts';
 import { startDeployWatch } from './src/workers/deploy-watch.ts';
+import { startBinance } from './src/lib/binance-ws.ts';
 
 // Ops-wallet funding (operator-driven): seeds/tops up the sponsor (SUI), settlement (SUI), and
 // treasury (SUI + DUSDC reserve) wallets so plays, redeems, and chip payouts never stall.
@@ -162,6 +163,9 @@ const start = async (): Promise<void> => {
     // this process to adopt the new ids. With a restart-on-exit container (Dokploy default) the box
     // re-points to a fresh deployment on its own, no env paste, no manual redeploy.
     startDeployWatch();
+    // Realtime chart display feed: one shared Binance aggTrade socket the price bus pins to the on-chain
+    // oracle. No-op off testnet / when disabled; any outage degrades to the on-chain fallback (L-015).
+    startBinance();
 
     await fastify.listen({
       port: APP_PORT,
