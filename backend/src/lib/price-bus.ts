@@ -72,6 +72,30 @@ function buzzerConverging(asset: string, now: number): boolean {
   return soonest <= BUZZER_CONVERGE_MS;
 }
 
+// Pure: advance the smoothed pin offset one step. An EMA pull toward `target` (time-constant `tauMs`),
+// then slew-clamp the move to `slewFracPerSec * dt * price` so a Binance-only flash drifts toward the
+// oracle instead of teleporting. Extracted pure so the display math is unit-testable without a socket.
+export function pinnedOffsetStep(prev: number, target: number, dtMs: number, price: number, tauMs: number, slewFracPerSec: number): number {
+  const k = 1 - Math.exp(-dtMs / tauMs);
+  const desired = prev + (target - prev) * k;
+  const maxStep = slewFracPerSec * (dtMs / 1000) * price;
+  const step = desired - prev;
+  if (step > maxStep) return prev + maxStep;
+  if (step < -maxStep) return prev - maxStep;
+  return desired;
+}
+
+// Pure: the fallback-ladder re-entry hysteresis. Binance drives only after a healthy streak of
+// `reentryMs`; any unhealthy read drops to fallback immediately (no streak needed to leave), so a single
+// gap never stutters the line between modes. Extracted pure so the anti-flap logic is unit-testable.
+export function nextPinDriver(prev: Driver, canBinance: boolean, healthySince: number, now: number, reentryMs: number): { driver: Driver; healthySince: number } {
+  if (!canBinance) return { driver: 'fallback', healthySince: 0 };
+  if (prev === 'binance') return { driver: 'binance', healthySince };
+  const since = healthySince === 0 ? now : healthySince;
+  if (now - since >= reentryMs) return { driver: 'binance', healthySince: 0 };
+  return { driver: 'fallback', healthySince: since };
+}
+
 // The chart display price for an asset. Async to match gameSpot (the fallback awaits a Pyth read on a
 // cold boot). Returns null only when even gameSpot has nothing yet; the SSE/WS layer guards null.
 export async function displaySpot(asset: string): Promise<Spot | null> {
@@ -88,19 +112,13 @@ export async function displaySpot(asset: string): Promise<Spot | null> {
   // Driver decision with re-entry hysteresis: drop to fallback the moment Binance can't drive (it is
   // already null only after BINANCE_STALE_MS of silence), but require a healthy streak before switching
   // back so a single recovered tick doesn't stutter the line between modes.
-  if (canBinance) {
-    if (st.driver === 'fallback') {
-      if (st.healthySince === 0) st.healthySince = now;
-      if (now - st.healthySince >= REENTRY_AFTER_MS) {
-        st.driver = 'binance';
-        st.healthySince = 0;
-        // Re-seed the offset from the current gap so the first Binance value == the last displayed value.
-        st.offset = (st.lastDisplay > 0 ? st.lastDisplay : (oracleSpot as number)) - (b as Spot).price;
-      }
-    }
-  } else {
-    st.healthySince = 0;
-    st.driver = 'fallback';
+  const dec = nextPinDriver(st.driver, canBinance, st.healthySince, now, REENTRY_AFTER_MS);
+  const switchedToBinance = st.driver === 'fallback' && dec.driver === 'binance';
+  st.driver = dec.driver;
+  st.healthySince = dec.healthySince;
+  if (switchedToBinance && b != null && oracleSpot != null) {
+    // Re-seed the offset from the current gap so the first Binance value == the last displayed value.
+    st.offset = (st.lastDisplay > 0 ? st.lastDisplay : oracleSpot) - b.price;
   }
 
   if (st.driver === 'binance' && b != null && oracleSpot != null) {
@@ -109,13 +127,7 @@ export async function displaySpot(asset: string): Promise<Spot | null> {
     if (buzzerConverging(asset, now)) {
       st.offset = target; // full convergence so the near-buzzer line matches settlement
     } else {
-      const k = 1 - Math.exp(-dt / PIN_TAU_MS);
-      let desired = st.offset + (target - st.offset) * k;
-      const maxStep = SLEW_FRAC_PER_SEC * (dt / 1000) * b.price;
-      const step = desired - st.offset;
-      if (step > maxStep) desired = st.offset + maxStep;
-      else if (step < -maxStep) desired = st.offset - maxStep;
-      st.offset = desired;
+      st.offset = pinnedOffsetStep(st.offset, target, dt, b.price, PIN_TAU_MS, SLEW_FRAC_PER_SEC);
     }
     st.lastAt = now;
     const price = b.price + st.offset;
