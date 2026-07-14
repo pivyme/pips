@@ -10,6 +10,7 @@ import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useLivePresence } from '@/lib/presence'
 import { isDemo } from '@/lib/demo'
+import { NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
@@ -123,7 +124,7 @@ export function GamesConsole() {
       <div className={cnm('flex items-center justify-between pb-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-text-2', RIM_T, RIM)}>
         <span className="flex min-w-0 items-center gap-2">
           <span className={cnm('h-2 w-2 shrink-0', demo ? 'bg-brand-500' : 'bg-up')} />
-          <span className="truncate">{demo ? 'Demo' : 'Sui Devnet'}</span>
+          <span className="truncate">{demo ? 'Demo' : NETWORK_LABEL}</span>
         </span>
         <span className="flex shrink-0 items-center gap-2 pl-3">
           {online == null ? (

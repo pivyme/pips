@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { cnm } from '@/utils/style'
+import { NETWORK } from '@/lib/sui/config'
 
 // Teenage-engineering style game-screen instruments, but trading-native. Crisp vivid vector
 // lines on true black, the "electric" layer that renders inside the console screen
@@ -795,7 +796,7 @@ export function StatusStrip({ frozen, className }: VizProps) {
   return (
     <Svg className={className} fill>
       <Tag x={14} y={42} hue="up">
-        ◆ DEVNET
+        ◆ {NETWORK.toUpperCase()}
       </Tag>
       <Num x={120} y={52} anchor="middle" size={26} hue="amber">
         $24.80

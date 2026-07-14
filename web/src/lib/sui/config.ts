@@ -5,6 +5,9 @@
 import { env } from '@/env'
 
 export const NETWORK = env.VITE_SUI_NETWORK
+// Human label for the active chain, e.g. "Sui Testnet". Drives the on-screen network badge so it
+// always reflects VITE_SUI_NETWORK instead of a hardcoded string.
+export const NETWORK_LABEL = `Sui ${NETWORK.charAt(0).toUpperCase()}${NETWORK.slice(1)}`
 export const PACKAGE_ID = env.VITE_PREDICT_PACKAGE_ID ?? ''
 export const PREDICT_ID = env.VITE_PREDICT_OBJECT_ID ?? ''
 

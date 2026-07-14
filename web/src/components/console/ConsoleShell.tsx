@@ -9,6 +9,7 @@ import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { useAuth } from '@/lib/auth'
 import { isDemo } from '@/lib/demo'
+import { NETWORK_LABEL } from '@/lib/sui/config'
 import { formatStringToNumericDecimals } from '@/utils/format'
 import { useConsoleView } from './controls'
 import type { ButtonColor, ConsoleView } from './controls'
@@ -118,7 +119,7 @@ function StatusStrip({ status, balance }: { status: ConsoleView['status']; balan
           status?.left ?? (
             <>
               <span className="h-1.5 w-1.5 rounded-full bg-up" />
-              Sui Devnet
+              {NETWORK_LABEL}
             </>
           )
         )}
