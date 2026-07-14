@@ -117,7 +117,7 @@ export function MoonshotScreen() {
   const balanceSyncedPlayId = useRef<string | null>(null)
   const livePriceRef = useRef(0)
 
-  const { liveAssets, noLiveMarket, isLoading: marketsLoading, isError: marketsError } = useLiveMarkets()
+  const { liveAssets, noLiveMarket, playsPaused, isLoading: marketsLoading, isError: marketsError } = useLiveMarkets()
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const streak = statsQ.data?.stats.currentStreak ?? 0
 
@@ -316,6 +316,10 @@ export function MoonshotScreen() {
 
   const doPlay = useCallback(async () => {
     if (phase !== 'idle') return
+    if (playsPaused) {
+      toast.error('Plays paused while we top up. Back in a moment.', { id: 'paused' })
+      return
+    }
     if (!canPlay) {
       toast.error('No live market right now. Try again in a sec.', { id: 'no-market' })
       return
@@ -343,7 +347,7 @@ export function MoonshotScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, stake, asset, side, reach])
+  }, [phase, canPlay, stake, asset, side, reach, playsPaused])
 
   const doCashOut = useCallback(async () => {
     if (!liveHold || !play) return
@@ -519,6 +523,8 @@ export function MoonshotScreen() {
         </div>
       ) : marketsError ? (
         <ScreenMessage title="Could not load markets" />
+      ) : playsPaused && phase === 'idle' ? (
+        <ScreenMessage title="Plays paused" hint="Topping up gas" />
       ) : noLiveMarket ? (
         <ScreenMessage title="No live markets right now." />
       ) : (

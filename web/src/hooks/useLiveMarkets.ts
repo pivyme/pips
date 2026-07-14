@@ -26,6 +26,7 @@ export type LiveMarkets = {
   allAssets: string[]
   spotByAsset: Record<string, number>
   noLiveMarket: boolean // graced: true only after a sustained outage
+  playsPaused: boolean // real-mode sponsor-floor pause: new plays are blocked while gas tops up
   isLoading: boolean
   isError: boolean
   refetch: () => void
@@ -78,6 +79,7 @@ export function useLiveMarkets(): LiveMarkets {
     allAssets: markets.map((m) => m.asset),
     spotByAsset,
     noLiveMarket: blackout,
+    playsPaused: q.data?.playsPaused ?? false,
     isLoading: q.isLoading,
     isError: q.isError,
     refetch: () => void q.refetch(),

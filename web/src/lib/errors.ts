@@ -13,6 +13,8 @@ const FRIENDLY: Record<string, string> = {
   REDEEM_FAILED: "Cash out didn't go through. Try again.",
   CASHOUT_FAILED: "Cash out didn't go through. Try again.",
   ORACLE_STALE: 'Price feed is catching up. One moment.',
+  PLAYS_PAUSED: 'Plays paused while we top up. Back in a moment.',
+  RATE_LIMITED: 'One play at a time. Hang on a sec.',
 }
 
 export function friendlyError(e: unknown): string {

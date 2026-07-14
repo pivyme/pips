@@ -270,8 +270,9 @@ const realApi = {
   authHeal: () => request<{ user: UserDTO }>('POST', '/auth/heal'),
   setUsername: (username: string) => request<{ user: UserDTO }>('PATCH', '/auth/me', { username }),
 
-  // markets + plays
-  markets: () => request<{ markets: MarketDTO[] }>('GET', '/markets'),
+  // markets + plays. `playsPaused` is the real-mode sponsor-floor pause (always false in fork/demo):
+  // when true, new plays are blocked while the gas sponsor tops up, and the games show a paused state.
+  markets: () => request<{ markets: MarketDTO[]; playsPaused?: boolean }>('GET', '/markets'),
   // Price the whole band ladder for an asset in one call (full-band widths %). Cached on select so
   // every band size shows its real multiple instantly, no estimate fallback.
   rangeQuotes: (asset: string, widthPcts: number[]) =>

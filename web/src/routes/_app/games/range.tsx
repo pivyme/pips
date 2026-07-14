@@ -171,6 +171,7 @@ export function RangeScreen() {
   const {
     liveAssets,
     noLiveMarket,
+    playsPaused,
     isLoading: marketsLoading,
     isError: marketsError,
   } = useLiveMarkets()
@@ -470,6 +471,10 @@ export function RangeScreen() {
     // Idle only: a finished round must be dismissed back to the default screen first (CONTINUE), never
     // re-played straight from the result. That keeps the post-round always landing on the live screen.
     if (phase !== 'idle') return
+    if (playsPaused) {
+      toast.error('Plays paused while we top up. Back in a moment.', { id: 'paused' })
+      return
+    }
     if (!canPlay) {
       toast.error('No live market right now. Try again in a sec.', {
         id: 'no-market',
@@ -529,7 +534,7 @@ export function RangeScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, stake, asset, halfPct, spot, idleMult, quotedMult])
+  }, [phase, canPlay, stake, asset, halfPct, spot, idleMult, quotedMult, playsPaused])
 
   const doCashOut = useCallback(async () => {
     // Armed only during the live hold (the button is hidden once the round is sealing/settling).
@@ -804,6 +809,8 @@ export function RangeScreen() {
         </div>
       ) : marketsError ? (
         <ScreenMessage title="Could not load markets" />
+      ) : playsPaused && phase === 'idle' ? (
+        <ScreenMessage title="Plays paused" hint="Topping up gas" />
       ) : noLiveMarket ? (
         <ScreenMessage title="No live markets right now." />
       ) : (

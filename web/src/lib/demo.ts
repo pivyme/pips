@@ -865,9 +865,10 @@ export const demoApi = {
     return { user: userDTO() }
   },
 
-  markets: async (): Promise<{ markets: MarketDTO[] }> => {
+  markets: async (): Promise<{ markets: MarketDTO[]; playsPaused: boolean }> => {
     await delay(120)
-    return { markets: MARKET_ASSETS.map((a) => ({ asset: a, spot: String(currentPrice(a)), durations: DURATIONS, live: true })) }
+    // Demo has no gas sponsor, so plays never pause here.
+    return { markets: MARKET_ASSETS.map((a) => ({ asset: a, spot: String(currentPrice(a)), durations: DURATIONS, live: true })), playsPaused: false }
   },
 
   // Demo has no chain, so each "quote" reuses the same model createRange mints against: the band +

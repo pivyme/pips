@@ -8,6 +8,7 @@ import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { EXPIRY_SAFETY_MS, GAME_DURATIONS } from '../config/main-config.ts';
 import { allMarkets, tradeableMarkets } from '../lib/sui/markets.ts';
+import { sponsorPaused } from '../lib/sui/play-safety.ts';
 import { gameSpot } from '../lib/game-price.ts';
 import { PlayError, httpStatusForPlayError, quoteRangeBatch } from '../services/games.ts';
 import {
@@ -65,7 +66,9 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
           return { asset, spot: spot ? String(spot.price) : '0', durations: GAME_DURATIONS, live: live.has(asset) };
         }),
       );
-      return reply.code(200).send({ success: true, error: null, data: { markets } });
+      // Real-mode sponsor-floor pause: a global flag the games poll (with the market set) so they can
+      // show a clear "topping up" state instead of letting a PLAY hard-fail. Always false in fork mode.
+      return reply.code(200).send({ success: true, error: null, data: { markets, playsPaused: sponsorPaused().paused } });
     } catch (error) {
       return handleError(reply, 500, 'Could not load markets', 'MARKETS_FAILED', error as Error);
     }

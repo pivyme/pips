@@ -133,7 +133,7 @@ export function LuckyScreen() {
   // spotByAsset feeds each chart its initial price so it paints a live line on mount; allAssets keeps
   // the stack full when fewer than three are live this instant. Both come from the shared feed, which
   // graces brief chain blips so a ladder roll never flashes "Market catching up".
-  const { liveAssets, allAssets, spotByAsset, noLiveMarket, isLoading: marketsLoading, isError: marketsError } = useLiveMarkets()
+  const { liveAssets, allAssets, spotByAsset, noLiveMarket, playsPaused, isLoading: marketsLoading, isError: marketsError } = useLiveMarkets()
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const canPlay = liveAssets.length > 0
   const streak = statsQ.data?.stats.currentStreak ?? 0
@@ -425,6 +425,10 @@ export function LuckyScreen() {
     // Idle only: a finished round must be dismissed back to the default screen first (CONTINUE), never
     // re-spun straight from the result. That keeps the post-round always landing on the 3-up stack.
     if (phase !== 'idle') return
+    if (playsPaused) {
+      toast.error('Plays paused while we top up. Back in a moment.', { id: 'paused' })
+      return
+    }
     if (!canPlay) {
       toast.error('No live market right now. Try again in a sec.', { id: 'no-market' })
       return
@@ -469,7 +473,7 @@ export function LuckyScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, bet])
+  }, [phase, canPlay, bet, playsPaused])
 
   const doCashOut = useCallback(async () => {
     if (phase !== 'open' || !play || closeLocked) return
@@ -615,6 +619,8 @@ export function LuckyScreen() {
         </div>
       ) : marketsError ? (
         <ScreenMessage title="Something slipped" />
+      ) : playsPaused && phase === 'idle' ? (
+        <ScreenMessage title="Plays paused" hint="Topping up gas" />
       ) : noLiveMarket ? (
         <ScreenMessage title="Market catching up" />
       ) : (
