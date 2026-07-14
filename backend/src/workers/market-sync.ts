@@ -143,7 +143,7 @@ const sync = async (): Promise<void> => {
 // Real-mode discovery (IS_REAL_PREDICT): Mysten owns the roll schedule and there is no operator role,
 // so we always read the chain. Read the PoolVault's live market ids, keep the unsettled, unpaused, 1m
 // BTC ones with room before expiry, read each one's economics, and upsert into the same market set the
-// games read. No GraphQL event scan, no predict-server, no per-market cap.
+// games read. No GraphQL event scan, no external discovery server, no per-market cap.
 let realRunning = false;
 
 const realSync = async (): Promise<void> => {
