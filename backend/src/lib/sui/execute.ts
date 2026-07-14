@@ -9,7 +9,7 @@ import { Transaction, SerialTransactionExecutor, TransactionDataBuilder } from '
 import type { User } from '../../../prisma/generated/client.js';
 import { AUTH_MODE, PLAY_GAS_BUDGET } from '../../config/main-config.ts';
 import { suiClient } from './client.ts';
-import { operatorKeypair, settlementKeypair, treasuryKeypair, treasuryAddress } from './signer.ts';
+import { operatorKeypair, operatorAddress, settlementKeypair, settlementAddress, treasuryKeypair, treasuryAddress } from './signer.ts';
 import { signSuiTxWithPrivy } from './privy.ts';
 import { loadCustodialKeypair } from './custodial.ts';
 import { SPONSOR_ENABLED, applySponsorGas, signAsSponsor, ensureSponsorAccumulator, isSponsorGasError } from './sponsor.ts';
@@ -151,6 +151,37 @@ export function executeAsOperator(tx: Transaction, label: string, opts?: { retri
 // executor when no settlement wallet is configured (legacy single-wallet behaviour).
 export function executeAsSettlement(tx: Transaction, label: string, opts?: { retries?: number; freshFirst?: boolean }): Promise<ExecResult> {
   return runViaExecutor(settlementExecutor ?? operatorExecutor, tx, label, opts);
+}
+
+// Real-mode (testnet) settle-redeem execution. redeem_settled has only shared inputs, so when the
+// paying wallet holds SUI as an ADDRESS BALANCE (routine on testnet, where the gRPC resolver prefers
+// address-balance gas the moment it covers the budget), the tx pays gas with no gas coin object and
+// the resolver adds the ValidDuring expiration itself. The coin-caching SerialTransactionExecutor
+// (executeAsSettlement) cannot survive that: its post-execution #cacheGasCoin -> getGasCoinFromEffects
+// throws "Gas object not found in effects" AFTER the redeem already settled on chain, discarding the
+// successful result and dropping the play into the slow reconcile-retry loop (settling drags for
+// several ticks until GraphQL catches up). This direct build-sign-submit path reads effects.status
+// only, never the gas coin, so a settled redeem finalizes on the FIRST tick under either gas mode.
+// Serialized on its own in-process chain so concurrent settles on the settlement wallet never
+// equivocate. Real-mode only; fork settle keeps the serial executor (its operator holds owned faucet
+// coins, so the resolver always picks coin gas and the cache never breaks).
+let settleChain: Promise<unknown> = Promise.resolve();
+export function executeRealSettle(tx: Transaction, label: string): Promise<ExecResult> {
+  const kp = settlementKeypair ?? operatorKeypair;
+  const addr = settlementKeypair ? settlementAddress : operatorAddress;
+  const run = settleChain.then(async () => {
+    tx.setSender(addr);
+    tx.setGasPrice(await refGasPrice()); // skip build's own reference-gas-price round trip
+    tx.setGasBudget(PLAY_GAS_BUDGET); // pin so build skips its gas-sizing dry-run; resolver still picks the payment
+    const txBytes = await withTimeout(tx.build({ client: suiClient }), 15_000, `${label} build`);
+    const { signature } = await kp.signTransaction(txBytes);
+    const digest = TransactionDataBuilder.getDigestFromBytes(txBytes);
+    const res = await submitAndConfirm(txBytes, signature, digest);
+    return toExecResult(res, label);
+  });
+  // Keep the chain alive regardless of this tx's outcome so one failed settle doesn't wedge the next.
+  settleChain = run.catch(() => { });
+  return run;
 }
 
 // Cache the network's reference gas price (per-epoch, near-constant on localnet). Setting it on the

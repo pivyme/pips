@@ -49,7 +49,7 @@ import {
 import { operatorCaps } from '../lib/sui/signer.ts';
 import { checkPlayAllowed, recordPlay, clearPlay } from '../lib/sui/play-safety.ts';
 import { gameSpot } from '../lib/game-price.ts';
-import { executeForUser, executeAsOperator, executeAsSettlement, userContext } from '../lib/sui/execute.ts';
+import { executeForUser, executeAsOperator, executeAsSettlement, executeRealSettle, userContext } from '../lib/sui/execute.ts';
 import {
   resolveLucky,
   resolveMoonshot,
@@ -1104,7 +1104,11 @@ async function settleOnePlayReal(play: Play, now: number): Promise<boolean> {
   try {
     const tx = new Transaction();
     buildRedeemSettled(tx, { marketId: play.oracleId, wrapperId, orderId, closeQuantityRaw: quantityRaw });
-    const exec = await executeAsSettlement(tx, `settle-redeem-real ${play.id}`, { retries: SETTLE_STALE_RETRIES, freshFirst: true });
+    // Direct build-sign-submit (not the coin-caching serial executor): redeem_settled is all-shared-
+    // input, so on testnet the resolver routinely pays gas from the settle wallet's address balance,
+    // which the serial executor's post-exec gas-coin cache chokes on ("Gas object not found in
+    // effects"). The direct path reads effects.status only, so a settled redeem resolves on this tick.
+    const exec = await executeRealSettle(tx, `settle-redeem-real ${play.id}`);
     const r = parseRedeem(exec.events);
     const status: PlayStatus = r.liquidated ? 'lost' : r.payoutRaw > 0n ? 'won' : 'lost';
     roundLog(`[Round SETTLE] ${play.game.padEnd(5)} ${play.asset.padEnd(4)} real order=${orderId.toString().slice(0, 8)}… ${status === 'won' ? 'WIN ' : 'LOSS'} payout=$${fromDusdcRaw(r.payoutRaw).toFixed(2)} (expired ${lagS}s ago) @${hhmmss()}`);
