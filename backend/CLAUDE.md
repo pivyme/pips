@@ -10,7 +10,7 @@
 
 This is the **PIPS** backend (gamified trading on Sui via DeepBook Predict). Read the root [`../CLAUDE.md`](../CLAUDE.md) for product and Sui stack context. Its job: auth (Privy + a dev auto-login), game engine, the Predict operator (price-pusher, oracle ladder, settle), indexing, and server-signing the user's plays (`@privy-io/node` `rawSign` under a session signer; dev = the operator key).
 
-**The chain is our own Sui localnet, not testnet.** It is deployed and live at `https://rpc.playpips.fun`. `scripts/bootstrap.ts` is network-aware via `SUI_NETWORK` and is driven by the repo-root `scripts/localnet.sh` (`setup` once, `redeploy` after any `contracts/` change). It writes the deployed ids into `src/lib/sui/deployed.localnet.json` (gitignored, read via `src/lib/sui/config.ts`) and the headline ids into `.env`. Runtime RPC is `SUI_FULLNODE_URL` (the proxied url); `PIPS_DEPLOY_RPC` is the gRPC origin the CLI publishes through. See "The chain" in the root CLAUDE.md for the gRPC-origin gotcha. Never hardcode ids.
+**The chain is mode-selected by `SUI_NETWORK`, behind one seam `IS_REAL_PREDICT = SUI_NETWORK === 'testnet'`.** On `localnet`/`devnet` we run our **own** vendored Predict fork; on `testnet` we trade against **Mysten's official** real Predict (structurally different, `src/lib/sui/predict-real.ts` + `config-real.ts`, discovery via direct chain reads, no fork publish). The full real-path spec is `../bigdev/plans/cont/01-PREDICT-TESTNET.md`; binding rules are **L-005..L-012** in the root `CLAUDE.md ## Learnings`, read them before touching testnet Predict. Fork mode: `scripts/bootstrap.ts` is network-aware via `SUI_NETWORK` and driven by the repo-root `scripts/localnet.sh` (`setup` once, `redeploy` after any `contracts/` change); it writes ids into `src/lib/sui/deployed.<network>.json` (gitignored, read via `src/lib/sui/config.ts`) and the headline ids into `.env`. The real record is the committed `src/lib/sui/deployed-real.testnet.json` (read via `config-real.ts`, ids re-fetched from chain, never hand-copied). Never hardcode ids.
 
 **v1 build:** planned in [`../bigdev/plans/`](../bigdev/plans/). Read `05-SUI-PREDICT.md` (we publish + operate our own Predict instance: the verified bootstrap recipe, the wrappers, and the price-pusher / oracle-roll / settle workers), `02-API.md` (routes + SSE streams), `03-DATABASE.md` (schema + seed), `LUCKY.md` §6 (dev + Privy auth, the current source of truth; `04-AUTH.md` keeps the JWT plumbing + onboarding). All Sui ids come from config, never hardcode.
 
@@ -32,7 +32,7 @@ bun dev              # Start with file watcher on :3780
 bun start            # Production start (no watch)
 bun run typecheck    # tsc --noEmit (the build loop's gate)
 bun test             # Run tests (*.test.ts: math, rng, achievements)
-bun run bootstrap    # Publish + seed our Predict deployment, writes deployed.json
+bun run bootstrap    # Fork mode (localnet/devnet): publish + seed our Predict, writes deployed.<network>.json
 bun run lint         # ESLint
 bun run db:push      # Push schema + regenerate client
 bun run db:pull      # Pull schema from existing DB
@@ -84,7 +84,7 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │       ├── pyth.ts          # Pyth price reads
 │       ├── price-cache.ts   # In-memory price cache
 │       ├── game-price.ts    # Unified follower price feed for games
-│       └── sui/             # client, predict, solver, markets, math, signer, privy, dusdc, gas, sponsor, execute, config, deployed(.localnet).json
+│       └── sui/             # client, predict (fork) / predict-real (testnet), solver, markets, math, signer, privy, dusdc, gas, sponsor, execute, config (+ config-real), deployed.<network>.json / deployed-real.testnet.json
 ```
 
 ---

@@ -1,7 +1,8 @@
-// The single source of truth for our Predict instance ids on the server.
-// The bootstrap (scripts/bootstrap.ts) writes deployed.json; everything reads from
-// here. Never inline a package/object/oracle id anywhere else. Ids are unstable
-// pre-mainnet, so a mainnet re-point is one bootstrap + this file, nothing else.
+// The single source of truth for our FORK (localnet/devnet) Predict instance ids on the server.
+// The bootstrap (scripts/bootstrap.ts) writes deployed.<network>.json; everything reads from here.
+// testnet runs Mysten's real Predict instead, whose ids live in config-real.ts. Never inline a
+// package/object/oracle id anywhere else. Ids are unstable pre-mainnet, so a mainnet re-point is one
+// bootstrap + this file, nothing else.
 
 import fs from 'fs';
 import path from 'path';
@@ -54,13 +55,11 @@ type Deployed = {
   bootstrappedAt: string;
 };
 
-// Per-network FORK deployment record (localnet/devnet only). testnet no longer uses a fork file at
-// all (it runs Mysten's real Predict via config-real.ts, so loadDeployed is never called in real
-// mode); localnet/devnet each read their own `deployed.<network>.json`, so switching networks never
-// clobbers another network's ids. The bootstrap writes the matching file.
-// HARVEST TODO (Phase 17): the committed fork-on-testnet `deployed.json` is dead once the real path
-// ships; delete it and drop the `=== 'testnet'` branch here.
-const DEPLOYED_FILE = SUI_NETWORK === 'testnet' ? 'deployed.json' : `deployed.${SUI_NETWORK}.json`;
+// Per-network FORK deployment record (localnet/devnet only). testnet never loads a fork file: it runs
+// Mysten's real Predict via config-real.ts, so loadDeployed is never called in real mode. Each fork
+// network reads its own `deployed.<network>.json`, so switching networks never clobbers another
+// network's ids. The bootstrap writes the matching file.
+const DEPLOYED_FILE = `deployed.${SUI_NETWORK}.json`;
 const DEPLOYED_PATH = path.resolve(import.meta.dir, DEPLOYED_FILE);
 
 // True when the deployment was read from the on-disk file (not PIPS_DEPLOYED_JSON), so a runtime
@@ -91,7 +90,7 @@ function loadDeployed(): Deployed {
   }
   const d = JSON.parse(fs.readFileSync(DEPLOYED_PATH, 'utf-8')) as Deployed;
   if (d.network !== SUI_NETWORK) {
-    throw new Error(`deployed.json is for "${d.network}" but SUI_NETWORK is "${SUI_NETWORK}". Re-bootstrap or fix the env.`);
+    throw new Error(`${DEPLOYED_FILE} is for "${d.network}" but SUI_NETWORK is "${SUI_NETWORK}". Re-bootstrap or fix the env.`);
   }
   deployedFromFile = true;
   return d;

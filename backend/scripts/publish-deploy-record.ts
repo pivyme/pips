@@ -13,7 +13,8 @@ import path from 'path';
 import { SUI_NETWORK } from '../src/config/main-config.ts';
 import { writeDeploymentRecord } from '../src/lib/deployment-store.ts';
 
-const file = SUI_NETWORK === 'testnet' ? 'deployed.json' : `deployed.${SUI_NETWORK}.json`;
+// Fork networks (localnet/devnet) only; testnet runs Mysten's real Predict, nothing to publish here.
+const file = `deployed.${SUI_NETWORK}.json`;
 const p = path.resolve(import.meta.dir, '../src/lib/sui', file);
 
 if (!fs.existsSync(p)) {

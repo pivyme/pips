@@ -67,9 +67,9 @@ const PUBLISH_GAS = 2_000_000_000n;
 const MIN_SUI = 1_200_000_000n; // floor for the publishes + the bootstrap txs, with headroom
 
 const CONTRACTS = path.resolve(import.meta.dir, '../../contracts');
-// testnet keeps the committed deployed.json; other networks get deployed.<network>.json
-// (localnet's is gitignored, ids change every regenesis). config.ts resolves the same way.
-const DEPLOYED_FILE = NETWORK === 'testnet' ? 'deployed.json' : `deployed.${NETWORK}.json`;
+// Every fork network gets deployed.<network>.json (gitignored, ids change every regenesis). testnet
+// runs Mysten's real Predict, so the bootstrap never publishes there. config.ts resolves the same way.
+const DEPLOYED_FILE = `deployed.${NETWORK}.json`;
 const DEPLOYED_PATH = path.resolve(import.meta.dir, `../src/lib/sui/${DEPLOYED_FILE}`);
 // Ephemeral networks (localnet + devnet): test-publish records ephemeral publication addresses in
 // this file (one shared across the leaf-first publishes so deepbook/predict resolve their deps). It

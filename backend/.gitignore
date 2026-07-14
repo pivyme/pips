@@ -1,8 +1,8 @@
 # prisma
 prisma/generated
 
-# per-network Predict deployments. testnet stays committed as deployed.json; localnet and
-# other ephemeral chains (ids change on every regenesis) are never committed.
+# per-network FORK Predict deployments (localnet/devnet): ids change on every regenesis, never
+# committed. testnet runs Mysten's real Predict, whose ids live in the committed deployed-real.testnet.json.
 src/lib/sui/deployed.*.json
 
 # localnet test-publish ephemeral publication file (regenerated every bootstrap)
