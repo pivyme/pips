@@ -65,7 +65,8 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   │   ├── authRoutes.ts    # /auth: dev login, privy/verify, me
 │   │   ├── gameRoutes.ts    # /games/* play, /plays/* confirm + cashout
 │   │   ├── menuRoutes.ts    # /stats, /achievements, /settings
-│   │   ├── streamRoutes.ts  # SSE: /stream/prices, /stream/plays/:id
+│   │   ├── streamRoutes.ts  # SSE: /stream/prices (fallback), /stream/plays/:id, /stream/live
+│   │   ├── wsRoutes.ts      # WS /ws: shared 10Hz displaySpot broadcast hub (real-mode chart)
 │   │   ├── walletRoutes.ts  # /wallet: balances + send for the standalone node wallet
 │   │   └── exampleRoutes.ts # starter sample
 │   ├── services/            # Business logic, called by routes
@@ -83,7 +84,9 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │       ├── prisma.ts        # Database client
 │       ├── pyth.ts          # Pyth price reads
 │       ├── price-cache.ts   # In-memory price cache
-│       ├── game-price.ts    # Unified follower price feed for games
+│       ├── game-price.ts    # Unified follower price feed for games (gameSpot: eased on-chain oracle)
+│       ├── binance-ws.ts    # Shared Binance aggTrade WS (real-mode chart MOTION, display-only, L-015)
+│       ├── price-bus.ts     # displaySpot: Binance motion EMA-pinned to the on-chain oracle level
 │       └── sui/             # client, predict (fork) / predict-real (testnet), solver, markets, math, signer, privy, dusdc, gas, sponsor, execute, config (+ config-real), deployed.<network>.json / deployed-real.testnet.json
 ```
 

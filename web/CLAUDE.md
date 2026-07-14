@@ -146,6 +146,7 @@ src/
 ├── ui/                       # HeroUI v3 wrappers + Illo (Button, Card, Modal, TextField, Tooltip, Switch, LoadingIcon)
 ├── lib/                      # Integrations + app logic
 │   ├── api.ts                # Typed backend client + SSE; the demo seam lives here
+│   ├── priceBus.ts           # Shared ref-counted WS to /ws for the chart (SSE + demo fallback)
 │   ├── auth.tsx              # Auth context (dev auto-login / Privy login)
 │   ├── privy.tsx             # Privy provider + login->wallet->verify bridge (privy mode)
 │   ├── demo.ts               # The ONE sanctioned in-memory sim (demo mode)
