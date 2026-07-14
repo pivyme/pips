@@ -81,6 +81,17 @@ export const BINANCE_SYMBOLS: Record<string, string> = Object.fromEntries(
 // canvas. The client interpolates between frames with a time-constant ease.
 export const PRICE_WS_BROADCAST_MS: number = Number(process.env.PIPS_PRICE_WS_BROADCAST_MS) || 100;
 
+// Display pin tuning (price-bus.ts, real mode only). Env-overridable so a live real-mode session can be
+// tuned without a redeploy. All display-only (L-015), so these move only the cosmetic line, never money.
+// PIN_TAU: how fast the smoothed offset pulls the Binance line toward the on-chain oracle level.
+// SLEW: max offset correction per second (fraction of price) so a Binance-only flash drifts, not teleports.
+// REENTRY: healthy Binance streak required before switching back after an outage (anti-flap hysteresis).
+// BUZZER: within this long before an oracle expiry, converge the offset fully so the line matches settlement.
+export const PRICE_PIN_TAU_MS: number = Number(process.env.PIPS_PRICE_PIN_TAU_MS) || 1200;
+export const PRICE_PIN_SLEW_FRAC_PER_SEC: number = Number(process.env.PIPS_PRICE_PIN_SLEW_FRAC_PER_SEC) || 0.004;
+export const PRICE_PIN_REENTRY_MS: number = Number(process.env.PIPS_PRICE_PIN_REENTRY_MS) || 1500;
+export const PRICE_PIN_BUZZER_MS: number = Number(process.env.PIPS_PRICE_PIN_BUZZER_MS) || 4000;
+
 // Privy (privy mode only). App id + secret authenticate the server SDK. The authorization key is
 // the app's session-signer key the user delegates to at login: its private key (P-256 PKCS8, with
 // or without the `wallet-auth:` prefix) signs each wallet API request so the server can rawSign the
@@ -431,6 +442,10 @@ export default {
   BINANCE_STALE_MS,
   BINANCE_SYMBOLS,
   PRICE_WS_BROADCAST_MS,
+  PRICE_PIN_TAU_MS,
+  PRICE_PIN_SLEW_FRAC_PER_SEC,
+  PRICE_PIN_REENTRY_MS,
+  PRICE_PIN_BUZZER_MS,
   PRIVY_APP_ID,
   PRIVY_APP_SECRET,
   PRIVY_AUTHORIZATION_KEY_ID,

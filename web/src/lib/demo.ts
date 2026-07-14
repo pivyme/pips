@@ -143,7 +143,6 @@ const anchors = new Map<string, number>() // the real level: live Pyth feed, or 
 const drifts = new Map<string, number>() // synthetic fractional offset from the anchor (reverts to 0)
 const vels = new Map<string, number>() // per-asset fractional velocity, carries momentum between ticks
 const transients = new Map<string, number>() // sharp wick offset, decays fast
-const priceSubs = new Map<string, Set<(p: number) => void>>()
 let priceTimer: ReturnType<typeof setInterval> | null = null
 const DRIFT_CLAMP = 0.08 // keep the synthetic walk from wandering too far off the real anchor
 
@@ -220,8 +219,6 @@ function startEngine(): void {
       transients.set(a, tr)
       const next = anchor * (1 + drift + tr)
       prices.set(a, next > 0 ? next : anchor)
-      const subs = priceSubs.get(a)
-      if (subs) for (const cb of subs) cb(prices.get(a) as number)
     }
   }, TICK_MS)
 }
@@ -230,19 +227,6 @@ function currentPrice(asset: string): number {
   ensurePrice(asset)
   startEngine()
   return prices.get(asset) as number
-}
-
-function subscribePrice(asset: string, cb: (p: number) => void): () => void {
-  ensurePrice(asset)
-  startEngine()
-  let set = priceSubs.get(asset)
-  if (!set) {
-    set = new Set()
-    priceSubs.set(asset, set)
-  }
-  set.add(cb)
-  cb(prices.get(asset) as number)
-  return () => set?.delete(cb)
 }
 
 // === Persistent state ===
@@ -991,8 +975,23 @@ export const demoApi = {
 
 // === SSE replacements ===
 
+// Match the live WS price bus: emit at ~10Hz (the backend's PRICE_WS_BROADCAST_MS), same {price, ts}
+// shape. The walk updates the level every TICK_MS; sampling faster just repeats the value between steps,
+// exactly like the real bus reading the display spot at 100ms, and the client ease smooths it. So the
+// demo chart moves and reads like a live-mode one, not the old 300ms per-connection stream.
+const DEMO_CHART_MS = 100
+
 export function demoStreamPrices(asset: string, onTick: (t: PriceTick) => void): () => void {
-  return subscribePrice(asset, (p) => onTick({ price: String(p), ts: nowMs() }))
+  let stopped = false
+  onTick({ price: String(currentPrice(asset)), ts: nowMs() })
+  const iv = setInterval(() => {
+    if (stopped) return
+    onTick({ price: String(currentPrice(asset)), ts: nowMs() })
+  }, DEMO_CHART_MS)
+  return () => {
+    stopped = true
+    clearInterval(iv)
+  }
 }
 
 // A gently breathing "online" count so the demo Home feels alive. Demo is a sim (clearly badged),

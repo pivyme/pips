@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { type PriceTick } from '@/lib/api'
 import { priceBus } from '@/lib/priceBus'
+import { isDemo } from '@/lib/demo'
+import { env } from '@/env'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 
@@ -105,11 +107,17 @@ const SEED_MAX_DEV = 0.012 // clamp the warm-up's drift from the live price (nev
 // oracle ticks. A zero-mean, mean-reverting wiggle, hard-clamped far under the min target offset
 // (~0.15%), applied ONLY to the drawn dot + line tip, never to display.current (the 60fps P/L source),
 // onPrice, the win-zone read, or the frame fit. So the line feels fluid while the readouts and the
-// oracle stay exact, and it can never drift (the offset is pulled back to 0 every frame).
+// oracle stay exact, and it can never drift (the offset is pulled back to 0 every frame). Suppressed in
+// real mode (LIVE_MICRO_FEED): the Binance-driven bus already carries genuine tick-level micro-motion,
+// so the fake wiggle would double up. Fork/demo (slower feeds) keep it, byte-identical to before.
 const SHIM_MOMENTUM = 0.9 // velocity persistence: a smooth drifting wiggle, not per-frame jitter
 const SHIM_VOL = 0.0000016 // per-frame velocity impulse
 const SHIM_REVERT = 0.05 // pull the offset back toward 0 each frame, so it never accumulates into drift
 const SHIM_MAX = 0.005 // hard clamp: ±0.035% of price (about a quarter of the 2x target distance)
+// Real mode (testnet / mainnet) drives the chart off the Binance-pinned display bus, which already has
+// genuine tick-level micro-motion, so the cosmetic shim is switched off there. Fork (localnet/devnet)
+// keeps it. Demo is resolved per-mount below (isDemo reads localStorage), and always keeps the shim.
+const REAL_NETWORK = env.VITE_SUI_NETWORK === 'testnet' || env.VITE_SUI_NETWORK === 'mainnet'
 
 type Point = { t: number; p: number }
 
@@ -206,6 +214,10 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     if (!canvas || !wrap) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+
+    // Real mode with a live backend feeds the Binance-pinned bus (real micro-motion), so the cosmetic
+    // shim is off; fork and demo keep it. Resolved once per mount (isDemo reads localStorage at load).
+    const liveMicroFeed = REAL_NETWORK && !isDemo()
 
     // Fresh series for this subscription. Must run before streamPrices so the first tick (the
     // demo emits one synchronously) seeds the flat baseline instead of landing as a lone dot.
@@ -398,9 +410,10 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       drawOverlays(ctx, ov, band, { w, h, nowX, entryReveal: entryReveal.current, targetReveal: targetReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
 
       // Advance the cosmetic micro-life and apply it to the DRAWN leading edge only. Continuous mode
-      // only; reduced motion stays perfectly still. display.current itself is untouched, so the P/L,
-      // the header price, the win-zone read, and the frame fit never see this wiggle.
-      if (continuous) {
+      // only, and only when the feed is NOT already lively (fork/demo); the real Binance-pinned bus
+      // carries its own micro-motion, so the shim stays at 0 there. display.current itself is untouched,
+      // so the P/L, the header price, the win-zone read, and the frame fit never see this wiggle.
+      if (continuous && !liveMicroFeed) {
         shimVel.current = shimVel.current * SHIM_MOMENTUM + (Math.random() * 2 - 1) * SHIM_VOL
         shimOff.current += shimVel.current
         shimOff.current -= shimOff.current * SHIM_REVERT

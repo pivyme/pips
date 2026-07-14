@@ -16,7 +16,13 @@
 // Fork mode (localnet/devnet) short-circuits to `gameSpot` verbatim, so its chart is byte-identical to
 // before (the walk engine is what settles there and is already lively, never pin it to an external feed).
 
-import { IS_REAL_PREDICT } from '../config/main-config.ts';
+import {
+  IS_REAL_PREDICT,
+  PRICE_PIN_BUZZER_MS,
+  PRICE_PIN_REENTRY_MS,
+  PRICE_PIN_SLEW_FRAC_PER_SEC,
+  PRICE_PIN_TAU_MS,
+} from '../config/main-config.ts';
 import { binanceSpot } from './binance-ws.ts';
 import { gameSpot } from './game-price.ts';
 import { allMarkets, assetSpot } from './sui/markets.ts';
@@ -27,10 +33,11 @@ type Spot = { price: number; ts: number };
 // SLEW caps how fast that gap can correct so a flash drifts, not teleports; REENTRY is the healthy
 // streak required before trusting Binance again after an outage; BUZZER converges the pin fully as an
 // oracle nears expiry so the visual outcome lines up with settlement (the reveal still snaps to truth).
-const PIN_TAU_MS = 1200;
-const SLEW_FRAC_PER_SEC = 0.004; // max offset move per second as a fraction of price
-const REENTRY_AFTER_MS = 1500;
-const BUZZER_CONVERGE_MS = 4000;
+// All four are env-overridable knobs (main-config.ts) so a live real-mode session tunes without a redeploy.
+const PIN_TAU_MS = PRICE_PIN_TAU_MS;
+const SLEW_FRAC_PER_SEC = PRICE_PIN_SLEW_FRAC_PER_SEC; // max offset move per second as a fraction of price
+const REENTRY_AFTER_MS = PRICE_PIN_REENTRY_MS;
+const BUZZER_CONVERGE_MS = PRICE_PIN_BUZZER_MS;
 
 type Driver = 'binance' | 'fallback';
 type St = {
