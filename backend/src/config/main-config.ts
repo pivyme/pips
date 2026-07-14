@@ -75,6 +75,12 @@ export const BINANCE_SYMBOLS: Record<string, string> = Object.fromEntries(
     .map(([asset, sym]) => [asset.toUpperCase(), sym.toLowerCase()]),
 );
 
+// WebSocket price hub (/ws) broadcast cadence. One shared server-side loop per active asset reads the
+// display bus ONCE per tick and fans the same value to every subscriber on the same frame, so every
+// user's chart is in lock-step. 100ms = 10Hz, fast enough to feel live without fighting the 60fps game
+// canvas. The client interpolates between frames with a time-constant ease.
+export const PRICE_WS_BROADCAST_MS: number = Number(process.env.PIPS_PRICE_WS_BROADCAST_MS) || 100;
+
 // Privy (privy mode only). App id + secret authenticate the server SDK. The authorization key is
 // the app's session-signer key the user delegates to at login: its private key (P-256 PKCS8, with
 // or without the `wallet-auth:` prefix) signs each wallet API request so the server can rawSign the
@@ -424,6 +430,7 @@ export default {
   BINANCE_WS_URL,
   BINANCE_STALE_MS,
   BINANCE_SYMBOLS,
+  PRICE_WS_BROADCAST_MS,
   PRIVY_APP_ID,
   PRIVY_APP_SECRET,
   PRIVY_AUTHORIZATION_KEY_ID,

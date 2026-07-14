@@ -2,6 +2,7 @@ import './dotenv.ts';
 
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import FastifyCors from '@fastify/cors';
+import FastifyWebsocket from '@fastify/websocket';
 import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, OPERATOR_ENABLED, IS_REAL_PREDICT } from './src/config/main-config.ts';
 import { NETWORK, PUBLIC_PREDICT_PACKAGE, PUBLIC_PREDICT_OBJECT, DUSDC_TYPE } from './src/lib/sui/config.ts';
 import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
@@ -11,6 +12,7 @@ import { exampletRoute } from './src/routes/exampleRoutes.ts';
 import { authRoutes } from './src/routes/authRoutes.ts';
 import { gameRoutes } from './src/routes/gameRoutes.ts';
 import { streamRoutes } from './src/routes/streamRoutes.ts';
+import { wsRoutes } from './src/routes/wsRoutes.ts';
 import { menuRoutes } from './src/routes/menuRoutes.ts';
 import { leaderboardRoutes } from './src/routes/leaderboardRoutes.ts';
 import { walletRoutes } from './src/routes/walletRoutes.ts';
@@ -59,6 +61,10 @@ fastify.register(FastifyCors, {
   allowedHeaders: ['Content-Type', 'Authorization', 'token'],
 });
 
+// WebSocket support for the price hub (/ws). Registered before the routes that use `{websocket:true}`.
+// Verified on the Bun runtime; the SSE /stream/prices route stays as a flagged fallback for one release.
+fastify.register(FastifyWebsocket);
+
 // Health check endpoint
 fastify.get('/', async (_request: FastifyRequest, reply: FastifyReply) => {
   return reply.status(200).send({
@@ -99,6 +105,8 @@ fastify.register(menuRoutes);
 fastify.register(leaderboardRoutes, { prefix: '/leaderboard' });
 fastify.register(walletRoutes, { prefix: '/wallet' });
 fastify.register(streamRoutes, { prefix: '/stream' });
+// Price hub at /ws (no prefix): one shared 10Hz broadcast loop per asset, all users in lock-step.
+fastify.register(wsRoutes);
 
 const start = async (): Promise<void> => {
   try {
@@ -143,10 +151,16 @@ const start = async (): Promise<void> => {
       );
     }
 
-    // Predict operator: roll the oracle ladder, keep prices fresh, settle expiries.
-    // All three no-op unless PIPS_OPERATOR_ENABLED=true (they spend testnet gas).
-    startOracleRoll();
-    startPricePusher();
+    // Fork mode only (localnet/devnet): roll our own oracle ladder, push our own prices, and run the
+    // devnet self-heal safety nets (faucet top-up + wipe-recovery restart). On testnet Mysten owns the
+    // market roll and price feed and there is no fork deployment to self-publish, so these are pure
+    // dead weight there, skip starting them entirely instead of relying on each one's internal no-op.
+    if (!IS_REAL_PREDICT) {
+      startOracleRoll();
+      startPricePusher();
+      startDevnetFaucet();
+      startDeployWatch();
+    }
     startSettleWorker();
     // Follower mode (operator disabled): learn the live oracle set from chain so the games are
     // playable against the deployed operator without running the operator workers here.
@@ -156,13 +170,6 @@ const start = async (): Promise<void> => {
     // Real mode (testnet): watch the sponsor's finite SUI reserve and pause new plays before it runs
     // dry (clear user state, auto-resume on top-up), and log burn rate. No-op off testnet / no sponsor.
     startSponsorMonitor();
-    // Devnet only: keep the crucial wallets (+ extra addresses) funded from the public faucet, so a
-    // low balance or a devnet wipe self-heals instead of stalling plays. No-op off devnet.
-    startDevnetFaucet();
-    // Self-heal: watch the shared DB for a fresh deploy record (a devnet-wipe recovery) and restart
-    // this process to adopt the new ids. With a restart-on-exit container (Dokploy default) the box
-    // re-points to a fresh deployment on its own, no env paste, no manual redeploy.
-    startDeployWatch();
     // Realtime chart display feed: one shared Binance aggTrade socket the price bus pins to the on-chain
     // oracle. No-op off testnet / when disabled; any outage degrades to the on-chain fallback (L-015).
     startBinance();

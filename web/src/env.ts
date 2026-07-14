@@ -17,6 +17,10 @@ export const env = createEnv({
     VITE_ACCESS_CODE: z.string().optional(),
     // Mirrors the backend PIPS_AUTH_MODE so the UI shows the right door.
     VITE_AUTH_MODE: z.enum(['dev', 'privy']).default('dev'),
+    // Chart price transport. 'true' (default): one shared WebSocket to /ws (10Hz, all users in
+    // lock-step). 'false': fall back to the per-connection SSE /stream/prices path. The client also
+    // auto-falls back to SSE for the session if the WS can't connect, so this is a hard kill switch.
+    VITE_PRICE_WS_ENABLED: z.enum(['true', 'false']).default('true'),
     // Debug switch: force every sign-in (and reload) through the full onboarding arc
     // (handle -> skin -> welcome), even when the account already has a username. Dev-only.
     VITE_ONBOARDING_DEBUG: z.enum(['true', 'false']).default('false'),
@@ -44,6 +48,7 @@ export const env = createEnv({
     VITE_ACCESS_GUARD: import.meta.env.VITE_ACCESS_GUARD,
     VITE_ACCESS_CODE: import.meta.env.VITE_ACCESS_CODE,
     VITE_AUTH_MODE: import.meta.env.VITE_AUTH_MODE,
+    VITE_PRICE_WS_ENABLED: import.meta.env.VITE_PRICE_WS_ENABLED,
     VITE_ONBOARDING_DEBUG: import.meta.env.VITE_ONBOARDING_DEBUG,
     VITE_WALLET_CONNECT_ENABLED: import.meta.env.VITE_WALLET_CONNECT_ENABLED,
     VITE_SUI_NETWORK: import.meta.env.VITE_SUI_NETWORK,

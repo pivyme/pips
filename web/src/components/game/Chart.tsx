@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { streamPrices, type PriceTick } from '@/lib/api'
+import { type PriceTick } from '@/lib/api'
+import { priceBus } from '@/lib/priceBus'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 
 // The single most important "feel" component. One canvas, one rAF loop reading refs. React
-// never re-renders on a price tick. The line glides toward each ~1s SSE tick (interpolated,
-// never stepped) while the x-axis scrolls continuously so motion never stalls between ticks.
-// Reduced motion swaps to discrete, tick-driven redraws with no continuous scroll.
+// never re-renders on a price tick. The line eases toward each price tick (the shared WS bus at
+// ~10Hz, SSE fallback ~1s; interpolated, never stepped) while the x-axis scrolls continuously so
+// motion never stalls between ticks. Reduced motion swaps to discrete, tick-driven redraws.
 
 export interface ChartBox {
   lower: number
@@ -68,7 +69,11 @@ type Particle = { x: number; y: number; vx: number; vy: number; born: number; co
 
 const WINDOW_MS = 30_000 // visible time span on the continuous axis
 const MAX_VISIBLE = 48 // points kept for the discrete (reduced-motion) axis
-const SMOOTH = 0.09 // leading-edge ease toward the latest tick (glides, never stalls between ticks)
+// Leading-edge ease toward the latest tick, as a TIME CONSTANT (k = 1 - exp(-dt/tau)), so it is
+// frame-rate independent and tracks a fast ~10Hz WS feed instead of gliding a second behind (a fixed
+// per-frame lerp lagged at that cadence). ~130ms reads alive but smooth; the SSE fallback (~1s ticks)
+// still glides cleanly through the same ease.
+const EASE_TAU_MS = 130
 const CENTER_SMOOTH = 0.06 // vertical recenter ease, slow so the frame stops breathing
 const HALF_GROW = 0.12 // zoom-out ease when content needs more room
 const HALF_SHRINK = 0.03 // zoom-in ease when there is slack, slow so the frame stays calm
@@ -556,9 +561,14 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     resize()
 
     let raf = 0
+    let lastNow = 0
     const loop = (now: number) => {
+      // Frame-rate-independent ease. Clamp dt so a backgrounded tab (huge dt) doesn't snap the line.
+      const dt = lastNow ? Math.min(now - lastNow, 100) : 16
+      lastNow = now
+      const k = 1 - Math.exp(-dt / EASE_TAU_MS)
       const d = display.current
-      display.current = d + (target.current - d) * SMOOTH
+      display.current = d + (target.current - d) * k
       paint(now)
       raf = requestAnimationFrame(loop)
     }
@@ -588,7 +598,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       }
     }
 
-    const unsub = streamPrices(asset, onTick, onError)
+    const unsub = priceBus.subscribe(asset, onTick, onError)
     if (!reduced) raf = requestAnimationFrame(loop)
 
     return () => {
