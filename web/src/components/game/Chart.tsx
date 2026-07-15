@@ -83,7 +83,11 @@ const HALF_SHRINK = 0.03 // zoom-in ease when there is slack, slow so the frame 
 const LIVE_CALM = 0.34 // ~3x slower recenter/zoom while a round is live, so entry/target barely drift
 const FILL_SMOOTH = 0.08 // band right-zone -> full-width ease on lock
 const PAD = 1.22 // headroom around the fitted content (tighter = the move fills more of the frame)
-const MIN_HALF_PCT = 0.0025 // floor so a flat line never zooms to infinity
+// Floor so a flat/degenerate line never zooms to infinity, not a target zoom level. Real testnet BTC
+// moves only ~0.05% per round (see range.tsx BAND_LADDER) and the tightest range band is ±0.02%, so this
+// has to sit well under that or it swamps real content and the line reads as barely moving. Kept as a
+// last-resort guard; actual content (ticks + overlays) drives the frame almost all the time.
+const MIN_HALF_PCT = 0.0001
 const DOT_R = 7 // leading-edge dot radius (steady, no pulsing)
 const MOM_LOOKBACK = 4000 // ms window for the momentum arrow's trend read
 // Degen: burst particles + chart shake on a momentum swing. For when subtlety is not the goal.
@@ -104,6 +108,12 @@ const SEED_N = 32 // pre-roll points, matched to the ~1s tick cadence over the w
 const SEED_STEP_VOL = 0.0024 // per-step move size of the warm-up walk (fraction of price)
 const SEED_MOMENTUM = 0.62 // walk persistence, so it forms natural runs instead of pure jitter
 const SEED_MAX_DEV = 0.012 // clamp the warm-up's drift from the live price (never wanders far)
+// Real mode's true volatility is far calmer than the fork's synthetic oracle (testnet BTC moves only
+// ~0.05% per round), so the fork-tuned seed above reads far more volatile than the real ticks that
+// replace it, leaving the frame over-wide for the seed's first WINDOW_MS on screen. Real mode gets its
+// own tamer envelope; fork/demo keep the original numbers untouched.
+const REAL_SEED_STEP_VOL = 0.0003
+const REAL_SEED_MAX_DEV = 0.0015
 // Cosmetic micro-life on the leading edge so the line is never dead-flat in the gaps between the ~1s
 // oracle ticks. A zero-mean, mean-reverting wiggle, hard-clamped far under the min target offset
 // (~0.15%), applied ONLY to the drawn dot + line tip, never to display.current (the 60fps P/L source),
@@ -132,19 +142,19 @@ function readColor(name: string): string {
 // read backward across the visible window, so a freshly opened chart shows a natural moving line
 // instead of a dead-flat baseline. Cosmetic only, the newest point is the live price and real ticks
 // replace the whole seed within WINDOW_MS. Returns points oldest-first (push order).
-function seedHistory(price: number, tNow: number): Point[] {
+function seedHistory(price: number, tNow: number, stepVol: number, maxDev: number): Point[] {
   // prices[k] = synthetic price k steps back in time; prices[1] anchors at the live price so the
   // warm-up joins the real leading edge seamlessly.
   const prices = new Array<number>(SEED_N + 1)
   prices[1] = price
-  let vel = (Math.random() - 0.5) * SEED_STEP_VOL
+  let vel = (Math.random() - 0.5) * stepVol
   let cur = price
   for (let k = 2; k <= SEED_N; k++) {
-    vel = vel * SEED_MOMENTUM + (Math.random() - 0.5) * SEED_STEP_VOL
+    vel = vel * SEED_MOMENTUM + (Math.random() - 0.5) * stepVol
     cur = cur * (1 + vel)
     const dev = (cur - price) / price
-    if (dev > SEED_MAX_DEV) cur = price * (1 + SEED_MAX_DEV)
-    else if (dev < -SEED_MAX_DEV) cur = price * (1 - SEED_MAX_DEV)
+    if (dev > maxDev) cur = price * (1 + maxDev)
+    else if (dev < -maxDev) cur = price * (1 - maxDev)
     prices[k] = cur
   }
   const out: Point[] = []
@@ -238,7 +248,12 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     // so the first stream tick never re-seeds.
     const seedAt = (p: number, tNow: number): void => {
       seeded.current = true
-      const seedPts = seedHistory(p, tNow)
+      const seedPts = seedHistory(
+        p,
+        tNow,
+        liveMicroFeed ? REAL_SEED_STEP_VOL : SEED_STEP_VOL,
+        liveMicroFeed ? REAL_SEED_MAX_DEV : SEED_MAX_DEV,
+      )
       let lo = p
       let hi = p
       for (const sp of seedPts) {

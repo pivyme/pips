@@ -1,4 +1,4 @@
-import { useEffect, useState, type MutableRefObject } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 
 import { api, streamPlay, type PlayDTO, type PlayStatus, type PlayTick } from '@/lib/api'
 
@@ -53,21 +53,32 @@ export function usePlayResolutionWatch({
   onSnapshot: (snapshot: LivePlaySnapshot) => void
   onTerminal: (status: PlayStatus, playId: string) => void
 }) {
+  // Callers pass inline closures that get a new identity every render (they close over local state
+  // setters). Keeping them as effect deps tore the EventSource down and reopened it on every single
+  // tick. Read the latest callback via a ref instead, so the effects only reopen on what should
+  // actually reopen them: enabled/playId flipping.
+  const onSnapshotRef = useRef(onSnapshot)
+  const onTerminalRef = useRef(onTerminal)
+  const refreshOnOpenRef = useRef(refreshOnOpen)
+  onSnapshotRef.current = onSnapshot
+  onTerminalRef.current = onTerminal
+  refreshOnOpenRef.current = refreshOnOpen
+
   useEffect(() => {
     if (!enabled || !playId) return
     return streamPlay(
       playId,
       (tick) => {
         if (finalizedRef.current) return
-        onSnapshot(toSnapshot(tick))
-        syncOpenBalance(tick.status, playId, syncedOpenPlayIdRef, refreshOnOpen)
-        onTerminal(tick.status, playId)
+        onSnapshotRef.current(toSnapshot(tick))
+        syncOpenBalance(tick.status, playId, syncedOpenPlayIdRef, refreshOnOpenRef.current)
+        onTerminalRef.current(tick.status, playId)
       },
       () => {
         // EventSource retries. The watchdog still guarantees the terminal frame lands.
       },
     )
-  }, [enabled, finalizedRef, onSnapshot, onTerminal, playId, refreshOnOpen, syncedOpenPlayIdRef])
+  }, [enabled, finalizedRef, playId, syncedOpenPlayIdRef])
 
   useEffect(() => {
     if (!enabled || !playId) return
@@ -79,9 +90,9 @@ export function usePlayResolutionWatch({
       try {
         const { play } = await api.getPlay(playId)
         if (stopped || finalizedRef.current) return
-        onSnapshot(toSnapshot(play))
-        syncOpenBalance(play.status, playId, syncedOpenPlayIdRef, refreshOnOpen)
-        onTerminal(play.status, playId)
+        onSnapshotRef.current(toSnapshot(play))
+        syncOpenBalance(play.status, playId, syncedOpenPlayIdRef, refreshOnOpenRef.current)
+        onTerminalRef.current(play.status, playId)
       } catch {
         // transient; the next tick retries
       }
@@ -95,7 +106,7 @@ export function usePlayResolutionWatch({
       stopped = true
       clearTimeout(timer)
     }
-  }, [enabled, finalizedRef, onSnapshot, onTerminal, playId, refreshOnOpen, syncedOpenPlayIdRef, watchdogMs])
+  }, [enabled, finalizedRef, playId, syncedOpenPlayIdRef, watchdogMs])
 }
 
 export function useRoundCountdown({

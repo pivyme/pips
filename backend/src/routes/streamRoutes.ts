@@ -131,6 +131,7 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
     const tick = async (): Promise<void> => {
       if (closed) return;
       const current = await prismaQuery.play.findUnique({ where: { id } });
+      if (closed) return;
       if (!current) {
         timer = setTimeout(() => void tick(), PLAY_STREAM_INTERVAL_MS);
         return;
@@ -140,16 +141,24 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
       const settling = current.status === 'open' && Date.now() >= Number(current.expiry);
       const mark = current.status === 'open' && !settling ? await getLiveMarkCached(current).catch(() => undefined) : undefined;
       const dto = await toPlayDTO(current, mark);
-      send({
-        markValue: dto.markValue,
-        pnl: dto.pnl,
-        multiplier: dto.multiplier,
-        entryValue: dto.entryValue,
-        maxPayout: dto.maxPayout,
-        status: dto.status,
-        lockPrice: dto.lockPrice,
-        ts: Date.now(),
-      });
+      if (closed) return;
+      try {
+        send({
+          markValue: dto.markValue,
+          pnl: dto.pnl,
+          multiplier: dto.multiplier,
+          entryValue: dto.entryValue,
+          maxPayout: dto.maxPayout,
+          status: dto.status,
+          lockPrice: dto.lockPrice,
+          ts: Date.now(),
+        });
+      } catch {
+        // Socket died between the disconnect check and the write; the close handler already cleared up.
+        closed = true;
+        clearTimeout(timer);
+        return;
+      }
       if (TERMINAL.has(current.status)) {
         closed = true;
         reply.raw.end();

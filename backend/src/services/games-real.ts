@@ -1,11 +1,13 @@
 import {
   EXPIRY_SAFETY_MS,
   LUCKY_ROUND_MS,
+  LUCKY_TARGET_WIN_PROB,
   RANGE_MAX_ORACLE_LIFE_MS,
   RANGE_MIN_ORACLE_LIFE_MS,
   REAL_BTC_ANNUAL_VOL,
   REAL_RANGE_MAX_PROB,
   REAL_STRIKE_MAX_OFFSET_FRAC,
+  REAL_STRIKE_MAX_PROB,
   REAL_STRIKE_MIN_PROB,
 } from '../config/main-config.ts';
 import { FLOAT_SCALING } from '../lib/sui/config.ts';
@@ -103,13 +105,13 @@ function rangeWinProb(halfFrac: number, sigma: number): number {
 }
 
 export function binaryOffsetFrac(strikeTier: number, seconds: number): number {
-  const p = Math.min(1 - REAL_STRIKE_MIN_PROB, Math.max(REAL_STRIKE_MIN_PROB, 1 / strikeTier));
+  const p = Math.min(REAL_STRIKE_MAX_PROB, Math.max(REAL_STRIKE_MIN_PROB, 1 / strikeTier));
   const off = probit(1 - p) * roundSigmaFrac(seconds);
   return Math.max(-REAL_STRIKE_MAX_OFFSET_FRAC, Math.min(REAL_STRIKE_MAX_OFFSET_FRAC, off));
 }
 
 function luckyLeverage(tier: number, maxLeverage1e9: bigint): bigint {
-  const want1e9 = BigInt(Math.round((tier / 2) * 1e9));
+  const want1e9 = BigInt(Math.round(tier * LUCKY_TARGET_WIN_PROB * 1e9));
   const capped = want1e9 < maxLeverage1e9 ? want1e9 : maxLeverage1e9;
   return capped > LEVERAGE_ONE ? capped : LEVERAGE_ONE;
 }
