@@ -418,7 +418,7 @@ function mapRealResolvedToPlay(userId: string, r: ResolvedReal, stakeRaw: bigint
     marketKey: '', // real: filled with the u256 order id after mint (settle reads this)
     entryCost: r.amountRaw, // provisional budget; snapped to the real all-in cost after mint
     multiplier: r.tierMultiplier, // reel estimate; snapped to the real minted multiplier after mint
-    leverage: Number(r.leverage1e9 / 1_000_000_000n), // 1 this wave (Phase 12 gives LUCKY real leverage)
+    leverage: Number(r.leverage1e9 / 1_000_000_000n), // reel/quote estimate; snapped to the REAL admitted leverage after mint
     ...seed,
     ...realMarketFieldsOf(r),
   };

@@ -227,17 +227,18 @@ export const REAL_BTC_ANNUAL_VOL: number = Number(process.env.PIPS_REAL_BTC_ANNU
 export const REAL_STRIKE_MIN_PROB: number = Number(process.env.PIPS_REAL_STRIKE_MIN_PROB) || 0.06;
 // Absolute guard cap on the strike offset (fraction of spot), in case the vol estimate runs hot.
 export const REAL_STRIKE_MAX_OFFSET_FRAC: number = Number(process.env.PIPS_REAL_STRIKE_MAX_OFFSET_FRAC) || 0.006;
-// LUCKY splits each tier between LEVERAGE (clamped to the market cap) and OTM strike distance
-// (LUCKY.md §5b): `strikeTier = tier / leverageFrac`, then binaryOffsetFrac prices that strikeTier at
-// p = 1/strikeTier. A naive `leverage = tier/2` makes leverageFrac/tier = 0.5 for EVERY uncapped tier,
-// i.e. strikeTier lands at exactly 2 every time: p = 0.5, the textbook coin-flip ATM strike, offset =
-// probit(1-0.5)*sigma = 0. That's correct math for a genuine strikeTier-2 request (see games.test.ts),
-// but it means every LUCKY tier below the leverage cap (2x, 3x, 5x on a 3x-max BTC market, only 10x
-// escapes it) minted a target sitting exactly on entry, real bug behind a "0.00%" TARGET readout no
-// chart zoom can fix (there's no distance to show). Target THIS probability for the leverage split
-// instead, so strikeTier only hits the ATM boundary at the true floor tier (2x, where leverage can't go
-// below 1x and there's no room to trade for OTM distance); every tier above it lands a real move.
-export const LUCKY_TARGET_WIN_PROB: number = Number(process.env.PIPS_LUCKY_TARGET_WIN_PROB) || 0.35;
+// Binary games (LUCKY, MOONSHOT) split each nominal tier between LEVERAGE (clamped to the market
+// cap) and OTM strike distance (LUCKY.md §5b): `strikeTier = tier / leverageFrac`, then
+// binaryOffsetFrac prices that strikeTier at p = 1/strikeTier. A naive `leverage = tier/2` makes
+// leverageFrac/tier = 0.5 for EVERY uncapped tier, i.e. strikeTier lands at exactly 2 every time:
+// p = 0.5, the textbook coin-flip ATM strike, offset = probit(1-0.5)*sigma = 0. That's correct math
+// for a genuine strikeTier-2 request (see games.test.ts), but it means every tier below the leverage
+// cap (2x, 3x, 5x on a 3x-max BTC market, only 10x escapes it) minted a target sitting exactly on
+// entry, real bug behind a "0.00%" TARGET readout no chart zoom can fix (there's no distance to
+// show). Target THIS probability for the leverage split instead, so strikeTier only hits the ATM
+// boundary at the true floor tier (2x, where leverage can't go below 1x and there's no room to trade
+// for OTM distance); every tier above it lands a real move.
+export const LEVERAGE_TARGET_WIN_PROB: number = Number(process.env.PIPS_LEVERAGE_TARGET_WIN_PROB) || 0.35;
 // Upper target probability for a RANGE band. A wide centered band on a 1m BTC market is near-certain to
 // contain settlement (probability ~1), which trips max_entry_probability; cap the half-width so the
 // band's probability stays under this. A too-tight user band is left as-is (it only lowers probability).

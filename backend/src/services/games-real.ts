@@ -1,7 +1,7 @@
 import {
   EXPIRY_SAFETY_MS,
+  LEVERAGE_TARGET_WIN_PROB,
   LUCKY_ROUND_MS,
-  LUCKY_TARGET_WIN_PROB,
   RANGE_MAX_ORACLE_LIFE_MS,
   RANGE_MIN_ORACLE_LIFE_MS,
   REAL_BTC_ANNUAL_VOL,
@@ -109,10 +109,25 @@ export function binaryOffsetFrac(strikeTier: number, seconds: number): number {
   return Math.max(-REAL_STRIKE_MAX_OFFSET_FRAC, Math.min(REAL_STRIKE_MAX_OFFSET_FRAC, off));
 }
 
-function luckyLeverage(tier: number, maxLeverage1e9: bigint): bigint {
-  const want1e9 = BigInt(Math.round(tier * LUCKY_TARGET_WIN_PROB * 1e9));
+// Shared by LUCKY and MOONSHOT (both binary): size leverage off the nominal multiplier so the
+// strike lands near LEVERAGE_TARGET_WIN_PROB instead of an OTM distance the probability/offset
+// floors would otherwise clip. See the LEVERAGE_TARGET_WIN_PROB comment in main-config.ts.
+function binaryLeverage(nominalMult: number, maxLeverage1e9: bigint): bigint {
+  const want1e9 = BigInt(Math.round(nominalMult * LEVERAGE_TARGET_WIN_PROB * 1e9));
   const capped = want1e9 < maxLeverage1e9 ? want1e9 : maxLeverage1e9;
   return capped > LEVERAGE_ONE ? capped : LEVERAGE_ONE;
+}
+
+// RANGE keeps the user's chosen band width (their real risk pick) and stacks leverage ON TOP of its
+// raw odds, unlike the binary split above. The real admission cap grants more leverage the more
+// ATM-like (higher win probability) a position is (L-012), so request leverage that scales with the
+// band's own win probability: wide/safe bands land close to the market cap (a real multiplier boost
+// for the same width), tight/risky bands request little and fall back to 1x on the existing
+// admission-abort retry (plays.ts) if even that is rejected.
+function rangeLeverage(winProb: number, maxLeverage1e9: bigint): bigint {
+  const p1e9 = BigInt(Math.round(Math.max(0, Math.min(1, winProb)) * 1e9));
+  const lev1e9 = LEVERAGE_ONE + ((maxLeverage1e9 - LEVERAGE_ONE) * p1e9) / FLOAT_SCALING;
+  return lev1e9 > LEVERAGE_ONE ? lev1e9 : LEVERAGE_ONE;
 }
 
 const premiumBudget = (stakeRaw: bigint): bigint => (stakeRaw * (100n - REAL_FEE_HEADROOM_PCT)) / 100n;
@@ -122,7 +137,7 @@ function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: S
   const market = realMarket(LUCKY_ROUND_MS);
   const { spot1e9, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
   const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
-  const leverage1e9 = game === 'lucky' ? luckyLeverage(tier, maxLeverage1e9) : LEVERAGE_ONE;
+  const leverage1e9 = binaryLeverage(tier, maxLeverage1e9);
   const strikeTier = tier / (Number(leverage1e9) / 1e9);
   const offset = BigInt(Math.round(binaryOffsetFrac(strikeTier, seconds) * 1e9));
   const strike1e9 = side === 'up' ? (spot1e9 * (FLOAT_SCALING + offset)) / FLOAT_SCALING : (spot1e9 * (FLOAT_SCALING - offset)) / FLOAT_SCALING;
@@ -151,12 +166,14 @@ function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: S
 function resolveRealRange(stakeRaw: bigint, widthPct: number): ResolvedReal {
   if (!(widthPct > 0) || widthPct > 10) throw new PlayError('INVALID_PARAMS', 'Band width out of range');
   const market = realMarket(Math.round((RANGE_MIN_ORACLE_LIFE_MS + RANGE_MAX_ORACLE_LIFE_MS) / 2));
-  const { spot1e9, tickSize, admissionTickSize } = realEcon(market);
+  const { spot1e9, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
   const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
-  const maxHalfFrac = probit((1 + REAL_RANGE_MAX_PROB) / 2) * roundSigmaFrac(seconds);
+  const sigma = roundSigmaFrac(seconds);
+  const maxHalfFrac = probit((1 + REAL_RANGE_MAX_PROB) / 2) * sigma;
   const halfFrac = Math.min(widthPct / 100 / 2, maxHalfFrac);
   const half = (spot1e9 * BigInt(Math.round(halfFrac * 1e9))) / FLOAT_SCALING;
   const { lowerTick, higherTick } = ticksForRange(spot1e9 - half, spot1e9 + half, tickSize, admissionTickSize);
+  const leverage1e9 = rangeLeverage(rangeWinProb(halfFrac, sigma), maxLeverage1e9);
   return {
     game: 'range',
     kind: 'range',
@@ -164,7 +181,7 @@ function resolveRealRange(stakeRaw: bigint, widthPct: number): ResolvedReal {
     asset: REAL_BTC_GAME_ASSET,
     lowerTick,
     higherTick,
-    leverage1e9: LEVERAGE_ONE,
+    leverage1e9,
     amountRaw: premiumBudget(stakeRaw),
     depositCeilRaw: stakeRaw,
     minQuantityRaw: POSITION_LOT_SIZE,
@@ -183,7 +200,7 @@ export function quoteRangeBatchReal(widthPcts: number[]): RangeQuote[] {
   if (widths.length === 0) return [];
   try {
     const market = realMarket(Math.round((RANGE_MIN_ORACLE_LIFE_MS + RANGE_MAX_ORACLE_LIFE_MS) / 2));
-    const { spot1e9 } = realEcon(market);
+    const { spot1e9, maxLeverage1e9 } = realEcon(market);
     const spot = Number(spot1e9) / 1e9;
     const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
     const sigma = roundSigmaFrac(seconds);
@@ -192,7 +209,8 @@ export function quoteRangeBatchReal(widthPcts: number[]): RangeQuote[] {
     return widths.map((widthPct) => {
       const halfFrac = Math.min(widthPct / 100 / 2, maxHalfFrac);
       const p = rangeWinProb(halfFrac, sigma);
-      const mult = Math.max(1.01, (1 / p) * (1 - REAL_RANGE_QUOTE_HAIRCUT));
+      const lev = Number(rangeLeverage(p, maxLeverage1e9)) / 1e9;
+      const mult = Math.max(1.01, (1 / p) * lev * (1 - REAL_RANGE_QUOTE_HAIRCUT));
       const half = spot * halfFrac;
       return { multiplier: mult, lower: String(spot - half), upper: String(spot + half), entrySpot: String(spot), duration, widthPct };
     });
