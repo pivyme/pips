@@ -23,6 +23,10 @@ model User {
   suiPublicKey     String?                     // Privy ed25519 public key, for signature assembly
   privyWalletId    String?                     // Privy embedded-wallet id used by server rawSign
 
+  twitterUsername  String?                     // linked X handle, lowercased, source = Privy
+  twitterSubject   String?   @unique           // X account id; unique so two PIPS users can't claim one X
+  twitterName      String?                     // X display name, nice-to-have
+
   // Wallet-connect (custodial play-wallet model). The connected external Sui wallet is the login
   // identity + default withdrawal target; playWalletSecret is the AES-256-GCM encrypted secret of
   // the server-held custodial play wallet (`address` above), which signs this user's plays.

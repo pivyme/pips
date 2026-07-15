@@ -20,7 +20,13 @@ import type {
 const TOP = 10;
 const SETTLED = ['won', 'lost', 'cashed_out'];
 const money = (raw: bigint): string => fromDusdcRaw(raw).toFixed(2);
-const nameFields = { id: true, username: true, displayName: true } as const;
+const nameFields = { id: true, username: true, displayName: true, twitterUsername: true } as const;
+
+// The verified-badge semantic: the displayed handle really is their OAuth-verified X account, not
+// just "some X is linked". Computed at query time (never denormalized), so a handle change or a
+// fresh link never drifts from the badge.
+const isTwitterVerified = (u: { username: string | null; twitterUsername: string | null }): boolean =>
+  Boolean(u.username && u.twitterUsername && u.username.toLowerCase() === u.twitterUsername.toLowerCase());
 
 // Global PnL board: gainers (net-positive) and rekt (net-negative, worst first), plus the caller's
 // own standing so they always see where they sit even when off the top 10. Summed straight from the
@@ -50,6 +56,7 @@ export async function globalLeaderboard(userId: string): Promise<GlobalLeaderboa
     netPnl: money(p.pnl),
     gamesPlayed: p.games,
     isYou: p.userId === userId,
+    twitterVerified: isTwitterVerified(byId.get(p.userId) ?? { username: null, twitterUsername: null }),
   });
 
   const me = players.find((p) => p.userId === userId);
@@ -99,6 +106,7 @@ export async function gameLeaderboard(game: string, userId: string): Promise<Gam
       pnl: money(r.pnl), // signed: gainers positive, rekt negative
       plays: r.plays,
       isYou: r.userId === userId,
+      twitterVerified: isTwitterVerified(u ?? { username: null, twitterUsername: null }),
     };
   };
 
@@ -124,6 +132,7 @@ export async function minigameLeaderboard(game: Minigame, userId: string): Promi
       displayName: r.user.displayName,
       score: r.score,
       isYou: r.userId === userId,
+      twitterVerified: isTwitterVerified(r.user),
     })),
     best: mine?.score ?? 0,
   };

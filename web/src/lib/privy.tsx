@@ -125,7 +125,7 @@ export function AppPrivyProvider({ children }: { children: React.ReactNode }) {
     <PrivyProvider
       appId={env.VITE_PRIVY_APP_ID as string}
       config={{
-        loginMethods: ['google', 'email'],
+        loginMethods: ['google', 'email', 'twitter'],
         // Match the app: dark modal with the PIPS amber accent, not Privy's default light theme.
         appearance: { theme: 'dark', accentColor: '#ffc016' },
       }}

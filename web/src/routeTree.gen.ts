@@ -28,6 +28,7 @@ import { Route as AppMenuHistoryRouteImport } from './routes/_app/menu/history'
 import { Route as AppMenuDepositRouteImport } from './routes/_app/menu/deposit'
 import { Route as AppMenuCustomizeRouteImport } from './routes/_app/menu/customize'
 import { Route as AppMenuAchievementsRouteImport } from './routes/_app/menu/achievements'
+import { Route as AppMenuAccountRouteImport } from './routes/_app/menu/account'
 import { Route as AppGamesRangeRouteImport } from './routes/_app/games/range'
 import { Route as AppGamesMoonshotRouteImport } from './routes/_app/games/moonshot'
 import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
@@ -128,6 +129,11 @@ const AppMenuAchievementsRoute = AppMenuAchievementsRouteImport.update({
   path: '/menu/achievements',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMenuAccountRoute = AppMenuAccountRouteImport.update({
+  id: '/menu/account',
+  path: '/menu/account',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppGamesRangeRoute = AppGamesRangeRouteImport.update({
   id: '/games/range',
   path: '/games/range',
@@ -167,6 +173,7 @@ export interface FileRoutesByFullPath {
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/moonshot': typeof AppGamesMoonshotRoute
   '/games/range': typeof AppGamesRangeRoute
+  '/menu/account': typeof AppMenuAccountRoute
   '/menu/achievements': typeof AppMenuAchievementsRoute
   '/menu/customize': typeof AppMenuCustomizeRoute
   '/menu/deposit': typeof AppMenuDepositRoute
@@ -192,6 +199,7 @@ export interface FileRoutesByTo {
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/moonshot': typeof AppGamesMoonshotRoute
   '/games/range': typeof AppGamesRangeRoute
+  '/menu/account': typeof AppMenuAccountRoute
   '/menu/achievements': typeof AppMenuAchievementsRoute
   '/menu/customize': typeof AppMenuCustomizeRoute
   '/menu/deposit': typeof AppMenuDepositRoute
@@ -219,6 +227,7 @@ export interface FileRoutesById {
   '/_app/games/lucky': typeof AppGamesLuckyRoute
   '/_app/games/moonshot': typeof AppGamesMoonshotRoute
   '/_app/games/range': typeof AppGamesRangeRoute
+  '/_app/menu/account': typeof AppMenuAccountRoute
   '/_app/menu/achievements': typeof AppMenuAchievementsRoute
   '/_app/menu/customize': typeof AppMenuCustomizeRoute
   '/_app/menu/deposit': typeof AppMenuDepositRoute
@@ -246,6 +255,7 @@ export interface FileRouteTypes {
     | '/games/lucky'
     | '/games/moonshot'
     | '/games/range'
+    | '/menu/account'
     | '/menu/achievements'
     | '/menu/customize'
     | '/menu/deposit'
@@ -271,6 +281,7 @@ export interface FileRouteTypes {
     | '/games/lucky'
     | '/games/moonshot'
     | '/games/range'
+    | '/menu/account'
     | '/menu/achievements'
     | '/menu/customize'
     | '/menu/deposit'
@@ -297,6 +308,7 @@ export interface FileRouteTypes {
     | '/_app/games/lucky'
     | '/_app/games/moonshot'
     | '/_app/games/range'
+    | '/_app/menu/account'
     | '/_app/menu/achievements'
     | '/_app/menu/customize'
     | '/_app/menu/deposit'
@@ -455,6 +467,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMenuAchievementsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/menu/account': {
+      id: '/_app/menu/account'
+      path: '/menu/account'
+      fullPath: '/menu/account'
+      preLoaderRoute: typeof AppMenuAccountRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/games/range': {
       id: '/_app/games/range'
       path: '/games/range'
@@ -500,6 +519,7 @@ interface AppRouteChildren {
   AppGamesLuckyRoute: typeof AppGamesLuckyRoute
   AppGamesMoonshotRoute: typeof AppGamesMoonshotRoute
   AppGamesRangeRoute: typeof AppGamesRangeRoute
+  AppMenuAccountRoute: typeof AppMenuAccountRoute
   AppMenuAchievementsRoute: typeof AppMenuAchievementsRoute
   AppMenuCustomizeRoute: typeof AppMenuCustomizeRoute
   AppMenuDepositRoute: typeof AppMenuDepositRoute
@@ -520,6 +540,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppGamesLuckyRoute: AppGamesLuckyRoute,
   AppGamesMoonshotRoute: AppGamesMoonshotRoute,
   AppGamesRangeRoute: AppGamesRangeRoute,
+  AppMenuAccountRoute: AppMenuAccountRoute,
   AppMenuAchievementsRoute: AppMenuAchievementsRoute,
   AppMenuCustomizeRoute: AppMenuCustomizeRoute,
   AppMenuDepositRoute: AppMenuDepositRoute,

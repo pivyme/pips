@@ -65,6 +65,12 @@ export function setDemoOverride(on: boolean | null): void {
 // A realistic-looking Sui address so demo reads as the real thing on screen recordings.
 const DEMO_ADDRESS = '0xa3f08c7e5b1d49260e8a3f7c6d20b9e41f5c8a037e94d2b60a3c5f81e9b27d4c'
 const DEMO_HANDLE = '@pips'
+// A linked-but-not-adopted X account by default (username starts as 'pips', not 'pips_demo'), so the
+// Account Settings screen, the "Use your X username" button, and the verified pill are all demoable
+// with no backend: tap the button, save, and the badge flips on, mirroring the real verifiedX rule.
+const DEMO_TWITTER = { username: 'pips_demo', name: 'PIPS Demo' }
+const isTwitterVerified = (username: string | null): boolean =>
+  Boolean(username && username.toLowerCase() === DEMO_TWITTER.username.toLowerCase())
 // Fallback seed levels (real mid-2026 oracle levels). Used until the live Pyth feed connects and any
 // time the network is blocked, so demo mode still runs fully offline, just on a frozen-but-correct base.
 const SEED_PRICES: Record<string, number> = { BTC: 63_575, ETH: 1_725, SOL: 71.45, SUI: 0.71, DEEP: 0.0166 }
@@ -689,6 +695,7 @@ function userDTO(): UserDTO {
     displayName: DEMO_HANDLE,
     username: state.username,
     email: 'demo@playpips.fun',
+    twitter: DEMO_TWITTER,
     provider: 'dev',
     balance: str(state.balance),
     managerReady: true,
@@ -765,7 +772,7 @@ function globalLeaderboardDTO(): GlobalLeaderboard {
   const all = allTraders()
   const gainers = all.filter((t) => t.netPnl > 0).sort((a, b) => b.netPnl - a.netPnl)
   const rekt = all.filter((t) => t.netPnl < 0).sort((a, b) => a.netPnl - b.netPnl)
-  const entry = (t: Trader, i: number) => ({ rank: i + 1, username: t.username, displayName: t.displayName, netPnl: str(t.netPnl), gamesPlayed: t.games, isYou: t.isYou })
+  const entry = (t: Trader, i: number) => ({ rank: i + 1, username: t.username, displayName: t.displayName, netPnl: str(t.netPnl), gamesPlayed: t.games, isYou: t.isYou, twitterVerified: isTwitterVerified(t.username) })
   const youNet = state.counters.netPnl
   const gi = gainers.findIndex((t) => t.isYou)
   const ri = rekt.findIndex((t) => t.isYou)
@@ -787,7 +794,7 @@ function gameLeaderboardDTO(game: Game): GameLeaderboard {
   const split = game === 'lucky' ? 0.45 : game === 'range' ? 0.3 : 0.25 // a believable per-game share of each rival's net
   const rows = LB_TRADERS.map((b) => ({ username: b.username as string | null, displayName: b.username, pnl: Math.round(b.netPnl * split), plays: Math.max(1, Math.round(b.games * split)), isYou: false }))
   rows.push({ username: state.username, displayName: DEMO_HANDLE, pnl: Math.round(youPnl), plays: mine.length, isYou: true })
-  const row = (r: (typeof rows)[number], i: number) => ({ rank: i + 1, username: r.username, displayName: r.displayName, pnl: str(r.pnl), plays: r.plays, isYou: r.isYou })
+  const row = (r: (typeof rows)[number], i: number) => ({ rank: i + 1, username: r.username, displayName: r.displayName, pnl: str(r.pnl), plays: r.plays, isYou: r.isYou, twitterVerified: isTwitterVerified(r.username) })
   const gainers = rows.filter((r) => r.pnl > 0).sort((a, b) => b.pnl - a.pnl).slice(0, 10)
   const rekt = rows.filter((r) => r.pnl < 0).sort((a, b) => a.pnl - b.pnl).slice(0, 10)
   return { entries: gainers.map(row), rekt: rekt.map(row) }
@@ -803,7 +810,7 @@ function minigameRows(game: string): ScoreRow[] {
 
 function minigameLeaderboardDTO(game: Minigame): MinigameLeaderboard {
   const best = state.minigameScores[game] ?? 0
-  const entries = minigameRows(game).slice(0, 10).map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, score: r.score, isYou: r.isYou }))
+  const entries = minigameRows(game).slice(0, 10).map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, score: r.score, isYou: r.isYou, twitterVerified: isTwitterVerified(r.username) }))
   return { entries, best }
 }
 
@@ -848,6 +855,10 @@ export const demoApi = {
     save()
     return { user: userDTO() }
   },
+
+  // Account Settings is read-only in demo (no Privy provider to drive real link/unlink), so this is
+  // never actually called from a link action; kept for api-client completeness.
+  linkRefresh: async () => ({ user: userDTO() }),
 
   markets: async (): Promise<{ markets: MarketDTO[]; playsPaused: boolean }> => {
     await delay(120)
@@ -968,7 +979,7 @@ export const demoApi = {
     const all = minigameRows(game) // now includes your row at `best`
     const youIdx = all.findIndex((r) => r.isYou)
     const rank = youIdx >= 0 ? youIdx + 1 : all.length + 1
-    const entries = all.slice(0, 10).map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, score: r.score, isYou: r.isYou }))
+    const entries = all.slice(0, 10).map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, score: r.score, isYou: r.isYou, twitterVerified: isTwitterVerified(r.username) }))
     return { result: { entries, rank, best, isBest: score > prevBest && rank === 1, prevBest } }
   },
 }

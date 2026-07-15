@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { MenuScreen, ScreenError } from '@/components/menu/shared'
+import { XBadgeGlyph } from '@/components/menu/BrandGlyphs'
 import { api, type Game, type GlobalLeaderboard, type LeaderboardGameEntry, type Minigame, type MinigameLeaderboard } from '@/lib/api'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
@@ -87,12 +88,12 @@ function TradersView({ data }: { data: GlobalLeaderboard }) {
     <div className="flex flex-col gap-3">
       <BoardCard title="Top Gainers" sub="Most profit" empty="No gainers yet. Bank a win." count={data.gainers.length} tone="up">
         {data.gainers.map((e, i) => (
-          <LeaderRow key={e.rank} rank={e.rank} name={displayHandle(e)} isYou={e.isYou} value={fmtMoney(e.netPnl)} valueClass="text-up" sub={`${e.gamesPlayed} plays`} first={i === 0} />
+          <LeaderRow key={e.rank} rank={e.rank} name={displayHandle(e)} isYou={e.isYou} verified={e.twitterVerified} value={fmtMoney(e.netPnl)} valueClass="text-up" sub={`${e.gamesPlayed} plays`} first={i === 0} />
         ))}
       </BoardCard>
       <BoardCard title="Top REKT" sub="Deepest in the red" empty="Nobody's down. For now." count={data.rekt.length} tone="down">
         {data.rekt.map((e, i) => (
-          <LeaderRow key={e.rank} rank={e.rank} name={displayHandle(e)} isYou={e.isYou} value={fmtMoney(e.netPnl)} valueClass="text-down" sub={`${e.gamesPlayed} plays`} first={i === 0} />
+          <LeaderRow key={e.rank} rank={e.rank} name={displayHandle(e)} isYou={e.isYou} verified={e.twitterVerified} value={fmtMoney(e.netPnl)} valueClass="text-down" sub={`${e.gamesPlayed} plays`} first={i === 0} />
         ))}
       </BoardCard>
       <YouRank you={data.you} />
@@ -105,7 +106,7 @@ function GameView({ entries }: { entries: Array<LeaderboardGameEntry> }) {
   return (
     <BoardCard title="Top Winners" sub="Most profit in this game" empty="No winners yet. Bank a profit to claim #1." count={entries.length} tone="up">
       {entries.map((e, i) => (
-        <LeaderRow key={e.rank} rank={e.rank} name={displayHandle(e)} isYou={e.isYou} value={fmtMoney(e.pnl)} valueClass="text-up" sub={`${e.plays} plays`} first={i === 0} />
+        <LeaderRow key={e.rank} rank={e.rank} name={displayHandle(e)} isYou={e.isYou} verified={e.twitterVerified} value={fmtMoney(e.pnl)} valueClass="text-up" sub={`${e.plays} plays`} first={i === 0} />
       ))}
     </BoardCard>
   )
@@ -117,7 +118,7 @@ function MinigameView({ data }: { data: MinigameLeaderboard }) {
     <div className="flex flex-col gap-3">
       <BoardCard title="High Scores" sub="Best run wins" empty="No scores yet. Set the first." count={data.entries.length}>
         {data.entries.map((e, i) => (
-          <LeaderRow key={e.rank} rank={e.rank} name={displayHandle(e)} isYou={e.isYou} value={fmtScore(e.score)} valueClass={e.rank === 1 ? 'text-brand-500' : 'text-text'} first={i === 0} />
+          <LeaderRow key={e.rank} rank={e.rank} name={displayHandle(e)} isYou={e.isYou} verified={e.twitterVerified} value={fmtScore(e.score)} valueClass={e.rank === 1 ? 'text-brand-500' : 'text-text'} first={i === 0} />
         ))}
       </BoardCard>
       {data.best > 0 && (
@@ -152,6 +153,7 @@ function LeaderRow({
   rank,
   name,
   isYou,
+  verified,
   value,
   valueClass,
   sub,
@@ -160,6 +162,7 @@ function LeaderRow({
   rank: number
   name: string
   isYou: boolean
+  verified?: boolean
   value: string
   valueClass?: string
   sub?: string
@@ -177,6 +180,7 @@ function LeaderRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className={cnm('truncate text-[16px] font-bold leading-tight', isYou ? 'text-brand-500' : 'text-text')}>{name}</span>
+          {verified && <XBadgeGlyph className="h-3.5 w-3.5 shrink-0 text-up" />}
           {isYou && <span className="shrink-0 rounded bg-brand-500/15 px-1 py-px text-[9px] font-black uppercase tracking-wide text-brand-500">You</span>}
         </div>
         {sub && <div className="mt-0.5 text-[11px] leading-none text-text-3">{sub}</div>}

@@ -68,6 +68,12 @@ function MenuHome() {
             title="Settings"
             sub="Sound, haptics, motion"
           />
+          <MenuRow
+            to="/menu/account"
+            illo="vault"
+            title="Account Settings"
+            sub="Linked accounts"
+          />
         </div>
         <AchievementsSection />
         <div className="relative mt-16 w-full">

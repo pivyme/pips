@@ -71,6 +71,33 @@ export async function fetchPrivyEmail(privyUserId: string): Promise<string | nul
   }
 }
 
+export type PrivyIdentity = {
+  email: string | null;
+  twitter: { username: string; subject: string; name: string | null } | null;
+};
+
+// One pass over the user's linked accounts for both email and X. Same email logic as
+// fetchPrivyEmail; also surfaces the linked twitter_oauth account, if any. Best-effort: returns
+// nulls and never throws, so a Privy hiccup can't block sign-in or a link refresh.
+export async function fetchPrivyIdentity(privyUserId: string): Promise<PrivyIdentity> {
+  try {
+    const user = await privy().users()._get(privyUserId);
+    let email: string | null = null;
+    let twitter: PrivyIdentity['twitter'] = null;
+    for (const acct of user.linked_accounts) {
+      if (!email && acct.type === 'email' && acct.address) email = acct.address;
+      if (!email && (acct.type === 'google_oauth' || acct.type === 'apple_oauth') && acct.email) email = acct.email;
+      if (!twitter && acct.type === 'twitter_oauth' && acct.username && acct.subject) {
+        twitter = { username: acct.username, subject: acct.subject, name: acct.name ?? null };
+      }
+    }
+    return { email, twitter };
+  } catch (e) {
+    console.warn('[privy] could not fetch identity:', e instanceof Error ? e.message : e);
+    return { email: null, twitter: null };
+  }
+}
+
 // Normalize Privy's ed25519 public key to the raw 32 bytes Ed25519PublicKey wants. Privy returns
 // the Sui-flagged form: 33 bytes = the 0x00 ed25519 scheme flag + the 32-byte key, hex-encoded (66
 // chars), and sometimes base64. Accept hex or base64, then strip the leading flag byte.

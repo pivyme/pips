@@ -9,7 +9,7 @@ import { prismaQuery } from '../lib/prisma.ts';
 import { AUTH_MODE, WALLET_AUTH_ENABLED } from '../config/main-config.ts';
 import { operatorAddress } from '../lib/sui/signer.ts';
 import { isChainUnavailableError } from '../lib/sui/client.ts';
-import { verifyPrivyToken, provisionServerSuiWallet, fetchPrivyEmail } from '../lib/sui/privy.ts';
+import { verifyPrivyToken, provisionServerSuiWallet, fetchPrivyIdentity } from '../lib/sui/privy.ts';
 import { issueWalletNonce, verifyWalletSignature } from '../lib/sui/walletAuth.ts';
 import { ensureUser, ensureWalletUser, provisionUser, mintToken, toUserDTO } from '../services/auth.ts';
 
@@ -57,9 +57,11 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
 
     try {
       const wallet = await provisionServerSuiWallet(privyUserId);
-      // Read the email from Privy by user id (covers Google sign-in, which the client can't report).
-      // Fall back to whatever the client sent so we never regress an email we'd otherwise have.
-      const email = (await fetchPrivyEmail(privyUserId)) ?? body.email ?? null;
+      // Read identity from Privy by user id (covers Google sign-in, which the client can't report,
+      // and keeps a returning user's linked X handle fresh at every login). Fall back to whatever the
+      // client sent for email so we never regress an email we'd otherwise have.
+      const identity = await fetchPrivyIdentity(privyUserId);
+      const email = identity.email ?? body.email ?? null;
       const user = await ensureUser({
         address: wallet.address,
         provider: 'privy',
@@ -67,6 +69,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
         privyUserId,
         suiPublicKey: wallet.publicKey,
         privyWalletId: wallet.walletId,
+        twitter: identity.twitter,
       });
       return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user) } });
     } catch (error) {
@@ -128,6 +131,35 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
       return reply.code(200).send({ success: true, error: null, data: { user: await toUserDTO(healed) } });
     } catch (error) {
       return failSignIn(reply, error, 'AUTH_HEAL_FAILED', 'Could not finish setting up your account');
+    }
+  });
+
+  // Re-read the signed-in user's linked Google/email/X state from Privy and persist it. This is the
+  // one write path for linked-account state: the client calls it after every successful Privy
+  // link/unlink so the DB (and thus the leaderboard badge) never trusts a client-reported handle.
+  // A no-op outside privy mode or before the Privy identity is known.
+  app.post('/link/refresh', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const me = request.user!;
+    if (AUTH_MODE !== 'privy' || !me.privyUserId) {
+      return reply.code(200).send({ success: true, error: null, data: { user: await toUserDTO(me) } });
+    }
+    try {
+      const { email, twitter } = await fetchPrivyIdentity(me.privyUserId);
+      const updated = await prismaQuery.user.update({
+        where: { id: me.id },
+        data: {
+          ...(email ? { email } : {}),
+          twitterUsername: twitter ? twitter.username.toLowerCase() : null,
+          twitterSubject: twitter ? twitter.subject : null,
+          twitterName: twitter ? twitter.name : null,
+        },
+      });
+      return reply.code(200).send({ success: true, error: null, data: { user: await toUserDTO(updated) } });
+    } catch (error) {
+      if ((error as { code?: string })?.code === 'P2002') {
+        return handleError(reply, 409, 'That X account is already linked to another PIPS account', 'X_ALREADY_LINKED');
+      }
+      return handleError(reply, 500, 'Could not refresh your linked accounts', 'LINK_REFRESH_FAILED', error as Error);
     }
   });
 

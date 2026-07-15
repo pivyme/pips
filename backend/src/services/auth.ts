@@ -51,17 +51,20 @@ export type EnsureUserParams = {
   privyUserId?: string | null;
   suiPublicKey?: string | null;
   privyWalletId?: string | null;
+  twitter?: { username: string; subject: string; name: string | null } | null;
 };
 
 // Idempotent onboarding for the address-keyed modes (dev / privy). Safe to call on every login.
 export async function ensureUser(params: EnsureUserParams): Promise<User> {
-  const { address, provider, email, privyUserId, suiPublicKey, privyWalletId } = params;
+  const { address, provider, email, privyUserId, suiPublicKey, privyWalletId, twitter } = params;
 
-  // Only write the privy identity fields when present, so a dev login never nulls them.
+  // Only write the privy identity fields when present, so a dev login never nulls them. Unlinking X
+  // goes through POST /auth/link/refresh (which writes an explicit null), not here.
   const privyFields = {
     ...(privyUserId ? { privyUserId } : {}),
     ...(suiPublicKey ? { suiPublicKey } : {}),
     ...(privyWalletId ? { privyWalletId } : {}),
+    ...(twitter ? { twitterUsername: twitter.username.toLowerCase(), twitterSubject: twitter.subject, twitterName: twitter.name } : {}),
   };
 
   const user = await prismaQuery.user.upsert({
@@ -223,6 +226,7 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
     displayName: user.displayName,
     username: user.username,
     email: user.email ?? null,
+    twitter: user.twitterUsername ? { username: user.twitterUsername, name: user.twitterName ?? null } : null,
     provider: user.provider === 'privy' || user.provider === 'wallet' ? user.provider : 'dev',
     walletAuthAddress: user.walletAuthAddress ?? undefined,
     balance: fromDusdcRaw(wallet + manager).toFixed(2),

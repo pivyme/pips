@@ -11,6 +11,7 @@ export interface UserDTO {
   displayName: string; // generated handle, e.g. "Lucky Otter"
   username: string | null; // user-chosen unique handle; null until set in onboarding
   email: string | null; // login email (Privy Google/email sign-in); null for dev/wallet
+  twitter: { username: string; name: string | null } | null; // linked X account, server-verified via Privy
   provider: 'privy' | 'dev' | 'wallet';
   walletAuthAddress?: string; // wallet-connect: the connected external wallet (login + default withdraw target)
   balance: string; // available DUSDC (wallet + manager cash), 2dp display, e.g. "983.50"
@@ -117,6 +118,7 @@ export interface LeaderboardPnlEntryDTO {
   netPnl: string; // signed DUSDC, e.g. "342.00" or "-128.50"
   gamesPlayed: number;
   isYou: boolean;
+  twitterVerified: boolean; // username matches their server-verified linked X handle
 }
 
 // A per-game ranked row (Lucky / Range), by summed PnL for that game. Used for both boards: signed
@@ -128,6 +130,7 @@ export interface LeaderboardGameEntryDTO {
   pnl: string; // signed summed DUSDC for this game (gainers positive, rekt negative)
   plays: number; // settled plays of this game
   isYou: boolean;
+  twitterVerified: boolean;
 }
 
 // A minigame high-score row (Line Rider / Flappy Piper).
@@ -137,6 +140,7 @@ export interface LeaderboardScoreEntryDTO {
   displayName: string;
   score: number;
   isYou: boolean;
+  twitterVerified: boolean;
 }
 
 // GET /leaderboard

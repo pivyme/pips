@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { MenuScreen, prepareMenuTransition } from '@/components/menu/shared'
+import { XBadgeGlyph } from '@/components/menu/BrandGlyphs'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
@@ -23,6 +24,11 @@ function UsernameScreen() {
   const trimmed = name.trim()
   const valid = HANDLE_RE.test(trimmed)
   const dirty = trimmed !== current
+
+  // Reads off the auth user (server-verified, synced through /auth/link/refresh), never Privy
+  // directly: this screen also has to work in dev/demo, where no Privy provider is mounted.
+  const twitterHandle = user?.twitter?.username ?? null
+  const verified = Boolean(twitterHandle && current === twitterHandle.toLowerCase())
 
   const save = async () => {
     if (saving || !valid || !dirty) return
@@ -87,6 +93,39 @@ function UsernameScreen() {
             )}
           </div>
         </div>
+
+        {twitterHandle && (
+          <div className="-mt-2 flex items-center gap-2 px-1">
+            {verified ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-up/15 px-2 py-0.5 text-xs font-bold text-up">
+                <XBadgeGlyph className="h-3.5 w-3.5" />
+                Verified
+              </span>
+            ) : (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setName(twitterHandle)
+                    if (error) setError(null)
+                  }}
+                  className="pointer-events-none rounded-full bg-white/[0.06] px-3 py-1.5 text-xs font-bold text-text-2 active:scale-95"
+                >
+                  Use your X username
+                </button>
+                <HapticOverlay
+                  className="absolute inset-0 rounded-full"
+                  preset="selection"
+                  silent
+                  onTap={() => {
+                    setName(twitterHandle)
+                    if (error) setError(null)
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="relative h-12">
           <button

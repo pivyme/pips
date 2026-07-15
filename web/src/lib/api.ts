@@ -19,6 +19,7 @@ export interface UserDTO {
   displayName: string
   username: string | null
   email: string | null // login email (Privy Google/email sign-in); null for dev/wallet
+  twitter: { username: string; name: string | null } | null // linked X account, server-verified via Privy
   provider: 'privy' | 'dev' | 'wallet'
   // wallet-connect: the connected external wallet (login + default withdraw target).
   walletAuthAddress?: string
@@ -142,6 +143,7 @@ export interface LeaderboardPnlEntry {
   netPnl: string // signed DUSDC
   gamesPlayed: number
   isYou: boolean
+  twitterVerified: boolean
 }
 export interface LeaderboardGameEntry {
   rank: number
@@ -150,6 +152,7 @@ export interface LeaderboardGameEntry {
   pnl: string // signed summed DUSDC for the game (gainers positive, rekt negative)
   plays: number
   isYou: boolean
+  twitterVerified: boolean
 }
 export interface LeaderboardScoreEntry {
   rank: number
@@ -157,6 +160,7 @@ export interface LeaderboardScoreEntry {
   displayName: string
   score: number
   isYou: boolean
+  twitterVerified: boolean
 }
 export interface GlobalLeaderboard {
   gainers: LeaderboardPnlEntry[]
@@ -269,6 +273,9 @@ const realApi = {
   // a stale session after a devnet refresh instead of forcing a full re-login.
   authHeal: () => request<{ user: UserDTO }>('POST', '/auth/heal'),
   setUsername: (username: string) => request<{ user: UserDTO }>('PATCH', '/auth/me', { username }),
+  // Re-read linked Google/email/X state from Privy and persist it. Call after every successful
+  // link/unlink so the DB (and the leaderboard badge) never trusts a client-reported handle.
+  linkRefresh: () => request<{ user: UserDTO }>('POST', '/auth/link/refresh'),
 
   // markets + plays. `playsPaused` is the real-mode sponsor-floor pause (always false in fork/demo):
   // when true, new plays are blocked while the gas sponsor tops up, and the games show a paused state.
