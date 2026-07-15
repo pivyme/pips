@@ -11,6 +11,7 @@ import { PrivyProvider, useLogin, usePrivy } from '@privy-io/react-auth'
 import { env } from '@/env'
 import { api, setAuthToken } from '@/lib/api'
 import { isDemo } from '@/lib/demo'
+import { readRef } from '@/lib/referral'
 import { clearStoredSession, isSessionRejected, loadToken, toAuthError, useAuthControl } from '@/lib/auth'
 
 // Privy is active only in privy mode with an app id configured, and never in demo mode.
@@ -101,6 +102,7 @@ function PrivyBridge() {
         const { token: appToken, user: u } = await api.authPrivyVerify({
           token,
           email: user?.email?.address,
+          referralCode: readRef() ?? undefined,
         })
         authedFor.current = user?.id ?? ''
         control.apply(appToken, u)

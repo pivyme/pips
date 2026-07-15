@@ -10,6 +10,8 @@ import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { isDemo, setDemoOverride } from '@/lib/demo'
 import { accessGuardEnabled, isUnlocked, tryUnlock } from '@/lib/accessGuard'
+import { api } from '@/lib/api'
+import { readRef } from '@/lib/referral'
 import { cnm } from '@/utils/style'
 import { useAuth, toAuthError, type AuthError } from '@/lib/auth'
 import { listSuiWallets, onWalletsChange, isUserRejection, type SuiWallet } from '@/lib/walletConnect'
@@ -35,6 +37,26 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   // Private test deploy: the access-code sheet (VITE_ACCESS_GUARD). Shown when START is tapped before
   // this device has entered the code.
   const [codeOpen, setCodeOpen] = useState(false)
+
+  // A referral link stashed a code before landing here (see lib/referral.ts + the /@{$handle} and
+  // /r/$code capture routes). Fire-and-forget: resolves to a friendly line above START, and a failed
+  // or unknown token just renders nothing, never blocks sign-in. Skipped entirely in demo (no backend).
+  const [inviteText, setInviteText] = useState<string | null>(null)
+  useEffect(() => {
+    if (demo) return
+    const token = readRef()
+    if (!token) return
+    let active = true
+    api
+      .resolveReferral(token)
+      .then((r) => {
+        if (active && r.valid) setInviteText(r.handle ? `@${r.handle} invited you` : 'You were invited')
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [demo])
 
   // Track installed Sui wallets (extensions register asynchronously, often after first paint).
   // Client-only: getWallets touches window, and effects never run on the server.
@@ -211,6 +233,8 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
             Demo mode · play money
           </span>
         )}
+
+        {inviteText && <p className="mt-4 text-[13px] font-bold text-brand-500">{inviteText}</p>}
 
         <div className="relative pointer-events-auto mt-6 w-full">
           <button

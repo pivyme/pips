@@ -14,6 +14,7 @@ import { demoUser, isDemo } from '@/lib/demo'
 import { setHapticsEnabled } from '@/lib/haptics'
 import { setSoundEnabled } from '@/lib/sound'
 import { readWalletBalances } from '@/lib/sui/predict'
+import { clearRef, readRef } from '@/lib/referral'
 
 const TOKEN_KEY = 'pips_token'
 const WALLET_DEBUG_INTERVAL_MS = 30_000
@@ -133,6 +134,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthToken(token)
     setUser(u)
     move('authed')
+    // The backend only ever attributes a stashed referral on account creation, so this is safe to
+    // clear unconditionally: a real attribution already landed, and a no-op resolve just leaves a
+    // stale code around for no reason.
+    clearRef()
   }, [move])
 
   const devLogin = useCallback(async () => {
@@ -229,7 +234,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const account = await connectWallet(wallet)
     const { message } = await api.authWalletNonce(account.address)
     const signature = await signLoginMessage(wallet, account, message)
-    const { token, user: u } = await api.authWalletVerify({ address: account.address, signature })
+    const { token, user: u } = await api.authWalletVerify({ address: account.address, signature, referralCode: readRef() ?? undefined })
     apply(token, u)
   }, [apply])
 

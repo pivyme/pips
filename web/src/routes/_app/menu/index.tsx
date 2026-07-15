@@ -57,6 +57,12 @@ function MenuHome() {
             sub="Top gainers, REKT & game ranks"
           />
           <MenuRow
+            to="/menu/referrals"
+            illo="gift"
+            title="Referrals"
+            sub="Invite friends, track your crew"
+          />
+          <MenuRow
             to="/menu/history"
             icon="/assets/icons/icon-history.webp"
             title="History"

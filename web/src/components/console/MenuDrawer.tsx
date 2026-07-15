@@ -49,7 +49,6 @@ export function MenuDrawer({
   const closeTargetRef = useRef<string | null>(null)
   const closeTimerRef = useRef<number | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const scrollPositionsRef = useRef(new Map<string, number>())
   // Drag-to-dismiss: the grabber pulls the whole sheet down, native bottom-sheet style. We drive the
   // transform straight on the node (no per-move re-render) and only flip React state on release.
   const sheetRef = useRef<HTMLDivElement>(null)
@@ -58,15 +57,11 @@ export function MenuDrawer({
   const draggedRef = useRef(false) // distinguishes a real drag from a plain tap on the grabber
   const dragRef = useRef({ active: false, startY: 0, dy: 0, maxDy: 0, lastY: 0, lastT: 0, vel: 0 })
 
-  // Each route owns its scroll viewport, so changing the destination cannot move the outgoing
-  // page before the browser snapshots it. Popping back restores that route's previous position.
+  // Each route owns its scroll viewport (a fresh node per pathname, see key={pathname} below), so it
+  // always mounts at scrollTop 0, forward or back. No saved-position map, nothing to go stale.
   useLayoutEffect(() => {
     const scrollElement = scrollRef.current
-    if (!scrollElement) return
-
-    const direction = document.documentElement.dataset.menuTransition
-    scrollElement.scrollTop =
-      direction === 'back' ? (scrollPositionsRef.current.get(pathname) ?? 0) : 0
+    if (scrollElement) scrollElement.scrollTop = 0
   }, [pathname])
 
   const finishClose = useCallback(() => {
@@ -289,12 +284,6 @@ export function MenuDrawer({
             key={pathname}
             ref={scrollRef}
             data-lenis-prevent
-            onScroll={(event) => {
-              scrollPositionsRef.current.set(
-                pathname,
-                event.currentTarget.scrollTop,
-              )
-            }}
             className="h-full overflow-y-auto overscroll-contain"
           >
             <MenuDrawerContext.Provider value={{ closeTo }}>

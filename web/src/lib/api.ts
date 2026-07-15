@@ -4,6 +4,7 @@
 
 import { env } from '@/env'
 import { isDemo, demoApi, demoStreamPrices, demoStreamPlay, demoStreamLive } from './demo'
+import { readRef } from './referral'
 
 const BASE = env.VITE_API_URL
 
@@ -124,12 +125,33 @@ export type FaucetResult = { user: UserDTO; amount: string; digest: string }
 export interface PrivyVerifyInput {
   token: string
   email?: string
+  referralCode?: string
 }
 // Wallet-connect login (custodial play-wallet model): get a challenge, sign it with the connected
 // wallet, send the signature back for a session.
 export interface WalletVerifyInput {
   address: string
   signature: string
+  referralCode?: string
+}
+
+// === Referrals === (track-only, see .claude/REFERRALS.md: no payout, no public profile page)
+
+export interface ReferralDTO {
+  handle: string // referee's username, falling back to displayName if they never onboarded
+  joinedAt: string
+  plays: number
+}
+export interface ReferralInfoDTO {
+  code: string // the anon-format token (/r/CODE)
+  anon: boolean // link format: false = /@username, true = /r/CODE
+  username: string | null // for building the /@username link; null if not onboarded
+  count: number
+  referrals: ReferralDTO[]
+}
+export interface ReferralResolveDTO {
+  valid: boolean
+  handle: string | null // null for an anon link or an unknown token
 }
 
 // === Leaderboards === (every row exposes username/displayName, never an address)
@@ -263,8 +285,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 // === Endpoints ===
 
 const realApi = {
-  // auth
-  authDev: () => request<{ token: string; user: UserDTO }>('POST', '/auth/dev', {}),
+  // auth. readRef() threads a stashed referral token into every login path; the backend only ever
+  // attributes it on account creation (see auth.ts ensureUser/ensureWalletUser), so this is a no-op
+  // for a returning user.
+  authDev: () => request<{ token: string; user: UserDTO }>('POST', '/auth/dev', { referralCode: readRef() ?? undefined }),
   authPrivyVerify: (input: PrivyVerifyInput) => request<{ token: string; user: UserDTO }>('POST', '/auth/privy/verify', input),
   authWalletNonce: (address: string) => request<{ message: string }>('POST', '/auth/wallet/nonce', { address }),
   authWalletVerify: (input: WalletVerifyInput) => request<{ token: string; user: UserDTO }>('POST', '/auth/wallet/verify', input),
@@ -298,6 +322,11 @@ const realApi = {
   // wallet
   withdraw: (input: WithdrawInput) => request<WithdrawResult>('POST', '/wallet/withdraw', input),
   requestDusdc: () => request<FaucetResult>('POST', '/wallet/request-dusdc', {}),
+
+  // referrals
+  referral: () => request<ReferralInfoDTO>('GET', '/referral'),
+  setReferralAnon: (anon: boolean) => request<ReferralInfoDTO>('PATCH', '/referral', { anon }),
+  resolveReferral: (token: string) => request<ReferralResolveDTO>('GET', `/referral/resolve?ref=${encodeURIComponent(token)}`),
 
   // menu
   stats: () => request<{ stats: UserStatsDTO }>('GET', '/stats'),

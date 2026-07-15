@@ -183,3 +183,28 @@ export interface FullLeaderboardDTO {
   games: Record<Game, LeaderboardGameEntryDTO[]>; // lucky, range, moonshot
   minigames: Record<Minigame, MinigameLeaderboardDTO>; // line-rider, candle-hop
 }
+
+// === Referrals ===
+// Track-only (no payout, see CLAUDE.md/.claude/REFERRALS.md): the link, the format, and who joined.
+
+// One referee row on the referrer's list.
+export interface ReferralDTO {
+  handle: string; // referee's username, falling back to displayName if they never onboarded
+  joinedAt: string;
+  plays: number;
+}
+
+// GET/PATCH /referral -> the referrer's own link state + who they've brought in.
+export interface ReferralInfoDTO {
+  code: string; // the anon-format token (/r/CODE)
+  anon: boolean; // link format: false = /@username, true = /r/CODE
+  username: string | null; // for building the /@username link client-side; null if not onboarded
+  count: number;
+  referrals: ReferralDTO[];
+}
+
+// GET /referral/resolve?ref=<token> (public) -> what the door shows for a stashed referral token.
+export interface ReferralResolveDTO {
+  valid: boolean;
+  handle: string | null; // null for an anon link or an unknown token
+}

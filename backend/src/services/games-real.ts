@@ -28,6 +28,9 @@ export type ResolvedReal = {
   kind: 'binary' | 'range';
   marketId: string;
   asset: string;
+  spot1e9: bigint;
+  tickSize: bigint;
+  admissionTickSize: bigint;
   lowerTick: bigint;
   higherTick: bigint;
   leverage1e9: bigint;
@@ -133,20 +136,49 @@ function rangeLeverage(winProb: number, maxLeverage1e9: bigint): bigint {
 const premiumBudget = (stakeRaw: bigint): bigint => (stakeRaw * (100n - REAL_FEE_HEADROOM_PCT)) / 100n;
 const realFmt = (value: bigint): string => String(Number(value) / 1e9);
 
+// The strike a binary tier/leverage split prices to (LUCKY.md §5b): strikeTier = tier/leverage,
+// priced at p = 1/strikeTier. Shared by the initial resolve and the admission-abort restrike below,
+// so a leverage fallback always re-prices the strike for the leverage that actually lands.
+function strikeFor(
+  side: Side,
+  tier: number,
+  leverage1e9: bigint,
+  spot1e9: bigint,
+  tickSize: bigint,
+  admissionTickSize: bigint,
+  seconds: number,
+): { strike1e9: bigint; lowerTick: bigint; higherTick: bigint } {
+  const strikeTier = tier / (Number(leverage1e9) / 1e9);
+  const offset = BigInt(Math.round(binaryOffsetFrac(strikeTier, seconds) * 1e9));
+  const strike1e9 = side === 'up' ? (spot1e9 * (FLOAT_SCALING + offset)) / FLOAT_SCALING : (spot1e9 * (FLOAT_SCALING - offset)) / FLOAT_SCALING;
+  const { lowerTick, higherTick } = ticksForBinary(side, strike1e9, tickSize, admissionTickSize);
+  return { strike1e9, lowerTick, higherTick };
+}
+
+// The requested leverage got rejected by the real admission check (ELeverageAboveAdmission etc,
+// L-012); re-price the strike for the leverage that actually lands instead of leaving it sized for
+// the rejected one, so the fallback lands close to the nominal tier instead of far short of it.
+export function restrikeBinary(r: ResolvedReal, leverage1e9: bigint): ResolvedReal {
+  if (r.kind !== 'binary' || !r.side) return r;
+  const seconds = Math.max(1, (r.expiryMs - now()) / 1000);
+  const { strike1e9, lowerTick, higherTick } = strikeFor(r.side, r.tierMultiplier, leverage1e9, r.spot1e9, r.tickSize, r.admissionTickSize, seconds);
+  return { ...r, leverage1e9, lowerTick, higherTick, strikeDisplay: realFmt(strike1e9) };
+}
+
 function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: Side, tier: number, seed?: string): ResolvedReal {
   const market = realMarket(LUCKY_ROUND_MS);
   const { spot1e9, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
   const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
   const leverage1e9 = binaryLeverage(tier, maxLeverage1e9);
-  const strikeTier = tier / (Number(leverage1e9) / 1e9);
-  const offset = BigInt(Math.round(binaryOffsetFrac(strikeTier, seconds) * 1e9));
-  const strike1e9 = side === 'up' ? (spot1e9 * (FLOAT_SCALING + offset)) / FLOAT_SCALING : (spot1e9 * (FLOAT_SCALING - offset)) / FLOAT_SCALING;
-  const { lowerTick, higherTick } = ticksForBinary(side, strike1e9, tickSize, admissionTickSize);
+  const { strike1e9, lowerTick, higherTick } = strikeFor(side, tier, leverage1e9, spot1e9, tickSize, admissionTickSize, seconds);
   return {
     game,
     kind: 'binary',
     marketId: market.oracleId,
     asset: REAL_BTC_GAME_ASSET,
+    spot1e9,
+    tickSize,
+    admissionTickSize,
     lowerTick,
     higherTick,
     leverage1e9,
@@ -179,6 +211,9 @@ function resolveRealRange(stakeRaw: bigint, widthPct: number): ResolvedReal {
     kind: 'range',
     marketId: market.oracleId,
     asset: REAL_BTC_GAME_ASSET,
+    spot1e9,
+    tickSize,
+    admissionTickSize,
     lowerTick,
     higherTick,
     leverage1e9,

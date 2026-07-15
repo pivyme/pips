@@ -55,6 +55,7 @@ import {
   resolveMoonshot,
   resolveRange,
   resolveReal,
+  restrikeBinary,
   parseStake,
   PlayError,
   type PlayErrorCode,
@@ -418,7 +419,7 @@ function mapRealResolvedToPlay(userId: string, r: ResolvedReal, stakeRaw: bigint
     marketKey: '', // real: filled with the u256 order id after mint (settle reads this)
     entryCost: r.amountRaw, // provisional budget; snapped to the real all-in cost after mint
     multiplier: r.tierMultiplier, // reel estimate; snapped to the real minted multiplier after mint
-    leverage: Number(r.leverage1e9 / 1_000_000_000n), // reel/quote estimate; snapped to the REAL admitted leverage after mint
+    leverage: Number(r.leverage1e9) / 1e9, // reel/quote estimate; snapped to the REAL admitted leverage after mint
     ...seed,
     ...realMarketFieldsOf(r),
   };
@@ -511,7 +512,7 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
             marketKey: mint.orderId.toString(), // the settle worker's key (decodeOrderId derives the close qty)
             entryCost: mint.costRaw,
             multiplier: actualMultiplier,
-            leverage: Number(mint.leverage1e9 / 1_000_000_000n), // the REAL admitted leverage (may be trimmed from the request)
+            leverage: Number(mint.leverage1e9) / 1e9, // the REAL admitted leverage (may be trimmed from the request)
             openedAt: new Date(),
           },
         });
@@ -535,12 +536,18 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
           continue;
         }
         // Requested leverage exceeds the tier's (unreadable pre-mint) probability-gated admission cap,
-        // or the strike/premium lands outside the admission band (LUCKY.md §5b). Drop to leverage 1 and
-        // retry the same strike, the closest achievable tier. If already at 1x it's a genuinely
-        // unmintable strike, so let it fall through to error (chips safe), never loop a doomed mint.
+        // or the strike/premium lands outside the admission band (LUCKY.md §5b). Drop to leverage 1;
+        // for a binary (LUCKY/MOONSHOT) also RE-PRICE the strike for that leverage (strikeTier=tier/1),
+        // since the original strike was only ever priced assuming the rejected, higher leverage, so
+        // leaving it in place would land far short of the nominal tier instead of the closest
+        // achievable one. RANGE keeps its band as-is (its width never depended on leverage). If already
+        // at 1x it's a genuinely unmintable strike/band, so let it fall through to error (chips safe),
+        // never loop a doomed mint.
         if (isAdmissionAbort(e) && cur.leverage1e9 > LEVERAGE_ONE) {
-          cur = { ...cur, leverage1e9: LEVERAGE_ONE };
-          await prismaQuery.play.update({ where: { id: playId }, data: { leverage: 1 } }).catch(() => {});
+          cur = cur.kind === 'binary' ? restrikeBinary(cur, LEVERAGE_ONE) : { ...cur, leverage1e9: LEVERAGE_ONE };
+          await prismaQuery.play
+            .update({ where: { id: playId }, data: cur.kind === 'binary' ? { leverage: 1, strike: cur.strikeDisplay } : { leverage: 1 } })
+            .catch(() => {});
           continue;
         }
         if (isRetriableMint(e)) continue; // transient owned-coin version race: rebuild + resubmit

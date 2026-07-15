@@ -15,14 +15,17 @@ import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as ConsoleTransparentRouteImport } from './routes/console-transparent'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppRouteImport } from './routes/_app'
+import { Route as AtChar123handleChar125RouteImport } from './routes/@{$handle}'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as ToolsWalletRouteImport } from './routes/tools/wallet'
+import { Route as RCodeRouteImport } from './routes/r.$code'
 import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
 import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
 import { Route as AppMenuWithdrawRouteImport } from './routes/_app/menu/withdraw'
 import { Route as AppMenuUsernameRouteImport } from './routes/_app/menu/username'
 import { Route as AppMenuStatsRouteImport } from './routes/_app/menu/stats'
 import { Route as AppMenuSettingsRouteImport } from './routes/_app/menu/settings'
+import { Route as AppMenuReferralsRouteImport } from './routes/_app/menu/referrals'
 import { Route as AppMenuLeaderboardRouteImport } from './routes/_app/menu/leaderboard'
 import { Route as AppMenuHistoryRouteImport } from './routes/_app/menu/history'
 import { Route as AppMenuDepositRouteImport } from './routes/_app/menu/deposit'
@@ -64,6 +67,11 @@ const AppRoute = AppRouteImport.update({
   id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AtChar123handleChar125Route = AtChar123handleChar125RouteImport.update({
+  id: '/@{$handle}',
+  path: '/@{$handle}',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -72,6 +80,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const ToolsWalletRoute = ToolsWalletRouteImport.update({
   id: '/tools/wallet',
   path: '/tools/wallet',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RCodeRoute = RCodeRouteImport.update({
+  id: '/r/$code',
+  path: '/r/$code',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppMenuIndexRoute = AppMenuIndexRouteImport.update({
@@ -102,6 +115,11 @@ const AppMenuStatsRoute = AppMenuStatsRouteImport.update({
 const AppMenuSettingsRoute = AppMenuSettingsRouteImport.update({
   id: '/menu/settings',
   path: '/menu/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMenuReferralsRoute = AppMenuReferralsRouteImport.update({
+  id: '/menu/referrals',
+  path: '/menu/referrals',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMenuLeaderboardRoute = AppMenuLeaderboardRouteImport.update({
@@ -161,12 +179,14 @@ const AppGamesCandleHopRoute = AppGamesCandleHopRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
+  '/@{$handle}': typeof AtChar123handleChar125Route
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleRoute
   '/console-transparent': typeof ConsoleTransparentRoute
   '/design-system': typeof DesignSystemRoute
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
+  '/r/$code': typeof RCodeRoute
   '/tools/wallet': typeof ToolsWalletRoute
   '/games/candle-hop': typeof AppGamesCandleHopRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
@@ -179,6 +199,7 @@ export interface FileRoutesByFullPath {
   '/menu/deposit': typeof AppMenuDepositRoute
   '/menu/history': typeof AppMenuHistoryRoute
   '/menu/leaderboard': typeof AppMenuLeaderboardRoute
+  '/menu/referrals': typeof AppMenuReferralsRoute
   '/menu/settings': typeof AppMenuSettingsRoute
   '/menu/stats': typeof AppMenuStatsRoute
   '/menu/username': typeof AppMenuUsernameRoute
@@ -187,11 +208,13 @@ export interface FileRoutesByFullPath {
   '/menu/': typeof AppMenuIndexRoute
 }
 export interface FileRoutesByTo {
+  '/@{$handle}': typeof AtChar123handleChar125Route
   '/console': typeof ConsoleRoute
   '/console-transparent': typeof ConsoleTransparentRoute
   '/design-system': typeof DesignSystemRoute
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
+  '/r/$code': typeof RCodeRoute
   '/tools/wallet': typeof ToolsWalletRoute
   '/': typeof AppIndexRoute
   '/games/candle-hop': typeof AppGamesCandleHopRoute
@@ -205,6 +228,7 @@ export interface FileRoutesByTo {
   '/menu/deposit': typeof AppMenuDepositRoute
   '/menu/history': typeof AppMenuHistoryRoute
   '/menu/leaderboard': typeof AppMenuLeaderboardRoute
+  '/menu/referrals': typeof AppMenuReferralsRoute
   '/menu/settings': typeof AppMenuSettingsRoute
   '/menu/stats': typeof AppMenuStatsRoute
   '/menu/username': typeof AppMenuUsernameRoute
@@ -214,12 +238,14 @@ export interface FileRoutesByTo {
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
+  '/@{$handle}': typeof AtChar123handleChar125Route
   '/_app': typeof AppRouteWithChildren
   '/console': typeof ConsoleRoute
   '/console-transparent': typeof ConsoleTransparentRoute
   '/design-system': typeof DesignSystemRoute
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
+  '/r/$code': typeof RCodeRoute
   '/tools/wallet': typeof ToolsWalletRoute
   '/_app/': typeof AppIndexRoute
   '/_app/games/candle-hop': typeof AppGamesCandleHopRoute
@@ -233,6 +259,7 @@ export interface FileRoutesById {
   '/_app/menu/deposit': typeof AppMenuDepositRoute
   '/_app/menu/history': typeof AppMenuHistoryRoute
   '/_app/menu/leaderboard': typeof AppMenuLeaderboardRoute
+  '/_app/menu/referrals': typeof AppMenuReferralsRoute
   '/_app/menu/settings': typeof AppMenuSettingsRoute
   '/_app/menu/stats': typeof AppMenuStatsRoute
   '/_app/menu/username': typeof AppMenuUsernameRoute
@@ -243,12 +270,14 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
+    | '/@{$handle}'
     | '/'
     | '/console'
     | '/console-transparent'
     | '/design-system'
     | '/export'
     | '/pitch'
+    | '/r/$code'
     | '/tools/wallet'
     | '/games/candle-hop'
     | '/games/line-rider'
@@ -261,6 +290,7 @@ export interface FileRouteTypes {
     | '/menu/deposit'
     | '/menu/history'
     | '/menu/leaderboard'
+    | '/menu/referrals'
     | '/menu/settings'
     | '/menu/stats'
     | '/menu/username'
@@ -269,11 +299,13 @@ export interface FileRouteTypes {
     | '/menu/'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/@{$handle}'
     | '/console'
     | '/console-transparent'
     | '/design-system'
     | '/export'
     | '/pitch'
+    | '/r/$code'
     | '/tools/wallet'
     | '/'
     | '/games/candle-hop'
@@ -287,6 +319,7 @@ export interface FileRouteTypes {
     | '/menu/deposit'
     | '/menu/history'
     | '/menu/leaderboard'
+    | '/menu/referrals'
     | '/menu/settings'
     | '/menu/stats'
     | '/menu/username'
@@ -295,12 +328,14 @@ export interface FileRouteTypes {
     | '/menu'
   id:
     | '__root__'
+    | '/@{$handle}'
     | '/_app'
     | '/console'
     | '/console-transparent'
     | '/design-system'
     | '/export'
     | '/pitch'
+    | '/r/$code'
     | '/tools/wallet'
     | '/_app/'
     | '/_app/games/candle-hop'
@@ -314,6 +349,7 @@ export interface FileRouteTypes {
     | '/_app/menu/deposit'
     | '/_app/menu/history'
     | '/_app/menu/leaderboard'
+    | '/_app/menu/referrals'
     | '/_app/menu/settings'
     | '/_app/menu/stats'
     | '/_app/menu/username'
@@ -323,12 +359,14 @@ export interface FileRouteTypes {
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
+  AtChar123handleChar125Route: typeof AtChar123handleChar125Route
   AppRoute: typeof AppRouteWithChildren
   ConsoleRoute: typeof ConsoleRoute
   ConsoleTransparentRoute: typeof ConsoleTransparentRoute
   DesignSystemRoute: typeof DesignSystemRoute
   ExportRoute: typeof ExportRoute
   PitchRoute: typeof PitchRoute
+  RCodeRoute: typeof RCodeRoute
   ToolsWalletRoute: typeof ToolsWalletRoute
 }
 
@@ -376,6 +414,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/@{$handle}': {
+      id: '/@{$handle}'
+      path: '/@{$handle}'
+      fullPath: '/@{$handle}'
+      preLoaderRoute: typeof AtChar123handleChar125RouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/': {
       id: '/_app/'
       path: '/'
@@ -388,6 +433,13 @@ declare module '@tanstack/react-router' {
       path: '/tools/wallet'
       fullPath: '/tools/wallet'
       preLoaderRoute: typeof ToolsWalletRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/r/$code': {
+      id: '/r/$code'
+      path: '/r/$code'
+      fullPath: '/r/$code'
+      preLoaderRoute: typeof RCodeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app/menu/': {
@@ -430,6 +482,13 @@ declare module '@tanstack/react-router' {
       path: '/menu/settings'
       fullPath: '/menu/settings'
       preLoaderRoute: typeof AppMenuSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/menu/referrals': {
+      id: '/_app/menu/referrals'
+      path: '/menu/referrals'
+      fullPath: '/menu/referrals'
+      preLoaderRoute: typeof AppMenuReferralsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/menu/leaderboard': {
@@ -525,6 +584,7 @@ interface AppRouteChildren {
   AppMenuDepositRoute: typeof AppMenuDepositRoute
   AppMenuHistoryRoute: typeof AppMenuHistoryRoute
   AppMenuLeaderboardRoute: typeof AppMenuLeaderboardRoute
+  AppMenuReferralsRoute: typeof AppMenuReferralsRoute
   AppMenuSettingsRoute: typeof AppMenuSettingsRoute
   AppMenuStatsRoute: typeof AppMenuStatsRoute
   AppMenuUsernameRoute: typeof AppMenuUsernameRoute
@@ -546,6 +606,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppMenuDepositRoute: AppMenuDepositRoute,
   AppMenuHistoryRoute: AppMenuHistoryRoute,
   AppMenuLeaderboardRoute: AppMenuLeaderboardRoute,
+  AppMenuReferralsRoute: AppMenuReferralsRoute,
   AppMenuSettingsRoute: AppMenuSettingsRoute,
   AppMenuStatsRoute: AppMenuStatsRoute,
   AppMenuUsernameRoute: AppMenuUsernameRoute,
@@ -557,12 +618,14 @@ const AppRouteChildren: AppRouteChildren = {
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
+  AtChar123handleChar125Route: AtChar123handleChar125Route,
   AppRoute: AppRouteWithChildren,
   ConsoleRoute: ConsoleRoute,
   ConsoleTransparentRoute: ConsoleTransparentRoute,
   DesignSystemRoute: DesignSystemRoute,
   ExportRoute: ExportRoute,
   PitchRoute: PitchRoute,
+  RCodeRoute: RCodeRoute,
   ToolsWalletRoute: ToolsWalletRoute,
 }
 export const routeTree = rootRouteImport

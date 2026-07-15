@@ -95,7 +95,7 @@ function LiveLinkedAccounts() {
     if (linkedLoginCount > 1) {
       return <TapButton label="Unlink" variant="ghost" preset="medium" busy={busy === kind} onTap={() => void doUnlink(kind)} />
     }
-    return <span className="shrink-0 text-right text-[11px] font-semibold leading-tight text-text-3">Only way to sign in</span>
+    return <span className="shrink-0 text-right text-[11px] font-semibold leading-tight text-text-3">Required to sign in</span>
   }
 
   const twitterLinked = Boolean(pUser?.twitter)

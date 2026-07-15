@@ -4,6 +4,7 @@
 // PredictManager. Never re-mints chips, never makes a second manager. See LUCKY.md §6-7.
 
 import jwt from 'jsonwebtoken';
+import { customAlphabet } from 'nanoid';
 import { Transaction } from '@mysten/sui/transactions';
 import { normalizeSuiAddress } from '@mysten/sui/utils';
 
@@ -26,6 +27,33 @@ const ADJECTIVES = ['Lucky', 'Bold', 'Swift', 'Calm', 'Brave', 'Sly', 'Quiet', '
 const ANIMALS = ['Otter', 'Falcon', 'Tiger', 'Lynx', 'Heron', 'Wolf', 'Fox', 'Orca', 'Raven', 'Bison', 'Crane', 'Marten', 'Gecko', 'Mako', 'Ibis'];
 const generateHandle = (): string =>
   `${ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]} ${ANIMALS[Math.floor(Math.random() * ANIMALS.length)]}`;
+
+// Referral code alphabet: no 0/O or 1/l/I, so a code read off a screen is never ambiguous.
+// getAlphanumericId (miscUtils.ts) uses the full alphanumeric set including those, so this is its own.
+const generateReferralCode = customAlphabet('23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz', 8);
+
+// Resolve a referral token (`@username` or a bare referralCode) to the referring user. Never throws,
+// an unknown or malformed token just means no attribution. Returns the fields the two call sites need:
+// ensureUser/ensureWalletUser (id, for referredById) and GET /referral/resolve (username + anon, for
+// what the door shows).
+export async function resolveReferrer(
+  token: string | null | undefined,
+): Promise<{ id: string; username: string | null; referralAnon: boolean } | null> {
+  if (!token) return null;
+  try {
+    return token.startsWith('@')
+      ? await prismaQuery.user.findFirst({
+          where: { username: { equals: token.slice(1), mode: 'insensitive' } },
+          select: { id: true, username: true, referralAnon: true },
+        })
+      : await prismaQuery.user.findUnique({
+          where: { referralCode: token },
+          select: { id: true, username: true, referralAnon: true },
+        });
+  } catch {
+    return null;
+  }
+}
 
 // Create + share the user's PredictManager. deposit/withdraw on it assert sender == owner, so it
 // must be created by whoever signs the plays: dev = the operator, privy = the user's embedded wallet,
@@ -52,11 +80,12 @@ export type EnsureUserParams = {
   suiPublicKey?: string | null;
   privyWalletId?: string | null;
   twitter?: { username: string; subject: string; name: string | null } | null;
+  referralCode?: string | null;
 };
 
 // Idempotent onboarding for the address-keyed modes (dev / privy). Safe to call on every login.
 export async function ensureUser(params: EnsureUserParams): Promise<User> {
-  const { address, provider, email, privyUserId, suiPublicKey, privyWalletId, twitter } = params;
+  const { address, provider, email, privyUserId, suiPublicKey, privyWalletId, twitter, referralCode } = params;
 
   // Only write the privy identity fields when present, so a dev login never nulls them. Unlinking X
   // goes through POST /auth/link/refresh (which writes an explicit null), not here.
@@ -67,10 +96,23 @@ export async function ensureUser(params: EnsureUserParams): Promise<User> {
     ...(twitter ? { twitterUsername: twitter.username.toLowerCase(), twitterSubject: twitter.subject, twitterName: twitter.name } : {}),
   };
 
+  // Attribution only ever happens on account creation (the `create` branch below), so an existing
+  // user clicking a friend's link is never retroactively marked as referred. Resolved up front since
+  // upsert can't branch its `where`.
+  const referrer = await resolveReferrer(referralCode);
+
   const user = await prismaQuery.user.upsert({
     where: { address },
     update: { provider, lastSignIn: new Date(), ...(email ? { email } : {}), ...privyFields },
-    create: { address, provider, displayName: generateHandle(), email: email ?? null, lastSignIn: new Date(), ...privyFields },
+    create: {
+      address,
+      provider,
+      displayName: generateHandle(),
+      email: email ?? null,
+      lastSignIn: new Date(),
+      ...privyFields,
+      ...(referrer ? { referredById: referrer.id, referredAt: new Date() } : {}),
+    },
   });
 
   return provisionUser(user);
@@ -80,11 +122,12 @@ export async function ensureUser(params: EnsureUserParams): Promise<User> {
 // external wallet (walletAuthAddress); on first sign-in we mint a server-held custodial play wallet,
 // whose Sui address becomes user.address (so chips/funding/manager all flow through the existing
 // pipeline unchanged). The connected wallet itself never signs a transaction here.
-export async function ensureWalletUser(walletAuthAddress: string): Promise<User> {
+export async function ensureWalletUser(walletAuthAddress: string, referralCode?: string | null): Promise<User> {
   const authAddr = normalizeSuiAddress(walletAuthAddress);
   let user = await prismaQuery.user.findUnique({ where: { walletAuthAddress: authAddr } });
   if (!user) {
     const wallet = generateCustodialWallet();
+    const referrer = await resolveReferrer(referralCode);
     user = await prismaQuery.user.create({
       data: {
         address: wallet.address,
@@ -93,6 +136,7 @@ export async function ensureWalletUser(walletAuthAddress: string): Promise<User>
         walletAuthAddress: authAddr,
         playWalletSecret: wallet.encryptedSecret,
         lastSignIn: new Date(),
+        ...(referrer ? { referredById: referrer.id, referredAt: new Date() } : {}),
       },
     });
   } else {
@@ -116,6 +160,19 @@ function managerReadyToCreate(user: User): boolean {
 export async function provisionUser(user: User): Promise<User> {
   // Empty stats row so the menu reads cleanly from the first login.
   await prismaQuery.userStats.upsert({ where: { userId: user.id }, update: {}, create: { userId: user.id } });
+
+  // Referral code, exactly once. Runs on every login, so existing users backfill a code on their next
+  // sign-in with no migration. Retries on a P2002 unique collision (the 8-char alphabet is large enough
+  // that this is rare, but cheap to guard).
+  if (!user.referralCode) {
+    for (let attempt = 0; attempt < 5 && !user.referralCode; attempt++) {
+      try {
+        user = await prismaQuery.user.update({ where: { id: user.id }, data: { referralCode: generateReferralCode() } });
+      } catch (e) {
+        if ((e as { code?: string })?.code !== 'P2002') throw e;
+      }
+    }
+  }
 
   // Free starting chips, exactly once. Paid from the treasury reserve (transferDusdc) so chips never
   // come off the operator key; falls back to an operator mint when no treasury is configured.

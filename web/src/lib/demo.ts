@@ -26,6 +26,9 @@ import type {
   PlayTick,
   PriceTick,
   LiveTick,
+  ReferralDTO,
+  ReferralInfoDTO,
+  ReferralResolveDTO,
   Side,
   UserDTO,
   UserStatsDTO,
@@ -35,7 +38,7 @@ import type {
 
 const OVERRIDE_KEY = 'pips_demo' // '1' force on, '0' force off, unset = env default
 const STATE_KEY = 'pips_demo_state'
-const STATE_VERSION = 5 // bumped: theme synced through settings
+const STATE_VERSION = 6 // bumped: added referralAnon
 
 export function isDemo(): boolean {
   if (typeof window !== 'undefined') {
@@ -263,6 +266,7 @@ interface DemoState {
   unlocked: Record<string, string> // slug -> unlockedAt ISO
   history: PlayDTO[] // settled plays only, newest first
   minigameScores: Record<string, number> // minigame key -> your best score, for the arcade boards
+  referralAnon: boolean // link format toggle, mirrors the live user.referralAnon
 }
 
 // Assigned by the init block at the very bottom, once every const/function below is in scope.
@@ -316,7 +320,17 @@ function freshState(): DemoState {
   for (const c of CATALOG) if (meets(c.metric, c.threshold, counters)) unlocked[c.slug] = past(60 * 24)
   // Seed the demo account's minigame bests so the arcade boards look played-in (mid-table, beatable).
   const minigameScores: Record<string, number> = { 'line-rider': 1240, 'candle-hop': 14 }
-  return { v: STATE_VERSION, balance: 2847.5, username: 'pips', settings: { sound: true, haptics: true, reducedMotion: false, theme: 'classic' }, counters, unlocked, history, minigameScores }
+  return {
+    v: STATE_VERSION,
+    balance: 2847.5,
+    username: 'pips',
+    settings: { sound: true, haptics: true, reducedMotion: false, theme: 'classic' },
+    counters,
+    unlocked,
+    history,
+    minigameScores,
+    referralAnon: false,
+  }
 }
 
 function load(): DemoState {
@@ -755,6 +769,14 @@ const LB_TRADERS: Array<{ username: string; netPnl: number; games: number }> = [
   { username: 'lunarey', netPnl: -3960, games: 289 },
 ]
 
+// A believable referral list so /menu/referrals doesn't read empty in demo. Fixed, not tied to
+// state.username (that's the demo account's OWN handle, these are people it referred).
+const DEMO_REFERRAL_CODE = 'DEMOCODE'
+const DEMO_REFERRALS: ReferralDTO[] = [
+  { handle: 'febi', joinedAt: new Date(nowMs() - 3 * 86_400_000).toISOString(), plays: 42 },
+  { handle: 'moonlee', joinedAt: new Date(nowMs() - 9 * 86_400_000).toISOString(), plays: 11 },
+]
+
 // Seed scores for the arcade boards (the demo account is mixed in via its own best).
 const MINIGAME_BOTS: Record<string, Array<[string, number]>> = {
   'line-rider': [['kweklabs', 3800], ['pivyme', 2650], ['axelrod', 1850], ['voidkat', 1240], ['kelpin', 820], ['moonlee', 520], ['febi', 310], ['devkai', 160]],
@@ -920,6 +942,24 @@ export const demoApi = {
     state.balance += DEMO_FAUCET_AMOUNT
     save()
     return { user: userDTO(), amount: DEMO_FAUCET_AMOUNT.toFixed(2), digest: `demo-faucet-${newId()}` }
+  },
+
+  referral: async (): Promise<ReferralInfoDTO> => {
+    await delay(100)
+    return { code: DEMO_REFERRAL_CODE, anon: state.referralAnon, username: state.username, count: DEMO_REFERRALS.length, referrals: DEMO_REFERRALS }
+  },
+
+  setReferralAnon: async (anon: boolean): Promise<ReferralInfoDTO> => {
+    state.referralAnon = anon
+    save()
+    return { code: DEMO_REFERRAL_CODE, anon: state.referralAnon, username: state.username, count: DEMO_REFERRALS.length, referrals: DEMO_REFERRALS }
+  },
+
+  // Unreachable in practice (the door skips resolveReferral entirely in demo mode), kept so the demo
+  // client stays a complete twin of the real one.
+  resolveReferral: async (_token: string): Promise<ReferralResolveDTO> => {
+    await delay(60)
+    return { valid: false, handle: null }
   },
 
   plays: async (q: { status?: string; limit?: number } = {}) => {

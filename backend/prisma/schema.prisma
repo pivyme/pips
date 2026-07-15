@@ -43,6 +43,13 @@ model User {
   reducedMotion    Boolean   @default(false)
   theme            String    @default("classic")   // selected device skin id, synced cross-device
 
+  referralCode     String?   @unique          // anon link token, generated in provisionUser
+  referralAnon     Boolean   @default(false)  // link format: false = /@username, true = /r/CODE
+  referredById     String?
+  referredAt       DateTime?
+  referredBy       User?     @relation("Referrals", fields: [referredById], references: [id])
+  referrals        User[]    @relation("Referrals")
+
   lastSignIn       DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
@@ -51,6 +58,8 @@ model User {
   achievements     UserAchievement[]
   stats            UserStats?
   minigameScores   MinigameScore[]
+
+  @@index([referredById])
 }
 
 model Play {
@@ -65,7 +74,7 @@ model Play {
   oracleId     String                          // our oracle object for this market
   marketKey    String                          // fork: JSON-serialized MarketKey/RangeKey. real: decimal order id string, '' until minted
   side         String?                         // 'up' | 'down' (binary games)
-  leverage     Int?                            // lucky strike-distance bucket (2/5/10/25/100)
+  leverage     Float?                          // fork: nominal tier bucket (2/3/5/10). real: the actual admitted on-chain leverage
   strike       String?                         // binary strike (display units)
   lower        String?                         // range lower bound (display units)
   upper        String?                         // range upper bound (display units)
