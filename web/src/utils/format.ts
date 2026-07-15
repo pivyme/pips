@@ -215,6 +215,23 @@ export const formatUiNumber = (
   }
 }
 
+// Decimal precision for a live asset price, scaled to magnitude (BTC in the tens of thousands
+// down to a sub-$1 token) so the readout still ticks visibly instead of rounding flat at high
+// prices. >= $1 keeps 2 decimals at every magnitude (no more collapsing to whole dollars above
+// $1k), sub-$1 assets get 4 so their smaller moves stay visible too.
+const priceDecimals = (price: number): number => (Math.abs(price) >= 1 ? 2 : 4)
+
+// Fixed-decimal price string, padded to a consistent width. Use for canvas-drawn labels where a
+// jittering digit count would misalign the text.
+export const formatPrice = (price: number): string => {
+  const decimals = priceDecimals(price)
+  return price.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+}
+
+// $-prefixed price label, trailing zeros trimmed. Use for JSX readouts (top bar, reels, panels).
+export const priceLabel = (price: number): string =>
+  `$${price.toLocaleString('en-US', { maximumFractionDigits: priceDecimals(price) })}`
+
 export const capitalizeFirstLetter = (str: string): string => {
   return str.charAt(0).toUpperCase() + str.slice(1)
 }

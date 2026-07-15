@@ -4,11 +4,7 @@ import { Chart, type ChartOverlays } from '@/components/game/Chart'
 import { haptic } from '@/lib/haptics'
 import { slotLock } from '@/lib/sound'
 import { cnm } from '@/utils/style'
-
-const priceLabel = (p: number): string =>
-  `$${p.toLocaleString('en-US', {
-    maximumFractionDigits: p >= 1000 ? 0 : p >= 1 ? 2 : 4,
-  })}`
+import { priceLabel } from '@/utils/format'
 
 export function Reel({
   index,

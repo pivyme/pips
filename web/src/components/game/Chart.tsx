@@ -5,6 +5,7 @@ import { isDemo } from '@/lib/demo'
 import { env } from '@/env'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
+import { formatPrice } from '@/utils/format'
 
 // The single most important "feel" component. One canvas, one rAF loop reading refs. React
 // never re-renders on a price tick. The line eases toward each price tick (the shared WS bus at
@@ -842,12 +843,6 @@ function drawParticles(ctx: CanvasRenderingContext2D, arr: Particle[], now: numb
     ctx.fill()
   }
   ctx.restore()
-}
-
-// Compact price for the on-chart label: fewer decimals as the magnitude grows.
-function formatPrice(p: number): string {
-  const max = p >= 1000 ? 0 : p >= 1 ? 2 : 4
-  return p.toLocaleString('en-US', { minimumFractionDigits: max, maximumFractionDigits: max })
 }
 
 // Smooth a polyline through midpoints (quadratic) so noisy ticks read as a flowing curve.

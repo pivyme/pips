@@ -2,18 +2,13 @@ import { motion } from 'motion/react'
 
 import type { PlayDTO } from '@/lib/api'
 import { cnm } from '@/utils/style'
-import { formatExactDecimal } from '@/utils/format'
+import { formatExactDecimal, priceLabel } from '@/utils/format'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 const compact = (n: number): string =>
   n >= 1000
     ? `${(n / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k`
     : n.toLocaleString('en-US', { maximumFractionDigits: n >= 1 ? 2 : 4 })
-
-const priceLabel = (p: number): string =>
-  `$${p.toLocaleString('en-US', {
-    maximumFractionDigits: p >= 1000 ? 0 : p >= 1 ? 2 : 4,
-  })}`
 
 export function RangePnl({
   inside,

@@ -26,7 +26,7 @@ import { placePlay, cashOut } from '@/lib/sui/predict'
 import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
-import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
+import { formatExactDecimal, formatStringToNumericDecimals, priceLabel } from '@/utils/format'
 
 // LUCKY, the hero. Hit SPIN: three reels (asset, direction, multiplier) snap to a server-dealt slot
 // pull, the position opens on the chart with a TARGET line, then ride the live value and CASH OUT, or
@@ -91,8 +91,6 @@ const money = (n: number): string =>
 const fmtMult = (n: number): string =>
   `${n.toFixed(2).replace(/\.?0+$/, '')}x`
 const sideLabel = (s: Side): string => (s === 'up' ? 'UP' : 'DOWN')
-const priceLabel = (p: number): string =>
-  `$${p.toLocaleString('en-US', { maximumFractionDigits: p >= 1000 ? 0 : p >= 1 ? 2 : 4 })}`
 
 export function LuckyScreen() {
   const { refresh, user } = useAuth()

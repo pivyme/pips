@@ -36,7 +36,7 @@ import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
-import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
+import { formatExactDecimal, formatStringToNumericDecimals, priceLabel } from '@/utils/format'
 
 // MOONSHOT. The whole call lives on the knob: scroll UP to go LONG, DOWN to go SHORT, and the further
 // you scroll the bigger the target and the multiple (the sign is the side, the distance is the REACH).
@@ -100,8 +100,6 @@ const money = (n: number): string =>
   n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtMult = (n: number): string => `${n.toFixed(2).replace(/\.?0+$/, '')}x`
 const sideLabel = (s: Side): string => (s === 'up' ? 'LONG' : 'SHORT')
-const priceLabel = (p: number): string =>
-  `$${p.toLocaleString('en-US', { maximumFractionDigits: p >= 1000 ? 0 : p >= 1 ? 2 : 4 })}`
 
 export function MoonshotScreen() {
   const { refresh, user } = useAuth()

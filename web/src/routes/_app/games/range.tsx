@@ -38,7 +38,7 @@ import { rangeDebug, type RangeEntryIntent } from '@/lib/rangeDebug'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
-import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
+import { formatExactDecimal, formatStringToNumericDecimals, priceLabel } from '@/utils/format'
 
 // RANGE. Size a band around the live price with the knob (tighter = higher multiple), hit PLAY to lock
 // it, then hold to the buzzer: a real mint_range that settles IN THE ZONE (spread-free $1·qty) or OUT
@@ -109,10 +109,6 @@ const compact = (n: number): string =>
   n >= 1000
     ? `${(n / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k`
     : n.toLocaleString('en-US', { maximumFractionDigits: n >= 1 ? 2 : 4 })
-
-// Live price for the header, fewer decimals as the magnitude grows.
-const priceLabel = (p: number): string =>
-  `$${p.toLocaleString('en-US', { maximumFractionDigits: p >= 1000 ? 0 : p >= 1 ? 2 : 4 })}`
 
 // Rough, monotonic estimate so the readout responds as the knob turns. Only a cold-start fallback: the
 // backend serves the real per-band quote (fork = live ask, real = the resolver's win-prob model) and the
