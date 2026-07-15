@@ -225,22 +225,18 @@ export const REAL_BTC_ANNUAL_VOL: number = Number(process.env.PIPS_REAL_BTC_ANNU
 // min_entry_probability). Caps how far OTM a high tier / long reach may sit: p never drops below this,
 // so the strike never lands below the admissible band. Multiplier tops out near 1/this before leverage.
 export const REAL_STRIKE_MIN_PROB: number = Number(process.env.PIPS_REAL_STRIKE_MIN_PROB) || 0.06;
-// Ceiling on the target win probability. p=0.5 is the exact at-the-money boundary: probit(1-0.5)=0,
-// so a strike solved at p=0.5 sits EXACTLY on entry with zero visible distance (the bug that let a real
-// LUCKY play mint a target identical to entry, no chart zoom could have shown a move that isn't there).
-// Both LUCKY's floor tier (leverage bottoms out at 1x, forcing p=1/tier=0.5 at tier=2) and MOONSHOT's own
-// floor reach hit this exactly. Capping p below 0.5 guarantees every strike, even the cheapest tier, is a
-// real (if small) directional move, mirroring the fork's LUCKY_MIN_TARGET_FRAC floor.
-export const REAL_STRIKE_MAX_PROB: number = Number(process.env.PIPS_REAL_STRIKE_MAX_PROB) || 0.45;
 // Absolute guard cap on the strike offset (fraction of spot), in case the vol estimate runs hot.
 export const REAL_STRIKE_MAX_OFFSET_FRAC: number = Number(process.env.PIPS_REAL_STRIKE_MAX_OFFSET_FRAC) || 0.006;
 // LUCKY splits each tier between LEVERAGE (clamped to the market cap) and OTM strike distance
-// (LUCKY.md §5b). The OTM half must target a real sub-0.5 win probability of its own: a naive
-// `leverage = tier/2` always lands leverage/tier at EXACTLY 0.5 (REAL_STRIKE_MAX_PROB's boundary) for
-// every tier, canceling the visible distance to zero regardless of which tier the reel dealt. Targeting
-// this probability instead lets leverage grow with the tier while the OTM half stays a real move; only
-// the 2x floor tier still can't clear it (leverage can't go below 1x), where REAL_STRIKE_MAX_PROB's clamp
-// takes over as the safety net.
+// (LUCKY.md §5b): `strikeTier = tier / leverageFrac`, then binaryOffsetFrac prices that strikeTier at
+// p = 1/strikeTier. A naive `leverage = tier/2` makes leverageFrac/tier = 0.5 for EVERY uncapped tier,
+// i.e. strikeTier lands at exactly 2 every time: p = 0.5, the textbook coin-flip ATM strike, offset =
+// probit(1-0.5)*sigma = 0. That's correct math for a genuine strikeTier-2 request (see games.test.ts),
+// but it means every LUCKY tier below the leverage cap (2x, 3x, 5x on a 3x-max BTC market, only 10x
+// escapes it) minted a target sitting exactly on entry, real bug behind a "0.00%" TARGET readout no
+// chart zoom can fix (there's no distance to show). Target THIS probability for the leverage split
+// instead, so strikeTier only hits the ATM boundary at the true floor tier (2x, where leverage can't go
+// below 1x and there's no room to trade for OTM distance); every tier above it lands a real move.
 export const LUCKY_TARGET_WIN_PROB: number = Number(process.env.PIPS_LUCKY_TARGET_WIN_PROB) || 0.35;
 // Upper target probability for a RANGE band. A wide centered band on a 1m BTC market is near-certain to
 // contain settlement (probability ~1), which trips max_entry_probability; cap the half-width so the

@@ -23,6 +23,7 @@ import { startPricePusher } from './src/workers/price-pusher.ts';
 import { startOracleRoll } from './src/workers/oracle-roll.ts';
 import { startSettleWorker } from './src/workers/settle.ts';
 import { startMarketSync } from './src/workers/market-sync.ts';
+import { startPriceWarmer } from './src/workers/price-warmer.ts';
 import { startOpsFunding } from './src/workers/ops-funding.ts';
 import { startDevnetFaucet } from './src/workers/devnet-faucet.ts';
 import { startDeployWatch } from './src/workers/deploy-watch.ts';
@@ -173,6 +174,10 @@ const start = async (): Promise<void> => {
     // Realtime chart display feed: one shared Binance aggTrade socket the price bus pins to the on-chain
     // oracle. No-op off testnet / when disabled; any outage degrades to the on-chain fallback (L-015).
     startBinance();
+    // Keeps every display asset's Pyth spot pre-warmed so a cold WS asset loop never blocks its first
+    // broadcast on a live Hermes fetch (the LUCKY non-BTC reel-lag fix). Runs on every instance, no
+    // shared state, so it's always on regardless of OPERATOR_ENABLED/IS_REAL_PREDICT.
+    startPriceWarmer();
 
     await fastify.listen({
       port: APP_PORT,

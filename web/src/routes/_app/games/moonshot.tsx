@@ -12,6 +12,7 @@ import {
   ResultOverlay,
 } from '@/components/game/gamePanels'
 import { GameScreen, ScreenMessage, Cell } from '@/components/game/screen'
+import { LivePrice } from '@/components/game/LivePrice'
 import { useConsoleControls } from '@/components/console/controls'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
@@ -36,7 +37,7 @@ import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
-import { formatExactDecimal, formatStringToNumericDecimals, priceLabel } from '@/utils/format'
+import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
 // MOONSHOT. The whole call lives on the knob: scroll UP to go LONG, DOWN to go SHORT, and the further
 // you scroll the bigger the target and the multiple (the sign is the side, the distance is the REACH).
@@ -461,7 +462,7 @@ export function MoonshotScreen() {
             <div className="flex items-start justify-between gap-3 px-[var(--screen-rim,24px)] pb-4">
               <div className="min-w-0">
                 <div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-text-3">Moonshot · {asset}</div>
-                <div className="tnum text-[34px] font-extrabold leading-none text-text">{spot != null ? priceLabel(spot) : '—'}</div>
+                <div className="tnum text-[34px] font-extrabold leading-none text-text"><LivePrice price={spot} /></div>
               </div>
               <div className="shrink-0 text-right">
                 <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">

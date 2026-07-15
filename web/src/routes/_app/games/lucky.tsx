@@ -13,6 +13,7 @@ import {
   ResultOverlay,
 } from '@/components/game/gamePanels'
 import { GameScreen, ScreenMessage } from '@/components/game/screen'
+import { LivePrice } from '@/components/game/LivePrice'
 import { LuckyCharts, Reel } from '@/components/game/lucky/LuckyReels'
 import {
   usePhaseElapsed,
@@ -26,7 +27,7 @@ import { placePlay, cashOut } from '@/lib/sui/predict'
 import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
-import { formatExactDecimal, formatStringToNumericDecimals, priceLabel } from '@/utils/format'
+import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
 // LUCKY, the hero. Hit SPIN: three reels (asset, direction, multiplier) snap to a server-dealt slot
 // pull, the position opens on the chart with a TARGET line, then ride the live value and CASH OUT, or
@@ -557,7 +558,7 @@ export function LuckyScreen() {
               <div className="min-w-0">
                 {/* Masked until a chart is selected (a round opens), matching the anonymous stack. */}
                 <div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-text-3">{showReadouts ? focusAsset : 'XXX'}</div>
-                <div className="tnum text-[34px] font-extrabold leading-none text-text">{showReadouts ? (spot != null ? priceLabel(spot) : '—') : '$XXXX'}</div>
+                <div className="tnum text-[34px] font-extrabold leading-none text-text">{showReadouts ? <LivePrice price={spot} /> : '$XXXX'}</div>
               </div>
               <div className="shrink-0 text-right">
                 <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">

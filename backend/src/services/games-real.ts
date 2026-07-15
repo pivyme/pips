@@ -7,7 +7,6 @@ import {
   REAL_BTC_ANNUAL_VOL,
   REAL_RANGE_MAX_PROB,
   REAL_STRIKE_MAX_OFFSET_FRAC,
-  REAL_STRIKE_MAX_PROB,
   REAL_STRIKE_MIN_PROB,
 } from '../config/main-config.ts';
 import { FLOAT_SCALING } from '../lib/sui/config.ts';
@@ -105,7 +104,7 @@ function rangeWinProb(halfFrac: number, sigma: number): number {
 }
 
 export function binaryOffsetFrac(strikeTier: number, seconds: number): number {
-  const p = Math.min(REAL_STRIKE_MAX_PROB, Math.max(REAL_STRIKE_MIN_PROB, 1 / strikeTier));
+  const p = Math.min(1 - REAL_STRIKE_MIN_PROB, Math.max(REAL_STRIKE_MIN_PROB, 1 / strikeTier));
   const off = probit(1 - p) * roundSigmaFrac(seconds);
   return Math.max(-REAL_STRIKE_MAX_OFFSET_FRAC, Math.min(REAL_STRIKE_MAX_OFFSET_FRAC, off));
 }

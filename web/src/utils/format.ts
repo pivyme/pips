@@ -219,7 +219,7 @@ export const formatUiNumber = (
 // down to a sub-$1 token) so the readout still ticks visibly instead of rounding flat at high
 // prices. >= $1 keeps 2 decimals at every magnitude (no more collapsing to whole dollars above
 // $1k), sub-$1 assets get 4 so their smaller moves stay visible too.
-const priceDecimals = (price: number): number => (Math.abs(price) >= 1 ? 2 : 4)
+export const priceDecimals = (price: number): number => (Math.abs(price) >= 1 ? 2 : 4)
 
 // Fixed-decimal price string, padded to a consistent width. Use for canvas-drawn labels where a
 // jittering digit count would misalign the text.

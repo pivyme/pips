@@ -22,3 +22,13 @@ export async function getSpot(asset: string): Promise<{ price: number; ts: numbe
     return hit ?? null; // serve stale on a transient failure, never blank the chart
   }
 }
+
+// Batched proactive refresh for price-warmer.ts: one Hermes round-trip for every asset instead of N
+// lazy per-asset ones, so a cold WS asset loop (wsRoutes.ts ensureAssetLoop) never has to block its
+// first broadcast on a live fetch. Silent on failure, the TTL cache just serves stale a bit longer.
+export async function warmSpots(assets: string[]): Promise<void> {
+  const spots = await fetchSpots(assets).catch(() => null);
+  if (!spots) return;
+  const now = Date.now();
+  for (const [asset, price] of Object.entries(spots)) cache.set(asset, { price, ts: now });
+}

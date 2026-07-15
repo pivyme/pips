@@ -18,6 +18,7 @@
     "@heroui/react": "^3.0.4",
     "@heroui/styles": "^3.0.4",
     "@mysten/sui": "^2.18.0",
+    "@number-flow/react": "^0.6.1",
     "@privy-io/react-auth": "^3.32.1",
     "@t3-oss/env-core": "^0.13.11",
     "@tailwindcss/vite": "^4.3.0",

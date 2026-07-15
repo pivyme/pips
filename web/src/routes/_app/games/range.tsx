@@ -8,6 +8,7 @@ import { useConsoleControls } from '@/components/console/controls'
 import { Chart } from '@/components/game/Chart'
 import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
 import { FooterStatusPanel, InstructionOverlay } from '@/components/game/gamePanels'
+import { LivePrice } from '@/components/game/LivePrice'
 import { RangePnl, RangeResult } from '@/components/game/range/RangePanels'
 import {
   Cell,
@@ -38,7 +39,7 @@ import { rangeDebug, type RangeEntryIntent } from '@/lib/rangeDebug'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
-import { formatExactDecimal, formatStringToNumericDecimals, priceLabel } from '@/utils/format'
+import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
 // RANGE. Size a band around the live price with the knob (tighter = higher multiple), hit PLAY to lock
 // it, then hold to the buzzer: a real mint_range that settles IN THE ZONE (spread-free $1·qty) or OUT
@@ -730,7 +731,7 @@ export function RangeScreen() {
                   Range · {asset}
                 </div>
                 <div className="tnum text-[34px] font-extrabold leading-none text-text">
-                  {spot != null ? priceLabel(spot) : '—'}
+                  <LivePrice price={spot} />
                 </div>
               </div>
               <div className="shrink-0 text-right">
