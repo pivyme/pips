@@ -30,14 +30,11 @@ import { betLadder } from '@/lib/sui/config'
 // Main / Action1 / Action2 / MenuTab / HomeTab, matching ConsoleShell's DOM equivalents.
 const BTN_HAPTIC: HapticPreset[] = ['rigid', 'medium', 'medium', 'selection', 'selection']
 
-// The 3D handheld, driven by the console controls registry. A game registers its bindings via
-// useConsoleControls(); this paints live labels on the buttons + knob and dispatches the physical
-// press/drag to those handlers. The game's screen content (the chart) renders in a black HTML layer
-// positioned on the projected screen cutout, masked to the L-shape by the device body.
+// The 3D handheld, driven by the console controls registry. A game binds via useConsoleControls(), which paints live labels on the buttons/knob and dispatches physical input to it.
+// The game's screen content (the chart) renders in an HTML layer masked to the screen cutout by the device body.
 
-// Parsed logo SVG, cached for the page lifetime. The scene effect remounts on every debug/customize
-// toggle, so without this the back logo + the main button's embossed P would re-fetch and re-parse
-// async on each rebuild and pop in a few frames late. Parsed once, every later mount builds it sync.
+// Parsed logo SVG, cached for the page lifetime. The scene effect remounts on every debug/customize toggle, and without this the logo + embossed P would re-fetch and pop in a few frames late.
+// Parsed once, every later mount builds it sync.
 type SvgPaths = Parameters<
   NonNullable<Parameters<SVGLoader['load']>[1]>
 >[0]['paths']
@@ -67,28 +64,22 @@ interface ConsoleCanvasProps {
   // the x/y sliders (exportRot, radians). Forces preserveDrawingBuffer so the canvas reads out to PNG.
   exportMode?: boolean
   exportRot?: { x: number; y: number }
-  // /export "Game screens": a snapshot of a real game screen, painted onto the 3D screen mesh as an
-  // emissive map. Lets the export tool pose the handheld holding a live game and spin it in full 3D
-  // (the HTML screen layer can't follow a spin, the textured mesh can). Customize/export path only.
+  // /export "Game screens": a snapshot of a real game screen, painted onto the 3D screen mesh as an emissive map so the export tool can pose the handheld holding a live game and spin it in full 3D.
+  // The HTML screen layer can't follow a spin, the textured mesh can. Customize/export path only.
   screenTexture?: string | null
-  // Done sequence: flip `outro` true and the device snaps front-on to the exact game position with
-  // the screen black, then `onOutroComplete` fires (the studio commits + leaves, and the game fades
-  // its own screen content in).
+  // Done sequence: `outro=true` snaps the device front-on to the exact game position with the screen black.
+  // `onOutroComplete` then fires, the studio commits + leaves, and the game fades its own content in.
   outro?: boolean
   onOutroComplete?: () => void
   // Keep the physical screen black while destination content mounts, then fade only the HTML UI in.
   screenContentVisible?: boolean
   // A prepared customize canvas renders once while hidden, then resumes its intro when revealed.
   active?: boolean
-  // Customize only: start the intro at the exact live games/app pose (the mirror of the Done outro
-  // target) instead of the studio's default fly-in. Lets onboarding hand off from the live device so it
-  // reads as the same handheld zooming back out into the workshop, not a crossfade to a second one.
+  // Customize only: start the intro at the live games/app pose (the mirror of the Done outro target) instead of the studio's default fly-in.
+  // Lets onboarding hand off from the live device so it reads as one handheld zooming back out, not a crossfade to a second one.
   introFromApp?: boolean
-  // Landing/onboarding arc on the LIVE shell (customize stays false). 'hero' floats the device as a
-  // pulled-back product shot with the screen showing; 'app' is the exact resting games pose (the
-  // "moves to center" settle); 'welcome' zooms the camera into the screen with a turn flourish, fires
-  // onWelcomeArrived once it squares up + fills (the splash content reveals then), and HOLDS there. It
-  // does not auto-advance: switching stage back to 'app' plays the zoom-out and fires onWelcomeComplete.
+  // Landing/onboarding arc on the LIVE shell (customize stays false): 'hero' is a pulled-back product shot, 'app' is the resting games pose, 'welcome' zooms into the screen and holds there,
+  // firing onWelcomeArrived on arrival. It does not auto-advance: switching back to 'app' plays the zoom-out and fires onWelcomeComplete.
   stage?: 'hero' | 'app' | 'welcome'
   onWelcomeComplete?: () => void
   // Fired once the welcome zoom-in settles (front-on, screen filled), so the app can reveal the splash
@@ -126,11 +117,8 @@ export default function ConsoleCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hintRef = useRef<HTMLDivElement>(null)
   const screenLayerRef = useRef<HTMLDivElement>(null)
-  // Real DOM overlays for the 5 physical buttons (Main/Action1/Action2/MenuTab/HomeTab), positioned
-  // over their projected on-screen rects. iOS Safari only grants its native Taptic tick to a genuine
-  // physical tap on a real switch-type element, never a script-triggered one (closed in 26.5), and
-  // these buttons are raycast-picked canvas pixels with no DOM element under the finger otherwise.
-  // See overlayPressRef below (assigned inside the scene effect) and the JSX render at the bottom.
+  // Real DOM overlays for the 5 physical buttons, positioned over their projected canvas rects. iOS Safari only grants its native Taptic tick to a genuine tap on a real switch element
+  // (never script-triggered, closed in 26.5), and these buttons are raycast-picked canvas pixels with no DOM element under the finger otherwise. See overlayPressRef below + the JSX at the bottom.
   const btnOverlayRefs = useRef<Array<HTMLInputElement | null>>([null, null, null, null, null])
   const overlayPressRef = useRef<((bi: number) => void) | null>(null)
 
@@ -246,11 +234,8 @@ export default function ConsoleCanvas({
         pressedZ: 0.2,
         pad: 0.15,
       },
-      // the two action caps are thin, recessed screen panels: a metal bezel + acrylic mounts over them
-      // (createActionScreens), so they sit low and read as little LCDs behind the frame, not pillows.
-      // Wide cap + small pad so the screen fills the aperture and the bezel stays a slim rim; the hole
-      // (w + pad*2) is unchanged from the old 1.6/0.15, so the two pockets still clear each other.
-      // Both caps press to the same deep travel so the click reads on either one.
+      // The two action caps are thin recessed screen panels (metal bezel + acrylic mounts, see createActionScreens), wide with a small pad so the screen fills the aperture and the bezel stays a slim rim.
+      // Hole size (w + pad*2) matches the old 1.6/0.15 so the two pockets still clear each other; both caps share the same deep press travel.
       {
         w: 1.72,
         h: 1.62,
@@ -332,15 +317,12 @@ export default function ConsoleCanvas({
     ]
     const SCREEN_MESH_Y_OFFSET = 0.13
 
-    // The screen stretches to fill frames taller than the device's own ratio: `screenExt` is the
-    // world height added above the natural body. The screen top + body top rise by it; the bottom
-    // edge and the whole control deck stay put. 0 = natural device.
+    // The screen stretches to fill frames taller than the device's own ratio: `screenExt` is the world height added above the natural body.
+    // Screen top and body top rise with it; the bottom edge and control deck stay put (0 = natural device).
     let screenExt = 0
 
-    // Everything physical hangs off the `device` group, shifted toward the camera by DEVICE_Z so the
-    // device mid-plane sits on the deck origin. That makes the "flip to back" rotation
-    // (deck.rotation.y) symmetric and lets the back panel show. The camera and the screen projection
-    // add the same offset, so the front view stays pixel-identical to the un-grouped device.
+    // Everything physical hangs off the `device` group, shifted toward the camera by DEVICE_Z so the mid-plane sits on the deck origin, making the flip-to-back rotation (deck.rotation.y) symmetric.
+    // The camera and screen projection add the same offset, so the front view stays pixel-identical to the un-grouped device.
     const DEVICE_Z = 1.06
 
     // Screen L-shape corners in world space, with the top edge raised by screenExt. Drives both the
@@ -415,19 +397,15 @@ export default function ConsoleCanvas({
     /* audio */
     const audio = createAudio()
 
-    // Screen: a matte true-black panel set into the body. The live chart renders as an HTML
-    // layer on top (positioned to this aperture), so this mesh is just the dark backing that
-    // shows at the very edge seam.
+    // Screen: a matte true-black panel set into the body. The live chart renders as an HTML layer on top of this aperture, so this mesh is just the dark backing visible at the edge seam.
     const matScreen = new THREE.MeshStandardMaterial({
       color: 0x000000,
       roughness: 1,
       metalness: 0,
     })
 
-    // Physical (not Standard) so the transparent "Clear" skin can add clearcoat for that wet-acrylic
-    // look without swapping the instance. It's a Standard subclass, so every later `as
-    // MeshStandardMaterial` cast and `.color/.map/.roughness` write still applies; opaque skins keep
-    // clearcoat at 0, which renders identically to the old Standard material.
+    // Physical (not Standard) so the "Clear" skin can add clearcoat for a wet-acrylic look without swapping the instance; it's a Standard subclass so later `as MeshStandardMaterial` casts still apply.
+    // Opaque skins keep clearcoat at 0, rendering identically to the old Standard material.
     const matBody = new THREE.MeshPhysicalMaterial({
       color: CREAM,
       roughness: 0.82,
@@ -457,9 +435,8 @@ export default function ConsoleCanvas({
     body.castShadow = true
     device.add(body)
 
-    /* back panel — solid cream shell behind the body. Covers the open back (button + knob undersides)
-       when the device is flipped; the slab is deep enough to swallow the deepest button and the knob.
-       Same outline as the body, so it never peeks past the front silhouette. Grows with screenExt. */
+    /* back panel — solid cream shell behind the body, covering the open back (button + knob undersides) when flipped; deep enough to swallow the deepest button and the knob.
+       Same outline as the body so it never peeks past the front silhouette. Grows with screenExt. */
     const matBack = new THREE.MeshPhysicalMaterial({
       color: CREAM,
       roughness: 0.88,
@@ -485,9 +462,8 @@ export default function ConsoleCanvas({
     backPanel.geometry.computeBoundingBox()
     let backFaceLocalZ = backPanel.geometry.boundingBox!.min.z
 
-    // Back + side dress: parting seam, gunmetal corner screws, speaker grille, vent, spec label, strap
-    // eyelet. Fixed gunmetal hardware; seam + recesses are darker shades of the shell, recolored per
-    // theme in applyTheme. Half-extents grow with the screen stretch, so place() re-seats on relayout.
+    // Back + side dress: parting seam, gunmetal corner screws, speaker grille, vent, spec label, strap eyelet. Seam + recesses are darker shades of the shell, recolored per theme in applyTheme.
+    // Half-extents grow with the screen stretch, so place() re-seats on relayout.
     const matMetal = new THREE.MeshStandardMaterial({
       color: 0x5f636b,
       metalness: 0.85,
@@ -517,11 +493,8 @@ export default function ConsoleCanvas({
     backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
     backDetails.rebuildSeam(screenExt, wy(1130) + screenExt / 2)
 
-    // Exposed guts for the transparent "Clear" skin: a packed PCB, copper coil, battery, ribbon and
-    // glyph light strips sitting between the two shells. Built once and hidden; applyTheme reveals it
-    // when a clear skin is on. Rides the body center so it tracks the screen-stretch like the body does.
-    // Full guts (incl. the top-frame band) only in showcase contexts; the live game screen can grow up
-    // into that band, so a played clear skin keeps just the always-safe bottom + side internals.
+    // Exposed guts for the transparent "Clear" skin (PCB, copper coil, battery, ribbon, glyph light strips) between the two shells. Built once and hidden; applyTheme reveals it, riding the body center so it tracks the screen-stretch like the body does.
+    // Full guts (incl. the top-frame band) only in showcase contexts; the live game screen can grow into that band, so a played clear skin keeps just the always-safe bottom + side internals.
     const fullInternals = debug || customize || exportMode
     const internals = createInternals(device, '#e5322b', fullInternals)
     internals.group.position.set(wx(585), wy(1130) + screenExt / 2, 0)
@@ -591,8 +564,7 @@ export default function ConsoleCanvas({
       roughness: 0.8,
       metalness: 0,
     })
-    // Main-button glyph: its own tone so it reads as part of the button, not the back logo. The raised P
-    // is a shade darker than the cap face; its counter stays open so the face shows through as the eye.
+    // Main-button glyph: its own tone so it reads as part of the button, not the back logo. The raised P is a shade darker than the cap face, its counter left open so the face shows through as the eye.
     // Recolored from t.main in applyTheme.
     const matMainGlyph = new THREE.MeshStandardMaterial({
       roughness: 0.6,
@@ -606,7 +578,6 @@ export default function ConsoleCanvas({
     // Maker's mark below the back logo, seated once the rear face z is known (see makeLabel section).
     let backMarkPlane: THREE.Mesh | null = null
 
-    // z = letter recess below the rear face, eyeZ = the eyes' depth (negative pops them out in front).
     const pieceZ = (kind: string) =>
       kind === 'eye' ? logoCarve.eyeZ : logoCarve.z
 
@@ -698,16 +669,13 @@ export default function ConsoleCanvas({
     screenMesh.position.z = -0.25
     screenMesh.position.y = SCREEN_MESH_Y_OFFSET
     screenMesh.receiveShadow = true
-    // The live HTML screen sits behind the device and shows through this cutout, so the panel mesh
-    // would only occlude it. Hidden in play. In customize the device is off and free-spinning, so we
-    // show this matte panel instead: it reads as a dark powered-off screen and rotates with the body
-    // (an HTML layer couldn't follow the spin).
+    // The live HTML screen sits behind the device and shows through this cutout, so the panel mesh would only occlude it, hidden in play.
+    // In customize the device free-spins, so this matte panel shows instead as a dark powered-off screen that rotates with the body (an HTML layer can't follow the spin).
     screenMesh.visible = customize
     device.add(screenMesh)
 
-    // /export: paint a game-screen snapshot onto the mesh as an emissive map, so it glows like a powered
-    // display regardless of scene lighting and spins with the body. The bare-device shot leaves it null
-    // (matte off-screen). Disposes the prior texture so the ~1s snapshot refresh never leaks GPU memory.
+    // /export: paint a game-screen snapshot onto the mesh as an emissive map so it glows like a powered display regardless of scene lighting and spins with the body. Null = bare matte off-screen shot.
+    // Disposes the prior texture so the ~1s snapshot refresh never leaks GPU memory.
     let screenTex: THREE.Texture | null = null
     let screenTexGen = 0 // supersedes in-flight async loads, so a later clear/snapshot always wins the race
     const screenTexLoader = new THREE.TextureLoader()
@@ -746,9 +714,8 @@ export default function ConsoleCanvas({
     // Reassigned by relayout() when the screen stretches to fill a tall frame.
     let screenWorld = screenWorldPts()
 
-    /* device elements — buttons + number wheel. Geometry/mesh factories live in consoleElements.ts;
-       the canvas only places them and keeps the handles the loop / theme / GUI need. The knob is built
-       lower down (after its `kp` tuning block). */
+    /* device elements — buttons + number wheel. Geometry/mesh factories live in consoleElements.ts; the canvas only places them and keeps the handles the loop/theme/GUI need.
+       The knob is built lower down, after its `kp` tuning block. */
     const interactive: THREE.Mesh[] = []
     const matPocket = new THREE.MeshStandardMaterial({
       color: 0x19160f,
@@ -783,13 +750,8 @@ export default function ConsoleCanvas({
     const { dispose: disposeActionScreens, glow: actionGlow } =
       createActionScreens(device, bm, ACTION_IDX, buttons, BTN_PX, wx, wy, spinView)
 
-    // The binding's color lights the screen (LONG → green, SHORT → red, …); a plain secondary cap
-    // (PREV/NEXT/HOW TO/HISTORY, color 'neutral' or unset) lights at the theme's own action tone, so it
-    // reads as a powered, themed screen instead of a dead grey one, matching the Customize preview.
-    // The loop adds the press flash onto baseEmissive. Only the loud semantic states (win/loss/buy) get a
-    // fixed hue here; everything else falls through to actionThemeColor below.
-    // Pure-ish hues so the screen's own emissive glow keeps the color true instead of washing toward
-    // white (a red with green/blue in it goes pink once it self-lights).
+    // A binding's color lights the screen (LONG → green, SHORT → red); everything else falls through to actionHex below. The loop adds the press flash onto baseEmissive.
+    // Hues stay pure-ish so the screen's own emissive glow keeps the color true instead of washing toward white on self-light.
     const SCREEN_COLORS: Record<string, string> = {
       up: '#15db6e',
       down: '#ff2a20',
@@ -805,9 +767,8 @@ export default function ConsoleCanvas({
       if (display?.mode === 'token') return '#000000'
       return (color && SCREEN_COLORS[color]) || actionThemeColor
     }
-    // Ink for the cap's label: near-black on a bright/light screen (amber, mint, Sui blue, greens),
-    // white on a saturated/dark one, so PREV / HOW TO / CASH OUT stay legible whatever the theme paints
-    // the cap. Perceived luminance; the emissive glow lifts mid tones, so the threshold leans bright.
+    // Ink for the cap's label: near-black on a bright/light screen, white on a saturated/dark one, so labels stay legible whatever the theme paints the cap.
+    // Perceived luminance; the emissive glow lifts mid tones, so the threshold leans bright.
     function actionInk(hex: string): string {
       const h = hex.replace('#', '')
       if (h.length !== 6) return '#ffffff'
@@ -858,10 +819,8 @@ export default function ConsoleCanvas({
     // Result-blink clock: drives the slow breathing of any action button flagged to pulse.
     let pulseT = 0
 
-    // The main button wears the first glyph of the PIPS wordmark, raised proud of the cap face (built
-    // once the logo SVG loads, see buildMainGlyph). The glyph is a separate mesh, so the cap stays a
-    // solid full-bevel pillow and keeps its glossy, light-catching rim. Cutting the glyph through the
-    // cap would force a near-flat bevel (to keep the letter crisp) and kill that gloss.
+    // The main button wears the first glyph of the PIPS wordmark, raised proud of the cap face as a separate mesh (built once the SVG loads, see buildMainGlyph).
+    // That keeps the cap a solid full-bevel pillow with a glossy rim; cutting the glyph through the cap would force a near-flat bevel and kill that gloss.
     function mainCapGeo() {
       const c = buttons[0]
       return frontZeroed(roundedRect(c.w, c.h, c.r), c.depth, 0.06)
@@ -917,9 +876,8 @@ export default function ConsoleCanvas({
         return g
       }
 
-      // Raised letter: the silhouette minus its counters (the eyes), standing proud of the cap face.
-      // The open counters let the cap face read through as the eye, the same look the back-panel carve
-      // gets from its lifted ovals. castShadow drops a faint emboss shadow onto the glossy face.
+      // Raised letter: the silhouette minus its counters (the eyes), standing proud of the cap face; open counters let the face read through as the eye, same look as the back-panel carve.
+      // castShadow drops a faint emboss shadow onto the glossy face.
       const letterShape = new THREE.Shape(outlinePts)
       for (const h of glyph.holes)
         letterShape.holes.push(new THREE.Path(h.getPoints(40).map(map)))
@@ -1040,10 +998,8 @@ export default function ConsoleCanvas({
           if (text) {
             g.fillStyle = col
             g.textAlign = 'center'
-            // A label can ask for two lines with a newline (e.g. a long word like LEADER\nBOARD that
-            // reads tiny on one line at the single-line size). Shrink the font so both lines fit the
-            // face, stack them centered, and size the plane to the WIDEST line so it scales to the text
-            // exactly like a single line does. Single-line labels keep the original path verbatim.
+            // A label can ask for two lines via a newline (e.g. LEADER\nBOARD reads tiny on one line). Shrink the font, stack lines centered, and size the plane to the widest line.
+            // Single-line labels keep the original path verbatim.
             const lines = text.split('\n')
             if (lines.length > 1) {
               const fs = Math.round(FS * 0.58)
@@ -1107,9 +1063,8 @@ export default function ConsoleCanvas({
       '#7c7870',
     )
 
-    // Landing attract text, rendered as a real plane on the screen (not a flat HTML overlay) so it
-    // tilts + floats WITH the handheld in the hero pose instead of detaching when the device angles.
-    // Centered vertically on the screen aperture; the loop blinks it and shows it only on the hero stage.
+    // Landing attract text, rendered as a real plane on the screen (not an HTML overlay) so it tilts + floats WITH the handheld in the hero pose instead of detaching.
+    // Centered vertically on the screen aperture; the loop blinks it and only shows it on the hero stage.
     const screenCenterY = () => {
       let lo = Infinity,
         hi = -Infinity
@@ -1119,11 +1074,8 @@ export default function ConsoleCanvas({
       }
       return (lo + hi) / 2
     }
-    // CRT attract label: a gold bloom halo, chromatic split, a warm gold phosphor core, and scanlines
-    // baked into the texture, plus a soft gold glow plane behind it. A real plane on the device (not
-    // HTML), so it tilts + floats with the handheld. The loop blinks + flickers it. It composites over
-    // the HTML black screen backing; the recessed 3D screen panel stays hidden so it can't peek while
-    // the device floats on the landing.
+    // CRT attract label: gold bloom halo, chromatic split, phosphor core, and scanlines baked into the texture, plus a soft glow plane behind it. A real plane on the device (not HTML), the loop blinks + flickers it.
+    // Composites over the HTML black screen backing; the recessed 3D screen panel stays hidden so it can't peek through while the device floats.
     const pressStart = (() => {
       const text = 'PRESS START'
       const FS = 150
@@ -1225,9 +1177,8 @@ export default function ConsoleCanvas({
     const pressStartMat = pressStart.mat
     let pressBlinkT = 0
 
-    // Maker's mark on the back panel, centered below the embossed logo. Parented to the panel so it
-    // tracks the screen stretch, faced toward -z so it reads when the device is flipped. Tinted to the
-    // theme's label color (recolored by applyTheme). placeLogoCarve seats its z on the rear face.
+    // Maker's mark on the back panel, centered below the embossed logo. Parented to the panel so it tracks the screen stretch, faced toward -z so it reads when flipped.
+    // Tinted to the theme's label color (recolored by applyTheme); placeLogoCarve seats its z on the rear face.
     const backMark = (() => {
       const c = document.createElement('canvas'),
         g = c.getContext('2d')!
@@ -1254,12 +1205,8 @@ export default function ConsoleCanvas({
       }
     })()
 
-    // Live labels: action1 / action2 on their faces. The main button wears the embossed PIPS glyph
-    // instead of a text label (carved once the logo SVG loads, see buildMainGlyph).
-    // Sits on the screen face under the acrylic. Kept small so even a 6-char label clears the bezel
-    // window (the label draws depth-test-free, so it must not overrun the metal frame).
-    // In the spin views the labels occlude properly (depthTest on) instead of bleeding through the
-    // body/knob from the side.
+    // Live labels: action1/action2 on their faces (the main button wears the embossed PIPS glyph instead, see buildMainGlyph). Sits under the acrylic, kept small so a 6-char label clears the bezel window.
+    // Draws depth-test-free in play so it never overruns the metal frame; spin views turn depthTest on so it doesn't bleed through the body/knob from the side.
     const a1Lbl = makeDynLabel(0.36, '#ffffff', false, spinView)
     a1Lbl.plane.position.set(0, 0, 0.02)
     bm[1].add(a1Lbl.plane)
@@ -1448,9 +1395,8 @@ export default function ConsoleCanvas({
     const numberWheelLabels = Array.from(
       { length: MAX_NUMBER_WHEEL_LABELS },
       () => {
-        // Keep the digits above the drum instead of depth-fighting into its black surface. In the spin
-        // views (customize/export) they opt into real occlusion so they don't bleed through the flipped
-        // back panel; the front games view keeps them depth-test-free, exactly as before.
+        // Keep the digits above the drum instead of depth-fighting into its black surface. Spin views (customize/export) opt into real occlusion so they don't bleed through the flipped back panel.
+        // The front games view keeps them depth-test-free, same as before.
         const label = makeDynLabel(0.46, '#ffffff', true, spinView)
         numberWheelRoll.add(label.plane)
         return { ...label, angle: 0, active: false }
@@ -1684,10 +1630,8 @@ export default function ConsoleCanvas({
         body.position.z,
       )
 
-    // Body skin: some themes wrap an SVG across the front body instead of a flat color. We load it
-    // once (cached), project it onto the body front as a normalized planar map, and cover-fit it so
-    // its squares stay square at any frame height (screenExt stretches the body). Texture transform
-    // does the cover crop, so a relayout never needs to touch the loaded image.
+    // Body skin: some themes wrap an SVG across the front body instead of a flat color. Loaded once (cached), projected onto the body front as a normalized planar map, cover-fit so squares stay square at any frame height.
+    // Texture transform does the cover crop, so a relayout never needs to touch the loaded image.
     const texLoader = new THREE.TextureLoader()
     const skinCache = new Map<string, THREE.Texture>()
     let bodySkinTex: THREE.Texture | null = null
@@ -1755,10 +1699,8 @@ export default function ConsoleCanvas({
     // every card tap in the studio. emissive tracks the color so the press glow stays in-palette.
     function applyTheme(t?: ConsoleTheme) {
       if (!t) return
-      // Transparent "Clear" skin. FRONT shell is real frosted acrylic via transmission (not a flat alpha
-      // film, which just looked like a white overlay): the guts behind read as diffused frosted plastic
-      // under a glossy clearcoat skin. The smoke tint rides the attenuation so the transmitted internals
-      // keep their color. Non-clear skins reset every prop back to the molded look.
+      // Transparent "Clear" skin: FRONT shell is real frosted acrylic via transmission (not a flat alpha film, which just read as a white overlay), so the guts read as diffused frosted plastic under a clearcoat.
+      // The smoke tint rides the attenuation so transmitted internals keep their color; non-clear skins reset every prop back to the molded look.
       const clear = !!t.clear
       matBody.transparent = clear
       matBody.transmission = clear ? 1 : 0
@@ -1860,9 +1802,8 @@ export default function ConsoleCanvas({
       pressStart.glow.position.y = sc
     }
 
-    /* customize studio — the device floats as a hero product shot you can spin. The intro eases the
-       camera from a bigger, near-front pose into a pulled-back 3/4 (it "shrinks into the center");
-       after that, drag spins the deck so you can read the front, the sides and the embossed back. */
+    /* customize studio — the device floats as a hero product shot you can spin. The intro eases the camera from a bigger, near-front pose into a pulled-back 3/4 ("shrinks into the center").
+       After that, drag spins the deck to read the front, sides, and embossed back. */
     const CUST = {
       // intro: start pose → rest pose, lerped by easeOutExpo(introT). Rest sits the device small and
       // high so the workshop breathes around it and the preset rail has room below.
@@ -1905,32 +1846,26 @@ export default function ConsoleCanvas({
     const clamp01 = (t: number) => Math.max(0, Math.min(1, t))
 
     // ===== LIVE landing/onboarding arc (customize/debug/export keep their own camera paths) =====
-    // resize() captures the resting games pose here so the loop can re-derive it each frame and blend
-    // the hero/welcome offsets onto it. At heroT=0/welcomeT=0 the blend reproduces the rest pose
-    // bit-for-bit, so the settle from hero lands exactly where the games view sits (seamless).
+    // resize() captures the resting games pose here so the loop can re-derive it each frame and blend hero/welcome offsets onto it, reproducing rest bit-for-bit at heroT=0/welcomeT=0 so the hero settle lands exactly where games sits.
     const restCamPos = new THREE.Vector3()
     const restLook = new THREE.Vector3()
     let viewW = 0
     let viewH = 0
-    // Extra shrink (<=1) folded into the screen content scale to fit a screen whose fixed-height stack
-    // is taller than a short aperture (the hub has no chart to absorb it). Measured by recomputeScreenFit
-    // on resize + structural content changes, never per frame; projectScreenLayer just reads it.
+    // Extra shrink (<=1) folded into the screen content scale to fit a screen whose fixed-height stack is taller than a short aperture (the hub has no chart to absorb it).
+    // Measured by recomputeScreenFit on resize + structural content changes, never per frame; projectScreenLayer just reads it.
     let screenFitScale = 1
-    // Hero product-shot offset, relative to rest: pulled well back so the device floats smaller, and
-    // raised in frame (negative dLookY lifts it) so its controls clear the landing copy band below.
+    // Hero product-shot offset, relative to rest: pulled back so the device floats smaller, raised in frame (negative dLookY) so its controls clear the landing copy band below.
     // A gentle 3/4 tilt gives it the product-shot feel.
     const HERO = { dz: 13, dLookY: -1.6, yaw: -0.11, pitch: -0.05 }
     const HERO_MS = 900
     const WELCOME_IN_MS = 880
     const WELCOME_OUT_MS = 680
-    // Entrance flourish while zooming in: the deck turns out and squares back to front-on. The screen
-    // is black through the zoom (content reveals only once squared up), so the turn reads on the body
-    // and never skews the splash. Yaw is the headline move; a touch of pitch gives it some lift.
+    // Entrance flourish while zooming in: the deck turns out and squares back to front-on. The screen stays black through the zoom (content reveals only once squared up), so the turn reads on the body without skewing the splash.
+    // Yaw is the headline move; a touch of pitch gives it some lift.
     const WELCOME_SPIN = 0.45
     const WELCOME_PITCH = -0.05
-    // Fraction of the resting camera distance at the held splash (lower = closer = bigger screen). The
-    // games pose already fits the device to the frame, so the welcome has to push PAST it to read as a
-    // zoom at all; this dollies in ~30% and recenters on the screen so the splash fills the frame.
+    // Fraction of the resting camera distance at the held splash (lower = closer = bigger screen). The games pose already fits the device to the frame, so welcome must push PAST it to read as a zoom.
+    // This dollies in ~30% and recenters on the screen so the splash fills the frame.
     const WELCOME_ZOOM = 0.7
     let liveStage: 'hero' | 'app' | 'welcome' = stage
     let heroT = stage === 'hero' ? 1 : 0
@@ -1959,9 +1894,8 @@ export default function ConsoleCanvas({
       let lookY: number, camZ: number
       let yaw: number, pitch: number
       if (introFromApp) {
-        // Intro starts at the exact games/app pose (same cy/d math as the Done outro target and the
-        // resize handler) so it hands off seamlessly from the live device, then eases out to the studio
-        // rest pose. Reads as the one handheld zooming back out into the workshop.
+        // Intro starts at the exact games/app pose (same cy/d math as the Done outro target and resize handler) so it hands off seamlessly from the live device, then eases out to the studio rest pose.
+        // Reads as one handheld zooming back out into the workshop.
         const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
         const aspect = Math.max(camera.aspect, 0.0001)
         const ext = responsiveScreenExt()
@@ -1978,8 +1912,7 @@ export default function ConsoleCanvas({
         pitch = lerp(CUST.pitch[0], CUST.pitch[1], e) + orbitPitch * e
       }
       if (outroActive) {
-        // Land on the exact pose the games view computes for this aspect (same cy/d math as the
-        // resize handler), so when the studio hands off to the live game device there's no jump.
+        // Land on the exact pose the games view computes for this aspect (same cy/d math as the resize handler), so the studio hand-off to the live game device has no jump.
         // The device was stretched to that height when the outro armed.
         const o = easeInOutCubic(outroT)
         const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
@@ -2003,9 +1936,8 @@ export default function ConsoleCanvas({
       backPanel.visible = !outroActive || easeInOutCubic(outroT) < 0.9
     }
 
-    // Export tool: a dead front-on frame at slider zero, with the device pose driven purely by the
-    // x/y sliders. No float, no orbit, no intro. x = pitch, y = yaw, applied to the deck pivot so the
-    // back panel reads when spun. Camera frames the device full-height like the games view does.
+    // Export tool: a dead front-on frame at slider zero, device pose driven purely by the x/y sliders (x=pitch, y=yaw), applied to the deck pivot so the back panel reads when spun. No float, no orbit, no intro.
+    // Camera frames the device full-height like the games view does.
     function placeExportCamera() {
       const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
       const aspect = Math.max(camera.aspect, 0.0001)
@@ -2026,11 +1958,8 @@ export default function ConsoleCanvas({
       backPanel.visible = true
     }
 
-    // Project the device's L-shaped screen cutout to CSS px and glue the HTML screen layer onto it.
-    // Extracted from resize() so the LIVE arc can re-run it every animating frame (the camera moves).
-    // We project the cutout's LIVE world position (device float bob/tilt + deck rotation), not the rest
-    // pose, so the screen content stays glued to the device as it drifts on the landing. screenWorld
-    // bakes in DEVICE_Z, so strip that back to device-local and re-apply the current world matrix.
+    // Project the device's L-shaped screen cutout to CSS px and glue the HTML screen layer onto it. Extracted from resize() so the LIVE arc can re-run it every animating frame (the camera moves).
+    // Projects the cutout's LIVE world position (device float bob/tilt + deck rotation), not the rest pose, so content stays glued as it drifts; screenWorld bakes in DEVICE_Z, stripped to device-local before reapplying the current world matrix.
     const screenScratch = new THREE.Vector3()
     function projectScreenLayer() {
       const el = screenLayerRef.current
@@ -2060,13 +1989,8 @@ export default function ConsoleCanvas({
       const apertureW = maxX - minX + M * 2
       el.style.width = `${apertureW}px`
       el.style.height = `${maxY - minY + M * 2}px`
-      // Content is authored for a roughly full-size aperture (DESIGN_W). When a short/wide/zoomed
-      // viewport forces the device smaller (it gets contained height-first), the aperture shrinks but
-      // the fixed-size content doesn't, so it overflows and clips. Shrink the whole layer to fit
-      // instead. widthScale fits the design WIDTH; screenFitScale fits the HEIGHT (measured from the
-      // live content's vertical overflow, for fixed-height screens the chart can't absorb). Capped at 1
-      // so the normal phone + product-shot sizes are untouched; floored so it never collapses to a
-      // speck. CSS lays the content out 1/scale bigger and scales it back down.
+      // Content is authored for a roughly full-size aperture (DESIGN_W); a short/wide/zoomed viewport shrinks the aperture but not the fixed-size content, so it overflows and clips. Shrink the whole layer to fit instead.
+      // widthScale fits the design WIDTH, screenFitScale fits the HEIGHT (from live content's vertical overflow); both capped at 1 and floored, CSS lays content out 1/scale bigger and scales it back down.
       const DESIGN_W = 340
       const widthScale = Math.min(1, apertureW / DESIGN_W)
       const contentScale = Math.max(0.4, Math.min(1, widthScale * screenFitScale))
@@ -2099,9 +2023,8 @@ export default function ConsoleCanvas({
       ]
     }
 
-    // Glue the 5 invisible haptic-overlay inputs onto their button meshes' live projected rects, same
-    // technique as projectScreenLayer. Button screen position only moves on resize/camera moves (never
-    // per-frame during normal play), so piggybacking on projectScreenLayer's call sites is enough.
+    // Glue the 5 invisible haptic-overlay inputs onto their button meshes' live projected rects, same technique as projectScreenLayer.
+    // Button screen position only moves on resize/camera moves (never per-frame during normal play), so piggybacking on projectScreenLayer's call sites is enough.
     function projectButtonOverlay() {
       if (viewW === 0 || viewH === 0) return
       device.updateWorldMatrix(true, false)
@@ -2131,12 +2054,8 @@ export default function ConsoleCanvas({
       }
     }
 
-    // Measure the live content's vertical overflow and fold it into screenFitScale so a too-tall screen
-    // (the hub stack on a short aperture) shrinks to fit instead of clipping its lower rows. Measured at
-    // the width-only scale, then re-applied. Cheap and rare: resize + structural content changes only,
-    // never per frame (projectScreenLayer reads the cached factor). GameScreen clips its own overflow
-    // (overflow-hidden), so its scrollHeight, not the wrapper's, is what exposes a too-tall stack, hence
-    // the worst-of both. Re-running projectScreenLayer here forces one reflow, which is fine at this rate.
+    // Measure the live content's vertical overflow and fold it into screenFitScale so a too-tall screen (the hub stack on a short aperture) shrinks to fit instead of clipping its lower rows. Measured at the width-only scale, then re-applied; cheap and rare, resize + structural changes only.
+    // GameScreen clips its own overflow, so its scrollHeight, not the wrapper's, exposes a too-tall stack; re-running projectScreenLayer here forces one reflow, which is fine at this rate.
     function recomputeScreenFit() {
       const layer = screenLayerRef.current
       if (!layer || viewW === 0 || viewH === 0 || customize) return
@@ -2144,16 +2063,14 @@ export default function ConsoleCanvas({
       if (!content) return
       screenFitScale = 1
       projectScreenLayer()
-      // Converge: re-applying the scale widens the design box, so text can rewrap and nudge the natural
-      // height, which one correction misses (the lowest row ends up kissing the bevel). Re-measure a few
-      // times, with ~1% headroom so the last row keeps a hair of black under it instead of touching.
+      // Converge: re-applying the scale widens the design box, so text can rewrap and nudge the natural height, which one correction misses (the lowest row ends up kissing the bevel).
+      // Re-measure a few times, with ~1% headroom so the last row keeps a hair of black under it instead of touching.
       for (let i = 0; i < 4; i++) {
         const root = content.firstElementChild as HTMLElement | null
         const r1 = content.clientHeight ? content.scrollHeight / content.clientHeight : 1
         const r2 = root && root.clientHeight ? root.scrollHeight / root.clientHeight : 1
-        // An open in-screen overlay (How to play, ranks) is absolute + scrollable, so its overflow
-        // never reaches the root above. Measure it directly so a short one (the rules) scales to fit
-        // fully instead of hiding its last lines; a long list still scrolls once we hit the floor.
+        // An open in-screen overlay (How to play, ranks) is absolute + scrollable, so its overflow never reaches the root above.
+        // Measure it directly so a short one (the rules) scales to fit fully instead of hiding its last lines; a long list still scrolls once we hit the floor.
         const overlay = content.querySelector('[data-screen-overlay]') as HTMLElement | null
         const r3 = overlay && overlay.clientHeight ? overlay.scrollHeight / overlay.clientHeight : 1
         const ratio = Math.max(r1, r2, r3, 1)
@@ -2172,14 +2089,12 @@ export default function ConsoleCanvas({
       const lookY = restLook.y + HERO.dLookY * he
       const yaw = HERO.yaw * he
       const pitch = HERO.pitch * he
-      // Welcome splash target: dolly toward the SCREEN (closer than rest + recentered on the screen,
-      // not the whole device) so the splash grows to fill the frame, the customize hand-off feel. The
-      // games pose already fits the device edge-to-edge, so the zoom has to push past it to read.
+      // Welcome splash target: dolly toward the SCREEN (closer than rest, recentered on the screen not the whole device) so the splash grows to fill the frame, the customize hand-off feel.
+      // The games pose already fits the device edge-to-edge, so the zoom has to push past it to read.
       const welcomeZ = (restCamPos.z - DEVICE_Z) * WELCOME_ZOOM + DEVICE_Z
       const welcomeLookY = screenCenterY()
-      // Turn flourish, IN only: 0 at the start, peaks mid-zoom, back to 0 as it squares up front-on.
-      // Off during the hold/out so the splash sits square and the zoom-out stays aligned. The screen
-      // is black through the zoom (content reveals only on arrival), so the turn never skews it.
+      // Turn flourish, IN only: 0 at the start, peaks mid-zoom, back to 0 as it squares up front-on. Off during the hold/out so the splash sits square and the zoom-out stays aligned.
+      // The screen is black through the zoom (content reveals only on arrival), so the turn never skews it.
       const spin = welcomePhase === 'in' ? Math.sin(clamp01(welcomeT) * Math.PI) : 0
       camera.position.set(0, lerp(lookY, welcomeLookY, we), lerp(camZ, welcomeZ, we))
       camera.lookAt(0, lerp(lookY, welcomeLookY, we), 0)
@@ -2354,10 +2269,8 @@ export default function ConsoleCanvas({
       toNDC(e)
       const obj = pick()
       if (!obj) {
-        // No device control under the tap. The WebGL canvas sits on top of the HTML screen layer and
-        // swallows the tap, so a text field on the screen (the onboarding handle) can't be selected and
-        // the mobile keyboard never opens. Forward a tap that lands on the screen to its input: doing it
-        // here, inside the real gesture, is what lets the keyboard come up. No-op on screens with no field.
+        // No device control under the tap. The WebGL canvas sits on top of the HTML screen layer and swallows the tap, so a screen text field (the onboarding handle) can't be selected and the keyboard never opens.
+        // Forward a tap that lands on the screen to its input here, inside the real gesture, which is what lets the keyboard come up. No-op on screens with no field.
         const layer = screenLayerRef.current
         if (layer && !exportMode && !debug) {
           const r = layer.getBoundingClientRect()
@@ -2372,9 +2285,8 @@ export default function ConsoleCanvas({
               field.focus()
               return
             }
-            // Screen content that opts into a real tap (e.g. the Home game rows) via data-console-tap.
-            // elementFromPoint would just return this canvas (it's on top), so hit-test each candidate's
-            // own rect instead, same idea as the field lookup above.
+            // Screen content that opts into a real tap (e.g. the Home game rows) via data-console-tap. elementFromPoint would just return this canvas (it's on top).
+            // Hit-test each candidate's own rect instead, same idea as the field lookup above.
             const tappables = layer.querySelectorAll<HTMLElement>('[data-visible="true"] [data-console-tap]')
             for (const t of tappables) {
               const tr = t.getBoundingClientRect()
@@ -2569,9 +2481,8 @@ export default function ConsoleCanvas({
       }
     }
 
-    // Keyboard = a physical tap of a button: same press travel, glow, sound, and dispatch as a click.
-    // bi 0 = main, 1 = left action, 2 = right action. Self-contained (no pointer capture), it sinks
-    // the cap, fires the handler, then schedules the release like a real press.
+    // Keyboard = a physical tap of a button: same press travel, glow, sound, and dispatch as a click (bi 0=main, 1=left action, 2=right action).
+    // Self-contained (no pointer capture): sinks the cap, fires the handler, then schedules the release like a real press.
     function keyTap(bi: number) {
       const btn = bm[bi]
       if (!btn) return
@@ -2589,10 +2500,8 @@ export default function ConsoleCanvas({
       dirty = true
     }
 
-    // Fired by the real DOM haptic-overlay switches (see the JSX render + btnOverlayRefs above), a
-    // genuine physical tap having landed on one of them. Mirrors the button branch of onPointerDown:
-    // same press visuals/audio/dispatch, no pointer capture needed since release() below is a
-    // window-level listener keyed off the module-scoped `active` mesh, not the original event target.
+    // Fired by the real DOM haptic-overlay switches (see the JSX render + btnOverlayRefs above) on a genuine physical tap. Mirrors the button branch of onPointerDown: same press visuals/audio/dispatch.
+    // No pointer capture needed since release() below is a window-level listener keyed off the module-scoped `active` mesh, not the original event target.
     function overlayPress(bi: number) {
       if (customize) return
       const btn = bm[bi]
@@ -2637,13 +2546,8 @@ export default function ConsoleCanvas({
       keyTap(bi)
     }
 
-    // Mobile keyboard: focus an on-screen text field (the onboarding handle) on touchstart, with
-    // preventDefault. The canvas sits over the HTML screen layer, so a tap lands here, not on the field;
-    // pointerdown already forwards focus, but on touch the trailing compatibility click re-targets the
-    // unfocusable canvas and blurs the field, snapping the just-opened keyboard shut (the "keyboard
-    // flashes then hides" bug). Calling preventDefault on touchstart kills that compat click, so focus
-    // sticks and the keyboard stays up. Scoped to the field's own padded rect so the knob + PLAY (which
-    // fall inside the screen's bounding box but well below the field) keep their normal press flow.
+    // Mobile keyboard: focus an on-screen text field on touchstart with preventDefault. The canvas sits over the HTML layer so the tap lands here; on touch, the trailing compatibility click re-targets the
+    // unfocusable canvas and blurs the field, snapping the just-opened keyboard shut (the "keyboard flashes then hides" bug). preventDefault kills that compat click; scoped to the field's own padded rect so the knob + PLAY keep their normal press flow.
     const onScreenTouchStart = (e: TouchEvent) => {
       if (customize || exportMode || debug) return
       const layer = screenLayerRef.current
@@ -2678,10 +2582,8 @@ export default function ConsoleCanvas({
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)
     window.addEventListener('keydown', onKeyDown)
-    // Returning to the tab can drop the drawing buffer; force one repaint so the device never
-    // shows a blank frame after we have been idle (not rendering). Backgrounding a standalone
-    // PWA also leaves the device SFX AudioContext suspended/interrupted, so re-arm it here too
-    // instead of waiting on the next tap (sound.ts self-heals its own context the same way).
+    // Returning to the tab can drop the drawing buffer; force one repaint so the device never shows a blank frame after being idle.
+    // Backgrounding a standalone PWA also leaves the device SFX AudioContext suspended, so re-arm it here too instead of waiting on the next tap (sound.ts self-heals its own context the same way).
     const onVisible = () => {
       dirty = true
       if (document.visibilityState === 'visible') audio.resumeAudio()
@@ -2724,10 +2626,8 @@ export default function ConsoleCanvas({
         camera.position.set(0, 0, Math.max(fitH, fitW) + DEVICE_Z)
         camera.lookAt(0, 0, 0)
       } else {
-        // Always fill the width. A frame taller than the device's ratio grows the screen to fill
-        // the extra height (the control deck keeps its size); a wider frame falls back to
-        // contain-by-height, so the device gaps at the sides but is never cropped. The resting pose is
-        // captured (not applied) here; placeLiveCamera() applies it plus any hero/welcome blend.
+        // Always fill the width: a frame taller than the device's ratio grows the screen to fill the extra height (control deck keeps its size); a wider frame falls back to contain-by-height so the device gaps at the sides but is never cropped.
+        // The resting pose is captured (not applied) here; placeLiveCamera() applies it plus any hero/welcome blend.
         const visibleH = 6.2 / camera.aspect // world height when the device width is fit edge to edge
         const ext = Math.max(0, Math.round((visibleH - 11.95) * 100) / 100)
         relayout(ext)
@@ -2741,10 +2641,8 @@ export default function ConsoleCanvas({
       }
       camera.updateProjectionMatrix()
 
-      // Screen content sits behind the device; the body's hole masks it to the L-shape and the beveled
-      // rim frames it. The debug playground sets its camera inline (no arc); the live shell applies the
-      // resting pose + arc blend via placeLiveCamera(). Both then glue the HTML screen layer onto the
-      // projected cutout (placeLiveCamera does it; debug calls projectScreenLayer directly).
+      // Screen content sits behind the device; the body's hole masks it to the L-shape and the beveled rim frames it. The debug playground sets its camera inline (no arc); the live shell applies the resting pose + arc blend via placeLiveCamera().
+      // Both then glue the HTML screen layer onto the projected cutout (placeLiveCamera does it; debug calls projectScreenLayer directly).
       if (debug) {
         camera.updateMatrixWorld()
         projectScreenLayer()
@@ -2760,9 +2658,8 @@ export default function ConsoleCanvas({
     resize()
     applyView(viewRef.current)
 
-    // Re-fit when the on-screen content changes height: navigating to another screen, or async data like
-    // the balance row mounting. Structural changes only (childList/subtree), so a ticking price label (a
-    // text update, not a node add/remove) never triggers a reflow. rAF-coalesced so a burst is one pass.
+    // Re-fit when the on-screen content changes height: navigating to another screen, or async data like the balance row mounting. Structural changes only (childList/subtree), so a ticking price label never triggers a reflow.
+    // rAF-coalesced so a burst is one pass.
     let fitRaf = 0
     const scheduleFit = () => {
       if (fitRaf) return
@@ -2776,9 +2673,8 @@ export default function ConsoleCanvas({
     if (screenLayerRef.current) contentObserver.observe(screenLayerRef.current, { childList: true, subtree: true })
     recomputeScreenFit()
 
-    // Game side only: the layer starts hidden (opacity 0) only so it doesn't flash before it's been
-    // sized, then snaps to visible on the next frame. No fade, no entry animation, the screen just
-    // shows its content the instant it's laid out.
+    // Game side only: the layer starts hidden (opacity 0) only so it doesn't flash before it's sized, then snaps to visible on the next frame.
+    // No fade, no entry animation, the screen just shows its content the instant it's laid out.
     if (!customize) {
       requestAnimationFrame(() => {
         if (screenLayerRef.current) screenLayerRef.current.style.opacity = '1'
@@ -2793,10 +2689,8 @@ export default function ConsoleCanvas({
     let decorAccum = 0
     const COIN_FRAME = 1 / 30 // chunky pixels don't need 60fps; keeps the idle device cheap
     const DECOR_FRAME = 1 / 30 // result pulse: 30fps is plenty, halves the GPU tax
-    // The ambient light show is a ~14s hue lap + a slow breathe, pure side-cap decoration. When it is
-    // the only thing animating, a game's own 60fps canvas owns the foreground, so render the device
-    // even slower: 15fps is visually identical here and stops the full-scene render stealing the
-    // game's frames (this is what made flappy stutter, the device repainting at 30fps under it).
+    // The ambient light show is a ~14s hue lap + a slow breathe, pure side-cap decoration. When it's the only thing animating, a game's own 60fps canvas owns the foreground, so render the device even slower (15fps).
+    // Visually identical here, and stops the full-scene render stealing the game's frames, this is what made flappy stutter with the device repainting at 30fps under it.
     const LIGHTSHOW_FRAME = 1 / 15
 
     function loop(time?: number) {
@@ -2822,9 +2716,8 @@ export default function ConsoleCanvas({
           }
           return
         }
-        // Idle float: a slow sine bob plus a gentle tilt sway so the hero shot feels alive. The axes
-        // run at offset rates so it never looks mechanical. Eases out during the Done snap so it
-        // doesn't fight the front framing. Keeps the loop painting while the studio is open.
+        // Idle float: a slow sine bob plus a gentle tilt sway so the hero shot feels alive, axes running at offset rates so it never looks mechanical.
+        // Eases out during the Done snap so it doesn't fight the front framing; keeps the loop painting while the studio is open.
         floatPhase += dt * FLOAT.speed
         const floatFade = outroActive ? Math.max(0, 1 - outroT * 2.5) : 1
         device.position.y = Math.sin(floatPhase) * FLOAT.bob * floatFade
@@ -2910,10 +2803,8 @@ export default function ConsoleCanvas({
           device.rotation.set(0, 0, 0)
           animating = true
         }
-        // Attract text: visible only while the device floats in the hero (landing) pose. It reads over
-        // the HTML black screen backing (the recessed 3D screen panel stays hidden so it can't peek
-        // past the body while the device floats). It blinks + flickers, fades with heroT on settle,
-        // then hides so the games HTML screen shows through and the GPU goes idle.
+        // Attract text: visible only while the device floats in the hero (landing) pose. Reads over the HTML black screen backing (the recessed 3D screen panel stays hidden so it can't peek past the body).
+        // Blinks + flickers, fades with heroT on settle, then hides so the games HTML screen shows through and the GPU goes idle.
         const showPress = liveStage === 'hero' && heroT > 0.001
         if (pressStart.plane.visible !== showPress) {
           pressStart.plane.visible = showPress
@@ -2935,10 +2826,8 @@ export default function ConsoleCanvas({
         if (animating) placeLiveCamera()
       }
 
-      // Only camera/body motion (the idle float, the landing arc, a resize) actually changes the
-      // shadows. Capture that here, before the control + decoration sections add their own repaints:
-      // a button press, a knob turn, the ambient light show never move the body, so they must not
-      // trigger the shadow pass (a near-second full render) on top of a running game.
+      // Only camera/body motion (idle float, landing arc, resize) actually changes the shadows. Capture that here, before the control + decoration sections add their own repaints.
+      // A button press, knob turn, or the ambient light show never moves the body, so they must not trigger the shadow pass (a near-second full render) on top of a running game.
       const geoMoved = animating || dirty
 
       interactive.forEach((o) => {
@@ -2990,14 +2879,12 @@ export default function ConsoleCanvas({
       numberWheelRoll.rotation.x = numberWheelAngle
       updateNumberWheelLighting()
 
-      // Control feedback (button glow, knob, wheel) must paint at full fps to feel responsive. The
-      // decoration below (light show, result pulse) is throttled to ~30fps, so snapshot the realtime
-      // drivers now: anything that animates past this point is pure cosmetics on the side screens.
+      // Control feedback (button glow, knob, wheel) must paint at full fps to feel responsive; decoration below (light show, result pulse) is throttled to ~30fps.
+      // Snapshot the realtime drivers now: anything that animates past this point is pure cosmetics on the side screens.
       const realtime = animating
 
-      // Ambient light show: while a game flags it (a live run), the two unbound action screens drift
-      // slowly through the spectrum as decoration. Pure color + glow, no geometry moves, so it never
-      // triggers the shadow pass and repaints at the decoration cadence, not the game's.
+      // Ambient light show: while a game flags it, the two unbound action screens drift slowly through the spectrum as decoration. Pure color + glow, no geometry moves.
+      // So it never triggers the shadow pass and repaints at the decoration cadence, not the game's.
       if (state.lightShow) {
         lightT += dt
         const hueBase = (lightT / 14) % 1 // a calm ~14s lap of the color wheel
@@ -3026,12 +2913,8 @@ export default function ConsoleCanvas({
         animating = true
       }
 
-      // Result blink: a flagged action button (Lucky's win/lose caps) blinks its bound color (green
-      // win / red lose) so the outcome reads at a glance. A steep sine pinned near 0 or 1 most of the
-      // cycle gives a clean on/off blink (not a gentle breathe) with quick transitions so it never
-      // strobes or clicks. ~1s period, calm. The off beat drives BOTH the emissive AND the diffuse to
-      // near-black, so the cap goes genuinely dark, not a dim lit color. Color-only like the light
-      // show, so it stays a cheap, shadow-free repaint.
+      // Result blink: a flagged action button (Lucky's win/lose caps) blinks its bound color so the outcome reads at a glance. A steep sine pinned near 0/1 most of the cycle gives a clean on/off blink with quick transitions, ~1s period, calm.
+      // The off beat drives BOTH emissive AND diffuse to near-black so the cap goes genuinely dark; color-only like the light show, so it stays a cheap, shadow-free repaint.
       if (state.a1Pulse || state.a2Pulse) {
         pulseT += dt
         const k = Math.max(0, Math.min(1, 0.5 + 3.4 * Math.sin(pulseT * 6.3)))
@@ -3063,10 +2946,8 @@ export default function ConsoleCanvas({
         tokenDrew = true // the coin texture changed, so this frame must paint
       }
 
-      // Only touch the GPU when something actually changed. An idle device paints nothing; the shadow
-      // pass (the heavy bit) runs only when the body actually moved. Pure decoration (the light show,
-      // a result pulse) repaints at ~30fps so it never steals a 60fps frame from a running game, while
-      // control feedback and real motion stay at full fps.
+      // Only touch the GPU when something actually changed: an idle device paints nothing, the shadow pass (the heavy bit) runs only when the body actually moved.
+      // Pure decoration (light show, result pulse) repaints at ~30fps so it never steals a 60fps frame from a running game, while control feedback and real motion stay at full fps.
       let doRender = dirty || animating
       const decorOnly = animating && !dirty && !realtime && !geoMoved && !tokenDrew
       if (decorOnly) {
@@ -3166,9 +3047,8 @@ export default function ConsoleCanvas({
         position: 'absolute',
         inset: 0,
         overflow: 'hidden',
-        // Playground sits the device on a warm backdrop to inspect the model; the real app frames it
-        // on a deep tint of the active skin so the surround feels themed, not flat black. Customize is
-        // transparent so the workshop backdrop shows around the floating device.
+        // Playground sits the device on a warm backdrop to inspect the model; the real app frames it on a deep tint of the active skin so the surround feels themed, not flat black.
+        // Customize is transparent so the workshop backdrop shows around the floating device.
         background: debug
           ? theme?.clear
             ? 'radial-gradient(circle at 50% 36%, #202227 0%, #0b0c0f 84%)' // dark bench so the clear case + guts pop
@@ -3247,12 +3127,8 @@ export default function ConsoleCanvas({
         ></div>
       </div>
 
-      {/* Real DOM haptic overlays for the 5 physical buttons, glued onto their projected on-screen
-          rects by projectButtonOverlay() above. iOS only grants its native Taptic tick to a genuine
-          physical tap on a real switch element, so these have to be actual DOM elements the finger
-          touches, not the canvas raycast the buttons otherwise use. Above the canvas (zIndex) so the
-          real tap lands here first; overlayPress() then replays the exact same press the raycast
-          branch would have. Knob/number-wheel stay raycast+drag only, no discrete tap to hook. */}
+      {/* Real DOM haptic overlays for the 5 physical buttons, glued onto their projected on-screen rects by projectButtonOverlay(). iOS only grants its native Taptic tick to a genuine tap on a
+          real switch element, so these must be actual DOM elements the finger touches, not the canvas raycast. Above the canvas (zIndex) so the real tap lands here first; overlayPress() then replays the exact same press the raycast branch would. Knob/number-wheel stay raycast+drag only. */}
       {!customize && !exportMode && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 11, pointerEvents: 'none' }}>
           {BTN_HAPTIC.map((preset, i) => (
@@ -3265,10 +3141,8 @@ export default function ConsoleCanvas({
               {...{ switch: '' }}
               aria-hidden="true"
               tabIndex={-1}
-              // Press must fire on pointer-DOWN so the cap sinks, sounds, and dispatches the instant the
-              // finger lands (and holds while held), same as the keyboard + raycast paths. release() pops
-              // it on pointerup. onChange stays only for the switch-toggle haptic: iOS grants its native
-              // Taptic tick solely on a genuine toggle of a real <input switch>, and that lands on click.
+              // Press must fire on pointer-DOWN so the cap sinks, sounds, and dispatches the instant the finger lands (and holds while held), same as the keyboard + raycast paths; release() pops it on pointerup.
+              // onChange stays only for the switch-toggle haptic: iOS grants its native Taptic tick solely on a genuine toggle of a real <input switch>, which lands on click.
               onPointerDown={() => overlayPressRef.current?.(i)}
               onChange={() => haptic(preset)}
               style={{

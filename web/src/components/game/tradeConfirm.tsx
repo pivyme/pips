@@ -4,14 +4,10 @@ import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
 
-// Trade confirmation, the opt-in fat-finger guard (see .claude/TRADE_CONFIRMATION.md). When a player
-// turns "Confirm trades" on, placing a staked play becomes two presses: the first arms and shows this
-// sheet, a second within the window actually places. Off (the default) the first press places, exactly
-// as before. This one file holds both the hook and the panel so the arm/confirm/countdown logic lives
-// in a single place, consumed by Lucky / Range / Moonshot.
+// Trade confirmation, the opt-in fat-finger guard (.claude/TRADE_CONFIRMATION.md): when on, placing a
+// staked play needs two presses (arm, then confirm within the window); off (default) the first press places. Hook + panel live here together, consumed by Lucky / Range / Moonshot.
 
-// The safety window: an armed trade auto-disarms after this so a play you set up and walked away from
-// never sits primed for a stray later tap. It is a timeout, not deadline pressure.
+// Safety window: an armed trade auto-disarms after this so it never sits primed for a stray later tap. A timeout, not deadline pressure.
 export const CONFIRM_WINDOW_MS = 5000
 
 export interface TradeDetails {
@@ -22,8 +18,7 @@ export interface TradeDetails {
   note?: string // a small subline, e.g. "Hold to the buzzer"
 }
 
-// onPlace = the game's existing doPlay(). getDetails() is read fresh at arm time so the sheet shows the
-// exact stake/play the second press will fire.
+// onPlace = the game's existing doPlay(); getDetails() is read fresh at arm time so the sheet shows the exact stake/play the second press will fire.
 export function useTradeConfirm(onPlace: () => void, getDetails: () => TradeDetails) {
   const { user } = useAuth()
   const reduced = useReducedMotion()
@@ -60,8 +55,7 @@ export function useTradeConfirm(onPlace: () => void, getDetails: () => TradeDeta
   }, [enabled, armed, onPlace, getDetails, disarm])
 
   // Countdown + auto-disarm in one deadline-driven loop, so the disarm fires at exactly the window
-  // regardless of tick cadence. Reduced motion steps once a second (visible ticks) rather than sweeping;
-  // the timeout itself is identical either way.
+  // regardless of tick cadence. Reduced motion steps once a second instead of sweeping; the timeout itself is identical either way.
   useEffect(() => {
     if (!armed) return
     const deadline = performance.now() + CONFIRM_WINDOW_MS
@@ -85,10 +79,8 @@ const money = (n: number): string =>
   n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtMult = (n: number): string => `×${n.toFixed(2).replace(/\.?0+$/, '')}`
 
-// The armed panel. Renders on the game screen, so it follows docs/SCREEN.md (the Teenage Engineering
-// instrument language, not the rounded App Surface): flat black, hairline rows, mono uppercase
-// micro-labels over tabular numbers, one amber accent, an amber countdown bar draining the window. It
-// sits in the notch-safe bottom band, so keep it left-only and compact.
+// The armed panel. Renders on the game screen, so it follows docs/SCREEN.md (TE instrument language,
+// not the App Surface): flat black, hairline rows, mono labels, one amber accent, a countdown bar. Sits in the notch-safe bottom band, keep it left-only and compact.
 export function TradeConfirmSheet({
   details,
   remainingMs,

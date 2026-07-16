@@ -1,7 +1,5 @@
-// The Customize studio. Launched from the menu, it drops the device into a black-and-white workshop
-// where it floats as a hero shot, screen off, free to spin front-to-back. A rail of skeuomorphic
-// preset cards reskins it live; the selected card tilts up like it's been pulled from the deck.
-// X discards, Done saves the skin, Share is a teaser for now.
+// The Customize studio: launched from the menu, drops the device into a black-and-white workshop,
+// floating as a hero shot, free to spin. A rail of preset cards reskins it live; X discards, Done saves, Share is a teaser.
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'motion/react'
 import { Share2, X } from 'lucide-react'
@@ -31,8 +29,7 @@ export function CustomizeStudio({
 }) {
   const reduced = useReducedMotion()
   const [selectedId, setSelectedId] = useState(initialThemeId)
-  // Once Done is tapped the device plays its snap-to-screen + power-on; the chrome bows out and
-  // taps are locked until the canvas reports the outro is finished.
+  // Once Done is tapped the device plays its snap-to-screen + power-on; chrome bows out and taps lock until the canvas reports the outro finished.
   const [exiting, setExiting] = useState(false)
   // Let the workshop paint one beat before the prepared WebGL view mounts.
   const [ready, setReady] = useState(reduced)
@@ -78,8 +75,8 @@ export function CustomizeStudio({
     >
       <WorkshopBackdrop />
 
-      {/* The floating device. Transparent canvas → the workshop shows around it. Mounted a beat late
-          so the drawer slides off cleanly, then the device flies into the empty bench. */}
+      {/* The floating device on a transparent canvas, workshop shows around it. Mounted a beat late so
+          the drawer slides off cleanly before the device flies into the empty bench. */}
       {ready && (
         <ConsoleCanvas
           customize
@@ -164,9 +161,8 @@ export function ThemeRail({
     moved: false,
   })
 
-  // Keep the active card centered, scrolling the rail itself. scrollIntoView would bubble up when the
-  // last cards can't be centered (no rail left to their right) and scroll the overflow-hidden studio
-  // root too, dragging the whole device off-center. Touching only the rail keeps the device put.
+  // Keep the active card centered by scrolling the rail itself; scrollIntoView would bubble up when the
+  // last cards can't center (no rail left of them) and drag the whole device off-center via the overflow-hidden studio root.
   useEffect(() => {
     const rail = railRef.current
     const el = rail?.querySelector<HTMLElement>(`[data-id="${selectedId}"]`)
@@ -178,8 +174,7 @@ export function ThemeRail({
   }, [selectedId])
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    // Touch uses the browser's native horizontal scrolling. Capturing it here breaks taps on the
-    // theme buttons and is less reliable than native momentum scrolling on mobile Safari.
+    // Touch uses the browser's native horizontal scrolling; capturing it here breaks taps on the theme buttons and is less reliable than native momentum on mobile Safari.
     if (e.pointerType === 'touch' || e.button !== 0) return
     const rail = e.currentTarget
     dragRef.current = {
@@ -227,8 +222,7 @@ export function ThemeRail({
         e.stopPropagation()
       }}
       onDragStart={(e) => e.preventDefault()}
-      // pt/pb leave room for the selected card to lift + tilt; overflow-x forces overflow-y, so
-      // without the padding the raised card clips.
+      // pt/pb leave room for the selected card to lift + tilt; overflow-x forces overflow-y, so without the padding the raised card clips.
       className="-mx-4 flex cursor-grab touch-pan-x select-none gap-3 overflow-x-auto px-5 pb-4 pt-7 active:cursor-grabbing [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {THEMES.map((t) => (
@@ -259,8 +253,8 @@ function ThemeCard({
       onClick={onPress}
       aria-pressed={selected}
       animate={{
-        // The -5deg tilt + scale pivots off the bottom and throws the top-left corner toward the
-        // previous card, so nudge the whole chip right when it lifts to keep clear of its neighbor.
+        // The -5deg tilt + scale pivots off the bottom and throws the top-left corner toward the previous
+        // card, so nudge the whole chip right when it lifts to keep clear of its neighbor.
         rotate: selected ? -5 : 0,
         x: selected ? 4 : 0,
         y: selected ? -10 : 0,
@@ -270,8 +264,7 @@ function ThemeCard({
       className="relative h-[116px] w-[152px] shrink-0 origin-bottom overflow-hidden rounded-[22px] text-left"
       style={{
         background: theme.cardBg,
-        // Just the cast shadow here; the molded-plastic emboss lives on the overlay below so it
-        // also reads over the full-bleed art cards.
+        // Just the cast shadow here, the molded-plastic emboss lives on the overlay below so it also reads over full-bleed art cards.
         boxShadow: selected
           ? '0 26px 46px -16px rgba(0,0,0,0.9)'
           : '0 10px 22px -12px rgba(0,0,0,0.8)',
@@ -289,9 +282,8 @@ function ThemeCard({
         />
       )}
 
-      {/* The emboss: a soft top-light sheen fading into a shaded base, built from a gradient + gently
-          blurred inset shadows (no hard bevel lines, which alias into gritty edges once the chip
-          tilts). Sits above the art, below the text, so solid and photo chips both read molded. */}
+      {/* The emboss: a soft top-light sheen fading into a shaded base via a gradient + blurred inset
+          shadows (no hard bevel lines, which alias once the chip tilts). Sits above art, below text. */}
       <div
         className="pointer-events-none absolute inset-0 rounded-[22px]"
         style={{
@@ -364,9 +356,8 @@ function DeckGlyph() {
   )
 }
 
-// The workshop: a dark workbench-mat with soft, out-of-focus parts and a heavy vignette. Pure CSS so
-// it looks intentional now; drop /assets/customize/workshop.jpg in later and it takes over (graded
-// black-and-white), with this as the always-on fallback. Shared with onboarding's skin step.
+// The workshop: a dark workbench-mat with soft out-of-focus parts and a heavy vignette, pure CSS. Drop
+// /assets/customize/workshop.jpg in later to take over (graded black-and-white); this stays the fallback. Shared with onboarding's skin step.
 export function WorkshopBackdrop() {
   const [hasPhoto, setHasPhoto] = useState(false)
 
@@ -410,8 +401,7 @@ export function WorkshopBackdrop() {
         }}
       />
 
-      {/* the real workbench photo — graded a touch darker so the device reads as the hero. The CSS
-          layers above are the fallback if it ever fails to load. */}
+      {/* the real workbench photo, graded a touch darker so the device reads as the hero; the CSS layers above are the fallback if it fails to load. */}
       <img
         src="/assets/images/customize-bg.webp"
         alt=""

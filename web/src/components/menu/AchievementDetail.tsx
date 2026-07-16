@@ -1,8 +1,5 @@
-// Tap an achievement (the menu rail or the full grid) and its sticker flies to the center of the
-// screen and blooms big behind a blurred backdrop, the same warm beat as earning one, just on
-// demand. One app-level provider holds the selection and renders the overlay at the viewport root
-// (so the flown sticker lines up with the card's real on-screen rect), cards call open() with their
-// sticker element. Tap anywhere to send it back.
+// Tap an achievement (rail or grid): its sticker flies to center screen and blooms behind a blurred
+// backdrop, same beat as unlocking. One provider renders the overlay at the viewport root; tap anywhere closes it.
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
@@ -46,9 +43,8 @@ function Detail({ sel, onClose }: { sel: Selected; onClose: () => void }) {
   const reduced = useReducedMotion()
   const { a, rect } = sel
 
-  // The sticker renders at its final centered box; we FLIP it with a transform so the morph is pure
-  // GPU and stays dead-center. Snapshot the viewport once, the overlay is transient so chasing a
-  // mid-view resize isn't worth it.
+  // The sticker renders at its final centered box; we FLIP it with a transform so the morph stays pure
+  // GPU and dead-center. Viewport is snapshotted once since the overlay is transient, not worth chasing a mid-view resize.
   const layout = useMemo(() => {
     const vw = window.innerWidth
     const vh = window.innerHeight
@@ -76,16 +72,14 @@ function Detail({ sel, onClose }: { sel: Selected; onClose: () => void }) {
     }
   }, [rect])
 
-  // Locked in this fullscreen bloom only: a flat dark-grey silhouette. brightness(0) crushes the art
-  // to black, then invert(0.3) lifts it just enough to read against the near-black backdrop (pure
-  // black would vanish here). The small card silhouettes stay pure black, they sit on lighter cards.
+  // Locked in this fullscreen bloom only: brightness(0) crushes the art to black, then invert(0.3)
+  // lifts it just enough to read against the near-black backdrop; small card silhouettes stay pure black since they sit on lighter cards.
   const stickerFilter = a.unlocked
     ? 'drop-shadow(0 18px 30px rgba(0,0,0,0.5)) drop-shadow(0 0 26px rgba(255,192,22,0.3))'
     : 'brightness(0) invert(0.3) drop-shadow(0 1px 0 rgba(255,255,255,0.04))'
 
-  // One calm easing for the whole morph. A tween (not a spring) keeps it smooth, no bounce, and is
-  // guaranteed to complete, so AnimatePresence always tears the overlay down (an infinite-repeat
-  // child here would hang the exit and trap every click behind a transparent layer).
+  // One calm easing for the whole morph. A tween (not spring) keeps it smooth and guaranteed to
+  // complete, so AnimatePresence always tears the overlay down; an infinite-repeat child here would hang the exit and trap clicks behind it.
   const flight = { duration: reduced ? 0.2 : 0.5, ease: [0.22, 1, 0.36, 1] as const }
 
   return (

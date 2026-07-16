@@ -2,9 +2,8 @@ import { createFileRoute } from '@tanstack/react-router'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { THEME_BY_ID } from '@/components/console/themes'
 
-// Showcase route for the transparent "Clear" (Nothing-style) device: frosted acrylic shell over the
-// exposed guts, on a dark bench. Debug mode keeps the tuning GUI handy and skips auth. Isolated from
-// the main /console so the molded device stays the default there.
+// Showcase route for the transparent "Clear" (Nothing-style) device: frosted acrylic shell over exposed
+// guts, on a dark bench. Debug mode keeps the tuning GUI handy and skips auth; isolated from /console so the molded device stays default there.
 export const Route = createFileRoute('/console-transparent')({ component: ConsoleTransparentPage })
 
 function ConsoleTransparentPage() {

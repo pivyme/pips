@@ -41,24 +41,14 @@ import { useActivePlay } from '@/lib/activePlay'
 import { cnm } from '@/utils/style'
 import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
-// MOONSHOT. The whole call lives on the knob: scroll UP to go LONG, DOWN to go SHORT, and the further
-// you scroll the bigger the target and the multiple (the sign is the side, the distance is the REACH).
-// The right button switches the market, the number wheel sets the bet, then PLAY: a real Predict binary
-// mint at the solved strike, ride the live value on the chart with a TARGET line, and CASH OUT early or
-// hold to the buzzer for a spread-free WIN/MISS. It is the directional twin of Lucky (same binary
-// mint/redeem path) but YOU aim it instead of the reel dealing it. Every round is a real position; demo
-// mode runs the same flow on the in-memory model. The left button is the info rotary (HOW TO / RANKS),
-// exactly like Range. Teenage Engineering language throughout (docs/SCREEN.md): flat black, mono labels,
-// one amber accent, green/red for facts.
+// MOONSHOT: the knob is the whole call, scroll up for LONG / down for SHORT, further out for a bigger
+// target and multiple. Right button switches market, number wheel sets bet, PLAY mints a real Predict binary at the solved strike; CASH OUT early or hold for a spread-free WIN/MISS. Directional twin of Lucky (same mint/redeem path) but YOU aim it; left button is the info rotary (HOW TO/RANKS), TE language throughout (docs/SCREEN.md).
 export const Route = createFileRoute('/_app/games/moonshot')({ component: MoonshotScreen })
 
-// Stake ladder is sized to the live stake band (betLadder(), read inside the component), shared with
-// Lucky + Range + the home wheel (same key).
+// Stake ladder is sized to the live stake band (betLadder(), read inside the component); shared with Lucky + Range + the home wheel (same key).
 const STAKE_KEY = 'pips_stake_idx'
-// AIM ladder = the knob. Scroll up to go LONG, down to go SHORT: the index climbs bottom->top, so the
-// deepest SHORT sits at the floor, the deepest LONG at the ceiling, and crossing the middle flips the
-// side. The sign is the direction, abs() is the REACH (how far out the target sits = the multiple).
-// The solver clamps to the live ask, so the far rungs land on the real mintable ceiling.
+// AIM ladder = the knob: index climbs bottom->top (deepest SHORT at the floor, deepest LONG at the
+// ceiling, crossing the middle flips the side). Sign is direction, abs() is REACH (target distance = multiple); the solver clamps to the live ask so far rungs land on the real mintable ceiling.
 const AIM_LADDER = [-25, -10, -5, -3, -2, 2, 3, 5, 10, 25] as const
 const AIM_KEY = 'pips_moonshot_aim'
 const DEFAULT_AIM_IDX = 7 // LONG x5
@@ -71,16 +61,14 @@ const TOKEN_LOGOS: Record<string, string> = {
   SUI: '/assets/images/coins/sui-logo.png',
 }
 
-// Preview TARGET placement (pre-play only): the same vol + reach->quantile mapping the backend solver
-// uses, so the aim line sits where the real strike will land. On open it snaps to the true solved strike.
+// Preview TARGET placement (pre-play only): same vol + reach->quantile mapping the backend solver uses, so the aim line previews where the real strike lands; snaps to the true strike on open.
 const ROUND_VOL_EST = 0.022
 const MIN_TARGET_FRAC = 0.0015
 const REACH_Z: Record<number, number> = { 2: 0, 3: 0.4307, 5: 0.8416, 10: 1.2816, 25: 1.7507 }
 
 const NOMINAL_ROUND_SEC = 30
 const RESULT_MS = 6500
-// Cash-out safety window: a redeem submitted this late may land after the oracle expires, so we disarm
-// cash-out and let the round auto-settle. Not a verdict, just a closed window (mirrors Range).
+// Cash-out safety window: a redeem submitted this late may land after the oracle expires, so cash-out disarms and the round auto-settles. Not a verdict, just a closed window (mirrors Range).
 const SETTLE_LOCK_MS = 5000
 const CASHOUT_SETTLE_MS = 1100
 const SETTLE_EXPECT_MS = 12000
@@ -142,8 +130,7 @@ function MoonshotScreen() {
   const asset =
     play && phase !== 'idle' ? (play.params as LuckyParams).asset : (pinnedAsset ?? liveAssets[0] ?? PREFERRED[0])
 
-  // The scroll wheel is the whole call: the sign is the side (LONG above the middle, SHORT below), the
-  // distance from the middle is the REACH multiple.
+  // The scroll wheel is the whole call: sign is the side (LONG above middle, SHORT below), distance from the middle is the REACH multiple.
   const aim = AIM_LADDER[Math.min(aimIdx, AIM_LADDER.length - 1)]
   const side: Side = aim >= 0 ? 'up' : 'down'
   const reach = Math.abs(aim)
@@ -154,16 +141,14 @@ function MoonshotScreen() {
   const maxBetIdx = Math.max(0, STAKE_LADDER.reduce((acc, v, i) => (v <= balance ? i : acc), 0))
   const safeBetIdx = Math.min(stakeIdx, maxBetIdx)
   const stake = STAKE_LADDER[safeBetIdx]
-  // Below the cheapest rung entirely: PLAY would just round-trip an INSUFFICIENT_DUSDC rejection, so
-  // the idle button becomes the actual next step instead of a dead-end error toast.
+  // Below the cheapest rung: PLAY would just round-trip an INSUFFICIENT_DUSDC rejection, so the idle button becomes the actual next step instead of a dead-end error toast.
   const cantAfford = balance < STAKE_LADDER[0]
 
   const lp = play ? (play.params as LuckyParams) : null
   const roundLive = phase === 'open' || phase === 'cashing'
   const showReadouts = play != null && roundLive
-  // The position is real on-chain only once the mint confirms (status leaves 'pending'; a failed mint
-  // goes 'error'). The entry/strike overlay is gated on this, never on the optimistic 'pending' window,
-  // so nothing is drawn for a position that hasn't actually opened.
+  // The position is real on-chain only once the mint confirms (status leaves 'pending'; a failed mint goes
+  // 'error'). The entry/strike overlay gates on this, not the optimistic 'pending' window, so nothing draws for a position that hasn't actually opened.
   const status = live?.status ?? play?.status
   const entered = status != null && status !== 'pending' && status !== 'error'
   const multiplier = live?.multiplier ?? play?.multiplier ?? reach
@@ -178,8 +163,7 @@ function MoonshotScreen() {
       ? spot * (1 + (side === 'up' ? 1 : -1) * Math.max(ROUND_VOL_EST * (REACH_Z[reach] ?? 0), MIN_TARGET_FRAC))
       : null
 
-  // Chart overlays: the real strike + entry only once the position has opened on-chain; the live preview
-  // aim while idle/placing. During the mint (open + still pending) nothing locked is drawn.
+  // Chart overlays: real strike+entry once the position opens on-chain, live preview aim while idle/placing; nothing locked draws during the mint (open + still pending).
   const overlays: ChartOverlays | undefined = entered && lp
     ? {
         ...(entryVal != null ? { entry: entryVal } : {}),
@@ -280,8 +264,7 @@ function MoonshotScreen() {
 
   useEffect(() => () => clearResetTimer(), [])
 
-  // The bed rides the active window (placing -> open) and cuts the moment it resolves so the sting
-  // lands clean. Tense + punchy, the ignition counterpart to Lucky's funk and Range's dark techno.
+  // The bed rides the active window (placing -> open) and cuts the moment it resolves so the sting lands clean. Tense + punchy, the ignition counterpart to Lucky's funk and Range's dark techno.
   const bedPlaying = phase === 'placing' || phase === 'open'
   useEffect(() => {
     if (!bedPlaying) return
@@ -325,22 +308,19 @@ function MoonshotScreen() {
     }
   }, [phase, canPlay, stake, asset, side, reach, playsPaused, track])
 
-  // Trade confirmation (opt-in, off by default). When on, PLAY arms first and CONFIRM places; the sheet
-  // shows the aimed side/reach the second press will fire. Off, press() places immediately.
+  // Trade confirmation (opt-in, off by default): when on, PLAY arms first and CONFIRM places (the sheet shows the aimed side/reach); off, press() places immediately.
   const confirm = useTradeConfirm(
     () => void doPlay(),
     () => ({
       stake,
       headline: `${asset} · ${sideLabel(side)} · ${reach}x`,
       multiplier: reach,
-      // Net of the house rake (config.ts netStakeUsd): the position sizes off net, so this is the true
-      // max win, never stake * reach. No-op (full stake) in demo / when the rake is off.
+      // Net of the house rake (config.ts netStakeUsd): position sizes off net so this is the true max win, never stake * reach. No-op in demo / when the rake is off.
       maxPayout: netStakeUsd(stake) * reach,
       note: 'Hold to the buzzer',
     }),
   )
-  // Disarm the moment placement would be blocked or the round leaves idle, so CONFIRM never fires a
-  // play the ready-state would have rejected.
+  // Disarm the moment placement would be blocked or the round leaves idle, so CONFIRM never fires a play the ready-state would have rejected.
   useEffect(() => {
     if (phase !== 'idle' || cantAfford || !canPlay || playsPaused) confirm.disarm()
   }, [phase, cantAfford, canPlay, playsPaused, confirm.disarm])
@@ -382,8 +362,7 @@ function MoonshotScreen() {
     void navigate({ to: '/menu/deposit' })
   }, [navigate])
 
-  // The knob sets the whole call. Fire the flip sting only when the side actually crosses the middle
-  // (LONG <-> SHORT); a plain reach step within a side just clicks the knob's own detent.
+  // The knob sets the whole call; fire the flip sting only when the side crosses the middle (LONG <-> SHORT), a plain reach step within a side just clicks the knob's own detent.
   const setAim = useCallback(
     (next: number) => {
       const prev = AIM_LADDER[Math.min(aimIdx, AIM_LADDER.length - 1)]
@@ -397,8 +376,7 @@ function MoonshotScreen() {
     [aimIdx, setAimIdx],
   )
 
-  // The right cap switches the market you're calling. Locked while a round is live (the open position's
-  // asset can't change), and a no-op with nothing else to switch to.
+  // The right cap switches the market you're calling; locked while a round is live (the open position's asset can't change) and a no-op with nothing else to switch to.
   const cycleAsset = useCallback(() => {
     if (phase !== 'idle' && phase !== 'placing') return
     if (liveAssets.length < 2) return
@@ -409,8 +387,7 @@ function MoonshotScreen() {
     })
   }, [phase, liveAssets])
 
-  // The left cap is the same info rotary as Range: game -> how to -> leaderboard -> game. The label
-  // names where the NEXT press lands.
+  // The left cap is the same info rotary as Range: game -> how to -> leaderboard -> game; the label names where the NEXT press lands.
   const rotateInfo = useCallback(() => {
     haptic('selection')
     setOverlay((o) => (o === 'none' ? 'howto' : o === 'howto' ? 'board' : 'none'))
@@ -451,8 +428,7 @@ function MoonshotScreen() {
       : confirm.armed
         ? { label: 'CANCEL', color: 'neutral', onPress: confirm.cancel } // escape hatch while armed
         : { label: infoLabel, color: 'neutral', onPress: rotateInfo },
-    // The right cap switches the market (token display). A no-op once a round is live, since an open
-    // position's asset can't change, so it just reads the locked market.
+    // The right cap switches the market (token display); a no-op once a round is live since an open position's asset can't change, so it just reads the locked market.
     action2: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
       : {
@@ -486,8 +462,7 @@ function MoonshotScreen() {
   const playCost = live?.entryValue ?? play?.entryValue ?? String(stake)
   const recap = `${asset} · ${sideLabel(lp?.side ?? side)} · ${fmtMult(multiplier)} · Cost $${formatExactDecimal(playCost)}`
 
-  // Layout mirrors Lucky / Range (the house language): a solid header band (price · balance) divides off
-  // the chart, the chart bleeds full width but stays bounded, and the readout hangs off the bottom-left.
+  // Layout mirrors Lucky/Range: a solid header band (price · balance) divides off the chart, the chart bleeds full width but stays bounded, and the readout hangs off the bottom-left.
   return (
     <GameScreen>
       {marketsLoading ? (

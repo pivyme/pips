@@ -16,11 +16,8 @@ import { ensureUser, ensureWalletUser, provisionUser, mintToken, toUserDTO } fro
 // A Sui address that is shaped right (0x + hex) and valid once normalized.
 const isAddress = (a: string): boolean => /^0x[0-9a-fA-F]+$/.test(a) && isValidSuiAddress(normalizeSuiAddress(a));
 
-// One exit for a failed sign-in. When the failure is our Predict deployment being gone (the test
-// chain was wiped, see isChainUnavailableError), return a stable CHAIN_UNAVAILABLE code so the door
-// shows the "we're refreshing, try demo" sheet. The code is the only channel in prod (error details
-// are stripped there), so the meaning has to ride the code, not the message. Anything else keeps the
-// caller's own generic failure code.
+// One exit for a failed sign-in: classifies a wiped test chain (isChainUnavailableError) into a stable
+// CHAIN_UNAVAILABLE code so the door shows the "refreshing, try demo" sheet; prod strips error details, so the code (not the message) has to carry the meaning. Anything else keeps the caller's own code.
 const failSignIn = (reply: FastifyReply, error: unknown, code: string, message: string): Promise<FastifyReply> =>
   isChainUnavailableError(error)
     ? handleError(reply, 503, "Sui Devnet just got reset, so we're putting PIPS back online. Usually back within a couple of hours. You can play demo mode in the meantime.", 'CHAIN_UNAVAILABLE', error as Error)
@@ -43,10 +40,8 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     }
   });
 
-  // privy mode: the client signs in with Privy (Google/email) and sends only the access token. We
-  // verify it, then provision (or reuse) a server-owned embedded Sui wallet keyed to the Privy user
-  // (owned by the app authorization key so the server signs every play with no popup or client round
-  // trip), onboard the user keyed by that Sui address, and mint our JWT.
+  // privy mode: client sends only the Privy access token; we verify it, provision (or reuse) a
+  // server-owned embedded Sui wallet keyed to the Privy user (so the server signs every play with no popup), onboard by that address, and mint our JWT.
   app.post('/privy/verify', authLimit, async (request: FastifyRequest, reply: FastifyReply) => {
     if (AUTH_MODE !== 'privy') return handleNotFoundError(reply, 'Route');
     const body = (request.body ?? {}) as { token?: string; email?: string; referralCode?: string };
@@ -62,9 +57,8 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
 
     try {
       const wallet = await provisionServerSuiWallet(privyUserId);
-      // Read identity from Privy by user id (covers Google sign-in, which the client can't report,
-      // and keeps a returning user's linked X handle fresh at every login). Fall back to whatever the
-      // client sent for email so we never regress an email we'd otherwise have.
+      // Read identity from Privy by user id (covers Google sign-in the client can't report, keeps a
+      // returning user's linked X handle fresh). Falls back to the client-sent email so we never regress one we'd otherwise have.
       const identity = await fetchPrivyIdentity(privyUserId);
       const email = identity.email ?? body.email ?? null;
       const user = await ensureUser({
@@ -94,8 +88,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   });
 
   // wallet-connect mode: verify the signed challenge, provision (or reuse) the user's custodial play
-  // wallet keyed by the connected wallet, onboard, and mint our JWT. The connected wallet is the
-  // login identity; all on-chain play work runs through the server-held custodial wallet.
+  // wallet keyed by the connected wallet, onboard, and mint our JWT. The connected wallet is only the login identity; all on-chain play work runs through the custodial wallet.
   app.post('/wallet/verify', authLimit, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!WALLET_AUTH_ENABLED) return handleNotFoundError(reply, 'Route');
     const body = (request.body ?? {}) as { address?: string; signature?: string; referralCode?: string };
@@ -126,11 +119,8 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     }
   });
 
-  // Re-provision the signed-in user in place: re-create the PredictManager and re-fund chips/gas if a
-  // devnet refresh re-armed the account (or first-login manager creation was deferred). Idempotent, so
-  // it's a no-op once everything is in place. The client calls this to self-heal a stale session
-  // without forcing a full sign-out. managerReady on the returned user tells the client whether the
-  // heal restored the manager; if not (chain still down), it falls back to the door.
+  // Re-provisions the signed-in user in place (re-creates the PredictManager, re-funds chips/gas) if a
+  // devnet refresh re-armed the account; idempotent, so a no-op once healthy. managerReady on the response tells the client whether the heal worked or it should fall back to the door.
   app.post('/heal', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const healed = await provisionUser(request.user!);
@@ -140,10 +130,8 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     }
   });
 
-  // Re-read the signed-in user's linked Google/email/X state from Privy and persist it. This is the
-  // one write path for linked-account state: the client calls it after every successful Privy
-  // link/unlink so the DB (and thus the leaderboard badge) never trusts a client-reported handle.
-  // A no-op outside privy mode or before the Privy identity is known.
+  // Re-reads the signed-in user's linked Google/email/X state from Privy and persists it: the one write
+  // path for linked-account state, so the DB (and the leaderboard badge) never trusts a client-reported handle. No-op outside privy mode or before the Privy identity is known.
   app.post('/link/refresh', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const me = request.user!;
     if (AUTH_MODE !== 'privy' || !me.privyUserId) {

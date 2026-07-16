@@ -1,19 +1,5 @@
-// The console is a persistent shell with a swappable screen (docs/DESIGN.md).
-// The physical controls (Main / Action 1·2 / Knob / Number Wheel / status) belong to the shell,
-// but each game screen *registers* what they do when it mounts. Same device,
-// different bindings, like a real handheld.
-//
-// Usage from a screen:
-//   useConsoleControls({
-//     main:    { label: 'PLAY', onPress: play },
-//     action1: { label: 'LONG', color: 'up',   onPress: () => setSide('long') },
-//     action2: { label: 'SHORT', color: 'down', onPress: () => setSide('short') },
-//     knob:    { min: 1, max: 100, step: 1, value: bet, onChange: setBet, label: 'BET' },
-//     numberWheel: { min: 0, max: 5, step: 1, value: stakeIndex, onChange: setStakeIndex },
-//   })
-//
-// Handlers stay fresh (kept in a ref) so screens don't fight stale closures;
-// only the renderable bits (labels, colors, knob value) re-render the shell.
+// The console is a persistent shell with a swappable screen (docs/DESIGN.md). Physical controls (Main / Action 1·2 / Knob / Number Wheel / status) belong to the shell; each game screen registers what they do via useConsoleControls() when it mounts.
+// Handlers stay fresh in a ref so screens don't fight stale closures; only the renderable bits (labels, colors, knob value) re-render the shell.
 import {
   createContext,
   useContext,
@@ -29,8 +15,7 @@ export type ActionDisplay =
   | { mode: 'text' }
   | { mode: 'token'; ticker: string; logoSrc?: string }
 
-// Physical controls intentionally have no disabled state. They always remain tactile; handlers
-// own any boundary clamping or safe no-op behavior required by the active screen.
+// Physical controls intentionally have no disabled state, they stay tactile; handlers own any boundary clamping or safe no-op behavior.
 export interface ActionSpec {
   label: string
   onPress: () => void
@@ -70,8 +55,7 @@ export interface ConsoleControls {
   knob?: KnobSpec | null
   numberWheel?: KnobSpec | null
   status?: StatusSpec | null
-  // While true, any unbound action screen drifts through a slow ambient light show (the device's two
-  // mini-screens become decoration). Games flip it on during a live run, off on death/idle.
+  // While true, any unbound action screen drifts through a slow ambient light show (the two mini-screens become decoration); games flip it on during a live run, off on death/idle.
   lightShow?: boolean
 }
 
@@ -128,9 +112,8 @@ function useCtx(): Ctx {
   return ctx
 }
 
-// True once the device has finished its entry settle (the hero -> app "drops in" zoom). Screens read
-// this to hold their content until the device is at rest, then fade in. Defaults true: a plain
-// game <-> game nav has no settle, so content reveals right away.
+// True once the device has finished its entry settle (the hero -> app "drops in" zoom); screens hold content until the device is at rest, then fade in.
+// Defaults true: a plain game <-> game nav has no settle, so content reveals right away.
 const DeviceSettledContext = createContext(true)
 
 export function DeviceSettledProvider({ settled, children }: { settled: boolean; children: ReactNode }) {

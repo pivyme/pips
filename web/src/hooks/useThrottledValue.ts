@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
-// Trailing-edge throttle: the displayed value updates at most once per intervalMs. A change inside
-// the window schedules a single trailing update instead of being dropped, so the latest value always
-// eventually lands. Used for readouts fed by a fast tick stream (e.g. the top-bar live price) that
-// would otherwise re-render, and visually judder, many times a second.
+// Trailing-edge throttle: updates at most once per intervalMs, a change inside the window schedules one trailing update so the latest value always lands.
+// Used for readouts fed by a fast tick stream (e.g. the top-bar live price) that would otherwise judder many times a second.
 export function useThrottledValue<T>(value: T, intervalMs: number): T {
   const [throttled, setThrottled] = useState(value)
   const lastUpdate = useRef(0)

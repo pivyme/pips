@@ -2,6 +2,7 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowDownToLine, ArrowUpFromLine, LogOut, Pencil } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
@@ -18,15 +19,14 @@ import { Illo } from '@/ui/Illo'
 import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { shareStatsCard } from '@/lib/shareCard'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { displayHandle, formatStringToNumericDecimals } from '@/utils/format'
 import { cnm } from '@/utils/style'
 
-// The menu home, rendered inside the bottom drawer. The trader card sits right at the top (the pen
-// on it opens the handle editor), the balance hero, then every destination as a compact 3x2 tile
-// grid (the six full-width rows folded into two rows so the menu reads without a long scroll), the
-// achievements rail, and Log out.
+// The menu home, rendered inside the bottom drawer: the trader card (pen opens the handle editor) up top,
+// then the balance hero, a 3x2 nav tile grid, the achievements rail, and Log out.
 export const Route = createFileRoute('/_app/menu/')({ component: MenuHome })
 
 function MenuHome() {
@@ -144,6 +144,7 @@ function StatsSection() {
   const navigate = useNavigate()
   const q = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const stats = q.data?.stats
+  const [sharing, setSharing] = useState(false)
 
   // The pen opens the handle editor: a plain menu sub-page with an input, pushed in with the drawer
   // transition (same as History / Settings).
@@ -151,6 +152,22 @@ function StatsSection() {
     prepareMenuTransition('forward')
     haptic('selection')
     void navigate({ to: '/menu/username', viewTransition: true })
+  }
+
+  // One-tap share, right from the card, no detour through the stats detail page. Renders the same PNG.
+  const shareCard = async () => {
+    if (!stats || !user || sharing) return
+    haptic('medium')
+    setSharing(true)
+    try {
+      await shareStatsCard(stats, { displayName: displayHandle(user), avatarUrl: user.avatarUrl })
+      haptic('success')
+    } catch {
+      const { default: toast } = await import('react-hot-toast')
+      toast.error('Could not make your card. Try again.', { id: 'share-card' })
+    } finally {
+      setSharing(false)
+    }
   }
 
   if (q.isLoading) return <StatsCardSkeleton />
@@ -196,7 +213,14 @@ function StatsSection() {
   }
 
   return (
-    <StatsCard stats={stats} displayName={displayHandle(user)} avatarUrl={user?.avatarUrl} onEdit={editHandle} />
+    <StatsCard
+      stats={stats}
+      displayName={displayHandle(user)}
+      avatarUrl={user?.avatarUrl}
+      onEdit={editHandle}
+      onShare={() => void shareCard()}
+      sharing={sharing}
+    />
   )
 }
 

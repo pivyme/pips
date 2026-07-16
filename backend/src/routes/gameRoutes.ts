@@ -1,6 +1,5 @@
-// Markets + the play lifecycle. Both auth modes finalize server-side and return a PlayDTO (dev
-// signs as the operator, privy signs with the user's wallet via a session signer). Predict errors
-// come through as PlayError and map to friendly codes, never a raw Move abort.
+// Markets + the play lifecycle. Both auth modes finalize server-side and return a PlayDTO (dev signs
+// as the operator, privy via a session signer). Predict errors come through as PlayError, mapped to friendly codes, never a raw Move abort.
 
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 
@@ -19,11 +18,8 @@ import type { Game } from '../types/api.ts';
 
 const GAMES: Game[] = ['lucky', 'range', 'moonshot'];
 
-// Funnel any thrown value to the envelope: PlayError keeps its friendly code, anything else
-// is a 500 we do not leak details of. A PlayError is an EXPECTED business outcome (no live market,
-// bad params, the cash-out buzzer race that resolves to a normal settle), not a server fault, so we
-// send its envelope directly and never log it. Routing it through handleError would write every
-// benign 4xx to the error table + console and bury real faults under that noise.
+// Funnel any thrown value to the envelope: PlayError is an EXPECTED business outcome (no live market,
+// bad params, a buzzer race), so send its envelope directly and never log it; handleError would bury real faults under routine 4xx noise. Anything else is a 500 with no leaked details.
 const fail = async (reply: FastifyReply, e: unknown, fallbackCode: string, fallbackMsg: string): Promise<FastifyReply> => {
   if (e instanceof PlayError) {
     reply.code(httpStatusForPlayError(e.code)).send({
@@ -38,24 +34,20 @@ const fail = async (reply: FastifyReply, e: unknown, fallbackCode: string, fallb
 };
 
 export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
-  // The markets the games can trade right now (first paint; live updates ride /stream/markets). The
-  // builder lists every priceable asset with an oracle-driven `live` flag, so display-only assets chart
-  // but never deal. See markets-feed.ts.
+  // The markets the games can trade right now (first paint; live updates ride /stream/markets). Lists
+  // every priceable asset with an oracle-driven `live` flag, so display-only assets chart but never deal. See markets-feed.ts.
   app.get('/markets', { preHandler: [authMiddleware] }, async (_request: FastifyRequest, reply: FastifyReply) => {
     try {
-      // One-shot for first paint; live updates ride /stream/markets. Same builder, so they never drift.
-      // The payload carries the real-mode sponsor-floor pause so a game can show "topping up" instead of
-      // letting a PLAY hard-fail (always false in fork mode).
+      // Payload carries the real-mode sponsor-floor pause so a game can show "topping up" instead of a
+      // hard PLAY failure (always false in fork mode).
       return reply.code(200).send({ success: true, error: null, data: await buildMarketsPayload() });
     } catch (error) {
       return handleError(reply, 500, 'Could not load markets', 'MARKETS_FAILED', error as Error);
     }
   });
 
-  // Pre-mint Range price previews for the whole band ladder, off the live Predict ask for each
-  // grid-snapped band, so the UI shows what it will actually mint instead of a guess. The client
-  // fetches this once on select and caches it. Cheap (one batched devInspect), read-only, no DB.
-  // `widths` is a CSV of full-band widths (percent). Static path, so no collision with the play route.
+  // Pre-mint Range price previews for the whole band ladder off the live Predict ask, so the UI shows
+  // what it will actually mint. Client fetches once on select and caches it (cheap, read-only, no DB). `widths` is a CSV of full-band widths (percent); static path so no collision with the play route.
   app.get('/games/range/quotes', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const q = request.query as { asset?: string; widths?: string };
     const asset = (q.asset ?? '').toUpperCase();

@@ -1,9 +1,8 @@
-// Typed backend client. One place owns the envelope unwrap, the Bearer header, and the SSE
-// helpers. Everything returns plain DTOs or throws ApiError(code, message); the UI maps the
-// code to a friendly toast. DTO shapes mirror backend/src/types/api.ts.
+// Typed backend client. One place owns the envelope unwrap, Bearer header, and SSE helpers; everything
+// returns plain DTOs or throws ApiError(code, message). DTO shapes mirror backend/src/types/api.ts.
 
 import { env } from '@/env'
-import { isDemo, demoApi, demoStreamPrices, demoStreamPlay, demoStreamLive } from './demo'
+import { isDemo, demoApi, demoStreamPrices, demoStreamPlay, demoStreamLive, demoStreamMarkets } from './demo'
 import { readRef } from './referral'
 
 const BASE = env.VITE_API_URL
@@ -52,8 +51,7 @@ export interface RangeParams {
   duration: number
 }
 
-// Pre-mint Range price preview: the real multiple read off the live Predict ask for the grid-snapped
-// band, so the knob shows what it will actually mint, not a blind estimate.
+// Pre-mint Range price preview: the real multiple read off the live Predict ask for the grid-snapped band, not a blind estimate.
 export interface RangeQuote {
   multiplier: number
   lower: string
@@ -76,12 +74,10 @@ export interface PlayDTO {
   multiplier: number
   maxPayout: string
   payout?: string
-  // Spot at entry (the price the strike was solved against). The chart's ENTRY line + the live P/L
-  // anchor to this so entry, target, and settlement always agree.
+  // Spot at entry (the price the strike was solved against); the chart's ENTRY line + live P/L anchor to this.
   entrySpot?: string
   settlePrice?: string // exact expiry settlement price; absent for cash-outs
-  // Exact oracle settlement_price after the settlement transaction lands, while redeem/finalization
-  // may still be in progress.
+  // Exact oracle settlement_price once the settlement tx lands, while redeem/finalization may still be in progress.
   lockPrice?: string
   openedAt?: string
   settledAt?: string
@@ -97,6 +93,7 @@ export interface UserStatsDTO {
   winRate: number
   currentStreak: number
   maxStreak: number
+  bestMultiplier: number // biggest realized payout multiple on a win, 0 if none
   totalVolume: string
   netPnl: string
   firstPlayAt?: string
@@ -129,20 +126,27 @@ export interface PrivyVerifyInput {
   email?: string
   referralCode?: string
 }
-// Wallet-connect login (custodial play-wallet model): get a challenge, sign it with the connected
-// wallet, send the signature back for a session.
+// Wallet-connect login (custodial play-wallet model): get a challenge, sign it with the connected wallet, send the signature back for a session.
 export interface WalletVerifyInput {
   address: string
   signature: string
   referralCode?: string
 }
 
-// === Referrals === (track-only, see .claude/REFERRALS.md: no payout, no public profile page)
+// === Referrals === (link + revenue share: earn 25% of referees' trading fees, see .claude/REVENUE_SHARING.md)
 
 export interface ReferralDTO {
   handle: string // referee's username, falling back to displayName if they never onboarded
   joinedAt: string
   plays: number
+  earned: string // what this referee has earned you so far (DUSDC)
+}
+export interface ReferralClaimDTO {
+  id: string
+  amount: string // DUSDC
+  status: 'pending' | 'paid' | 'failed'
+  txDigest: string | null // the payout tx, set once paid
+  createdAt: string
 }
 export interface ReferralInfoDTO {
   code: string // the anon-format token (/r/CODE)
@@ -150,6 +154,12 @@ export interface ReferralInfoDTO {
   username: string | null // for building the /@username link; null if not onboarded
   count: number
   referrals: ReferralDTO[]
+  sharePct: number // the share you earn, e.g. 25
+  totalEarned: string // lifetime earned across all referees (DUSDC)
+  totalClaimed: string // lifetime claimed (pending + paid) (DUSDC)
+  claimable: string // spendable now = earned - claimed (DUSDC)
+  minClaim: string // minimum before Claim unlocks (DUSDC)
+  claims: ReferralClaimDTO[] // recent claim history, newest first
 }
 export interface ReferralResolveDTO {
   valid: boolean
@@ -221,8 +231,7 @@ export interface FullLeaderboard {
 export class ApiError extends Error {
   code: string
   status: number
-  // The backend's underlying cause (dev only: server sends it under IS_DEV). Surfaced in the
-  // sign-in error sheet so a reviewer sees the real reason, not just "something went wrong".
+  // The backend's underlying cause (dev only, sent under IS_DEV); surfaced in the sign-in error sheet for reviewers.
   details?: string
   constructor(code: string, message: string, status: number, details?: string) {
     super(message)
@@ -239,9 +248,8 @@ export const setAuthToken = (token: string | null): void => {
 }
 export const getAuthToken = (): string | null => authToken
 
-// After a devnet refresh the backend re-arms users (their PredictManager is nulled), so a live
-// session 409s MANAGER_NOT_READY on every play until it re-logs-in. The auth layer registers a
-// handler here to bounce a stale session to the door the moment the backend reports it.
+// After a devnet refresh users re-arm (PredictManager nulled), so a live session 409s MANAGER_NOT_READY
+// until re-login; the auth layer registers a handler here to react the moment the backend reports it.
 let onManagerNotReady: (() => void) | null = null
 export const setManagerNotReadyHandler = (fn: (() => void) | null): void => {
   onManagerNotReady = fn
@@ -290,30 +298,25 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 // === Endpoints ===
 
 const realApi = {
-  // auth. readRef() threads a stashed referral token into every login path; the backend only ever
-  // attributes it on account creation (see auth.ts ensureUser/ensureWalletUser), so this is a no-op
-  // for a returning user.
+  // auth. readRef() threads a stashed referral token into every login path; the backend only attributes
+  // it on account creation (auth.ts ensureUser/ensureWalletUser), so it's a no-op for a returning user.
   authDev: () => request<{ token: string; user: UserDTO }>('POST', '/auth/dev', { referralCode: readRef() ?? undefined }),
   authPrivyVerify: (input: PrivyVerifyInput) => request<{ token: string; user: UserDTO }>('POST', '/auth/privy/verify', input),
   authWalletNonce: (address: string) => request<{ message: string }>('POST', '/auth/wallet/nonce', { address }),
   authWalletVerify: (input: WalletVerifyInput) => request<{ token: string; user: UserDTO }>('POST', '/auth/wallet/verify', input),
   me: () => request<{ user: UserDTO }>('GET', '/auth/me'),
-  // Re-provision a re-armed session in place (new PredictManager + re-funded chips). Called to self-heal
-  // a stale session after a devnet refresh instead of forcing a full re-login.
+  // Re-provision a re-armed session in place (new PredictManager + chips), self-healing instead of forcing a full re-login.
   authHeal: () => request<{ user: UserDTO }>('POST', '/auth/heal'),
   setUsername: (username: string) => request<{ user: UserDTO }>('PATCH', '/auth/me', { username }),
-  // Re-read linked Google/email/X state from Privy and persist it. Call after every successful
-  // link/unlink so the DB (and the leaderboard badge) never trusts a client-reported handle.
+  // Re-read linked Google/email/X state from Privy and persist it; call after every link/unlink so the DB never trusts a client-reported handle.
   linkRefresh: () => request<{ user: UserDTO }>('POST', '/auth/link/refresh'),
   // Avatar: upload a client-shrunk 500x500 webp data URL, or remove the custom one (revert to default).
   uploadAvatar: (dataUrl: string) => request<{ user: UserDTO }>('POST', '/avatar', { image: dataUrl }),
   removeAvatar: () => request<{ user: UserDTO }>('DELETE', '/avatar'),
 
-  // markets + plays. `playsPaused` is the real-mode sponsor-floor pause (always false in fork/demo):
-  // when true, new plays are blocked while the gas sponsor tops up, and the games show a paused state.
+  // markets + plays. `playsPaused` is the real-mode sponsor-floor pause (always false in fork/demo); blocks new plays while the gas sponsor tops up.
   markets: () => request<{ markets: MarketDTO[]; playsPaused?: boolean }>('GET', '/markets'),
-  // Price the whole band ladder for an asset in one call (full-band widths %). Cached on select so
-  // every band size shows its real multiple instantly, no estimate fallback.
+  // Price the whole band ladder for an asset in one call; cached on select so every band shows its real multiple instantly, no estimate fallback.
   rangeQuotes: (asset: string, widthPcts: number[]) =>
     request<{ quotes: RangeQuote[] }>('GET', `/games/range/quotes?asset=${encodeURIComponent(asset)}&widths=${widthPcts.join(',')}`),
   play: (game: Game, body: Record<string, unknown>) => request<PlayResult>('POST', `/games/${game}/play`, body),
@@ -334,6 +337,7 @@ const realApi = {
   // referrals
   referral: () => request<ReferralInfoDTO>('GET', '/referral'),
   setReferralAnon: (anon: boolean) => request<ReferralInfoDTO>('PATCH', '/referral', { anon }),
+  claimReferral: () => request<ReferralInfoDTO>('POST', '/referral/claim'),
   resolveReferral: (token: string) => request<ReferralResolveDTO>('GET', `/referral/resolve?ref=${encodeURIComponent(token)}`),
 
   // menu
@@ -352,8 +356,7 @@ const realApi = {
     request<{ result: MinigameSubmit }>('POST', `/leaderboard/minigame/${game}`, { score, runToken }),
 }
 
-// Demo mode swaps the whole client for an in-memory mock (no server, no chain). Resolved per
-// call so a runtime toggle takes effect without rebuilding the api binding everyone imported.
+// Demo mode swaps the whole client for an in-memory mock, resolved per call so a runtime toggle takes effect without rebuilding the api binding.
 export const api: typeof realApi = new Proxy(realApi, {
   get(target, prop, receiver) {
     if (isDemo()) {
@@ -408,6 +411,11 @@ export const streamPlay = (playId: string, onTick: (t: PlayTick) => void, onErro
   isDemo()
     ? demoStreamPlay(playId, onTick, onError)
     : stream<PlayTick>(`/stream/plays/${playId}`, onTick, onError)
+
+// Live markets: tradeable assets + the sponsor-pause flag, pushed on change; replaces the per-client GET /markets poll.
+export type MarketsTick = { markets: MarketDTO[]; playsPaused: boolean }
+export const streamMarkets = (onTick: (t: MarketsTick) => void, onError?: () => void): (() => void) =>
+  isDemo() ? demoStreamMarkets(onTick) : stream<MarketsTick>('/stream/markets', onTick, onError)
 
 export const streamLive = (onTick: (t: LiveTick) => void, onError?: () => void): (() => void) =>
   isDemo() ? demoStreamLive(onTick) : stream<LiveTick>('/stream/live', onTick, onError)

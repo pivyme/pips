@@ -1,11 +1,5 @@
-// Real-mode (testnet) play safety layer. Testnet SUI is finite and the DUSDC treasury is hand-funded
-// (L-008), so a real-mode play clears two gates before it ever touches the chain:
-//   1. a per-user rate limit (in-memory cooldown, anti-burn), and
-//   2. a sponsor-reserve floor: when the gas sponsor's readable SUI reserve is too low to keep
-//      refilling its gas accumulator, new plays PAUSE with a clear user-facing state instead of
-//      hard-failing mid-mint, and auto-resume once the reserve recovers.
-// Both gates are no-ops off testnet (the fork's localnet/devnet has free, effectively infinite SUI),
-// so fork behavior is unchanged. A background monitor re-reads the reserve on a cron and logs burn rate.
+// Real-mode (testnet) play safety: testnet SUI is finite (L-008), so every play clears a per-user rate limit
+// and a sponsor-reserve floor that pauses new plays (clear user-facing state) before the gas accumulator empties, auto-resuming once it recovers. Both gates no-op off testnet; a cron monitor logs burn rate.
 
 import cron from 'node-cron';
 
@@ -30,9 +24,8 @@ const lastPlayAt = new Map<string, number>();
 // A block reason the play path turns into a PlayError. null = allowed.
 export type PlayBlock = { code: 'PLAYS_PAUSED' | 'RATE_LIMITED'; message: string; retryAfterMs?: number };
 
-// Gate a play. Real mode only; fork mode always allows (free localnet). Checks the sponsor pause first
-// (a paused sponsor blocks everyone) then the caller's own cooldown. Does NOT stamp the cooldown, so a
-// blocked attempt never starts the clock; call recordPlay once the play is accepted.
+// Gates a play; real mode only, fork mode always allows. Checks the sponsor pause first (blocks everyone),
+// then the caller's own cooldown. Does NOT stamp the cooldown, so call recordPlay once the play is accepted.
 export function checkPlayAllowed(userId: string): PlayBlock | null {
   if (!IS_REAL_PREDICT) return null;
   if (pauseState.paused) {
@@ -48,26 +41,21 @@ export function checkPlayAllowed(userId: string): PlayBlock | null {
   return null;
 }
 
-// Reserve the user's cooldown slot the moment a play passes the gate, so a rapid double-tap can't slip
-// two plays past the check before either lands. No-op in fork mode / when the limit is off.
+// Reserves the user's cooldown slot the moment a play passes the gate, so a rapid double-tap can't slip two plays past the check before either lands (no-op in fork mode or when the limit is off).
 export function recordPlay(userId: string): void {
   if (!IS_REAL_PREDICT || PLAY_RATE_LIMIT_MS <= 0) return;
   lastPlayAt.set(userId, Date.now());
 }
 
-// Release a reserved slot when the play fails BEFORE it is accepted (bad params, no market), so the
-// user can retry immediately instead of eating a cooldown for a play that never happened.
+// Releases a reserved slot when the play fails BEFORE it is accepted, so the user can retry immediately instead of eating a cooldown for a play that never happened.
 export function clearPlay(userId: string): void {
   lastPlayAt.delete(userId);
 }
 
 // === Sponsor reserve floor -> pause ===
-//
-// The sponsor pays gas from its SUI address-balance accumulator (unreadable over RPC), which is
-// refilled from its OWNED SUI coins (sponsor.ts). Those owned coins ARE readable and are the reserve
-// that backstops the accumulator, so the floor watches them: once they run below SPONSOR_FLOOR_SUI the
-// sponsor can no longer refill, so we pause BEFORE a play hard-fails on an empty accumulator. On
-// testnet the reserve is topped up by a human (no faucet), so the monitor just resumes when it sees SUI.
+
+// The sponsor pays gas from an unreadable SUI address-balance accumulator, refilled from its OWNED coins
+// (sponsor.ts) which ARE readable, so the floor watches those instead, pausing plays BEFORE the accumulator empties. Testnet reserve is topped up by a human, the monitor just resumes once it sees SUI.
 
 type PauseState = { paused: boolean; reason: string; reserveSui: number; checkedAt: number };
 const pauseState: PauseState = { paused: false, reason: '', reserveSui: 0, checkedAt: 0 };
@@ -83,9 +71,8 @@ async function readSponsorReserveSui(): Promise<number> {
   return Number(BigInt(bal.balance.balance)) / MIST_PER_SUI;
 }
 
-// Re-read the sponsor's readable SUI reserve, flip the pause state on the floor, and log burn since the
-// last successful read. Errors leave the prior state untouched (a transient RPC blip must not pause
-// plays). No-op when sponsorship is off or off testnet.
+// Re-reads the sponsor's readable SUI reserve, flips the pause state on the floor, and logs burn since the
+// last successful read. Errors leave the prior state untouched, so a transient RPC blip never pauses plays.
 export async function refreshSponsorPauseState(): Promise<void> {
   if (!IS_REAL_PREDICT || !SPONSOR_ENABLED || !sponsorAddress) return;
   let reserveSui: number;
@@ -119,8 +106,7 @@ export async function refreshSponsorPauseState(): Promise<void> {
   }
 }
 
-// Schedule the reserve monitor. Real mode + sponsorship only; a first read runs immediately so the
-// pause state is correct before the first play. No-op otherwise (fork localnet has free SUI).
+// Schedules the reserve monitor (real mode + sponsorship only); a first read runs immediately so the pause state is correct before the first play.
 export function startSponsorMonitor(): void {
   if (!IS_REAL_PREDICT || !SPONSOR_ENABLED) return;
   console.log(`[play-safety] sponsor reserve monitor scheduled (${SPONSOR_MONITOR_CRON}, floor ${SPONSOR_FLOOR_SUI} SUI)`);

@@ -2,10 +2,8 @@ import { useState } from 'react'
 import { cnm } from '@/utils/style'
 import { avatarColor, avatarInitial } from '@/lib/avatar'
 
-// One avatar component every surface uses. Renders the uploaded image when `src` is set; on a load
-// error (a dead or blocked URL) or when there's no src, it falls back to the PIPS identicon: a bright
-// deterministic disc with the handle's initial in Open Runde Bold. So a broken URL never shows a busted
-// <img>, and a user with no photo still gets a distinct, on-brand avatar. `name` is the handle.
+// One avatar component every surface uses. Falls back to the PIPS identicon (a deterministic disc with
+// the handle's initial) on a load error or missing src, so a broken URL or no photo never breaks the avatar.
 export function Avatar({
   name,
   src,

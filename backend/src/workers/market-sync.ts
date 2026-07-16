@@ -1,11 +1,5 @@
-// market-sync: follower-mode market discovery. When this backend is NOT the operator
-// (PIPS_OPERATOR_ENABLED != true) it never creates oracles, so the in-memory market set would stay
-// stuck on the (expired) bootstrap seed and every game would read "Market catching up". Instead we
-// follow the chain: whoever IS the operator (the deployed backend) emits OracleActivated for every
-// oracle it stands up, so we read those events, keep the ones still live (active, unsettled, far
-// enough from expiry), recover each one's EXACT on-chain strike grid, and upsert them into the same
-// market set the games read. The operator path (oracle-roll) maintains that set itself, so this only
-// schedules as a follower.
+// Follower-mode market discovery: when this backend is NOT the operator (PIPS_OPERATOR_ENABLED != true)
+// it never creates oracles, so it reads the chain instead, following the operator's OracleActivated events to recover each live oracle's exact strike grid and upsert into the same market set the games read.
 
 import cron from 'node-cron';
 
@@ -25,9 +19,8 @@ import { allMarkets, getMarket, removeMarket, upsertMarket } from '../lib/sui/ma
 import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
 import { isOperatorLeader } from '../lib/leader-lock.ts';
 
-// Game asset symbol for the only underlying live on Mysten's testnet Predict (propbook id 1). The
-// games route every selected asset to this BTC market in real mode; discovery tags it with the symbol
-// the asset picker + assetSpot key on.
+// Game asset symbol for the only underlying live on Mysten's testnet Predict (propbook id 1); every
+// selected asset routes to this BTC market in real mode, tagged with the symbol the asset picker + assetSpot key on.
 const REAL_BTC_GAME_ASSET = 'BTC';
 
 const ORACLE_ACTIVATED_EVENT = `${PACKAGE_ID}::oracle::OracleActivated`;
@@ -54,8 +47,7 @@ type ActivatedEventsResult = {
 };
 
 // Pick still-live oracle ids from one GraphQL page (oldest-first, iterated reversed for newest-first).
-// `reachedOld` flags that this page reached activations older than any live oracle, so the caller stops
-// paging. Pure so the migrated GraphQL parse is unit-testable against a captured response.
+// `reachedOld` flags the page reached activations older than any live oracle so the caller stops paging; pure for unit testing against a captured response.
 export function selectLiveOraclesFromPage(
   nodes: ActivatedNode[],
   now: number,
@@ -73,8 +65,7 @@ export function selectLiveOraclesFromPage(
 }
 
 // Recent OracleActivated oracle ids whose expiry is still ahead. Walks events newest-first and stops
-// once activations predate the max oracle lifetime (those oracles are certainly expired), so the scan
-// is bounded regardless of how many oracles the operator has created over the deployment's life.
+// once activations predate the max oracle lifetime, so the scan stays bounded regardless of deployment age.
 async function liveCandidateIds(now: number): Promise<string[]> {
   const cutoff = now - ORACLE_LIFETIME_MS - 60_000; // activated before this => long expired
   const ids = new Set<string>();
@@ -146,10 +137,8 @@ const sync = async (): Promise<void> => {
   }
 };
 
-// Real-mode discovery (IS_REAL_PREDICT): Mysten owns the roll schedule and there is no operator role,
-// so we always read the chain. Read the PoolVault's live market ids, keep the unsettled, unpaused, 1m
-// BTC ones with room before expiry, read each one's economics, and upsert into the same market set the
-// games read. No GraphQL event scan, no external discovery server, no per-market cap.
+// Real-mode discovery (IS_REAL_PREDICT): Mysten owns the roll schedule and there's no operator role, so
+// we always read the chain: PoolVault's live 1m BTC market ids, unsettled/unpaused with room before expiry, upserted into the same market set. No GraphQL scan, no discovery server, no per-market cap.
 let realRunning = false;
 
 const realSync = async (): Promise<void> => {

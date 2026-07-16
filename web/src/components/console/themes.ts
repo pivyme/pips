@@ -1,7 +1,5 @@
-// Device skins. A theme is a whole-device color preset: it recolors the body, the buttons, the nav
-// pills and the knob in one shot (no geometry rebuild). ConsoleCanvas applies it to the live
-// materials; the Customize studio previews them and persists the pick here. Colors are hex strings
-// so they drop straight into THREE.Color.set() and into CSS alike.
+// Device skins. A theme is a whole-device color preset (body, buttons, nav pills, knob) applied live by
+// ConsoleCanvas with no geometry rebuild. Colors are hex strings so they drop into THREE.Color.set() and CSS alike.
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 
 export interface ConsoleTheme {
@@ -29,13 +27,11 @@ export interface ConsoleTheme {
   cardImage?: string // optional art behind the card (e.g. a skin preview); text sits on a scrim
 }
 
-// Each skin is one body + one accent (knob + PLAY) + a quiet neutral for the small buttons. Keeps it
-// tasteful, not a toy-box rainbow. Classic is the brand: matte charcoal with the PIPS yellow, so the
-// default device reads like the logo.
+// Each skin is one body + one accent (knob + PLAY) + a quiet neutral for the small buttons, tasteful
+// not a toy-box rainbow. Classic is the brand default: matte charcoal with the PIPS yellow.
 export const THEMES: ConsoleTheme[] = [
   {
-    // The signature look, identical to the bare device on /console: cream body, red PLAY, blue
-    // actions, yellow knob, red/blue eyes on the back.
+    // The signature look, identical to the bare device on /console: cream body, red PLAY, blue actions, yellow knob, red/blue eyes on the back.
     id: 'classic',
     code: '001',
     name: 'Classic',
@@ -125,8 +121,7 @@ export const THEMES: ConsoleTheme[] = [
     cardImage: '/assets/pivy-theme-card.png',
   },
   {
-    // The Nothing-style see-through case: the front shell goes to frosted acrylic and the guts show,
-    // black PCB, copper coil, battery, RF shields, ribbon, glyph light strips; the back is white frosted.
+    // The Nothing-style see-through case: front shell goes frosted acrylic, guts show (PCB, coil, battery, RF shields, ribbon, glyph strips); back is white frosted.
     id: 'clear',
     code: '000',
     name: 'Clear',
@@ -227,9 +222,8 @@ export const THEMES: ConsoleTheme[] = [
   },
 ]
 
-// The ambient the device floats on: the root page, the desktop surround, and the strip framing the
-// 3D handheld. Derived from the skin's body color so the backdrop feels part of the theme instead of
-// flat black, but kept deep so the device still reads as the hero. A theme can pin it with `ambient`.
+// The ambient the device floats on (root page, desktop surround, the strip framing the 3D handheld).
+// Derived from the skin's body color so it feels themed instead of flat black; a theme can pin it with `ambient`.
 export function themeBackdrop(theme: ConsoleTheme): string {
   if (theme.ambient) return theme.ambient
   const hex = theme.body.replace('#', '')

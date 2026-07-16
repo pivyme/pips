@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
 
-// Single source of truth for "calm down the motion". Honors both the user's in-app setting
-// (Settings screen) and the OS-level prefers-reduced-motion. The chart and rolling numbers
-// read this to switch to discrete, non-animated updates.
+// Single source of truth for "calm down the motion": honors both the in-app Settings toggle and OS-level prefers-reduced-motion.
+// The chart and rolling numbers read this to switch to discrete, non-animated updates.
 export function useReducedMotion(): boolean {
   const { user } = useAuth()
   const [osReduced, setOsReduced] = useState(false)

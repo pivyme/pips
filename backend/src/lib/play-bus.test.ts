@@ -1,8 +1,5 @@
-// Play-bus contract. Runtime dependency-free (it imports only a type, erased at build), so this runs
-// hermetically with no DB / env. It locks the guarantees the event-driven play SSE relies on: publish
-// notifies live subscribers, carries the committed row through to them (so the SSE skips a DB read),
-// unsubscribe stops delivery and frees the id, a publish to nobody is a harmless no-op, and one throwing
-// listener never starves the publisher or its siblings.
+// Play-bus contract, hermetic (imports only a type, erased at build, no DB/env needed). Locks the
+// guarantees the play SSE relies on: publish delivers and carries the row (skips a DB read), unsubscribe frees the id, and a throwing listener never blocks its siblings.
 
 import { describe, expect, it } from 'bun:test';
 
@@ -23,18 +20,12 @@ describe('play-bus', () => {
   });
 
   it('hands the committed row through to subscribers, or undefined when omitted', () => {
-    let seen: Play | undefined = undefined;
-    let calls = 0;
-    const un = onPlay('p1', (row) => {
-      seen = row;
-      calls++;
-    });
+    const got: Array<Play | undefined> = [];
+    const un = onPlay('p1', (row) => got.push(row));
     const committed = { id: 'p1', status: 'open' } as Play;
     publishPlay('p1', committed);
-    expect(seen).toBe(committed); // the SSE reads straight off this, no DB round trip
     publishPlay('p1'); // a bulk sweep with no row in hand
-    expect(seen).toBeUndefined(); // the SSE falls back to reading the row itself
-    expect(calls).toBe(2);
+    expect(got).toEqual([committed, undefined]); // reads straight off the row, else falls back to a DB read
     un();
   });
 

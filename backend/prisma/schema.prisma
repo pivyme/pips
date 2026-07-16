@@ -61,8 +61,28 @@ model User {
   achievements     UserAchievement[]
   stats            UserStats?
   minigameScores   MinigameScore[]
+  referralClaims   ReferralClaim[]   @relation("ReferralClaims")
 
   @@index([referredById])
+}
+
+// A referrer's payout of their accrued referral revshare (25% of referees' trading fees). One row per
+// claim; the amount is a snapshot of claimable at reserve time so a later share-rate change never
+// re-prices an already-claimed payout. status: pending (reserved, payout in flight) -> paid | failed.
+// claimable = earned - SUM(amount where status in {pending, paid}), so a pending row locks the funds
+// for any concurrent claim and a failed row releases them. See services/referral.ts.
+model ReferralClaim {
+  id         String    @id @default(cuid())
+  referrerId String
+  referrer   User      @relation("ReferralClaims", fields: [referrerId], references: [id])
+  amount     BigInt                          // DUSDC 6dp, snapshot of claimable at reserve time
+  status     String    @default("pending")   // pending | paid | failed
+  txDigest   String?
+  createdAt  DateTime  @default(now())
+  paidAt     DateTime?
+
+  @@index([referrerId, status])
+  @@index([referrerId, createdAt])
 }
 
 model Play {
@@ -87,6 +107,7 @@ model Play {
 
   stake        BigInt                          // DUSDC base units
   entryCost    BigInt    @default(0)           // mint cost base units
+  rake         BigInt    @default(0)           // house fee collected on this play (6dp); 0 if none/unminted. Ground truth for referral revshare
   markValue    BigInt?                         // last known live mark
   payout       BigInt?                         // set on settle / cashout
   pnl          BigInt?                         // signed realized PnL: payout - entryCost (the real mint cost, not the requested stake)

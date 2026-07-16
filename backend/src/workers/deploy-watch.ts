@@ -1,15 +1,5 @@
-// Self-heal watcher. The shared DB holds the live Predict deploy record (see deployment-store). When a
-// devnet wipe is recovered, the deployer publishes a fresh stack and writes a new record; its package
-// id changes. This worker notices that change and restarts the process. The boot hook (preboot.ts)
-// then reloads the new ids from the DB, so with a restart-on-exit container (Dokploy default) the box
-// re-points to the fresh deployment on its own, no env paste, no manual redeploy. Downtime is one
-// container restart.
-//
-// It also logs loudly when the package this process booted with has vanished on chain (a wipe in
-// progress), so the logs explain why plays are failing while we wait for the fresh record to land.
-//
-// Disabled by default off production (DEPLOY_WATCH_ENABLED) so it never kills a local `bun dev`
-// follower: locally the deploy script rewires .env and the dev server restart picks the ids up.
+// Self-heal watcher: restarts the process when a fresh Predict deploy record lands in the shared DB
+// (preboot.ts then reloads the new ids), relying on a restart-on-exit container (Dokploy default). Disabled outside production (DEPLOY_WATCH_ENABLED) so it never kills a local `bun dev` follower.
 
 import path from 'path';
 
@@ -36,11 +26,8 @@ let warnedMissing = false;
 let publishing = false;
 let lastPublishAt = 0;
 
-// Republish the whole Predict stack from inside the operator container after a wipe. Spawns the same
-// recovery the local CLI uses (fund -> publish -> write the DB deploy record). On success the record's
-// package id changes, so the next tick exits and the container restarts onto the fresh ids. Guarded by
-// a single-flight flag + a cooldown so a devnet outage (publish fails/timeouts) retries calmly instead
-// of hammering. The API keeps serving (the CHAIN_UNAVAILABLE door) while this runs in the background.
+// Republishes the whole Predict stack from inside the operator container after a wipe (same recovery as
+// the local CLI: fund, publish, write the DB record); single-flight + cooldown guarded so an outage retries calmly instead of hammering. The API keeps serving the CHAIN_UNAVAILABLE door meanwhile.
 async function selfPublish(): Promise<void> {
   if (publishing) return;
   if (Date.now() - lastPublishAt < SELF_PUBLISH_COOLDOWN_MS) return;
@@ -87,9 +74,8 @@ const tick = async (): Promise<void> => {
       }
     }
 
-    // Liveness check: is the package we booted with still on chain? If it 404s, a wipe is underway and
-    // every play is failing until the deployer republishes. Surface it once so the logs aren't silent,
-    // and in self-publish mode kick off the republish ourselves.
+    // Liveness check: if the booted package 404s on chain, a wipe is underway and every play is failing.
+    // Warns once so the logs aren't silent, and in self-publish mode kicks off the republish itself.
     if (bootPackageId) {
       try {
         // gRPC throws "not found" when the package is gone; a successful read means it's live.

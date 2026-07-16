@@ -10,9 +10,8 @@ import { isDemo, resetDemo } from '@/lib/demo'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 
-// Sound, haptics, reduced motion. No save button: each toggle persists immediately (PATCH
-// /settings) with a haptic tick, no confirm. Reduced motion flows back through the auth user, so
-// the chart and rolling numbers calm down at once (useReducedMotion reads it).
+// Sound, haptics, reduced motion. No save button, each toggle PATCHes /settings immediately with a haptic tick.
+// Reduced motion flows back through the auth user, so the chart and rolling numbers calm down at once.
 export const Route = createFileRoute('/_app/menu/settings')({
   component: SettingsScreen,
 })

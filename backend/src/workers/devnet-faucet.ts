@@ -1,16 +1,5 @@
-// Devnet faucet top-up. On Sui devnet the public faucet is the only SUI source, and devnet gets
-// wiped roughly weekly, so the crucial wallets run dry and break plays/redeems/payouts. This worker
-// is the self-healing safety net: every minute it reads each wallet's balance and, for any below the
-// floor, faucets it back up to the target. It VERIFIES each drip actually landed by re-reading the
-// balance, because the public devnet faucet silently rate-limits (returns 200 but sends nothing),
-// which is what used to wedge the operator below its 1 SUI gas budget while we logged a false
-// "topped up". When the real balance stops moving it stops requesting and warns, instead of lying.
-//
-// For a rock-stable operator, point DEVNET_FAUCET_URL at a no-rate-limit faucet (set the env). The
-// loop-to-target then keeps the operator far above its gas budget so it never starves between drips.
-//
-// Note: this refills SUI, it cannot fix a devnet wipe (the Predict packages vanish too). After a wipe,
-// re-run scripts/devnet-refresh.sh to republish; this worker keeps the wallets alive between wipes.
+// Devnet faucet top-up: devnet wipes weekly and the public faucet silently rate-limits (200 but sends
+// nothing), which used to wedge wallets below their gas floor while logging a false "topped up". Verifies each drip by re-reading balance; refills SUI only, doesn't fix a wipe (rerun scripts/devnet-refresh.sh).
 
 import cron from 'node-cron';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
@@ -39,8 +28,7 @@ const FAUCET_HOST = DEVNET_FAUCET_URL || getFaucetHost('devnet');
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const sui = (mist: bigint): string => (Number(mist) / 1e9).toFixed(3);
 
-// The wallets to keep alive, de-duped (an unset ops wallet falls back to the operator address, so
-// they can collide) and filtered to those actually configured.
+// The wallets to keep alive, de-duped (an unset ops wallet falls back to the operator address, so they can collide) and filtered to those actually configured.
 function targets(): { label: string; address: string }[] {
   const list = [
     { label: 'operator', address: operatorAddress },
@@ -61,8 +49,7 @@ const balanceMist = async (owner: string): Promise<bigint> => {
   }
 };
 
-// One faucet drip. v2 endpoint, with the v1 /gas fallback the bootstrap also uses. Throws on a
-// hard failure so the caller can stop hammering a rate-limited host.
+// One faucet drip: v2 endpoint with the v1 /gas fallback the bootstrap also uses; throws on a hard failure so the caller can stop hammering a rate-limited host.
 const requestFaucet = async (recipient: string): Promise<void> => {
   try {
     await requestSuiFromFaucetV2({ host: FAUCET_HOST, recipient });
@@ -76,10 +63,8 @@ const requestFaucet = async (recipient: string): Promise<void> => {
   }
 };
 
-// Faucet `t` back up to the target, firing requests in parallel batches so a high target fills in
-// seconds. After each batch we re-read the real balance: if it didn't move at all (the host accepted
-// the requests but delivered nothing, i.e. rate-limited or dry) we back off rather than spin. Returns
-// the final balance so the caller can flag a wallet still stuck below its floor.
+// Faucets `t` back up to the target in parallel batches so a high target fills in seconds; re-reads the
+// real balance after each batch and backs off if it didn't move (rate-limited or dry) rather than spin. Returns the final balance so the caller can flag one still stuck below its floor.
 const fundToTarget = async (t: { label: string; address: string }, start: bigint): Promise<bigint> => {
   let bal = start;
   let delivered = 0n;

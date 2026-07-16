@@ -1,30 +1,12 @@
-// The game price layer. Two prices, one source of motion:
-//
-//  - engineSpot: the real Pyth anchor times a smooth, bounded, mean-reverting volatility walk, so a
-//    30-60s round actually MOVES (real markets barely twitch over half a minute, a tight band would
-//    always win and the chart would sit flat). OPERATOR ONLY. This is the value the price-pusher writes
-//    on-chain and oracle-roll stands oracles up at, so it BECOMES the oracle price. The offset is pulled
-//    back toward the live anchor and hard-clamped every tick, so it tracks real BTC with enough life.
-//
-//  - gameSpot: the DISPLAY price (the chart stream, the /markets spot, the cash-out exit). It is the
-//    on-chain oracle spot, eased. This is the single price the player ever sees, in BOTH modes. The
-//    operator used to chart engineSpot raw while only ~1-2s snapshots of it hit the oracle, so the live
-//    line drifted off the entry (the pushed spot) and the strike (solved against it), and settlement read
-//    a price the chart never showed (the misleading entry/target bug). Charting the PUSHED spot instead
-//    makes the line exactly what prices and settles the round: entry and target sit on its real path.
-//
-// One in-process engine. The operator runs the walk AND serves the stream; charting the pushed spot
-// (not the raw walk) is what keeps the line and the chain identical. Scaling horizontally? Run the
-// operator (and this engine) on exactly ONE instance, the OPERATOR_ENABLED single-leader rule.
+// Two prices, one source of motion: engineSpot (operator-only synthetic walk that becomes the oracle
+// price) and gameSpot (the eased on-chain spot every player/chart/settlement reads). Scale to one instance only, the operator runs the walk (OPERATOR_ENABLED single-leader rule).
 
 import { GAME_VOL } from '../config/main-config.ts';
 import { getSpot } from './price-cache.ts';
 import { assetSpot } from './sui/markets.ts';
 
-// Tuned so the realized move over a ~45s round is ~0.6% (calibrated): a ±0.1% band is a real long
-// shot, ±0.5% is roughly a coin flip, and wide bands are the safe, low-payout end. Motion stays
-// smooth (per-tick ~0.04%) with the occasional sharp wick for a lively pop. Magnitudes scale with
-// GAME_VOL; the shape params (momentum, revert, decay) do not.
+// Tuned so a ~45s round realizes ~0.6% move (calibrated): ±0.1% bands are a real long shot, ±0.5% is
+// roughly a coin flip. Motion stays smooth per-tick with occasional wicks for a lively pop. Magnitudes scale with GAME_VOL, the shape params (momentum/revert/decay) do not.
 const TICK_MS = 250;
 const MOMENTUM = 0.88; // velocity persistence: turns per-tick noise into smooth trends, not jitter
 const VOL = 0.000208 * GAME_VOL; // per-tick velocity impulse (uniform amplitude)
@@ -73,16 +55,11 @@ function refreshAnchor(asset: string, c: Cell): void {
   });
 }
 
-// The display feed (gameSpot uses this in BOTH modes now): the on-chain oracle spot, eased so the
-// ~1-2s push/sync steps glide instead of stepping. assetSpot is the operator's freshly pushed price
-// (the pusher writes it each tick) or, on a follower, the price market-sync mirrors off chain. Serving
-// THIS as the chart means the line, the entry (the pushed spot), the strike (solved against it), and
-// the settlement all read one price, with no second walk to drift from (the bug that floated the
-// entry/target off the live line). Falls back to raw Pyth only on a cold boot before any oracle spot.
+// The display feed (gameSpot, both modes): the on-chain oracle spot, eased so the ~1-2s push/sync steps
+// glide. assetSpot is the operator's freshly pushed price (or, on a follower, what market-sync mirrors), so chart/entry/strike/settlement all read one price, no second walk to drift from. Falls back to raw Pyth on a cold boot.
 const followShown = new Map<string, { price: number; at: number }>();
-const FOLLOW_TAU_MS = 650; // smoothing time constant for the ~2s chain-spot steps. Kept short so the
-// served line tracks the oracle closely (it is what "am I winning" and the win-zone shading read);
-// a long tau lags the oracle on a fast move and can show the line above target when it settled below.
+const FOLLOW_TAU_MS = 650; // smoothing constant for the ~2s chain-spot steps, kept short so the line
+// tracks the oracle closely; a long tau can show the line above target when it settled below (win-zone shading reads this).
 
 async function followerSpot(asset: string): Promise<{ price: number; ts: number } | null> {
   let target = assetSpot(asset);
@@ -103,10 +80,8 @@ async function followerSpot(asset: string): Promise<{ price: number; ts: number 
   return { price: cur.price > 0 ? cur.price : target, ts: now };
 }
 
-// The synthetic walk: the real Pyth anchor times the bounded vol offset. OPERATOR ONLY, and the value
-// the price-pusher writes on-chain + oracle-roll stands oracles up at, so it BECOMES the oracle price
-// (it is never charted raw, gameSpot charts the pushed-and-eased version). Returns null only on a cold
-// start where Pyth has never answered. With GAME_VOL <= 0 it is pure Pyth pass-through (kill switch).
+// The synthetic walk: real Pyth anchor times a bounded vol offset. OPERATOR ONLY; the price-pusher writes
+// this on-chain so it BECOMES the oracle price (never charted raw, gameSpot charts the pushed-and-eased version). Null only on a cold start; GAME_VOL <= 0 is a pure Pyth pass-through kill switch.
 export async function engineSpot(asset: string): Promise<{ price: number; ts: number } | null> {
   if (GAME_VOL <= 0) return getSpot(asset);
   let c = cells.get(asset);
@@ -123,10 +98,8 @@ export async function engineSpot(asset: string): Promise<{ price: number; ts: nu
   return { price: price > 0 ? price : c.anchor, ts: Date.now() };
 }
 
-// The display price every game screen shows: the on-chain oracle spot, eased (followerSpot). The same
-// in both modes now, so the chart line IS the price the round prices and settles against, and the
-// entry/target lines drawn on it can never sit where the line never went. With GAME_VOL <= 0 it is pure
-// Pyth pass-through (kill switch). Null only on a cold boot before any oracle has a spot.
+// The display price every game screen shows: the eased on-chain oracle spot (followerSpot), same in both
+// modes, so the chart line IS the price the round prices/settles against (entry/target can never sit where the line never went). GAME_VOL <= 0 is a Pyth pass-through kill switch; null only on a cold boot.
 export async function gameSpot(asset: string): Promise<{ price: number; ts: number } | null> {
   if (GAME_VOL <= 0) return getSpot(asset);
   return followerSpot(asset);

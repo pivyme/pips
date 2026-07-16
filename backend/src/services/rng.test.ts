@@ -1,6 +1,5 @@
-// RNG fairness tests. Pure and chain-free: the draws are deterministic from a seed, so we
-// assert reproducibility (audit), uniformity of the [0,1) stream, and that the weighted
-// leverage picker matches its declared weights over a large sample.
+// RNG fairness tests, pure and chain-free: draws are deterministic from a seed, so this asserts
+// reproducibility, uniformity of the [0,1) stream, and that the weighted leverage picker matches its declared weights over a large sample.
 
 import { describe, expect, it } from 'bun:test';
 

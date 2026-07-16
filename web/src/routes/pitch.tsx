@@ -13,9 +13,8 @@ import {
   Users,
 } from 'lucide-react'
 
-// A focused pitch deck for PIPS: hook, problem, solution. Standalone full-bleed scroll surface,
-// outside the console shell. Classic brand yellow (#FFC016) carries the attention; black is the
-// base. The "act break" slides flip to full yellow so problem and solution land like punches.
+// Pitch deck for PIPS: hook, problem, solution slides. Standalone full-bleed scroll, outside the console shell.
+// Brand yellow (#FFC016) carries attention over black; "act break" slides flip full yellow so problem/solution land like punches.
 export const Route = createFileRoute('/pitch')({ component: Pitch })
 
 const YELLOW = '#FFC016'
@@ -56,7 +55,7 @@ function Reveal({
   )
 }
 
-// Slide 1 — the hook. Giant wordmark on black, one tagline, a scroll cue.
+// Slide 1: the hook. Giant wordmark on black, one tagline, a scroll cue.
 function Hook() {
   return (
     <section className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-6 text-center">
@@ -109,7 +108,7 @@ function Hook() {
   )
 }
 
-// Slide 2 — the problem, stated big. Full yellow act break.
+// Slide 2: the problem, stated big. Full yellow act break.
 function ProblemBreak() {
   return (
     <section
@@ -157,7 +156,7 @@ const PAINS = [
   },
 ]
 
-// Slide 3 — the three pains, on black, as cards.
+// Slide 3: the three pains, on black, as cards.
 function ProblemDetail() {
   return (
     <section className="flex min-h-dvh flex-col justify-center px-6 py-24 sm:px-16">
@@ -192,7 +191,7 @@ function ProblemDetail() {
   )
 }
 
-// Slide 4 — the solution, stated big. Full yellow act break.
+// Slide 4: the solution, stated big. Full yellow act break.
 function SolutionBreak() {
   return (
     <section
@@ -227,7 +226,7 @@ const GAMES = [
   { icon: Hand, title: 'Tap', sub: 'Tap the chart. Catch the move.' },
 ]
 
-// Slide 5 — how the solution works + the games. On black.
+// Slide 5: how the solution works + the games. On black.
 function SolutionDetail() {
   return (
     <section className="flex min-h-dvh flex-col justify-center px-6 py-24 sm:px-16">
@@ -280,7 +279,7 @@ function SolutionDetail() {
   )
 }
 
-// Slide 6 — closing. Full yellow, one line, a way in.
+// Slide 6: closing. Full yellow, one line, a way in.
 function Closing() {
   return (
     <section

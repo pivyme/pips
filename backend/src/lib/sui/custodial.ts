@@ -1,9 +1,5 @@
-// Custodial play wallets for the wallet-connect login mode. A wallet-connect user proves they own an
-// external Sui wallet (off-chain nonce signature), then the server holds a per-user ed25519 wallet
-// that does all their on-chain work (manager, mints, redeems, withdraw), so the fast no-popup play
-// loop is preserved. Those keys are real key material, so they are encrypted at rest with AES-256-GCM
-// under WALLET_ENCRYPTION_KEY (env only). For mainnet/real money this should move to a KMS/HSM; for
-// free-chip localnet it is the same trust shape as the existing Privy embedded wallet, just self-hosted.
+// Custodial play wallets for wallet-connect login: after a user proves ownership of an external wallet
+// (off-chain nonce signature), the server holds a per-user ed25519 wallet for all on-chain work, keeping the no-popup play loop. Keys are encrypted at rest (AES-256-GCM, WALLET_ENCRYPTION_KEY); move to a KMS/HSM before mainnet.
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 

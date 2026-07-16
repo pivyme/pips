@@ -1,8 +1,5 @@
-// Keeps the three ops wallets topped up: the gas sponsor (SUI), the settlement wallet (SUI), and the
-// treasury (SUI + a big DUSDC reserve). Operator-driven, since only the leader owns the SUI + DUSDC
-// TreasuryCap to fund from, so this no-ops unless OPERATOR_ENABLED. Generous amounts (free localnet
-// SUI), low cadence: each tick just reads three balances and tops up the shortfall. Boot funding is
-// done once in index.ts before serving; this worker is the ongoing safety net.
+// Tops up the gas sponsor, settlement, and treasury wallets. Operator-only (needs the SUI + DUSDC
+// TreasuryCap), so this no-ops unless OPERATOR_ENABLED; boot funding runs once in index.ts, this worker is the ongoing safety net.
 
 import cron from 'node-cron';
 

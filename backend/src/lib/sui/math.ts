@@ -1,8 +1,5 @@
-// Pure Predict money math. No chain, no config, no deployed.json, so it unit-tests in
-// isolation. Two scales live in the protocol and we keep every conversion here:
-//   - prices / strikes are FLOAT_SCALING (1e9) fixed-point
-//   - quantities and DUSDC coin amounts are 6dp (1_000_000 = $1 = one settled contract)
-// mint cost = mulScaled(ask, quantity); a winning binary pays `quantity` at settlement.
+// Pure Predict money math, no chain or config, so it unit-tests standalone. Two scales: prices/strikes
+// are FLOAT_SCALING (1e9), quantities and DUSDC amounts are 6dp (1_000_000 = $1 = one settled contract).
 
 export const FLOAT_SCALING = 1_000_000_000n; // 1e9, on-chain price/strike scale
 export const DUSDC_DECIMALS = 1_000_000n; // 6dp, coin + quantity scale
@@ -28,9 +25,8 @@ export const formatDusdcRaw = (raw: bigint, minDecimals = 2): string => {
 // deepbook::math::mul: floor((a * b) / 1e9). Used for cost = ask(1e9) * quantity(6dp).
 export const mulScaled = (a1e9: bigint, b: bigint): bigint => (a1e9 * b) / FLOAT_SCALING;
 
-// Invert cost = mulScaled(ask, quantity): the quantity whose first-order cost is `stakeRaw`.
-// First-order only (ask shifts as the trade moves the book), so callers refine against a
-// live preview before minting. Floors to whole 6dp units.
+// Inverts cost = mulScaled(ask, quantity) for the quantity whose first-order cost is `stakeRaw`. Ask
+// shifts as the trade moves the book, so callers refine against a live preview before minting; floors to 6dp.
 export const quantityForStake = (ask1e9: bigint, stakeRaw: bigint): bigint => {
   if (ask1e9 <= 0n) throw new Error('quantityForStake: ask must be positive');
   return (stakeRaw * FLOAT_SCALING) / ask1e9;
@@ -40,11 +36,8 @@ export const quantityForStake = (ask1e9: bigint, stakeRaw: bigint): bigint => {
 export const multiplier = (costRaw: bigint, payoutRaw: bigint): number =>
   costRaw <= 0n ? 0 : Number(payoutRaw) / Number(costRaw);
 
-// The house-rake split of a stake into { rake, net } (all 6dp). rake = floor(stake * bps / 10_000), net
-// = stake - rake. Returns rake = 0 / net = stake (byte-identical to no-rake) when bps <= 0, the stake is
-// non-positive, or taking the rake would drop net below `minNetRaw` (the floor that protects real
-// Predict's ~$1 net-premium minimum, L-011). Pure so the vig arithmetic is unit-tested here; the enabled/
-// disabled gate + config wiring live in house.ts.
+// Splits a stake into { rake, net } (6dp): rake = floor(stake * bps / 10_000), net = stake - rake. Falls
+// back to rake=0/net=stake when bps<=0, stake<=0, or net would drop below minNetRaw (real Predict's ~$1 net-premium floor, L-011).
 export const houseRake = (stakeRaw: bigint, bps: bigint, minNetRaw: bigint): { rake: bigint; net: bigint } => {
   if (bps <= 0n || stakeRaw <= 0n) return { rake: 0n, net: stakeRaw };
   const rake = (stakeRaw * bps) / 10_000n;

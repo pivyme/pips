@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
-import { probit, binaryOffsetFrac } from './games.ts';
-import { REAL_STRIKE_MIN_PROB, REAL_STRIKE_MAX_OFFSET_FRAC, REAL_BTC_ANNUAL_VOL } from '../config/main-config.ts';
+import { probit, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9 } from './games.ts';
+import { REAL_STRIKE_MIN_PROB, REAL_STRIKE_MAX_OFFSET_FRAC, REAL_BTC_ANNUAL_VOL, REAL_BINARY_MIN_OFFSET_SIGMA } from '../config/main-config.ts';
 
-// The real-mode strike sizer can't be exercised on-chain (a mint needs a funded wrapper, L-012), so the
-// math it rests on is pinned here. binaryOffsetFrac places a binary strike at z(p)*sigma off spot where
-// p = target win probability, so a mint's entry probability lands inside the chain's (unreadable)
-// admission band instead of the fixed-percentage strike that always aborts on a 20-60s market.
+// The real-mode strike sizer can't be exercised on-chain (needs a funded wrapper, L-012), so the math it
+// rests on is pinned here: binaryOffsetFrac places a strike at z(p)*sigma off spot so entry probability lands inside the chain's (unreadable) admission band, instead of the fixed strike that always aborts on a 20-60s market.
 
 // Acklam's inverse-normal-CDF approximation against textbook quantiles (abs error < 1.2e-9).
 describe('probit', () => {
@@ -53,6 +51,55 @@ describe('binaryOffsetFrac (real strike sizing)', () => {
     const YEAR = 365.25 * 24 * 3600;
     expect(binaryOffsetFrac(10, YEAR)).toBeCloseTo(REAL_STRIKE_MAX_OFFSET_FRAC, 9);
     expect(binaryOffsetFrac(1.05, YEAR)).toBeCloseTo(-REAL_STRIKE_MAX_OFFSET_FRAC, 9);
+  });
+});
+
+// The 2x tier prices ATM (raw offset 0), so its target would hug the entry line even after snapping to the
+// grid ($1 away). The floor lifts it to a visible directional move while staying sigma-scaled/admissible (L-013).
+describe('binaryOffsetFloored (2x tier is a visible move, not ATM)', () => {
+  const SECS = 25;
+  const sigma = REAL_BTC_ANNUAL_VOL * Math.sqrt(SECS / (365.25 * 24 * 3600));
+
+  it('lifts the ATM 2x tier to the sigma-scaled minimum offset', () => {
+    expect(binaryOffsetFrac(2, SECS)).toBeCloseTo(0, 9); // raw 2x is a coin-flip, ATM
+    expect(binaryOffsetFloored(2, SECS)).toBeCloseTo(REAL_BINARY_MIN_OFFSET_SIGMA * sigma, 9);
+    expect(binaryOffsetFloored(2, SECS)).toBeGreaterThan(binaryOffsetFrac(2, SECS));
+  });
+
+  it('leaves a high tier that already clears the floor untouched', () => {
+    expect(binaryOffsetFloored(10, SECS)).toBeCloseTo(binaryOffsetFrac(10, SECS), 9);
+  });
+});
+
+// The 2x floor prices at p=0.5 (offset 0), so the strike snapper must move it off the entry line, else
+// ENTRY == TARGET (the reported bug). Pinned here since the snap can't be exercised on-chain (L-012).
+describe('otmStrike1e9 (binary strike never lands on the entry line)', () => {
+  const ADM = 1_000_000_000n; // BTC admission step = $1 (1e9-scaled)
+  const spot = 64_196_870_000_000n; // $64,196.87, between admission boundaries
+
+  it('pushes a coin-flip (2x, raw offset 0) strike one admission step OTM, not onto entry', () => {
+    expect(otmStrike1e9('up', spot, spot, ADM)).toBe(64_197_000_000_000n); // first $1 boundary above
+    expect(otmStrike1e9('down', spot, spot, ADM)).toBe(64_196_000_000_000n); // first $1 boundary below
+    expect(otmStrike1e9('up', spot, spot, ADM)).toBeGreaterThan(spot);
+    expect(otmStrike1e9('down', spot, spot, ADM)).toBeLessThan(spot);
+  });
+
+  it('snaps a real offset onto the admission grid on the OTM side (up ceils, down floors)', () => {
+    expect(otmStrike1e9('up', 64_207_700_000_000n, spot, ADM)).toBe(64_208_000_000_000n);
+    expect(otmStrike1e9('down', 64_186_300_000_000n, spot, ADM)).toBe(64_186_000_000_000n);
+  });
+
+  it('stays strictly OTM even when spot sits exactly on an admission boundary', () => {
+    const onGrid = 64_196_000_000_000n; // $64,196.00
+    expect(otmStrike1e9('up', onGrid, onGrid, ADM)).toBe(64_197_000_000_000n);
+    expect(otmStrike1e9('down', onGrid, onGrid, ADM)).toBe(64_195_000_000_000n);
+  });
+
+  it('steps an extra boundary out when the strike would round onto the 2dp entry line', () => {
+    const nearUp = 64_196_997_000_000n; // $64,196.997 -> rounds to 64,197.00, same as the first boundary above
+    expect(otmStrike1e9('up', nearUp, nearUp, ADM)).toBe(64_198_000_000_000n);
+    const nearDown = 64_196_003_000_000n; // $64,196.003 -> rounds to 64,196.00, same as the first boundary below
+    expect(otmStrike1e9('down', nearDown, nearDown, ADM)).toBe(64_195_000_000_000n);
   });
 });
 

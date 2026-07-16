@@ -1,6 +1,5 @@
-// SSE streams: the game chart price feed and a live PnL feed per open play. EventSource
-// cannot set headers, so auth is a short-lived JWT in the query (`?t=`). Both validate
-// before hijacking the socket, so auth failures still return a normal JSON envelope.
+// SSE streams: the game chart price feed and a live PnL feed per open play.
+// EventSource can't set headers, so auth is a JWT in the query (`?t=`); both validate before hijacking, so auth failures still return a normal JSON envelope.
 
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 
@@ -17,21 +16,14 @@ import { PYTH_FEED_IDS } from '../lib/pyth.ts';
 
 const TERMINAL = new Set(['won', 'lost', 'cashed_out', 'error']);
 
-// Once a round is past its buzzer the play is 'settling' on the client and the live mark is moot
-// (about to become the final payout). Poll the status this fast then, so the won/lost frame lands
-// within ~1s of the worker resolving it instead of waiting out a full live-mark interval.
+// Past the buzzer the live mark is moot (about to become the final payout), so poll status this fast instead, landing the won/lost frame within ~1s of the worker resolving it.
 const SETTLING_POLL_MS = 1000;
 
-// Presence keepalive. The live feed is event-driven (we only push on join/leave), so without a
-// periodic frame an idle proxy would hang the socket up. Re-sending the count on this interval is
-// the heartbeat and also self-heals any client that missed a broadcast.
+// Presence keepalive: the feed only pushes on join/leave, so without this an idle proxy drops the socket; also self-heals a client that missed a broadcast.
 const LIVE_HEARTBEAT_MS = 25_000;
 
-// Live presence: every open app holds one connection here for its whole session (the client opens it
-// at the app shell, so it stays up across home, games, and menu, not just on the Home screen).
-// Broadcast the current count to all of them on every join/leave so the "N ONLINE" ticker moves in
-// real time. One process serves every web client (frontend talks to a single API), so this Set is the
-// global count.
+// Live presence: one connection per open app session (held at the app shell, so it spans home/games/menu, not just Home).
+// Broadcast count on every join/leave for the "N ONLINE" ticker; one process serves every client, so this Set is the global count.
 const liveClients = new Set<{ send: (data: unknown) => void }>();
 
 function broadcastOnline(): void {
@@ -43,6 +35,48 @@ function broadcastOnline(): void {
       // Dead socket; its close handler prunes it from the set.
     }
   }
+}
+
+// Live markets feed: one shared per-process ticker diffs a live-set signature each second and pushes a frame to every subscriber on a tradeable-set/pause flip, plus a 15s heartbeat.
+// One in-memory diff for N clients instead of N polling GET /markets; runs only while someone is watching.
+const marketClients = new Set<{ send: (data: unknown) => void }>();
+const MARKETS_TICK_MS = 1000; // how often the shared ticker checks for a live-set/pause change (in-memory)
+const MARKETS_HEARTBEAT_MS = 15_000; // force a frame at least this often (proxy keepalive + spot refresh)
+let marketTicker: ReturnType<typeof setInterval> | null = null;
+let lastMarketSig = '';
+let lastMarketBroadcastAt = 0;
+
+async function broadcastMarkets(): Promise<void> {
+  lastMarketBroadcastAt = Date.now();
+  const payload = await buildMarketsPayload().catch(() => null);
+  if (!payload) return;
+  for (const c of marketClients) {
+    try {
+      c.send(payload);
+    } catch {
+      // Dead socket; its close handler prunes it from the set.
+    }
+  }
+}
+
+function ensureMarketTicker(): void {
+  if (marketTicker) return;
+  lastMarketSig = liveSetSignature();
+  lastMarketBroadcastAt = Date.now(); // new clients are primed on connect, so start the heartbeat clock now
+  marketTicker = setInterval(() => {
+    const sig = liveSetSignature();
+    const stale = Date.now() - lastMarketBroadcastAt >= MARKETS_HEARTBEAT_MS;
+    if (sig === lastMarketSig && !stale) return;
+    lastMarketSig = sig;
+    void broadcastMarkets();
+  }, MARKETS_TICK_MS);
+  (marketTicker as { unref?: () => void }).unref?.(); // don't keep the process alive on this timer alone
+}
+
+function stopMarketTickerIfIdle(): void {
+  if (marketClients.size > 0 || !marketTicker) return;
+  clearInterval(marketTicker);
+  marketTicker = null;
 }
 
 // Hijack the reply and open the event-stream. Returns a writer + a close registration.
@@ -65,10 +99,8 @@ function openStream(reply: FastifyReply, request: FastifyRequest): { send: (data
 }
 
 export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
-  // Chart price feed for one asset. ~1s server cadence; the client interpolates to 60fps. Serves the
-  // display bus (Binance motion pinned to the on-chain oracle in real mode, gameSpot in fork mode), a
-  // cosmetic feed only, every truthful number reads the chain (L-015). The WS hub (/ws) supersedes this
-  // at 10Hz; this SSE route stays as the flagged fallback for one release.
+  // Chart price feed for one asset, ~1s cadence, client interpolates to 60fps. Cosmetic only (display bus: Binance motion pinned to on-chain oracle in real mode, gameSpot in fork mode); every truthful number reads the chain (L-015).
+  // The WS hub (/ws) supersedes this at 10Hz; this SSE route stays as the flagged fallback for one release.
   app.get('/prices', async (request: FastifyRequest, reply: FastifyReply) => {
     const { asset, t } = request.query as { asset?: string; t?: string };
     if (!asset || !PYTH_FEED_IDS[asset]) return handleError(reply, 400, 'Unknown asset', 'VALIDATION_ERROR');
@@ -85,9 +117,7 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
     onClose(() => clearInterval(timer));
   });
 
-  // Live presence: one connection per open app session (held at the client app shell, so a player
-  // stays counted while playing a game, not only on Home). No per-client tick beyond the keepalive,
-  // the count is pushed to everyone on join/leave. Drives the "N ONLINE" ticker on the device home.
+  // Live presence: one connection per app session (held at the app shell, so a player stays counted mid-game, not just on Home). Drives the "N ONLINE" ticker; count pushes on join/leave.
   app.get('/live', async (request: FastifyRequest, reply: FastifyReply) => {
     const { t } = request.query as { t?: string };
     const user = t ? await userFromToken(t) : null;
@@ -117,12 +147,40 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
     onClose(cleanup);
   });
 
-  // Live PnL for one open play, event-driven. The play bus (plays.ts commitPlay) fires the instant a
-  // status write commits (mint open/error, cash-out, settle), so pending->open and the settle reveal
-  // land in one RTT instead of waiting out a poll interval. A slow mark cadence rides alongside for the
-  // trickle live P/L and doubles as the safety net for any bus emit that never reached this process
-  // (split operator topology, TRADE_REALTIME.md §6). Emits a terminal frame and closes once, whichever
-  // path (event or cadence) observes the terminal status first.
+  // Live markets feed: tradeable set + sponsor-pause, pushed on change (replaces the per-client GET /markets
+  // poll). Primes each connection immediately, then the shared ticker broadcasts to all; reconnects re-prime.
+  app.get('/markets', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { t } = request.query as { t?: string };
+    const user = t ? await userFromToken(t) : null;
+    if (!user) return handleError(reply, 401, 'Invalid stream token', 'INVALID_TOKEN');
+
+    const { send, onClose } = openStream(reply, request);
+    const client = { send };
+    marketClients.add(client);
+    ensureMarketTicker();
+    // Prime this connection immediately; the shared ticker only pushes on change, not on connect.
+    void buildMarketsPayload()
+      .then((p) => {
+        try {
+          send(p);
+        } catch {
+          // Socket already gone; its close handler prunes it.
+        }
+      })
+      .catch(() => {});
+
+    let closed = false;
+    const cleanup = (): void => {
+      if (closed) return;
+      closed = true;
+      marketClients.delete(client);
+      stopMarketTickerIfIdle();
+    };
+    onClose(cleanup);
+  });
+
+  // Live PnL for one open play, event-driven: the play bus (plays.ts commitPlay) fires the instant a status write commits, so pending->open and the settle reveal land in one RTT instead of a poll interval.
+  // A slow mark cadence rides alongside for trickle P/L and as a safety net for any missed bus emit (split operator topology, TRADE_REALTIME.md §6); emits a terminal frame and closes once, whichever path sees it first.
   app.get('/plays/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     const id = (request.params as { id: string }).id;
     const { t } = request.query as { t?: string };
@@ -143,8 +201,7 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
       if (timer) clearTimeout(timer);
       if (unsub) unsub();
     };
-    // Tear down and send the socket FIN. Guarded by `closed`, so a terminal seen by both the event and
-    // the cadence path (or a race between them) ends the stream exactly once.
+    // Tear down and send the socket FIN; guarded by `closed` so a terminal seen by both the event and cadence paths (or a race) ends the stream exactly once.
     const endStream = (): void => {
       if (closed) return;
       cleanup();
@@ -155,8 +212,7 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
       }
     };
 
-    // Build + push one frame from a row. `mark` is the optional live cash-out value (a ~1.5s chain
-    // devInspect); omit it on the instant status push so a slow mark never delays a pending->open frame.
+    // Build + push one frame from a row. `mark` is the optional live cash-out value (a ~1.5s chain devInspect); omit it on the instant push so a slow mark never delays pending->open.
     // Returns true once a terminal frame has closed the stream, so callers stop looping.
     const pushFrame = async (current: Play, mark?: bigint): Promise<boolean> => {
       if (closed) return true;
@@ -185,11 +241,8 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
       return false;
     };
 
-    // Instant status push. The bus fires the moment a status write commits, carrying the freshly committed
-    // row, so this pushes it with NO DB read on the hot path (a bulk sweep may omit the row, in which case
-    // read the one row). Push WITHOUT the live-mark devInspect (the felt live P/L is client-side
-    // chart-synced), so pending->open is one RTT. A pending->open row is pre-expiry and a terminal row is
-    // closed, so toPlayDTO takes no chain read here either. Never let a listener error escape into the bus.
+    // Instant status push: the bus carries the committed row, so push it with NO DB read on the hot path (a
+    // bulk sweep omits it, then read the one row). No mark devInspect here, so pending->open lands in 1 RTT.
     const onEvent = async (row?: Play): Promise<void> => {
       if (closed) return;
       const current = row ?? (await prismaQuery.play.findUnique({ where: { id } }).catch(() => null));
@@ -198,10 +251,8 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
     };
     unsub = onPlay(id, (row) => void onEvent(row));
 
-    // Mark cadence: the slow, chain-bound trickle P/L, and the safety net that re-reads status each tick
-    // in case a bus emit was missed or came from another process. While open and pre-buzzer, refresh the
-    // live mark; while settling (past expiry) skip the moot mark and poll the status fast (SETTLING_POLL_MS)
-    // so a cross-process settle still resolves within ~1s.
+    // Mark cadence: the slow, chain-bound trickle P/L and safety net that re-reads status each tick in case a bus emit was missed or came from another process.
+    // Pre-buzzer, refresh the live mark; while settling (past expiry) skip the moot mark and poll status fast (SETTLING_POLL_MS) so a cross-process settle resolves within ~1s.
     const cadence = async (): Promise<void> => {
       if (closed) return;
       const current = await prismaQuery.play.findUnique({ where: { id } }).catch(() => null);
@@ -216,9 +267,7 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
       timer = setTimeout(() => void cadence(), settling ? SETTLING_POLL_MS : PLAY_STREAM_INTERVAL_MS);
     };
 
-    // One immediate frame on connect (instant, no mark), then start the cadence loop for the trickle mark
-    // + safety poll. If the play is already terminal, the immediate frame closes the stream and the
-    // cadence never starts.
+    // One immediate frame on connect (no mark), then start the cadence loop for trickle mark + safety poll; a terminal play closes on that first frame and cadence never starts.
     onClose(cleanup);
     if (!(await pushFrame(play))) void cadence();
   });

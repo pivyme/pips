@@ -1,18 +1,5 @@
-// The Binance display feed. One shared upstream websocket (NOT per-user, NOT per-chart) subscribed to a
-// combined aggTrade stream for every configured asset. It maintains the last-trade price per asset in
-// memory; the price bus (price-bus.ts) reads it, pins its LEVEL to the on-chain oracle, and streams the
-// result to charts. This module never records or settles anything (L-015): it is pure display motion.
-//
-// Real mode (testnet) + mainnet only. In fork mode (localnet/devnet) the socket never opens (the walk
-// engine is what settles there and is already lively), so binanceSpot always returns null and the bus
-// falls straight through to the on-chain gameSpot. It also stays silent when BINANCE_ENABLED is off.
-//
-// Robustness is deliberate (a hosted, long-lived socket): auto-reconnect with capped backoff + jitter, a
-// staleness watchdog that force-reconnects a silent-but-open socket, and loud logging on repeated connect
-// failure (geo-block / 451) without ever crashing the process. Binance sends WebSocket ping control
-// frames every ~20s and the runtime auto-pongs, and closes the connection after 24h; a close just trips
-// the reconnect path, so both are handled for free. The fallback ladder in price-bus.ts makes any of
-// these degrade to today's on-chain chart with zero regression.
+// Shared upstream Binance aggTrade feed per asset (not per-user, not per-chart); price-bus.ts reads it,
+// pins the level to the on-chain oracle, and streams to charts. Display-only, never records or settles (L-015). Real mode + mainnet only, fork mode never opens the socket, and BINANCE_ENABLED can kill it.
 
 import { BINANCE_ENABLED, BINANCE_STALE_MS, BINANCE_SYMBOLS, BINANCE_WS_URL, IS_REAL_PREDICT } from '../config/main-config.ts';
 import { assetSpot } from './sui/markets.ts';

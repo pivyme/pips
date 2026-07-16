@@ -1,8 +1,7 @@
 import type { AchievementDTO } from '@/lib/api'
 
-// Canonical achievement catalog: the source of truth for names, copy, and sticker art, shared by
-// the menu home rail and the full Achievements grid so the two never drift. The backend may still
-// hand back legacy slugs, so each entry can carry a legacySlug to merge old rows onto current art.
+// Canonical achievement catalog: source of truth for names, copy, and sticker art, shared by the menu
+// home rail and the full grid so they never drift. Entries can carry a legacySlug to merge old backend rows onto current art.
 
 export type CatalogAchievement = {
   slug: string
@@ -44,8 +43,7 @@ export const ACHIEVEMENTS: Array<CatalogAchievement> = [
 export const achievementImage = (slug: string): string =>
   `/assets/achievements/achievement-${slug.replaceAll('_', '-')}.webp`
 
-// The backend hands back catalog/legacy slugs (e.g. `first_play`); resolve each to its canonical
-// entry so a fresh unlock surfaces with the right sticker art + copy in the celebration overlay.
+// The backend hands back catalog/legacy slugs (e.g. `first_play`); resolve each to its canonical entry so a fresh unlock surfaces with the right sticker art + copy.
 const BY_ANY_SLUG = new Map<string, CatalogAchievement>()
 for (const a of ACHIEVEMENTS) {
   BY_ANY_SLUG.set(a.slug, a)

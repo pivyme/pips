@@ -1,9 +1,8 @@
 import { Switch as HeroSwitch } from '@heroui/react'
 import { cnm } from '@/utils/style'
 
-// Flat wrapper over HeroUI v3's compound Switch (react-aria under the hood, so it stays
-// accessible and keyboard driven). The material recipe lives in styles.css so previews and
-// production settings stay visually identical.
+// Flat wrapper over HeroUI v3's compound Switch (react-aria under the hood, accessible and keyboard driven).
+// The material recipe lives in styles.css so previews and production settings stay visually identical.
 export function Switch({
   isSelected,
   onChange,

@@ -39,9 +39,7 @@ export const serializeFormattedStringToFloat = (val: string): number => {
   }
 }
 
-// Money formatter for the DUSDC strings the API returns. Renders 2 decimals by default (clean for the
-// UI) without ever going through a JS float, so the comma grouping and sign stay exact. Pass a higher
-// maxDecimals only where sub-cent precision genuinely needs to show.
+// Money formatter for DUSDC strings from the API. Never goes through a JS float, so comma grouping and sign stay exact.
 export const formatExactDecimal = (
   value: string,
   options: { minDecimals?: number; maxDecimals?: number; absolute?: boolean } = {},
@@ -56,9 +54,8 @@ export const formatExactDecimal = (
   return `${sign}${whole}${fraction ? `.${fraction}` : ''}`
 }
 
-// Collapse anything >= 1000 to a short 1-decimal suffix (5152 -> "5.1k", 2.3M, 1B). Truncates
-// instead of rounding so a value never reads higher than it actually is. Returns null below 1k so
-// the caller keeps its own exact formatting. Magnitude only, the caller owns the sign and currency.
+// Collapses >= 1000 to a 1-decimal suffix (5152 -> "5.1k"), truncated so it never reads higher than actual.
+// Null below 1k so the caller keeps its own formatting; magnitude only, caller owns sign/currency.
 const compactSuffix = (abs: number): string | null => {
   if (abs < 1000) return null
   for (const [base, suffix] of [
@@ -74,9 +71,7 @@ const compactSuffix = (abs: number): string | null => {
   return null
 }
 
-// Compact money for tight card cells. Keeps small amounts exact (the usual 2dp) and collapses
-// anything >= 1k to a 1-decimal suffix to save space. Magnitude only (absolute), the caller
-// prepends the sign and the $. Input is the DUSDC string the API returns.
+// Compact money for tight card cells: exact 2dp under 1k, 1-decimal suffix above. Magnitude only, caller prepends sign and $.
 export const formatCompactMoney = (value: string): string => {
   const match = value.trim().replace(/,/g, '').match(/^([+-]?)(\d+)(?:\.(\d+))?$/)
   if (!match) return '0.00'
@@ -215,10 +210,7 @@ export const formatUiNumber = (
   }
 }
 
-// Decimal precision for a live asset price, scaled to magnitude (BTC in the tens of thousands
-// down to a sub-$1 token) so the readout still ticks visibly instead of rounding flat at high
-// prices. >= $1 keeps 2 decimals at every magnitude (no more collapsing to whole dollars above
-// $1k), sub-$1 assets get 4 so their smaller moves stay visible too.
+// Decimal precision scaled to magnitude so the readout still ticks visibly: 2dp at >= $1 (even for BTC-sized prices), 4dp below $1.
 export const priceDecimals = (price: number): number => (Math.abs(price) >= 1 ? 2 : 4)
 
 // Fixed-decimal price string, padded to a consistent width. Use for canvas-drawn labels where a
@@ -236,9 +228,7 @@ export const capitalizeFirstLetter = (str: string): string => {
   return str.charAt(0).toUpperCase() + str.slice(1)
 }
 
-// The player's @handle for display: always lowercase, prefixed with @. Before a handle is set (or
-// as a guard) it falls back to the auth display name, then a generic label. One place so every
-// surface that shows the handle reads the same.
+// The player's @handle for display, always lowercase and @-prefixed; falls back to the display name then a generic label before a handle is set.
 export const displayHandle = (
   user?: { username?: string | null; displayName?: string | null } | null,
   fallback = 'Player',

@@ -1,10 +1,5 @@
-// Demo mode. A self-contained mock of the whole backend + chain so the UI is fully playable
-// with no server, no funds, and no Sui. Every screen runs on simulated prices and in-memory
-// state (persisted to localStorage so your record survives a reload). The api client and the
-// two SSE helpers route here when isDemo() is true, so the games never know the difference.
-//
-// This is the ONLY place sim lives. The real product is always real Predict; demo is a play
-// pen, clearly badged as such, for poking at the interface.
+// Demo mode: a self-contained mock of the whole backend + chain, so the UI is fully playable
+// with no server, no funds, no Sui. The ONLY place sim lives; the real product is always real Predict.
 
 import { env } from '@/env'
 import { ApiError } from './api'
@@ -26,6 +21,7 @@ import type {
   PlayTick,
   PriceTick,
   LiveTick,
+  ReferralClaimDTO,
   ReferralDTO,
   ReferralInfoDTO,
   ReferralResolveDTO,
@@ -68,21 +64,17 @@ export function setDemoOverride(on: boolean | null): void {
 // A realistic-looking Sui address so demo reads as the real thing on screen recordings.
 const DEMO_ADDRESS = '0xa3f08c7e5b1d49260e8a3f7c6d20b9e41f5c8a037e94d2b60a3c5f81e9b27d4c'
 const DEMO_HANDLE = '@pips'
-// A linked-but-not-adopted X account by default (username starts as 'pips', not 'pips_demo'), so the
-// Account Settings screen, the "Use your X username" button, and the verified pill are all demoable
-// with no backend: tap the button, save, and the badge flips on, mirroring the real verifiedX rule.
+// Unadopted by default (username starts as 'pips', not 'pips_demo') so the "Use your X username" flow
+// and verified pill are demoable with no backend.
 const DEMO_TWITTER = { username: 'pips_demo', name: 'PIPS Demo' }
 const isTwitterVerified = (username: string | null): boolean =>
   Boolean(username && username.toLowerCase() === DEMO_TWITTER.username.toLowerCase())
-// Fallback seed levels (real mid-2026 oracle levels). Used until the live Pyth feed connects and any
-// time the network is blocked, so demo mode still runs fully offline, just on a frozen-but-correct base.
+// Seed levels (real mid-2026 oracle prices), used offline until the live Pyth feed connects.
 const SEED_PRICES: Record<string, number> = { BTC: 63_575, ETH: 1_725, SOL: 71.45, SUI: 0.71, DEEP: 0.0166 }
 const ASSETS = Object.keys(SEED_PRICES)
-// The tradeable set the games see, matching the real backend (ORACLE_ASSETS = BTC,SUI,ETH). The price
-// model still walks all of SEED_PRICES (history rows reference SOL etc.), but markets only lists these.
+// Tradeable set the games see, matching backend ORACLE_ASSETS; SEED_PRICES still walks SOL/DEEP for history rows.
 const MARKET_ASSETS = ['BTC', 'ETH', 'SUI']
-// Pyth Hermes price-feed ids (the real oracle). The live SSE stream sets each asset's anchor to the
-// true market price; the synthetic walk rides on top so a 30s round still has motion to settle against.
+// Pyth Hermes feed ids: the live SSE stream sets each anchor to the true price; the synthetic walk rides on top for round motion.
 const PYTH_IDS: Record<string, string> = {
   BTC: 'e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43',
   ETH: 'ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace',
@@ -95,12 +87,8 @@ const DURATIONS = [10, 30, 60]
 const RANGE_ROUND_SEC = 30 // Range is one real settled round; the client no longer picks a duration
 
 // === Lucky: the slot-weighted multiplier reel (LUCKY.md §4-5) ===
-// The reel deals one tier per spin, weighted for fun (NOT by win odds). Each tier then settles at its
-// own honest odds = 1/mult, so a 2x is a real coinflip and a 25x is a rare-but-real jackpot. The strike
-// (the TARGET line) always sits in the BET DIRECTION (z >= 0): up targets above entry, down below, so
-// "down" always needs the price to fall. The ladder starts at 2x (a small move past entry, floored so
-// it never lands on the entry line); a sub-2x tier would force the target onto the wrong side of entry.
-// z is the standard-normal quantile invNorm(1 - 1/mult).
+// Reel deals one tier per spin, weighted for fun not win odds; each tier settles at its own honest 1/mult odds.
+// TARGET always sits in the bet direction (z >= 0, floored above entry) so "down" always needs price to fall.
 const LUCKY_ASSETS = ['BTC', 'SUI', 'ETH']
 const LUCKY_ROUND_SEC = 30 // fixed fast round
 const ROUND_VOL = 0.022 // fractional std of price over a 30s round; sets how far the TARGET sits per tier
@@ -122,9 +110,8 @@ const TRANSIENT_DECAY = 0.3 // how fast a wick snaps back, sharp and gone within
 // Demo-only latency beats, so a play feels like it really hits the chain (but ~1s, not the real 3s+).
 const OPEN_PENDING_MS = 850 // the OPENING beat: hold 'pending' ~1s after the deal before it goes live
 const SETTLE_HOLD_MS = 900 // the SETTLING beat: hold at the buzzer ~1s before the result lands
-// The lock-in lead, mirroring the real backend's EXPIRY_SAFETY_MS: the settlement price freezes this far
-// before the buzzer (the price-pusher stops then), so demo snapshots the result here too and serves it as
-// lockPrice. Keeps the demo's RESULT line honest, the value shown at lock is exactly what settles.
+// Mirrors the backend's EXPIRY_SAFETY_MS: settlement price freezes this far before the buzzer, so demo
+// snapshots it here too and serves it as lockPrice, the value shown at lock is exactly what settles.
 const LOCK_LEAD_MS = 5000
 
 const CATALOG = [
@@ -139,13 +126,8 @@ const CATALOG = [
 ] as const
 
 // === Price engine ===
-// Each asset's price = a live anchor (the real market level) times a synthetic walk on top. The live
-// oracle (Pyth Hermes, below) streams the true price into the anchor, so the chart reads accurate; the
-// walk adds a smooth momentum trend plus the occasional sharp wick (the "hammer") so a 30s round has
-// enough motion to settle against (real 30s vol is too small to play). The walk mean-reverts to the
-// anchor, so the line always hugs the real level. Lazily started in the browser; every game reads the
-// same emitted price, so chart and settlement agree. No live feed (blocked/offline) = the seed anchors
-// + the walk carry demo fully, just on a correct-but-frozen base.
+// Price = live anchor (Pyth Hermes streamed) times a synthetic momentum walk with occasional wicks, since
+// real 30s vol is too small to play; the walk mean-reverts to the anchor so it always hugs the real level.
 
 const prices = new Map<string, number>() // emitted price = anchor * (1 + drift + transient)
 const anchors = new Map<string, number>() // the real level: live Pyth feed, or the seed fallback
@@ -164,10 +146,8 @@ function ensurePrice(asset: string): void {
   }
 }
 
-// Live oracle: stream real prices from Pyth Hermes (SSE) into each asset's anchor. One persistent
-// connection (no polling, so no rate limit); EventSource auto-reconnects, and if it never connects the
-// seed anchors keep everything running. Only ever opened from the demo price paths, so it never runs
-// outside demo mode.
+// Streams real Pyth Hermes prices into each anchor over one persistent SSE connection (no polling, no
+// rate limit); EventSource auto-reconnects, and the seed anchors carry on if it never connects.
 const ID_TO_ASSET = new Map<string, string>()
 for (const [a, id] of Object.entries(PYTH_IDS)) ID_TO_ASSET.set(id.toLowerCase().replace(/^0x/, ''), a)
 let pythSrc: EventSource | null = null
@@ -215,8 +195,8 @@ function startEngine(): void {
       if (vel > MAX_VEL) vel = MAX_VEL
       else if (vel < -MAX_VEL) vel = -MAX_VEL
       vels.set(a, vel)
-      // Drift is a fractional offset from the live anchor: it accrues velocity and slowly reverts to 0,
-      // so the line wanders for a playable round but always settles back toward the real oracle level.
+      // Drift is a fractional offset from the anchor: accrues velocity, slowly reverts to 0 so the line
+      // always settles back toward the real oracle level.
       let drift = (drifts.get(a) ?? 0) + vel
       drift -= drift * REVERT
       if (drift > DRIFT_CLAMP) drift = DRIFT_CLAMP
@@ -342,8 +322,8 @@ function load(): DemoState {
     if (raw) {
       const parsed = JSON.parse(raw) as DemoState
       if (parsed.v === STATE_VERSION) {
-        // Additive settings backfill: a state saved before a new toggle existed lacks the key, so
-        // default it in place rather than bumping the version and wiping the demo record.
+        // Additive settings backfill: a state saved before a new toggle existed lacks the key, default
+        // it in place rather than bumping the version and wiping the demo record.
         if (parsed.settings.confirmTrades == null) parsed.settings.confirmTrades = false
         return parsed
       }
@@ -397,8 +377,7 @@ const pxStr = (n: number): string => (n >= 1 ? n.toFixed(2) : n.toFixed(6))
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 function pickTier(): (typeof LUCKY_TIERS)[number] {
-  // Slot-weighted: which bet you are dealt is weighted for fun (usually a winnable tier), but you then
-  // win it at its own honest odds. Weights sum to 1, so a single uniform draw picks the tier.
+  // Weighted deal (fun, not odds): each tier still settles at its own honest odds. Weights sum to 1.
   let r = Math.random()
   for (const t of LUCKY_TIERS) if ((r -= t.weight) <= 0) return t
   return LUCKY_TIERS[0]
@@ -406,10 +385,8 @@ function pickTier(): (typeof LUCKY_TIERS)[number] {
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 
-// Standard normal CDF (Zelen & Severo approximation). Marks an open lucky ticket to its live fair
-// value, bet × mult × P(finish on your side of TARGET given the live price and the time left). At open
-// that is exactly the bet; a favorable move lifts it toward bet × mult, so an early cash-out pays a
-// believable partial before the price has fully reached the target.
+// Standard normal CDF (Zelen & Severo approx). Marks an open ticket to its live fair value: bet × mult ×
+// P(finish on your side of TARGET); a favorable move lifts it toward bet × mult for a believable cash-out.
 function normCdf(x: number): number {
   const t = 1 / (1 + 0.2316419 * Math.abs(x))
   const poly = t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
@@ -503,8 +480,7 @@ function mark(c: MarkCtx, price: number): { markValue: number; pnl: number; mult
   return { markValue, pnl: markValue - c.stake, multiplier: c.lockedMult, win: inside }
 }
 
-// Close a play (cash out at the live mark, or settle at expiry). Idempotent per id. Updates the
-// record + balance + achievements and moves the play into settled history.
+// Close a play (cash out at live mark, or settle at expiry), idempotent per id; updates record/balance/achievements and moves it to history.
 function closePlay(id: string, mode: 'cashout' | 'settle'): { play: PlayDTO; unlocked: string[] } {
   const p = byId.get(id)
   const c = ctx.get(id)
@@ -538,8 +514,7 @@ function closePlay(id: string, mode: 'cashout' | 'settle'): { play: PlayDTO; unl
   p.multiplier = m.multiplier
   p.settledAt = new Date(nowMs()).toISOString()
   p.settlePrice = pxStr(settlePx)
-  // A settle freezes the price via a post-expiry push; mirror that tx so demo history shows the
-  // settlement link. A cash-out is a pre-expiry redeem, so it has no settlement push.
+  // Settle freezes price via a post-expiry push, mirrored as txSettle; a cash-out is a pre-expiry redeem so it has none.
   if (mode === 'settle') p.txSettle = demoDigest()
 
   // Record + balance.
@@ -552,7 +527,7 @@ function closePlay(id: string, mode: 'cashout' | 'settle'): { play: PlayDTO; unl
     k.currentStreak += 1
     k.maxStreak = Math.max(k.maxStreak, k.currentStreak)
     if (status === 'cashed_out') k.cashouts += 1
-    if (m.multiplier >= 25) k.maxMultiplierCashed = Math.max(k.maxMultiplierCashed, m.multiplier)
+    k.maxMultiplierCashed = Math.max(k.maxMultiplierCashed, m.multiplier)
     if (k.lastWasLoss) k.comebackDone = true
     k.lastWasLoss = false
   } else {
@@ -598,9 +573,8 @@ function createLucky(body: Record<string, unknown>): PlayDTO {
   const entry = currentPrice(asset)
   const roundVol = ROUND_VOL * Math.sqrt(duration / LUCKY_ROUND_SEC)
   const dir = side === 'up' ? 1 : -1
-  // The strike (TARGET) sits in the bet direction at the distance the tier's odds imply, floored at a
-  // small minimum so even the 2x is a real, visible directional move (never a strike on the entry
-  // line), mirroring the backend's LUCKY_MIN_TARGET_FRAC. So "down" always needs the price to fall.
+  // TARGET sits in the bet direction at the tier-implied distance, floored (LUCKY_MIN_TARGET_FRAC) so
+  // even a 2x is a real visible move, never on the entry line. "down" always needs the price to fall.
   const MIN_TARGET_FRAC = 0.0015
   const target = entry * (1 + dir * Math.max(roundVol * tier.z, MIN_TARGET_FRAC))
   const openedMs = nowMs()
@@ -658,9 +632,8 @@ function createRange(body: Record<string, unknown>): PlayDTO {
   return p
 }
 
-// Reach (the dialed target multiple) -> normal quantile, matching the real solver's tier distances, so
-// a bigger reach places the TARGET further OTM (longer odds, bigger multiple). Exact for the ladder
-// values [2,3,5,10,25]; anything between snaps to the nearest rung at or below.
+// Reach (dialed target multiple) -> normal quantile matching the real solver's tier distances; a bigger
+// reach places TARGET further OTM. Exact for [2,3,5,10,25], anything between snaps to the nearest rung below.
 const REACH_Z: Record<number, number> = { 2: 0, 3: 0.4307, 5: 0.8416, 10: 1.2816, 25: 1.7507 }
 function reachZ(reach: number): number {
   if (REACH_Z[reach] != null) return REACH_Z[reach]
@@ -669,10 +642,8 @@ function reachZ(reach: number): number {
   return z
 }
 
-// MOONSHOT: the directional twin of Lucky. The player calls the side (LONG = up, SHORT = down) and
-// dials a reach (the target multiple); the bet sizes it. Same binary settle as Lucky, but you pick the
-// direction + reach instead of the reel dealing them. The TARGET sits in the bet direction at the reach's
-// implied distance, floored so even a 2x is a real move.
+// MOONSHOT: directional twin of Lucky. Player calls side + dials reach (target multiple) instead of the
+// reel dealing them; same binary settle, TARGET floored so even a 2x is a real move.
 function createMoonshot(body: Record<string, unknown>): PlayDTO {
   const stake = Number(body.stake ?? 25)
   ensureBalance(stake)
@@ -742,6 +713,7 @@ function statsDTO(): UserStatsDTO {
     winRate: k.gamesPlayed > 0 ? k.wins / k.gamesPlayed : 0,
     currentStreak: k.currentStreak,
     maxStreak: k.maxStreak,
+    bestMultiplier: k.maxMultiplierCashed,
     totalVolume: str(k.totalVolume),
     netPnl: str(k.netPnl),
     firstPlayAt: k.firstPlayAt,
@@ -782,12 +754,36 @@ const LB_TRADERS: Array<{ username: string; netPnl: number; games: number }> = [
 ]
 
 // A believable referral list so /menu/referrals doesn't read empty in demo. Fixed, not tied to
-// state.username (that's the demo account's OWN handle, these are people it referred).
+// state.username (that's the demo account's OWN handle, these are people it referred). `earned` is what
+// each has paid the demo account in revenue share (25% of their trading fees).
 const DEMO_REFERRAL_CODE = 'DEMOCODE'
 const DEMO_REFERRALS: ReferralDTO[] = [
-  { handle: 'febi', joinedAt: new Date(nowMs() - 3 * 86_400_000).toISOString(), plays: 42 },
-  { handle: 'moonlee', joinedAt: new Date(nowMs() - 9 * 86_400_000).toISOString(), plays: 11 },
+  { handle: 'febi', joinedAt: new Date(nowMs() - 3 * 86_400_000).toISOString(), plays: 42, earned: '4.15' },
+  { handle: 'moonlee', joinedAt: new Date(nowMs() - 9 * 86_400_000).toISOString(), plays: 11, earned: '1.05' },
 ]
+// Total earned = sum of the referees' contributions; claimed accrues as the demo account claims.
+const DEMO_REFERRAL_EARNED = DEMO_REFERRALS.reduce((s, r) => s + Number(r.earned), 0)
+const DEMO_REFERRAL_MIN_CLAIM = 1
+let demoReferralClaimed = 0
+let demoReferralClaims: ReferralClaimDTO[] = []
+
+// Shared /referral payload so referral(), setReferralAnon(), and claimReferral() all agree.
+function demoReferralInfo(): ReferralInfoDTO {
+  const claimable = Math.max(0, DEMO_REFERRAL_EARNED - demoReferralClaimed)
+  return {
+    code: DEMO_REFERRAL_CODE,
+    anon: state.referralAnon,
+    username: state.username,
+    count: DEMO_REFERRALS.length,
+    referrals: DEMO_REFERRALS,
+    sharePct: 25,
+    totalEarned: DEMO_REFERRAL_EARNED.toFixed(2),
+    totalClaimed: demoReferralClaimed.toFixed(2),
+    claimable: claimable.toFixed(2),
+    minClaim: DEMO_REFERRAL_MIN_CLAIM.toFixed(2),
+    claims: demoReferralClaims,
+  }
+}
 
 // Seed scores for the arcade boards (the demo account is mixed in via its own best).
 const MINIGAME_BOTS: Record<string, Array<[string, number]>> = {
@@ -865,8 +861,7 @@ export const demoApi = {
     await delay(120)
     return { token: 'demo-token', user: userDTO() }
   },
-  // Wallet-connect is hidden in demo (the door gates it on !demo), so these are just stubs that keep
-  // the demo client complete.
+  // Wallet-connect is hidden in demo (door gates on !demo); these are stubs so the demo client stays complete.
   authWalletNonce: async (_address: string) => {
     await delay(60)
     return { message: 'Sign in to PIPS (demo)' }
@@ -876,8 +871,7 @@ export const demoApi = {
     return { token: 'demo-token', user: userDTO() }
   },
   me: async () => ({ user: userDTO() }),
-  // Demo never re-arms (managerReady is always true), so heal is unreachable here; keep the twin so
-  // the demo client stays complete.
+  // Demo never re-arms (managerReady always true) so heal is unreachable here; kept for client completeness.
   authHeal: async () => ({ user: userDTO() }),
 
   setUsername: async (username: string) => {
@@ -890,12 +884,10 @@ export const demoApi = {
     return { user: userDTO() }
   },
 
-  // Account Settings is read-only in demo (no Privy provider to drive real link/unlink), so this is
-  // never actually called from a link action; kept for api-client completeness.
+  // Account Settings is read-only in demo (no Privy provider); never actually called, kept for api-client completeness.
   linkRefresh: async () => ({ user: userDTO() }),
 
-  // Avatar upload/remove, in-memory. The client already shrank the file to a webp data URL, so just
-  // stash it (custom wins over the default) or clear it. No network, no chain.
+  // Avatar upload/remove, in-memory: client already shrank the file to a webp data URL, just stash or clear it.
   uploadAvatar: async (dataUrl: string) => {
     await delay(140)
     if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
@@ -918,8 +910,7 @@ export const demoApi = {
     return { markets: MARKET_ASSETS.map((a) => ({ asset: a, spot: String(currentPrice(a)), durations: DURATIONS, live: true })), playsPaused: false }
   },
 
-  // Demo has no chain, so each "quote" reuses the same model createRange mints against: the band +
-  // multiple are exactly what a demo PLAY would lock, so the preview and the locked value still agree.
+  // Demo has no chain: each "quote" reuses the same model createRange mints against, so preview and locked value always agree.
   rangeQuotes: async (asset: string, widthPcts: number[]): Promise<{ quotes: RangeQuote[] }> => {
     await delay(80)
     const entry = currentPrice(asset)
@@ -976,17 +967,33 @@ export const demoApi = {
 
   referral: async (): Promise<ReferralInfoDTO> => {
     await delay(100)
-    return { code: DEMO_REFERRAL_CODE, anon: state.referralAnon, username: state.username, count: DEMO_REFERRALS.length, referrals: DEMO_REFERRALS }
+    return demoReferralInfo()
   },
 
   setReferralAnon: async (anon: boolean): Promise<ReferralInfoDTO> => {
     state.referralAnon = anon
     save()
-    return { code: DEMO_REFERRAL_CODE, anon: state.referralAnon, username: state.username, count: DEMO_REFERRALS.length, referrals: DEMO_REFERRALS }
+    return demoReferralInfo()
   },
 
-  // Unreachable in practice (the door skips resolveReferral entirely in demo mode), kept so the demo
-  // client stays a complete twin of the real one.
+  // Claim twin: pay the claimable balance into the demo balance and append a paid claim to history.
+  claimReferral: async (): Promise<ReferralInfoDTO> => {
+    await delay(180)
+    const claimable = Math.max(0, DEMO_REFERRAL_EARNED - demoReferralClaimed)
+    if (claimable < DEMO_REFERRAL_MIN_CLAIM) {
+      throw new ApiError('REFERRAL_BELOW_MIN', `You need at least $${DEMO_REFERRAL_MIN_CLAIM.toFixed(2)} in rewards to claim.`, 400)
+    }
+    demoReferralClaimed += claimable
+    demoReferralClaims = [
+      { id: `demo-claim-${newId()}`, amount: claimable.toFixed(2), status: 'paid', txDigest: `demo-claim-${newId()}`, createdAt: new Date(nowMs()).toISOString() },
+      ...demoReferralClaims,
+    ]
+    state.balance += claimable
+    save()
+    return demoReferralInfo()
+  },
+
+  // Unreachable in practice (door skips resolveReferral in demo mode); kept so the client stays a complete twin.
   resolveReferral: async (_token: string): Promise<ReferralResolveDTO> => {
     await delay(60)
     return { valid: false, handle: null }
@@ -1061,10 +1068,8 @@ export const demoApi = {
 
 // === SSE replacements ===
 
-// Match the live WS price bus: emit at ~10Hz (the backend's PRICE_WS_BROADCAST_MS), same {price, ts}
-// shape. The walk updates the level every TICK_MS; sampling faster just repeats the value between steps,
-// exactly like the real bus reading the display spot at 100ms, and the client ease smooths it. So the
-// demo chart moves and reads like a live-mode one, not the old 300ms per-connection stream.
+// Matches the live WS price bus: emits at ~10Hz (PRICE_WS_BROADCAST_MS), same {price, ts} shape. The walk
+// updates every TICK_MS; faster sampling just repeats the value, so demo reads like live mode, not the old 300ms stream.
 const DEMO_CHART_MS = 100
 
 export function demoStreamPrices(asset: string, onTick: (t: PriceTick) => void): () => void {
@@ -1080,8 +1085,7 @@ export function demoStreamPrices(asset: string, onTick: (t: PriceTick) => void):
   }
 }
 
-// A gently breathing "online" count so the demo Home feels alive. Demo is a sim (clearly badged),
-// so this is a bounded random walk, not real presence.
+// Gently breathing "online" count so demo Home feels alive: a bounded random walk, not real presence.
 export function demoStreamLive(onTick: (t: LiveTick) => void): () => void {
   let n = 6 + Math.floor(Math.random() * 7) // start 6..12
   let stopped = false
@@ -1095,6 +1099,18 @@ export function demoStreamLive(onTick: (t: LiveTick) => void): () => void {
     stopped = true
     clearInterval(iv)
   }
+}
+
+export function demoStreamMarkets(onTick: (t: { markets: MarketDTO[]; playsPaused: boolean }) => void): () => void {
+  // Demo has no chain: the live set never changes and plays never pause. Emits a snapshot then a slow
+  // heartbeat mirroring the server's spot-refresh cadence; the chart streams its own prices.
+  const frame = () => ({
+    markets: MARKET_ASSETS.map((a) => ({ asset: a, spot: String(currentPrice(a)), durations: DURATIONS, live: true })),
+    playsPaused: false,
+  })
+  onTick(frame())
+  const iv = setInterval(() => onTick(frame()), 15_000)
+  return () => clearInterval(iv)
 }
 
 export function demoStreamPlay(playId: string, onTick: (t: PlayTick) => void, onError?: () => void): () => void {
@@ -1113,17 +1129,15 @@ export function demoStreamPlay(playId: string, onTick: (t: PlayTick) => void, on
       return true
     }
     const t = nowMs()
-    // OPENING beat: the mint is "landing". Hold 'pending' ~1s after the stream opens, then go live, so
-    // the screen shows a believable OPENING loader (real chain takes a few seconds; demo fakes ~1s).
+    // OPENING beat: hold 'pending' ~1s after the stream opens then go live, faking the real chain's few seconds.
     if (c.confirmAtMs == null) c.confirmAtMs = t + OPEN_PENDING_MS
     if (t < c.confirmAtMs) {
       onTick({ markValue: str(c.stake), pnl: '0.00', multiplier: c.lockedMult, status: 'pending', ts: t })
       return false
     }
     if (p.status === 'pending') p.status = 'open'
-    // Lock-in: LOCK_LEAD_MS before the buzzer the settlement price freezes (mirrors the backend), so
-    // snapshot it ONCE here and serve it as lockPrice. The RESULT line drawn from this is exactly what
-    // settles. Win/loss is decided by this snapshot, not where the price drifts afterward.
+    // Lock-in: LOCK_LEAD_MS before the buzzer, price freezes (mirrors backend); snapshot it ONCE as lockPrice.
+    // Win/loss is decided by this snapshot, not where the price drifts afterward.
     if (c.settlePrice == null && t >= c.expiryMs - LOCK_LEAD_MS) c.settlePrice = currentPrice(c.asset)
     const lockPrice = c.settlePrice != null ? pxStr(c.settlePrice) : undefined
     // SETTLING beat: at the buzzer, hold ~1s before the result lands, like the on-chain settle.
@@ -1139,8 +1153,7 @@ export function demoStreamPlay(playId: string, onTick: (t: PlayTick) => void, on
       onTick({ markValue: play.markValue, pnl: play.pnl, multiplier: play.multiplier, status: play.status, ts: t })
       return true
     }
-    // Once locked, mark against the frozen price (the live read no longer matters); before the lock, mark
-    // against the live price as usual.
+    // Once locked, mark against the frozen price; before the lock, mark against the live price as usual.
     const m = mark(c, c.settlePrice ?? currentPrice(c.asset))
     onTick({ markValue: str(m.markValue), pnl: str(m.pnl), multiplier: m.multiplier, status: 'open', lockPrice, ts: t })
     return false
@@ -1171,9 +1184,8 @@ interface SeedSpec {
   minsAgo: number
 }
 
-// A played-in record: newest first, a believable hot-but-not-perfect run. The three most recent are
-// wins, so currentStreak (3) reads true; the loss at 44m ago is what that streak resets from. Prices
-// track the seed levels above, so entry/exit/target read like the real market.
+// A played-in record: newest first, hot-but-not-perfect. The three most recent are wins so currentStreak
+// (3) reads true; the loss at 44m ago is what it resets from. Prices track the seed levels above.
 const SEED_PLAYS: SeedSpec[] = [
   { game: 'lucky', asset: 'BTC', status: 'won', stake: 25, mult: 3, pnl: 50, minsAgo: 4 },
   { game: 'lucky', asset: 'SUI', status: 'cashed_out', stake: 10, mult: 5, pnl: 22, minsAgo: 13 },

@@ -19,9 +19,8 @@ export function useLocalStorage<T>(
     }
   }, [key])
 
-  // Server render and the first client render must agree, otherwise any consumer that binds the
-  // stored value into markup or styles will trip hydration warnings. We still sync the real value in
-  // a layout effect so client-only mounts (like game screens) pick it up before paint.
+  // Server and first client render must agree or consumers binding this into markup trip hydration warnings.
+  // Synced to the real value in a layout effect so client-only mounts (game screens) pick it up before paint.
   const [storedValue, setStoredValue] = useState<T>(initialValue)
 
   useIsoLayoutEffect(() => {

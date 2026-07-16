@@ -1,8 +1,5 @@
-// price-pusher: the heartbeat of the Predict instance. Every tick it pulls spot from Pyth
-// Hermes and pushes it onto every tradeable oracle so mint/redeem stay inside the 30s
-// freshness gate (gotcha #1). Pushes are batched per cap (one PTB per cap, gotcha #5) and
-// it never touches an oracle inside the expiry safety window, so an in-flight mint cannot
-// race settlement (gotcha #3); settle owns oracles past that line.
+// price-pusher: the heartbeat of the Predict instance, pulling Pyth spot each tick and pushing it onto
+// every tradeable oracle to keep mint/redeem inside the 30s freshness gate. Batched one PTB per cap; never touches an oracle inside the expiry safety window, so an in-flight mint can't race settlement.
 
 import cron from 'node-cron';
 
@@ -29,9 +26,8 @@ const pushPrices = async (): Promise<void> => {
     if (due.length === 0) return;
 
     const assets = [...new Set(due.map((m) => m.underlying))];
-    // The synthetic walk (real Pyth anchor + vol): the value we write on-chain. The chart streams the
-    // eased version of THIS pushed price (gameSpot), so the line always tracks what the play settles
-    // against, never a second walk.
+    // The synthetic walk (real Pyth anchor + vol) is the value written on-chain; the chart streams an eased
+    // version of THIS pushed price (gameSpot), so the line always tracks what the play settles against, never a second walk.
     const spots: Record<string, number> = {};
     await Promise.all(
       assets.map(async (a) => {

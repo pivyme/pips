@@ -1,12 +1,5 @@
-// Privy server wrapper for privy auth mode: verify the user's access token, provision/fetch the
-// embedded Sui wallet, and sign their Sui transactions with that wallet via Privy rawSign under a
-// session signer (the app's authorization key the user delegated to at login). No per-spin popup,
-// no client round trip. All Privy server calls funnel through here.
-//
-// Sui signing detail (the one subtle correctness point, confirmed in the Phase 12 spike): the Sui
-// signing digest is blake2b256(messageWithIntent('TransactionData', txBytes)). Privy's rawSign
-// supports blake2b256 in its hash_function enum, so we hand it the intent message bytes and let it
-// hash, then assemble the ed25519 signature into the Sui serialized format.
+// Privy server wrapper for privy auth mode: verifies the access token, provisions the embedded Sui wallet, and signs txs via Privy rawSign under a session signer (no per-spin popup). All Privy server calls funnel through here.
+// Sui signing digest is blake2b256(messageWithIntent('TransactionData', txBytes)); rawSign hashes with blake2b256, then we assemble the ed25519 sig into Sui's serialized format.
 
 import { PrivyClient } from '@privy-io/node';
 import { messageWithIntent, toSerializedSignature } from '@mysten/sui/cryptography';
@@ -36,27 +29,22 @@ function privy(): PrivyClient {
   return client;
 }
 
-// The authorization context that lets the server act on a wallet the app's session signer controls.
-// The SDK strips the `wallet-auth:` prefix and signs each request with this P-256 key. Empty when no
-// key is configured (an app-owned wallet then needs no authorization signature, just the app secret).
+// Authorization context for a wallet the app's session signer controls; the SDK strips `wallet-auth:` and signs each request with this P-256 key.
+// Empty when unconfigured, an app-owned wallet then needs only the app secret.
 function authContext() {
   return PRIVY_AUTHORIZATION_PRIVATE_KEY
     ? { authorization_context: { authorization_private_keys: [PRIVY_AUTHORIZATION_PRIVATE_KEY] } }
     : {};
 }
 
-// Verify a Privy access token and return the stable Privy user id (DID / sub). Throws if the
-// token is invalid or expired, which the caller maps to a 401.
+// Verify a Privy access token, return the stable Privy user id (DID/sub); throws on invalid/expired (caller maps to 401).
 export async function verifyPrivyToken(accessToken: string): Promise<{ privyUserId: string }> {
   const claims = await privy().utils().auth().verifyAccessToken(accessToken);
   return { privyUserId: claims.user_id };
 }
 
-// Pull the user's email straight from Privy by user id. The access token claims don't carry it, and
-// the client only knows it for the email login method (Google sign-in keeps it under the google_oauth
-// account, not user.email), which is why client-reported emails came through blank. We read every
-// login method that surfaces an email. Best-effort: returns null and never throws, so a Privy hiccup
-// can't block sign-in.
+// Pull the user's email by Privy user id: token claims don't carry it, and Google sign-in keeps it under google_oauth not user.email, which is why client-reported emails came through blank.
+// Best-effort, returns null and never throws so a Privy hiccup can't block sign-in.
 export async function fetchPrivyEmail(privyUserId: string): Promise<string | null> {
   try {
     const user = await privy().users()._get(privyUserId);
@@ -76,9 +64,8 @@ export type PrivyIdentity = {
   twitter: { username: string; subject: string; name: string | null } | null;
 };
 
-// One pass over the user's linked accounts for both email and X. Same email logic as
-// fetchPrivyEmail; also surfaces the linked twitter_oauth account, if any. Best-effort: returns
-// nulls and never throws, so a Privy hiccup can't block sign-in or a link refresh.
+// One pass over linked accounts for both email (same logic as fetchPrivyEmail) and the linked twitter_oauth account, if any.
+// Best-effort, returns nulls and never throws so a Privy hiccup can't block sign-in or a link refresh.
 export async function fetchPrivyIdentity(privyUserId: string): Promise<PrivyIdentity> {
   try {
     const user = await privy().users()._get(privyUserId);
@@ -98,9 +85,8 @@ export async function fetchPrivyIdentity(privyUserId: string): Promise<PrivyIden
   }
 }
 
-// Normalize Privy's ed25519 public key to the raw 32 bytes Ed25519PublicKey wants. Privy returns
-// the Sui-flagged form: 33 bytes = the 0x00 ed25519 scheme flag + the 32-byte key, hex-encoded (66
-// chars), and sometimes base64. Accept hex or base64, then strip the leading flag byte.
+// Normalize Privy's ed25519 public key to the raw 32 bytes Ed25519PublicKey wants.
+// Privy returns the Sui-flagged form (0x00 scheme flag + 32-byte key), hex or base64, so accept either and strip the leading flag byte.
 function parsePublicKey(pk: string): Uint8Array {
   const v = pk.startsWith('0x') ? pk.slice(2) : pk;
   const isHex = /^[0-9a-fA-F]+$/.test(v) && (v.length === 64 || v.length === 66);
@@ -109,25 +95,19 @@ function parsePublicKey(pk: string): Uint8Array {
   return bytes;
 }
 
-// The canonical Sui address for an ed25519 public key (flag 0x00 || pubkey, blake2b256, first 32B).
-// The tx sender must match this or Sui rejects the signature, so we always derive it ourselves
-// rather than trusting a reported address.
+// Canonical Sui address for an ed25519 public key (flag 0x00 || pubkey, blake2b256, first 32B).
+// Always derived here, never trusted from a reported address, since the tx sender must match or Sui rejects the signature.
 export function suiAddressForPublicKey(publicKey: string): string {
   return new Ed25519PublicKey(parsePublicKey(publicKey)).toSuiAddress();
 }
 
 export type ProvisionedWallet = { walletId: string; address: string; publicKey: string };
 
-// Privy's external_id only accepts [A-Za-z0-9_-], but a Privy DID is `did:privy:<id>` (colons), so
-// map the disallowed chars out. The result is stable and 1:1, so it stays a unique idempotency tag.
+// Privy's external_id only accepts [A-Za-z0-9_-] but a DID has colons (`did:privy:<id>`), so map disallowed chars out; stable and 1:1, stays a unique idempotency tag.
 const toExternalId = (id: string): string => id.replace(/[^a-zA-Z0-9_-]/g, '_');
 
-// Provision a server-controlled embedded Sui wallet, owned by the app's authorization key so the
-// server can rawSign for it. This is the headless path: the Phase 12 spike and any automated test of
-// the privy signing branch use it instead of a browser login. In production the user creates their
-// own wallet client-side (web/src/lib/privy.tsx) and grants this same authorization key as a session
-// signer, so the server-side signing recipe below is identical either way. `externalId` makes it
-// idempotent: a wallet already tagged with that id is reused instead of creating a duplicate.
+// Provision a server-controlled embedded Sui wallet, owned by the app's authorization key so the server can rawSign for it; the headless path used by tests instead of a browser login.
+// Production wallets are created client-side (web/src/lib/privy.tsx) granting the same authorization key as a session signer, so signing is identical either way. `externalId` makes this idempotent.
 export async function provisionServerSuiWallet(externalId?: string): Promise<ProvisionedWallet> {
   if (!PRIVY_AUTHORIZATION_KEY_ID) {
     throw new Error('PRIVY_AUTHORIZATION_KEY_ID is not set (needed to own a server-provisioned wallet)');
@@ -160,8 +140,7 @@ function toProvisioned(w: { id: string; address: string; public_key?: string }):
   return { walletId: w.id, address: w.address, publicKey: w.public_key };
 }
 
-// Sign a built Sui transaction (BCS TransactionData bytes) with the user's embedded wallet and
-// return the Sui serialized signature ready for executeTransactionBlock.
+// Sign a built Sui tx (BCS TransactionData bytes) with the user's embedded wallet, return the Sui serialized signature ready for executeTransactionBlock.
 export async function signSuiTxWithPrivy(input: {
   walletId: string;
   publicKey: string;

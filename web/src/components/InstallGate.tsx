@@ -1,8 +1,5 @@
-// The Add-to-Home-Screen guide. A full-screen App-Surface overlay (docs/DESIGN.md, the door's
-// language) that shows each visitor the recommended way to install PIPS on their exact browser:
-// Android one-tap, iOS Safari illustrated steps, or a nudge to switch browsers when theirs can't
-// install. Skippable via "Continue in browser"; it returns every visit unless they tick "Don't show
-// this again". Mounted by _app in place of the 3D console while useInstallGate().active.
+// Add-to-Home-Screen guide: full-screen overlay (docs/DESIGN.md) showing the install steps for the
+// visitor's exact browser. Mounted by _app in place of the 3D console while useInstallGate().active.
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { motion } from 'motion/react'

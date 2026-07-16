@@ -28,7 +28,7 @@ function StatsScreen() {
     haptic('medium')
     setSharing(true)
     try {
-      await shareStatsCard(stats, { displayName: displayHandle(user), address: user.address })
+      await shareStatsCard(stats, { displayName: displayHandle(user), avatarUrl: user.avatarUrl })
       haptic('success')
     } catch {
       const { default: toast } = await import('react-hot-toast')

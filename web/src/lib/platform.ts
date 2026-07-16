@@ -1,7 +1,5 @@
-// Mobile install-context detection + the Android beforeinstallprompt capture, behind one hook.
-// Drives the Add-to-Home-Screen guide (components/InstallGate). SSR-safe: every browser read is
-// window-guarded, so it stays inert ('desktop', not active) on the server, and the first client
-// layout effect commits the real context before paint, so the guide never flashes the console behind it.
+// Mobile install-context detection + Android beforeinstallprompt capture, behind one hook, drives the Add-to-Home-Screen
+// guide (components/InstallGate). SSR-safe (window-guarded, inert 'desktop' on server); a pre-paint layout effect commits the real context so the guide never flashes.
 import { useCallback, useEffect, useLayoutEffect, useReducer, useState } from 'react'
 import { haptic } from '@/lib/haptics'
 
@@ -117,9 +115,8 @@ function isDismissed(): boolean {
 
 const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
-// The one hook the app mounts. `active` commits in a pre-paint client layout effect so the first
-// painted mobile frame already shows the guide (no console flash behind it). Always skippable:
-// skip() persists a per-device flag so the guide never returns on this browser.
+// The one hook the app mounts. `active` commits in a pre-paint layout effect so the first painted mobile frame
+// already shows the guide with no console flash. Always skippable: skip() persists a per-device flag so it never returns.
 export function useInstallGate(): InstallGateState {
   const [client, setClient] = useState(false)
   const [ctx, setCtx] = useState<InstallContext>('desktop')
@@ -143,8 +140,7 @@ export function useInstallGate(): InstallGateState {
   )
 
   const skip = useCallback((dontShowAgain: boolean) => {
-    // Default: hide for this visit only, so the guide returns next time. Only the explicit
-    // "Don't show this again" checkbox persists the skip across visits.
+    // Default hides for this visit only (the guide returns next time); only the explicit "Don't show again" checkbox persists across visits.
     if (dontShowAgain) {
       try {
         window.localStorage.setItem(DISMISS_KEY, '1')

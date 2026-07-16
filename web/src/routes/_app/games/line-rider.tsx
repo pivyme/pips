@@ -11,10 +11,8 @@ import { rideCrash, rideStart, setRideState, startRideBgm, stopRideBgm } from '@
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 
-// Line Rider. A pure local arcade minigame (no Sui, no backend): a neon trend line scrolls in and
-// the thumbwheel rides a pip on it. Hug the line and your score climbs (faster the tighter you hug,
-// via a combo multiplier); fall off and the combo resets while your grip drains; grip empties and
-// the run ends, straight into the leaderboard. Runs on the 3D handheld's L-shaped aperture.
+// Line Rider. Pure local arcade (no Sui, no backend): thumbwheel rides a pip on a scrolling neon line.
+// Hug the line and score climbs (faster via a combo multiplier); fall off and combo resets while grip drains; grip empties, run ends into the leaderboard. Runs on the 3D handheld's L-shaped aperture.
 export const Route = createFileRoute('/_app/games/line-rider')({ component: LineRiderScreen })
 
 const GAME = 'line-rider'
@@ -40,8 +38,7 @@ function LineRiderScreen() {
 
   const best = board[0]?.score ?? 0 // the high score to chase (top of the board)
 
-  // The run ends from inside the engine loop. Kept in a ref so the engine (built once) always calls
-  // the latest closure. Show the score instantly; the rank + refreshed board land when submit resolves.
+  // The run ends inside the engine loop; kept in a ref so the engine (built once) always calls the latest closure. Score shows instantly, rank + refreshed board land when submit resolves.
   endRef.current = (score: number) => {
     haptic('error')
     stopRideBgm() // cut the bed so the wipeout lands clean over silence
@@ -118,8 +115,7 @@ function LineRiderScreen() {
       <GameStage
         top={
           playing ? (
-            // top-left only: current score over the high score, dropped a touch off the top edge.
-            // (Grip reads off the on-screen bar, the combo off the line's heat, so the top-right is clear.)
+            // top-left only: current score over high score. Grip reads off the on-screen bar, combo off the line's heat, so the top-right stays clear.
             <div className="pt-[18px]">
               <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Score</div>
               <div className="tnum text-4xl font-extrabold leading-none text-text">{fmt(hud.score)}</div>
@@ -173,8 +169,7 @@ function TitleOverlay({ best, board }: { best: number; board: LeaderboardScoreEn
   )
 }
 
-// Game over: the banner, the final score, where it landed globally. The score shows instantly; the
-// rank + refreshed board fill in when the submit resolves (board is the pre-run fallback meanwhile).
+// Game over: banner, final score, where it landed globally. Score shows instantly; rank + refreshed board fill in when submit resolves (board is the pre-run fallback meanwhile).
 function OverOverlay({ over, board }: { over: { score: number; result: MinigameSubmit | null }; board: LeaderboardScoreEntry[] }) {
   const { score, result } = over
   const rows = result?.entries ?? board

@@ -1,7 +1,5 @@
-// 3D illustration slot (docs/DESIGN.md §6). Renders the real art from
-// /illustrations/<name>.webp when it lands, else a clean neumorphic placeholder
-// with the right glow and footprint, so layouts never shift when assets arrive.
-// Placeholders use emoji for now; swap the folder in, nothing else changes.
+// 3D illustration slot (docs/DESIGN.md §6): renders /illustrations/<name>.webp when it lands, else a
+// neumorphic placeholder with the right glow/footprint so layouts never shift. Placeholders use emoji for now.
 import { useEffect, useState } from 'react'
 import { cnm } from '@/utils/style'
 
@@ -60,10 +58,8 @@ export function Illo({
   const def = LIBRARY[name] ?? { emoji: '✦', glow: 'neutral' }
   const g = glow ?? def.glow
 
-  // Only attempt the asset on the client. Rendering the <img> during SSR risks a permanent
-  // broken-image icon: the file can 404 before hydration attaches onError, so the fallback
-  // never fires. We mount first, keep the placeholder underneath, and reveal the image only
-  // once it actually loads. No assets yet means the placeholder simply stays.
+  // Client-only: rendering the <img> during SSR risks a permanent broken-image icon (the file can 404
+  // before hydration attaches onError). Mount first, reveal the image only once it actually loads.
   useEffect(() => setMounted(true), [])
   const showPlaceholder = !loaded || failed
 

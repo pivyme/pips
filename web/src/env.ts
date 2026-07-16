@@ -7,35 +7,28 @@ export const env = createEnv({
 
   client: {
     VITE_API_URL: z.string().url(),
-    // Demo mode: the whole app runs on an in-memory mock (no backend, no Sui, play money).
-    // Lets anyone poke at the full UI with zero setup. A localStorage flag can override it.
+    // Demo mode: the whole app runs on an in-memory mock (no backend, no Sui, play money); a localStorage flag can override it.
     VITE_DEMO_MODE: z.enum(['true', 'false']).default('false'),
-    // Soft access gate for a private test deploy: when 'true', tapping START on the door asks for
-    // VITE_ACCESS_CODE before letting anyone in, and remembers a correct code per-device. Not real
-    // security (the code ships in the client bundle), just enough to keep the public out. Default off.
+    // Soft access gate for a private test deploy: 'true' asks for VITE_ACCESS_CODE on START and remembers
+    // it per-device. Not real security (the code ships in the client bundle), just keeps the public out.
     VITE_ACCESS_GUARD: z.enum(['true', 'false']).default('false'),
     VITE_ACCESS_CODE: z.string().optional(),
     // Mirrors the backend PIPS_AUTH_MODE so the UI shows the right door.
     VITE_AUTH_MODE: z.enum(['dev', 'privy']).default('dev'),
-    // Chart price transport. 'true' (default): one shared WebSocket to /ws (10Hz, all users in
-    // lock-step). 'false': fall back to the per-connection SSE /stream/prices path. The client also
-    // auto-falls back to SSE for the session if the WS can't connect, so this is a hard kill switch.
+    // Chart price transport: 'true' (default) is one shared WebSocket to /ws (10Hz, all users in lock-step),
+    // 'false' falls back to per-connection SSE. The client also auto-falls back to SSE if the WS can't connect.
     VITE_PRICE_WS_ENABLED: z.enum(['true', 'false']).default('true'),
-    // Debug switch: force every sign-in (and reload) through the full onboarding arc
-    // (handle -> skin -> welcome), even when the account already has a username. Dev-only.
+    // Debug switch: force every sign-in through the full onboarding arc (handle -> skin -> welcome). Dev-only.
     VITE_ONBOARDING_DEBUG: z.enum(['true', 'false']).default('false'),
-    // Mirrors the backend PIPS_WALLET_AUTH_ENABLED: show the "Connect Sui Wallet" door option
-    // (custodial play-wallet login), alongside Privy social. Independent of VITE_AUTH_MODE.
+    // Mirrors backend PIPS_WALLET_AUTH_ENABLED: shows the "Connect Sui Wallet" door option, independent of VITE_AUTH_MODE.
     VITE_WALLET_CONNECT_ENABLED: z.enum(['true', 'false']).default('false'),
     VITE_SUI_NETWORK: z.enum(['testnet', 'mainnet', 'devnet', 'localnet']).default('testnet'),
     VITE_SUI_FULLNODE_URL: z.string().url().optional(),
-    // Public Predict ids the client needs for reads. Written by the bootstrap into
-    // web/.env (mirrors backend deployed.json). Optional so the app can boot pre-deploy.
+    // Public Predict ids the client needs for reads, written by the bootstrap into web/.env; optional so the app can boot pre-deploy.
     VITE_PREDICT_PACKAGE_ID: z.string().optional(),
     VITE_PREDICT_OBJECT_ID: z.string().optional(),
     VITE_DUSDC_TYPE: z.string().optional(),
-    // privy mode only: the public Privy app id, and the session-signer key-quorum id the user
-    // delegates to so the server can sign plays without a per-spin popup.
+    // privy mode only: the public app id + session-signer key-quorum id the user delegates so the server signs plays without a per-spin popup.
     VITE_PRIVY_APP_ID: z.string().optional(),
     VITE_PRIVY_SESSION_SIGNER_ID: z.string().optional(),
     VITE_APP_NAME: z.string().min(1).default('PIPS'),

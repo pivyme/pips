@@ -1,12 +1,5 @@
-// The client price bus. ONE shared, ref-counted WebSocket for the whole app, multiplexing every
-// asset any chart wants (Lucky's up-to-3 charts share this single connection). `subscribe(asset, cb)`
-// returns an unsub; callbacks get the same `PriceTick` shape the old SSE `streamPrices` delivered, so
-// `Chart.tsx` swaps one for the other with no other change.
-//
-// Resilience: auto-reconnect with backoff, resubscribe the live asset set on every (re)open, and a
-// hard fallback to the SSE `/stream/prices` path (same data, per-connection) if the WS can't establish
-// or the flag is off. Demo mode keeps its in-memory twin (no backend). The whole thing is display-only
-// (L-015): nothing truthful reads this feed.
+// The client price bus: one shared, ref-counted WebSocket multiplexing every asset any chart wants (Lucky's up-to-3 charts share this connection).
+// Auto-reconnects with backoff and falls back to per-connection SSE if the WS can't establish; display-only (L-015), nothing truthful reads this feed.
 
 import { env } from '@/env'
 import { getAuthToken, streamPrices, type PriceTick } from './api'
@@ -68,8 +61,7 @@ function scheduleReconnect(): void {
   backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS)
 }
 
-// Give up on the WS for this session and route every asset through the SSE fallback. Sticky: a page
-// reload retries the WS. This is what makes the transport strictly no-worse-than-today.
+// Gives up on the WS for this session, routing every asset through SSE; sticky until a page reload retries the WS, so the transport is never worse than before.
 function fallbackToSse(): void {
   if (mode === 'sse') return
   mode = 'sse'

@@ -1,7 +1,5 @@
-// In-memory cache of the live oracle set. oracle-roll keeps it true (adds the oracles it
-// creates, drops settled ones), price-pusher and settle read it each tick, and /markets
-// will read it to tell the games what is tradeable right now. Seeded from deployed.json so
-// the set is non-empty the moment the server boots; oracle-roll reconciles against chain.
+// In-memory cache of the live oracle set: oracle-roll keeps it true (adds/drops oracles), price-pusher,
+// settle, and /markets read it each tick. Seeded from deployed.json so it's non-empty at boot; oracle-roll reconciles against chain.
 
 import { ORACLES, ORACLE_CAP_IDS } from './config.ts';
 
@@ -15,8 +13,7 @@ export type Market = {
   settled: boolean;
   spot1e9?: string; // last observed spot, for /markets display
   lastPushAt?: number; // ms epoch of the last successful price push
-  // Real-mode-only economics (from readMarketEconomics), so the solver never hardcodes them. Absent in
-  // fork mode. The two runtime modes never coexist in one process, so reusing this record is safe.
+  // Real-mode-only economics (from readMarketEconomics), absent in fork mode; the two runtime modes never coexist in one process, so reusing this record is safe.
   admissionTickSizeRaw?: string; // coarser mint-boundary step (BTC 1e9 = $1)
   maxLeverage1e9?: string; // max_admission_leverage (BTC 3e9 = 3.0x)
   liquidationLtv1e9?: string; // liquidation_ltv (BTC 0.85e9)
@@ -24,8 +21,7 @@ export type Market = {
 
 const markets = new Map<string, Market>();
 
-// Seed from the bootstrap deployment. These may already be expired; oracle-roll retires
-// them and rolls fresh ones. The cap defaults to the first bootstrapped oracle cap.
+// Seeds from the bootstrap deployment (may already be expired, oracle-roll retires and rolls fresh ones); cap defaults to the first bootstrapped oracle cap.
 for (const o of ORACLES) {
   markets.set(o.oracleId, {
     oracleId: o.oracleId,
@@ -50,18 +46,15 @@ export const removeMarket = (oracleId: string): void => {
   markets.delete(oracleId);
 };
 
-// Markets a play can mint against right now: unsettled and far enough from expiry that the
-// price-pusher is still keeping them fresh inside the safety window.
+// Markets a play can mint against right now: unsettled and far enough from expiry that the price-pusher still keeps them fresh inside the safety window.
 export const tradeableMarkets = (now: number, safetyMs: number): Market[] =>
   allMarkets().filter((m) => !m.settled && m.expiryMs - now > safetyMs);
 
 export const liveByAsset = (asset: string, now: number, minRemainingMs: number): Market[] =>
   allMarkets().filter((m) => m.underlying === asset && !m.settled && m.expiryMs - now > minRemainingMs);
 
-// The freshest on-chain spot for an asset, in display units, from the live oracle set. The
-// price-pusher writes spot1e9 each tick (operator), market-sync reads it off chain every few seconds
-// (follower). The follower chart serves this so the line the player watches is the price the round
-// settles against. Picks the most recently observed live market; null if none is live yet.
+// Freshest on-chain spot for an asset, in display units, from the live oracle set (price-pusher writes it
+// as operator, market-sync reads it off chain as follower, so the chart matches what the round settles against). Picks the most recently observed live market, null if none is live yet.
 export const assetSpot = (asset: string): number | null => {
   let best: Market | undefined;
   for (const m of markets.values()) {

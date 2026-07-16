@@ -1,6 +1,5 @@
-// Fair, auditable RNG for I Feel Lucky. Chain-free and pure so the distribution unit-tests
-// in isolation. Every pick is a sha256 draw from a stored seed + index, so given the seed
-// anyone can replay the exact asset/side/leverage/duration the server chose.
+// Fair, auditable RNG for I Feel Lucky, chain-free and pure so the distribution unit-tests in isolation.
+// Every pick is a sha256 draw from a stored seed + index, so anyone with the seed can replay the exact asset/side/leverage/duration the server chose.
 
 import crypto from 'crypto';
 
@@ -31,13 +30,8 @@ export const pickWeighted = (r: number, weights: Record<number, number>): number
 
 export const pickLeverage = (r: number): number => pickWeighted(r, BUCKET_WEIGHTS);
 
-// LUCKY slot-weighted multiplier reel (LUCKY.md §4). Weights are the reel-DEAL frequency (how
-// often the slot hands you that tier), NOT the win odds; each dealt tier then wins at its own
-// honest odds (~1/mult) from the live market. Keyed by multiplier so pickTier returns the tier.
-// The ladder starts at 2x: every tier is a real directional move (the target sits in the bet
-// direction, OTM), so "down" always needs the price to fall. A sub-2x tier would force an
-// in-the-money target sitting on the wrong side of entry, which is the confusion we removed. Capped
-// at 10x (the old 25x tier's weight folded into 10x): the top stays reachable and pays a sane amount.
+// LUCKY slot-weighted multiplier reel (LUCKY.md §4): weights are reel-DEAL frequency, NOT win odds, each
+// dealt tier wins at its own honest ~1/mult odds. Starts at 2x since a sub-2x tier forces an in-the-money target; capped at 10x (old 25x weight folded in) so the top stays reachable.
 export const LUCKY_TIER_WEIGHTS: Record<number, number> = { 2: 50, 3: 30, 5: 13, 10: 7 };
 
 // Deal one tier for a spin from a uniform draw. The strike solver then prices that tier honestly.

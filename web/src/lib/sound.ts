@@ -1,7 +1,5 @@
-// One sound instance for the whole app. Tiny WebAudio synth (no asset files): a bright two-note
-// blip on a win, a soft fall on a loss. Mirrors haptics.ts: silent where unsupported and a no-op
-// when the user's Sound setting is off, so callers never have to guard. Sounds only fire after a
-// user gesture (a settle follows a tap), so autoplay policy is never hit.
+// One sound instance for the whole app: a tiny WebAudio synth (no asset files), mirrors haptics.ts's
+// no-op-when-off pattern. Fires only after a user gesture, so autoplay policy is never hit.
 
 let ctx: AudioContext | null = null
 let enabled = true
@@ -12,8 +10,7 @@ function audio(): AudioContext | null {
   if (typeof window === 'undefined') return null
   const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!Ctx) return null
-  // Backgrounding a standalone PWA can leave the context 'closed'. A stale closed context would
-  // otherwise sit here forever producing silent no-ops, so drop it and build a fresh one.
+  // A backgrounded standalone PWA can leave the context 'closed' forever; drop it and rebuild fresh.
   if (ctx && ctx.state === 'closed') {
     ctx = null
     synthBus = null
@@ -22,16 +19,13 @@ function audio(): AudioContext | null {
   return ctx
 }
 
-// iOS Safari has a non-standard 'interrupted' state (backgrounding a standalone PWA) that the
-// spec's 'suspended'/'running'/'closed' enum doesn't cover. Code that only checked for
-// 'suspended' never resumed an interrupted context, so it stayed silent until the whole app was
-// killed and reopened. Treat anything other than 'running' as needing a resume.
+// iOS Safari has a non-standard 'interrupted' state beyond the spec's suspended/running/closed
+// enum; checking only for 'suspended' left it silently stuck. Treat anything but 'running' as needing a resume.
 function ensureRunning(ac: AudioContext): void {
   if (ac.state !== 'running') ac.resume().catch(() => {})
 }
 
-// Master level for all synth voices (one-shots + BGM). The device SFX in consoleAudio.ts decode at
-// full scale, so the synth bus is lifted to sit level with them. One knob to rebalance everything.
+// Master gain for all synth voices; lifted to match consoleAudio.ts's full-scale device SFX.
 const SYNTH_LEVEL = 2.0
 let synthBus: GainNode | null = null
 function out(ac: AudioContext): AudioNode {
@@ -43,8 +37,7 @@ function out(ac: AudioContext): AudioNode {
   return synthBus
 }
 
-// Driven by the user's Sound setting (synced from the auth user). When off, every call no-ops
-// and any running BGM is cut so the toggle takes effect immediately.
+// Driven by the user's Sound setting; when off, every call no-ops and running BGM cuts immediately.
 export function setSoundEnabled(value: boolean): void {
   enabled = value
   if (!value) {
@@ -56,20 +49,15 @@ export function setSoundEnabled(value: boolean): void {
   }
 }
 
-// Unlock the synth AudioContext on the first real user gesture. Every voice resumes the context
-// per-call, but those calls fire after an async settle, which is outside the gesture window on
-// mobile Safari and silently fails to unlock. The bed/stings then stay dead on a phone even though
-// they work on a lenient desktop. Call this from the shell's first pointerdown (next to the device
-// SFX unlock) so the context is live before any sound is asked for.
+// Unlocks the synth AudioContext on the first user gesture. Per-call resume happens after an async
+// settle, outside mobile Safari's gesture window, so call this from the shell's first pointerdown instead.
 export function unlockAudio(): void {
   const ac = audio()
   if (ac) ensureRunning(ac)
 }
 
-// Re-arm the synth context when the app returns to the foreground. A backgrounded standalone PWA
-// on iOS drops the AudioContext into 'interrupted' (or drains it to 'closed' under memory
-// pressure); without this, sound/music stayed dead until the whole app was force-quit and
-// reopened, because nothing ever prompted a resume until the next sound happened to fire.
+// Re-arms the synth context on foreground return. A backgrounded standalone PWA on iOS drops the
+// context to 'interrupted' or drains it to 'closed'; without this it stayed dead until force-quit.
 if (typeof document !== 'undefined') {
   const onForeground = () => {
     if (document.visibilityState === 'visible') unlockAudio()
@@ -92,10 +80,8 @@ function blip(ac: AudioContext, freq: number, start: number, dur: number, gain =
   osc.stop(start + dur + 0.02)
 }
 
-// A soft mallet/bell: a triangle through a gentle lowpass with a quick attack and a rounded tail,
-// plus an octave shimmer for air. Warmer and fuller than `blip`, this is the Lucky voice (marimba,
-// not chiptune). Reused across the reel locks, the commit, and the win/cash-out resolves so the
-// whole game speaks one tone. Routes to `dest` when given (the bed bus), else the shared synth bus.
+// The warm mallet/bell voice: filtered triangle + octave shimmer, warmer and fuller than `blip`.
+// Reused across reel locks, commits, and win/cash-out resolves so a game speaks one tone; routes to `dest` or the shared bus.
 function bell(ac: AudioContext, freq: number, start: number, dur: number, gain = 0.06, dest?: AudioNode): void {
   const sink = dest ?? out(ac)
   const o = ac.createOscillator()
@@ -123,9 +109,8 @@ function bell(ac: AudioContext, freq: number, start: number, dur: number, gain =
   sh.stop(start + dur + 0.05)
 }
 
-// The onboarding welcome moment: a short, warm, rising open-major sparkle (C major, mallet voice)
-// over silence. Bright and celebratory, distinct from luckyWin's sub-heavy two-octave climb and from
-// any game bed. Fire it on a real gesture (the welcome beat lands right after the Continue tap).
+// Onboarding welcome: a rising open-major sparkle (C major, mallet voice), bright and celebratory,
+// distinct from luckyWin's sub-heavy climb. Fired on the Continue tap gesture.
 export function welcomeJingle(): void {
   if (!enabled) return
   const ac = audio()
@@ -148,10 +133,8 @@ export function welcomeJingle(): void {
   blip(ac, 2093.0, t + 0.62, 0.25, 0.02) // C7 air
 }
 
-// Achievement unlocked: an elegant little fanfare, fancy not silly. A deep bass swell anchors a lush
-// Cmaj9 chord (the maj7 + 9th are the "fancy" color) that blooms like a slow harp roll on the warm
-// bell voice, lifted by one soft high shimmer. Refined, weighted with bass, no arcade sweep. Fired
-// when the unlock overlay appears (always over a real gesture, a play just settled).
+// Achievement unlock: a refined fanfare, a deep bass swell under a lush Cmaj9 chord bloomed like a
+// harp roll, topped with one soft shimmer. No arcade sweep. Fires when the unlock overlay appears.
 export function achievementUnlock(): void {
   if (!enabled) return
   const ac = audio()
@@ -159,8 +142,7 @@ export function achievementUnlock(): void {
   ensureRunning(ac)
   const t = ac.currentTime
 
-  // Bass foundation: a deep sub plus a filtered low octave for body. Swells in soft, holds, fades long,
-  // the weight under the chord (felt more than heard), never a thud.
+  // Bass foundation: a deep sub plus a filtered low octave, felt more than heard, never a thud.
   const sub = ac.createOscillator()
   const subG = ac.createGain()
   sub.type = 'sine'
@@ -186,8 +168,7 @@ export function achievementUnlock(): void {
   low.start(t)
   low.stop(t + 1.3)
 
-  // The chord over the C bass: E G B D = Cmaj9, the lush "fancy" color. Bloomed a few ms apart like a
-  // soft harp roll so it reads as one rich chord, not an arpeggio. Warm bell voice, long mellow tails.
+  // The Cmaj9 chord (E G B D) over the C bass, bloomed a few ms apart so it reads as one chord, not an arpeggio.
   const chord: Array<[number, number]> = [
     [329.63, 0.0], // E4  (3rd)
     [392.0, 0.06], // G4  (5th)
@@ -218,12 +199,10 @@ export function sound(kind: Sound): void {
   }
 }
 
-// --- Lucky slot voices. The reels are a little instrument: a soft launch whoosh, a warm ratchet
-// while they spin, and a rounded mallet snap that climbs per reel. All built on the `bell` voice and
-// filtered noise (no raw square blips), so the slot reads tactile and playful, never chiptune.
+// --- Lucky slot voices: a soft launch whoosh, a warm ratchet while spinning, and a mallet snap that
+// climbs per reel. Built on `bell` + filtered noise, never raw square blips, tactile not chiptune.
 
-// Spin-up: a quick filtered-noise whoosh rising under a warm three-note bloom (C-E-G), as the reels
-// are dealt and start tumbling. The whoosh gives motion, the bloom gives it a friendly major lift.
+// Spin-up: a filtered-noise whoosh rising under a warm C-E-G bloom, motion plus a friendly major lift.
 export function slotSpin(): void {
   if (!enabled) return
   const ac = audio()
@@ -249,9 +228,8 @@ export function slotSpin(): void {
   bell(ac, 783.99, t + 0.1, 0.18, 0.04) // G5
 }
 
-// One ratchet tick: a tiny filtered-noise detent, ultra-short and quiet, a hair of bandpass jitter
-// so a stream of them reads as a mechanical reel rolling rather than a chiptune click. Driven on an
-// interval while the reels cycle.
+// One ratchet tick: a tiny filtered-noise detent with bandpass jitter, so a stream of them reads as a
+// rolling mechanical reel, not a chiptune click. Called on an interval while the reels cycle.
 export function slotTick(): void {
   if (!enabled) return
   const ac = audio()
@@ -273,9 +251,8 @@ export function slotTick(): void {
   src.stop(t + 0.04)
 }
 
-// A reel lands: a soft body thunk + a noise detent click + a rounded mallet ding that climbs by reel
-// (A5, C#6, E6). The final reel (`last`) rings longer and tops itself with a little sparkle, so the
-// last stop feels like the payoff beat instead of just another click.
+// A reel lands: a body thunk + a detent click + a mallet ding that climbs by reel (A5, C#6, E6). The
+// final reel (`last`) rings longer with a sparkle on top, so it feels like the payoff beat.
 export function slotLock(step: number, last = false): void {
   if (!enabled) return
   const ac = audio()
@@ -312,8 +289,7 @@ export function slotLock(step: number, last = false): void {
   if (last) bell(ac, 1760.0, t + 0.08, 0.24, 0.025) // A6 sparkle to top the final landing
 }
 
-// The chart locks in after the reels settle: a bright ascending mallet confirm (B5-E6-A6), the slot
-// committing to its market right before the chart blooms open. Its own voice, clear of the reel chord.
+// Chart lock-in: a bright ascending mallet confirm (B5-E6-A6) right before the chart blooms open, its own voice clear of the reel chord.
 export function slotPick(): void {
   if (!enabled) return
   const ac = audio()
@@ -325,24 +301,21 @@ export function slotPick(): void {
   bell(ac, 1760.0, t + 0.12, 0.26, 0.055) // A6, held a touch longer
 }
 
-// --- Lucky bed + resolves. A warm, groovy bed rides the whole round (deal -> open), and the round
-// ends on one of three warm mallet stings: a jackpot climb on a win, a confident chime on a cash-out,
-// a soft sigh on a miss. Cool and confident, distinct from Range's dark tension and Flappy's bright arp.
+// --- Lucky bed + resolves: a groovy bed rides the round (deal -> open), ending on one of three mallet
+// stings, a jackpot climb, a cash-out chime, or a miss sigh. Cool and confident, unlike Range/Flappy.
 
-// D Dorian, i - IV - i - bVII (Dm - G - Dm - C): the "cool" minor (the natural 6th keeps it confident,
-// not sad), a tight vamp. Each bar carries a low chord pad for weight. Warm-mallet, bassy, serious-but-fun,
-// nothing like Flappy's bright C-major arp or Range's resonant-saw tension.
+// D Dorian i-IV-i-bVII (Dm-G-Dm-C): the natural 6th keeps it confident not sad. Each bar carries a low
+// chord pad for weight, warm-mallet and bassy, nothing like Flappy's major arp or Range's saw tension.
 const LUCKY_BARS = [
   { bass: 73.42, pad: [146.83, 174.61, 220.0] }, // Dm  (D F A)
   { bass: 98.0, pad: [196.0, 246.94, 293.66] }, // G   (G B D)
   { bass: 73.42, pad: [146.83, 174.61, 220.0] }, // Dm  (D F A)
   { bass: 65.41, pad: [130.81, 164.81, 196.0] }, // C   (C E G)
 ]
-// A syncopated bass groove (root on the beats, an octave pop on the pushes), keyed by sixteenth step.
-// This funk, plus the sub layer in luckyBass, is the low-end weight the bed leans on.
+// A syncopated bass groove (root on the beats, octave pop on the pushes), keyed by sixteenth step; the bed's low-end weight.
 const LUCKY_BASS_HITS: Record<number, number> = { 0: 1, 3: 1, 6: 2, 8: 1, 11: 2, 14: 1 }
-// The hook: a spacey, mid-register mallet riff (D-minor pentatonic, lots of rest = cool, not busy), not a
-// sweet high melody. Four bars of eighth notes, null = rest. It sits low and confident, never twinkly.
+// The hook: a spacey mid-register mallet riff (D-minor pentatonic, lots of rest). Four bars of eighth
+// notes, null = rest, sits low and confident, never twinkly.
 const LUCKY_MELODY: (number | null)[] = [
   293.66, null, 349.23, 440.0, null, 440.0, null, null, // Dm: D4 .  F4 A4 .  A4 .  .
   493.88, null, 440.0, 392.0, null, null, 392.0, null, // G : B4 .  A4 G4 .  .  G4 .
@@ -368,8 +341,7 @@ function luckyKick(ac: AudioContext, dest: AudioNode, t: number): void {
   o.stop(t + 0.21)
 }
 
-// A fat, warm bass: a sawtooth body through a low lowpass for harmonics small speakers can hear, plus a
-// unison sine sub for the felt low end. This is the "bassy" weight the bed leans on.
+// A fat, warm bass: sawtooth through a low lowpass (harmonics small speakers can hear) plus a sine sub for felt low end.
 function luckyBass(ac: AudioContext, dest: AudioNode, freq: number, t: number): void {
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -412,9 +384,8 @@ function luckyShaker(ac: AudioContext, dest: AudioNode, t: number, accent: boole
   src.stop(t + 0.06)
 }
 
-// One sixteenth of the bed. Kick on beats 1 and 3 for weight, a syncopated bass groove (the low-end
-// drive), a soft low chord pad at the top of each bar for body, the spacey mid-register mallet riff on
-// the eighths (swung), and an offbeat shaker. Cool and bassy, never the old oom-pah cheer.
+// One sixteenth of the bed: kick on beats 1/3, a syncopated bass groove, a low chord pad per bar, the
+// mid-register mallet riff on the eighths (swung), and an offbeat shaker. Cool and bassy, not oom-pah.
 function luckyStepAt(ac: AudioContext, dest: AudioNode, step: number, t: number): void {
   const bar = Math.floor(step / 16) % LUCKY_BARS.length
   const chord = LUCKY_BARS[bar]
@@ -436,8 +407,7 @@ let luckyStepIdx = 0
 let luckyNext = 0
 let luckyBus: GainNode | null = null
 
-// Start the bed (deal -> open). Same lookahead scheduler as the other beds; kept low so it sits under
-// the reels and readouts. No-op if sound is off or it is already running.
+// Starts the bed (deal -> open); same lookahead scheduler as the other beds, no-op if sound is off or already running.
 export function startLuckyBgm(): void {
   if (!enabled || luckyTimer) return
   const ac = audio()
@@ -460,8 +430,7 @@ export function startLuckyBgm(): void {
   }, 25)
 }
 
-// Stop the bed with a quick fade so it never clicks off and the resolve sting lands clean. Safe to
-// call when nothing is playing.
+// Stops the bed with a quick fade so it never clicks and the resolve sting lands clean; safe to call idle.
 export function stopLuckyBgm(): void {
   if (luckyTimer) {
     clearInterval(luckyTimer)
@@ -478,8 +447,7 @@ export function stopLuckyBgm(): void {
   }
 }
 
-// Jackpot win: a warm sub boom under a bright ascending major arpeggio (C up two octaves) with a
-// twinkling sparkle tail. The payout climb. Triumphant and fun, never cheesy.
+// Jackpot win: a sub boom under a bright C-major arpeggio climbing two octaves, topped with a sparkle tail.
 export function luckyWin(): void {
   if (!enabled) return
   const ac = audio()
@@ -503,8 +471,7 @@ export function luckyWin(): void {
   spark.forEach((f, i) => bell(ac, f, t + 0.52 + i * 0.07, 0.18, 0.02)) // high twinkle tail
 }
 
-// Cash-out: a confident two-note bell climb (G5 -> C6) topped with a sparkle, over a soft body. The
-// "locked it in" chime, distinct from a held jackpot so cashing out feels like its own win.
+// Cash-out: a confident G5 -> C6 bell climb topped with a sparkle, the "locked it in" chime, distinct from the jackpot.
 export function luckyCashout(): void {
   if (!enabled) return
   const ac = audio()
@@ -527,8 +494,7 @@ export function luckyCashout(): void {
   bell(ac, 1567.98, t + 0.22, 0.2, 0.03) // G6 sparkle
 }
 
-// Miss: a soft low sigh under a gentle descending minor third on the mallet (E4 -> C4). Acknowledges
-// the loss, warm and brief, never a harsh nag.
+// Miss: a soft low sigh under a descending E4 -> C4 mallet third, warm and brief, never a harsh nag.
 export function luckyLose(): void {
   if (!enabled) return
   const ac = audio()
@@ -554,9 +520,8 @@ export function luckyLose(): void {
   bell(ac, 261.63, t + 0.16, 0.42, 0.04) // C4
 }
 
-// --- Flappy Piper voices. A calm, loopable synth bed for the run plus two punchy one-shots: a
-// bright "tuiing" that climbs a pentatonic ladder per cleared candle (so a streak feels good), and
-// a falling synth sigh on a crash. The bed is a bed, not a foreground: low gain, soft filtering.
+// --- Flappy Piper voices: a calm loopable bed plus two one-shots, a bright "tuiing" that climbs a
+// pentatonic ladder per cleared candle, and a falling synth sigh on crash. The bed stays low and soft.
 
 // A short noise burst reused for the hi-hat. Built once, lazily.
 let noiseBuf: AudioBuffer | null = null
@@ -642,8 +607,7 @@ function bgmHat(ac: AudioContext, dest: AudioNode, t: number, accent: boolean): 
   src.stop(t + 0.06)
 }
 
-// Lay down one sixteenth step of the loop at time t: kick + bass on the beat, a rolling up-down
-// arp on the eighths, soft hats on the offbeats.
+// Lays down one sixteenth step: kick + bass on the beat, a rolling up-down arp on the eighths, soft hats on the offbeats.
 function bgmStepAt(ac: AudioContext, dest: AudioNode, step: number, t: number): void {
   const chord = BGM_BARS[Math.floor(step / 16) % BGM_BARS.length]
   const s = step % 16
@@ -665,8 +629,7 @@ let bgmStepIdx = 0
 let bgmNext = 0
 let bgmBus: GainNode | null = null
 
-// Start the looping bed. A short lookahead scheduler (the standard WebAudio pattern) keeps note
-// timing tight regardless of timer jitter. No-op if sound is off or it is already running.
+// Starts the looping bed; the standard WebAudio lookahead-scheduler pattern keeps timing tight through timer jitter.
 export function startBgm(): void {
   if (!enabled || bgmTimer) return
   const ac = audio()
@@ -706,8 +669,7 @@ export function stopBgm(): void {
   }
 }
 
-// The "tuiing" climbs with the streak, but gently: it rises ~1.5 octaves spread over HOP_CAP
-// candles, then holds. So an early streak nudges up slowly instead of pinning the top by score ~8.
+// The "tuiing" climbs ~1.5 octaves over HOP_CAP candles then holds, so an early streak doesn't pin the top by score ~8.
 const HOP_BASE = 783.99 // G5, the streak's first note
 const HOP_RANGE = 1.5 // octaves of total climb across the whole streak
 const HOP_CAP = 40 // candles to reach the top, then it stays there
@@ -717,8 +679,7 @@ export function hopResetCombo(): void {
   hopCombo = 0
 }
 
-// The "tuiing": a fast upward portamento on a triangle plus a shimmer an octave up, pitched a touch
-// higher for every candle in the current streak.
+// The "tuiing": a fast upward triangle portamento plus an octave shimmer, pitched higher each candle in the streak.
 export function hopScore(): void {
   if (!enabled) return
   const ac = audio()
@@ -742,8 +703,7 @@ export function hopScore(): void {
   blip(ac, base * 2, t + 0.012, 0.1, 0.025) // shimmer
 }
 
-// The crash: two detuned saws sliding down a fifth under a closing lowpass, with a sub thud. A
-// short synth sigh that lands the miss without being harsh.
+// The crash: two detuned saws sliding down a fifth under a closing lowpass with a sub thud, a short sigh, not harsh.
 export function hopLose(): void {
   if (!enabled) return
   const ac = audio()
@@ -782,10 +742,8 @@ export function hopLose(): void {
   sub.stop(t + 0.52)
 }
 
-// --- Range voices. Tense but driving, so the hold feels like a high-stakes game, not an elevator. A
-// dark minor loop with a real groove: four-on-the-floor kick, a pulsing octave bass, a resonant
-// 16th-note saw arp for the hook, and offbeat hats. Around it sit the stings: the band lock, an
-// in/out-of-zone crossing tone, the buzzer riser, and an epic win/loss resolve. Same synth master.
+// --- Range voices: tense and driving, a dark minor loop with four-on-the-floor kick, pulsing octave
+// bass, a resonant saw arp hook, and offbeat hats. Stings: band lock, zone-crossing tone, buzzer, win/loss.
 
 const RANGE_TEMPO = 122
 const RANGE_STEP = 60 / RANGE_TEMPO / 4 // sixteenth-note length, seconds
@@ -861,8 +819,7 @@ function rangeHat(ac: AudioContext, dest: AudioNode, t: number, accent: boolean)
   src.stop(t + 0.05)
 }
 
-// One sixteenth of the driving loop: four-on-the-floor kick, a root/octave pulsing eighth bass, a
-// rolling 16th saw arp (the hook), and offbeat hats.
+// One sixteenth of the driving loop: four-on-the-floor kick, root/octave pulsing eighth bass, rolling 16th saw arp hook, offbeat hats.
 function rangeStepAt(ac: AudioContext, dest: AudioNode, step: number, t: number): void {
   const chord = RANGE_BARS[Math.floor(step / 16) % RANGE_BARS.length]
   const s = step % 16
@@ -938,8 +895,7 @@ export function rangeLock(): void {
   triad.forEach((f, i) => blip(ac, f, t + 0.04 + i * 0.05, 0.18, 0.06))
 }
 
-// The live price crosses your band edge: a hopeful rising fifth going in, a tense falling step going
-// out. Subtle on purpose so a price hovering at the edge never nags.
+// Price crosses the band edge: a hopeful rising fifth going in, a tense falling step going out, subtle so hovering never nags.
 export function rangeCross(inside: boolean): void {
   if (!enabled) return
   const ac = audio()
@@ -1021,8 +977,7 @@ export function rangeWin(): void {
   chord.forEach((f, i) => blip(ac, f, t + 0.05 + i * 0.06, 0.4, 0.07))
 }
 
-// Somber loss resolve: a deep hit and a slow descending minor sigh under a closing filter. Final,
-// weighty, never harsh.
+// Somber loss resolve: a deep hit and slow descending minor sigh under a closing filter, final and weighty, never harsh.
 export function rangeLose(): void {
   if (!enabled) return
   const ac = audio()
@@ -1061,19 +1016,15 @@ export function rangeLose(): void {
   }
 }
 
-// --- Moonshot voices. A driving, euphoric synth engine, its own world clear of Lucky's funk and Range's
-// dark tense techno. Four-on-the-floor drive, a pumping offbeat bass, big detuned supersaw chord pads for
-// the wide euphoric body, and a continuous flowing supersaw ARP as the hook (smooth and rich, not the old
-// sparse sproingy pluck). G minor at 150, intense and uplifting, but complete and satisfying on every loop.
-// Around it: a launch "fire", a direction-flip tick, and the win/cash-out/miss resolves.
+// --- Moonshot voices: a driving euphoric engine, G minor at 150bpm, four-on-the-floor kick, pumping
+// offbeat bass, supersaw chord pads, and a flowing supersaw arp hook. Own world, clear of Lucky/Range.
 
 const MOON_TEMPO = 150
 const MOON_STEP = 60 / MOON_TEMPO / 4 // sixteenth-note length, seconds
 const MOON_STEPS = 64 // 4 bars
 const MOON_BAR_LEN = MOON_STEP * 16 // one bar, seconds (how long the pad holds)
-// Gm - Eb - Bb - F (i - VI - III - VII): a warm, uplifting circular loop that never touches the tense V,
-// so it drives without straining. F (bVII) steps right back up to Gm at the loop point.
-// pad = the supersaw chord voicing (root up to the octave); arp = the five hook tones, low to high.
+// Gm-Eb-Bb-F (i-VI-III-VII): never touches the tense V, so it drives without straining; F steps back
+// up to Gm at the loop point. pad = supersaw chord voicing; arp = the five hook tones, low to high.
 const MOON_BARS = [
   { bass: 98.0, pad: [196.0, 233.08, 293.66, 392.0], arp: [293.66, 392.0, 466.16, 587.33, 783.99] }, // Gm
   { bass: 77.78, pad: [155.56, 196.0, 233.08, 311.13], arp: [311.13, 392.0, 466.16, 622.25, 783.99] }, // Eb
@@ -1082,8 +1033,7 @@ const MOON_BARS = [
 ]
 // Four-on-the-floor: the relentless drive under everything.
 const MOON_KICKS = new Set([0, 4, 8, 12])
-// The hook: a bouncing up-down arp figure over the five chord tones, one note per sixteenth. Same shape
-// every bar, so the harmony does the moving and the figure stays something you lock onto, not a scale run.
+// The hook: a bouncing up-down arp figure over the five chord tones, same shape every bar so it's something to lock onto, not a scale run.
 const MOON_ARP = [0, 2, 4, 2, 1, 3, 4, 3, 0, 2, 4, 2, 1, 2, 3, 4]
 
 function moonKick(ac: AudioContext, dest: AudioNode, t: number): void {
@@ -1100,8 +1050,7 @@ function moonKick(ac: AudioContext, dest: AudioNode, t: number): void {
   o.stop(t + 0.21)
 }
 
-// The pumping offbeat bass: a punchy saw through a low lowpass plus a sine sub, short and tight. It lands
-// on the "and" of every beat, filling the gaps between the kicks so the low end never stops moving.
+// The pumping offbeat bass: a punchy saw + sine sub landing on the "and" of every beat, so the low end never stops moving.
 function moonBass(ac: AudioContext, dest: AudioNode, freq: number, t: number): void {
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -1128,8 +1077,7 @@ function moonBass(ac: AudioContext, dest: AudioNode, freq: number, t: number): v
   sub.stop(t + 0.17)
 }
 
-// Big detuned-saw PAD: two saws a few cents apart through a lowpass, slow swell, held across the bar, long
-// release. The wide euphoric chord bed the arp rides on. Spawned as a chord at the top of each bar.
+// The supersaw pad: two detuned saws through a lowpass, slow swell held across the bar, spawned as a chord at the top of each bar.
 function moonPad(ac: AudioContext, dest: AudioNode, freq: number, t: number, dur: number): void {
   const o = ac.createOscillator()
   const d = ac.createOscillator()
@@ -1159,8 +1107,7 @@ function moonPad(ac: AudioContext, dest: AudioNode, freq: number, t: number, dur
   d.stop(t + dur + 0.06)
 }
 
-// The hook: a bright detuned-saw arp pluck. Two saws through a lowpass with a touch of resonance for the
-// classic trance edge, fast attack and a short decay so each sixteenth is articulate but the line flows.
+// The hook: a bright detuned-saw arp pluck with a touch of resonance for the trance edge, fast attack and short decay.
 function moonArp(ac: AudioContext, dest: AudioNode, freq: number, t: number): void {
   const o = ac.createOscillator()
   const d = ac.createOscillator()
@@ -1237,9 +1184,8 @@ function moonHat(ac: AudioContext, dest: AudioNode, t: number, accent: boolean):
   src.stop(t + 0.05)
 }
 
-// One sixteenth of the engine: the supersaw pad chord at the top of each bar, the four-on-the-floor kick,
-// the backbeat clap on 2 and 4, the pumping offbeat bass, the flowing arp hook every step, and 8th hats
-// with the offbeat accented (the trance "tss").
+// One sixteenth of the engine: the supersaw pad chord per bar, the four-on-the-floor kick, backbeat
+// clap on 2/4, pumping offbeat bass, arp hook every step, and 8th hats with offbeat accent (the "tss").
 function moonStepAt(ac: AudioContext, dest: AudioNode, step: number, t: number): void {
   const bar = Math.floor(step / 16) % MOON_BARS.length
   const chord = MOON_BARS[bar]
@@ -1258,8 +1204,7 @@ let moonStepIdx = 0
 let moonNext = 0
 let moonBus: GainNode | null = null
 
-// Start the bed (fire -> open). Same lookahead scheduler as the other beds, kept low so it sits under
-// the chart + readouts. No-op if sound is off or it is already running.
+// Starts the bed (fire -> open); same lookahead scheduler as the other beds, no-op if sound is off or already running.
 export function startMoonshotBgm(): void {
   if (!enabled || moonTimer) return
   const ac = audio()
@@ -1298,8 +1243,7 @@ export function stopMoonshotBgm(): void {
   }
 }
 
-// Ignition on PLAY: a deep launch thump under a fast rising filtered-noise whoosh and a tense three-note
-// saw climb. "We have liftoff", punchy and committal.
+// Ignition on PLAY: a launch thump under a rising filtered-noise whoosh and a tense three-note saw climb, punchy and committal.
 export function moonshotFire(): void {
   if (!enabled) return
   const ac = audio()
@@ -1338,8 +1282,7 @@ export function moonshotFire(): void {
   climb.forEach((freq, i) => moonPluck(ac, out(ac), freq, t + 0.04 + i * 0.06))
 }
 
-// Direction flip: a crisp mechanical tick (a noise detent + a short triangle), neutral so toggling
-// either way reads the same.
+// Direction flip: a crisp mechanical tick (noise detent + short triangle), neutral so either toggle reads the same.
 export function moonshotFlip(): void {
   if (!enabled) return
   const ac = audio()
@@ -1361,8 +1304,7 @@ export function moonshotFlip(): void {
   blip(ac, 560, t + 0.004, 0.07, 0.035)
 }
 
-// Win: the tension resolves G minor -> G major. A low boom under a bright ascending G-major arpeggio
-// (G B D G B), topped with a sparkle. Triumphant and distinct from Lucky's C climb / Range's D chord.
+// Win: G minor resolves to G major, a boom under a bright G-major arpeggio topped with a sparkle, distinct from Lucky's climb.
 export function moonshotWin(): void {
   if (!enabled) return
   const ac = audio()
@@ -1386,8 +1328,7 @@ export function moonshotWin(): void {
   spark.forEach((f, i) => bell(ac, f, t + 0.5 + i * 0.07, 0.18, 0.02))
 }
 
-// Cash-out: a confident rising fourth (D5 -> G5) topped with a sparkle, over a soft body. The "locked
-// it in" chime, its own interval so it never sounds like the held win.
+// Cash-out: a confident D5 -> G5 rising fourth topped with a sparkle, its own interval so it never sounds like the win.
 export function moonshotCashout(): void {
   if (!enabled) return
   const ac = audio()
@@ -1410,8 +1351,7 @@ export function moonshotCashout(): void {
   bell(ac, 1174.66, t + 0.22, 0.2, 0.03) // D6 sparkle
 }
 
-// Miss: a soft low sigh under a gentle descending minor third (Bb4 -> G4). Acknowledges the miss,
-// warm and brief.
+// Miss: a soft low sigh under a descending Bb4 -> G4 minor third, warm and brief.
 export function moonshotLose(): void {
   if (!enabled) return
   const ac = audio()
@@ -1437,19 +1377,13 @@ export function moonshotLose(): void {
   bell(ac, 392.0, t + 0.16, 0.42, 0.04) // G4
 }
 
-// --- Line Rider voices. A dreamy synthwave glide, its own world: slow 90bpm, bright E major, a soft
-// pad sky over a gliding pluck arp and a round synth bass, almost no drums. What makes it unique is
-// that the bed is *adaptive*, it listens to the run. One tone filter wraps the whole bed and opens as
-// the line speeds up (so the run audibly builds), brightens while you hug the line and goes underwater
-// when you drift off (staying on the line literally sounds better), a low heartbeat throbs in as grip
-// runs low, and the arp sparkles an octave up once your combo is hot. Nothing like Lucky's funk,
-// Range's tension, or Flappy's cheer. Non-intrusive by design: soft and muffled at rest, never a wall.
+// --- Line Rider voices: a dreamy 90bpm synthwave glide, almost no drums. The bed is *adaptive*: one
+// tone filter opens as the line speeds up, brightens on-line, goes underwater off-line, throbs on low grip.
 
 const RIDE_TEMPO = 90
 const RIDE_STEP = 60 / RIDE_TEMPO / 4 // sixteenth-note length, seconds
-// vi - IV - I - V in E major (C#m9 - Amaj9 - Emaj9 - Bsus4): the nostalgic "gliding at dusk" loop, a
-// gentle two-feel that never fatigues over a long run. Each bar: a low bass root, a soft three-note
-// pad voicing, and four ascending arp tones.
+// vi-IV-I-V in E major (C#m9-Amaj9-Emaj9-Bsus4): a gentle two-feel that never fatigues over a long run.
+// Each bar: a low bass root, a three-note pad voicing, and four ascending arp tones.
 const RIDE_BARS = [
   { bass: 69.3, pad: [164.81, 207.65, 246.94], arp: [277.18, 329.63, 415.3, 493.88] }, // C#m9
   { bass: 110.0, pad: [220.0, 277.18, 329.63], arp: [277.18, 329.63, 440.0, 493.88] }, // Amaj9
@@ -1460,8 +1394,7 @@ const RIDE_STEPS = RIDE_BARS.length * 16
 // A rolling up-down glide with breaths (-1 = rest), so the arp reads as flowing motion, not a machine gun.
 const RIDE_ARP = [0, -1, 2, 1, -1, 3, 2, -1, 0, 1, -1, 3, 2, -1, 1, -1]
 
-// A soft, wide pad voice: a slightly detuned triangle+sine pair through a gentle lowpass, slow swell,
-// long release. Spawned as a chord at each bar to hold the "sky" under the pluck.
+// A soft wide pad voice: detuned triangle+sine through a gentle lowpass, spawned as a chord each bar to hold the "sky".
 function ridePad(ac: AudioContext, dest: AudioNode, freq: number, t: number, dur: number): void {
   const o = ac.createOscillator()
   const d = ac.createOscillator()
@@ -1486,8 +1419,7 @@ function ridePad(ac: AudioContext, dest: AudioNode, freq: number, t: number, dur
   d.stop(t + dur + 0.05)
 }
 
-// A round synth bass: a saw body through a low lowpass plus a sine sub, soft and a touch longer than
-// the other beds so it sustains like synthwave rather than plucks.
+// A round synth bass: saw + sine sub, held a touch longer than the other beds so it sustains like synthwave.
 function rideBass(ac: AudioContext, dest: AudioNode, freq: number, t: number): void {
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -1545,8 +1477,7 @@ function rideTick(ac: AudioContext, dest: AudioNode, t: number, accent: boolean)
   src.stop(t + 0.05)
 }
 
-// A low heartbeat that pulses in only when grip runs low: felt more than heard, it makes danger audible
-// alongside the red vignette.
+// A low heartbeat pulsing only when grip runs low, felt more than heard, danger audible alongside the red vignette.
 function rideThrob(ac: AudioContext, dest: AudioNode, t: number): void {
   const o = ac.createOscillator()
   const g = ac.createGain()
@@ -1560,8 +1491,7 @@ function rideThrob(ac: AudioContext, dest: AudioNode, t: number): void {
   o.stop(t + 0.42)
 }
 
-// One sixteenth of the glide: a pad chord at each bar, a pulsing bass, the gliding pluck (sparkling an
-// octave up once the combo is hot), and the drums + heartbeat the adaptive state gates in.
+// One sixteenth of the glide: a pad chord per bar, pulsing bass, the gliding pluck (sparkles when combo is hot), and adaptive drums/heartbeat.
 function rideStepAt(ac: AudioContext, dest: AudioNode, step: number, t: number): void {
   const bar = Math.floor(step / 16) % RIDE_BARS.length
   const chord = RIDE_BARS[bar]
@@ -1590,9 +1520,8 @@ let rideIntensity = 0
 let rideGripLow = false
 let rideMult = 1
 
-// Start the glide. The whole bed runs through one lowpass `rideTone` that the run drives (see
-// setRideState): it opens as the line speeds up and brightens while you hug it. Same lookahead
-// scheduler as the other beds. No-op if sound is off or it is already running.
+// Starts the glide. The whole bed runs through one lowpass `rideTone` driven by setRideState: opens as
+// the line speeds up, brightens on-line. Same lookahead scheduler as the other beds.
 export function startRideBgm(): void {
   if (!enabled || rideTimer) return
   const ac = audio()
@@ -1644,9 +1573,8 @@ export function stopRideBgm(): void {
   }
 }
 
-// The run feeds the bed its live state every HUD tick (~20Hz). intensity (0..1, the difficulty ramp)
-// and onLine drive the tone filter: brighter as the line speeds up, brighter still while hugging it,
-// underwater when you drift off. gripLow + mult are read by the scheduler for the heartbeat + sparkle.
+// Fed the bed's live state every HUD tick (~20Hz). intensity + onLine drive the tone filter, underwater
+// when you drift off; gripLow + mult are read by the scheduler for the heartbeat + sparkle.
 export function setRideState(s: { intensity: number; onLine: boolean; gripLow: boolean; mult: number }): void {
   rideIntensity = s.intensity
   rideGripLow = s.gripLow
@@ -1685,8 +1613,7 @@ export function rideStart(): void {
   bloom.forEach((fr, i) => bell(ac, fr, t + 0.05 + i * 0.06, 0.5, 0.04))
 }
 
-// Wipeout: the floor drops out (a low sub fall) under a dreamy descending E-pentatonic tumble and an
-// airy noise fall through a closing filter. Melancholy, not harsh, the dream collapsing as you fall off.
+// Wipeout: the floor drops out under a descending E-pentatonic tumble and an airy noise fall, melancholy not harsh.
 export function rideCrash(): void {
   if (!enabled) return
   const ac = audio()

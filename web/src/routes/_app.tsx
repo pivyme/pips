@@ -34,23 +34,16 @@ import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 const LOADING_EXIT_DELAY_MS = 150
 const LOADING_EXIT_DURATION_MS = 520
-// Mirrors the canvas hero -> app settle (ConsoleCanvas HERO_MS): how long the device "drops in"
-// before it's at rest. Screens can hold their content until then. Kept in sync by hand.
+// Mirrors ConsoleCanvas's HERO_MS (kept in sync by hand); screens hold content until the device settles.
 const DEVICE_SETTLE_MS = 900
 
-// Runs before paint on the client, no-ops on the server. Lets us read localStorage (the auth token) and
-// commit the "returning session" decision into the first painted frame, so a refresh never flashes the
-// door or the hero -> app zoom.
+// Pre-paint on the client (no-op on server) so the returning-session decision lands in the first frame, no door/zoom flash on refresh.
 const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 const routeComponent = (route: { options: { component?: ComponentType } }): ComponentType =>
   route.options.component as ComponentType
 
-// The aperture games keyed by their route path. The 3D device mounts the active game's screen
-// directly from here, not through the router Outlet. That is what lets the screen survive the menu:
-// the menu is its own /menu route, so going through the Outlet would unmount the game the moment the
-// drawer opens and flash the device black behind the blur. Mounting by path keeps the same instance
-// alive across game <-> menu, so the live chart never blinks.
+// Aperture games keyed by route path. Mounted directly here (not through the Outlet) so opening /menu never unmounts the live game screen and flashes the device black.
 const DEVICE_SCREENS: Record<string, ComponentType> = {
   '/games': routeComponent(GamesRoute),
   '/games/lucky': routeComponent(LuckyRoute),
@@ -62,23 +55,17 @@ const DEVICE_SCREENS: Record<string, ComponentType> = {
 
 type OnboardingStep = 'username' | 'customize' | 'welcome'
 
-// Everything lives on ONE persistent console: the landing door, the first-run onboarding, and the
-// games + menu. They are phases of this single shell (never separate route trees), so the same 3D
-// device instance survives the whole arc with no remount: it settles from a floating hero to center
-// after sign-in, hosts the username + skin + welcome beats, then becomes the live games device.
+// Landing, onboarding, and games+menu are phases of ONE persistent console shell (never separate route trees), so the 3D device instance survives the whole arc with no remount.
 // The landing route ("/") just redirects here.
 export const Route = createFileRoute('/_app')({ component: AppLayout })
 
 function AppLayout() {
   const { status, user, recovering, refresh } = useAuth()
   const reduced = useReducedMotion()
-  // The Add-to-Home-Screen guide. Active only on a mobile browser that isn't installed yet and
-  // hasn't been skipped; it sits as an opaque overlay over the console.
+  // Add-to-Home-Screen guide: an opaque overlay, active only on a mobile browser not yet installed/skipped.
   const gate = useInstallGate()
-  // Warm the 3D console underneath the gate so dismissing it ("Continue in browser") reveals the
-  // device instantly instead of cold-building Three.js on tap. With the gate up we defer the build a
-  // beat so the gate paints snappily first, then it warms in the background; with no gate it mounts
-  // right away. Sticky: once mounted it stays, so toggling the gate never thrashes the WebGL scene.
+  // Warms the 3D console under the install gate so dismissing it reveals the device instantly, deferred a beat while the gate is up so it paints first.
+  // Sticky once mounted, so toggling the gate never thrashes the WebGL scene.
   const [mountConsole, setMountConsole] = useState(false)
   useEffect(() => {
     if (mountConsole) return
@@ -96,8 +83,7 @@ function AppLayout() {
   const [customizeHandoff, setCustomizeHandoff] = useState(false)
   const navigate = useNavigate()
   const matchRoute = useMatchRoute()
-  // The menu is a drawer over the device, not a screen inside it. When a /menu route is active we
-  // render it through the drawer while the shell behind it stays put for the blur layer.
+  // The menu is a drawer over the device, not a screen inside it; the shell stays mounted behind it for the blur layer.
   const onMenu = Boolean(matchRoute({ to: '/menu', fuzzy: true }))
   const onRange = Boolean(matchRoute({ to: '/games/range' }))
   const onLucky = Boolean(matchRoute({ to: '/games/lucky' }))
@@ -105,23 +91,17 @@ function AppLayout() {
   const onLineRider = Boolean(matchRoute({ to: '/games/line-rider' }))
   const onFlappyPiper = Boolean(matchRoute({ to: '/games/flappy-piper' }))
   const on3D = Boolean(matchRoute({ to: '/games', fuzzy: true }))
-  // Customize takes over the device: the menu drawer slides away and the device drops into the
-  // workshop studio. It rides the same persistent 3D branch so the WebGL stays warm.
+  // Customize takes over the device (drawer slides away, workshop studio drops in) on the same persistent 3D branch, so WebGL stays warm.
   const onCustomize = Boolean(matchRoute({ to: '/menu/customize' }))
   // The saved skin. Feeds the live games device; the studio + onboarding seed from it and write back.
   const savedTheme = useConsoleTheme()
-  // Theme is a synced setting: localStorage paints it instantly (pre-auth, no flash), but the server is
-  // the cross-device source of truth. On the first authenticated frame per account, adopt the server's
-  // saved skin so a new device matches the one you customized. We only adopt a NON-default pick: when the
-  // server is still on the default we leave the local skin alone, so a pre-sync local choice (or the
-  // shared-key demo user) is never clobbered back to Classic. Same-device logins already match (every
-  // pick writes both), so there's no recolor. setId is unstable (it closes over the stored value), so
-  // reach it through a ref.
+  // Theme syncs from the server on first authenticated frame per account, but only adopts a NON-default server pick, so a pre-sync local choice (or the shared demo user) is never clobbered back to Classic.
+  // setId is unstable (closes over the stored value), so it's read through a ref.
   const savedThemeRef = useRef(savedTheme)
   savedThemeRef.current = savedTheme
   const themeHydratedFor = useRef<string | null>(null)
-  // Adopt the live deploy ids (the DUSDC coin type) from the backend once on boot, so a devnet
-  // redeploy never needs a frontend rebuild. Demo has no backend, so it keeps the compile-time value.
+  // Adopts the live deploy ids (the DUSDC coin type) from the backend on boot, so a devnet redeploy never needs a frontend rebuild.
+  // Demo has no backend, so it keeps the compile-time value.
   useEffect(() => {
     if (!isDemo()) void refreshDeployedConfig()
   }, [])
@@ -134,16 +114,13 @@ function AppLayout() {
     themeHydratedFor.current = user.id
     const serverTheme = user.settings.theme
     const st = savedThemeRef.current
-    // own-property check: the server theme is a free-form string, so ignore anything not in the
-    // catalog (and never let a prototype key like "constructor" slip through into the skin lookup).
+    // Own-property check: the server theme is free-form, so reject anything outside the catalog (blocks a prototype key like "constructor" from slipping through).
     const known = serverTheme ? Object.prototype.hasOwnProperty.call(THEME_BY_ID, serverTheme) : false
     if (known && serverTheme !== DEFAULT_THEME_ID && serverTheme !== st.id) {
       st.setId(serverTheme)
     }
   }, [user])
-  // The ambient the whole frame floats on, derived from the skin so the surround stops being flat
-  // black. We paint html + body (body shows under the safe-area inset behind iOS Safari's status
-  // bar) and retint the theme-color meta, which is what Safari uses to color the notch/status strip.
+  // The ambient the frame floats on, derived from the skin. Paints html + body (body shows under iOS Safari's safe-area status bar) and retints the theme-color meta that Safari uses for the notch/status strip.
   const backdrop = themeBackdrop(savedTheme.theme)
   useEffect(() => {
     const root = document.documentElement
@@ -156,8 +133,7 @@ function AppLayout() {
       // private mode / storage blocked: this effect still tints once mounted, just no pre-paint help.
     }
 
-    // TanStack re-syncs <head> on every navigation and would reset theme-color to the static default,
-    // so pin it: re-apply our color whenever the head changes (the meta gets mutated or replaced).
+    // TanStack re-syncs <head> on every navigation, resetting theme-color; pin it by re-applying our color whenever the head mutates.
     const pin = () => {
       let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
       if (!meta) {
@@ -180,8 +156,7 @@ function AppLayout() {
     }
   }, [backdrop])
 
-  // Where Close returns the menu and which game the device mounts: the live game while on a games
-  // route, held across the menu open so the chart never blinks. (Mounting by path, not the Outlet.)
+  // Tracks which game the device mounts (held across menu open so the chart never blinks) and where Close returns to; mounted by path, not the Outlet.
   const last3DPath = useRef('/games')
   if (!onMenu && on3D)
     last3DPath.current = onRange
@@ -197,23 +172,8 @@ function AppLayout() {
               : '/games'
   const DeviceScreen = DEVICE_SCREENS[last3DPath.current]
 
-  // ===== Phase machine: landing (the door) -> onboarding (new account) -> app =====
-  // The door always shows first and is left by tapping the CTA, even when dev/demo auto-login has
-  // already resolved a session (a returning privy session auto-walks in). `entered` is that gate;
-  // it resets on sign-out so the door returns. "Onboarded" is server-truth: user.username is set
-  // (the same in demo, which persists it locally). onboardedRef latches the run so a flaky refresh
-  // can't bounce a finished user back into onboarding.
-  // A token already in storage means this is a refresh / returning user, not a fresh login. Those skip
-  // the door and hold the settled app pose from frame one, so the hero -> app "zoom in" only plays on a
-  // real login this session (the door CTA / privy handshake), never on every page load. Detected in a
-  // pre-paint client layout effect (localStorage is client-only), so the first painted frame is already
-  // committed to the app, no door/zoom flash. Demo keeps its door (it never persists a real token here).
-  // Debug: replay the whole onboarding arc on every sign-in/reload even when the handle is already set,
-  // so the flow can be evaluated without resetting an account. It must run the REAL first-run path
-  // (door -> hero->app settle -> onboarding -> welcome zoom), so it skips the session-restore below.
-  // Restoring would pin the device to the settled app pose with no hero, which is what made the 3D
-  // movement break (the username step crossfaded instead of settling, the welcome zoom over-shot).
-  // onboardedRef still latches it to once per session (resets on sign-out), so a finished run can't loop.
+  // Phase machine: landing (door) -> onboarding (new account) -> app, all phases of one persistent shell; `entered` gates the door and onboardedRef latches onboarding done, both reset on sign-out.
+  // A stored token means a returning session: skip the door/zoom and hold the settled app pose (unless onboardingDebug, which forces the real first-run arc for QA).
   const onboardingDebug = env.VITE_ONBOARDING_DEBUG === 'true'
   const [entered, setEntered] = useState(false)
   const [restoredSession, setRestoredSession] = useState(false)
@@ -230,13 +190,11 @@ function AppLayout() {
   const [onboarding, setOnboarding] = useState(false)
   const [step, setStep] = useState<OnboardingStep>('username')
   const [chosenName, setChosenName] = useState('')
-  // Welcome (the final onboarding beat) sub-state. The skin step's Done snap (its own customize outro)
-  // already lands the device at the app pose with a black screen, so the welcome is pure screen content:
-  // `revealed` flips after a short black hold, which gates the splash content + jingle fading in.
+  // Welcome (final onboarding beat) sub-state: the skin step's Done snap already lands the device at the app pose with a black screen, so welcome is pure screen content.
+  // `revealed` flips after a short black hold, gating the splash content + jingle fade-in.
   const [welcomeRevealed, setWelcomeRevealed] = useState(false)
-  // Sign-out (incl. the onboarding Log out) returns to the door with a clean slate, so the gate resets
-  // and the next sign-in starts onboarding fresh, never mid-flow. A stale token that fails to restore
-  // (401 -> anon, or error) also drops the no-animation path so the door comes back normally.
+  // Sign-out (incl. onboarding Log out) resets the gate so the next sign-in starts onboarding fresh, never mid-flow.
+  // A stale token that fails to restore (401 -> anon, or error) also drops the no-animation path so the door returns normally.
   useEffect(() => {
     if (status === 'anon' || status === 'error') setRestoredSession(false)
     if (status === 'anon') {
@@ -258,11 +216,8 @@ function AppLayout() {
   const phase: 'landing' | 'onboarding' | 'app' =
     !enteredAndAuthed ? 'landing' : onboarding ? 'onboarding' : 'app'
 
-  // Keep the URL honest with the phase, on the one persistent shell. Signed out -> the door at the
-  // root, so logging out never leaves a stale /games or /menu path behind the door. Signed in -> the
-  // canonical /games hub (the menu is only ever a drawer over it, never a standalone page). Mid
-  // onboarding we just strip a stray /menu. Skipped while auth is still resolving so a returning
-  // session isn't bounced off /games during the loading veil.
+  // Keeps the URL honest with the phase: signed out -> door at root, signed in -> canonical /games hub (menu is only ever a drawer, never a standalone page), mid-onboarding strips a stray /menu.
+  // Skipped while auth is resolving so a returning session isn't bounced off /games during the loading veil.
   useEffect(() => {
     if (status === 'loading') return
     if (phase === 'landing') {
@@ -274,9 +229,7 @@ function AppLayout() {
     }
   }, [status, phase, onMenu, navigate, matchRoute])
 
-  // Welcome dismissed: leave onboarding and refresh so the shell re-reads the new handle. We defer the
-  // refresh to here (not the username step) so the user object stays "not onboarded" through every step
-  // and the phase can't jump to the app mid-flow.
+  // Welcome dismissed: leave onboarding and refresh here (not at the username step) so the user object stays "not onboarded" through every step, and the phase can't jump to app mid-flow.
   const finishOnboarding = useCallback(() => {
     onboardedRef.current = true
     setOnboarding(false)
@@ -284,8 +237,7 @@ function AppLayout() {
     void refresh()
   }, [refresh])
 
-  // The skin step's Done snap puts the device at the app pose with the screen black. Hold that black for
-  // a beat (so it reads as "powered on, then greeted you", not a hard cut), then fade the splash in.
+  // The skin step's Done snap lands the device at the app pose with a black screen; hold that black a beat so it reads as "powered on, then greeted you", not a hard cut.
   useEffect(() => {
     if (phase !== 'onboarding' || step !== 'welcome' || welcomeRevealed) return
     if (reduced) {
@@ -295,9 +247,8 @@ function AppLayout() {
     const t = window.setTimeout(() => setWelcomeRevealed(true), 1000)
     return () => window.clearTimeout(t)
   }, [phase, step, welcomeRevealed, reduced])
-  // The device tab buttons (HOME / MENU) bypass the controls registry and navigate directly, so they
-  // must stay inert until the app proper, or a stray press mid-onboarding navigates away and wedges
-  // the flow. In the welcome beat continue is the tap overlay, so tabs do nothing there too.
+  // Device tab buttons (HOME/MENU) bypass the controls registry and navigate directly, so they stay inert until the app proper, or a stray press mid-onboarding wedges the flow.
+  // In the welcome beat, continue is the tap overlay, so tabs do nothing there too.
   const handleTab = useCallback(
     (tab: 'MENU' | 'GAMES') => {
       if (phase !== 'app') return
@@ -307,8 +258,7 @@ function AppLayout() {
     [phase, navigate],
   )
 
-  // The loading veil covers the very first paint until auth resolves (anon -> door, authed -> app),
-  // then wipes up to reveal the live console underneath.
+  // The loading veil covers the first paint until auth resolves (anon -> door, authed -> app), then wipes up to reveal the console.
   useEffect(() => {
     if (status === 'loading') return
     const exitTimer = window.setTimeout(() => setLoadingScreenLeaving(true), LOADING_EXIT_DELAY_MS)
@@ -326,10 +276,8 @@ function AppLayout() {
     if (onCustomize) setCustomizeOpening(false)
   }, [onCustomize])
 
-  // No Customize pre-warm on menu open. Building the studio is a whole second 3D device (~0.9s of
-  // synchronous Three.js), and doing it while the drawer is open froze every scroll/close. The studio
-  // builds only when you actually open it (onLaunchStart sets customizePrepared on the Customize tap),
-  // so the menu itself does zero 3D work and stays smooth.
+  // No Customize pre-warm on menu open: building the studio is a second 3D device (~0.9s synchronous Three.js) that froze scroll/close if built while the drawer was open.
+  // It builds only when actually opened (onLaunchStart sets customizePrepared on the Customize tap), so the menu does zero 3D work.
 
   useEffect(() => {
     if (!onMenu && !onCustomize && !customizeHandoff) {
@@ -340,39 +288,26 @@ function AppLayout() {
   const showCustomizeStudio = onCustomize || customizeOpening || customizeHandoff
   const mountCustomizeStudio = showCustomizeStudio || customizePrepared
 
-  // What pose the one device holds, and whether its HTML screen content shows. A returning session
-  // holds the settled app pose from the first frame (canvas inits heroT=0 -> no hero, so no settle).
-  // Onboarding keeps it on 'app': the skin step's Done snap (the customize outro) is what flies the
-  // device into the app pose for the welcome beat, so the persistent shell never runs its own zoom.
+  // Which pose the device holds and whether its screen content shows. A returning session holds the settled app pose from frame one (canvas inits heroT=0, no hero, no settle).
+  // Onboarding stays on 'app' too: the skin step's Done snap flies the device into the app pose for the welcome beat, so the shell never runs its own zoom.
   const restoring = restoredSession && !onboarding && status !== 'anon' && status !== 'error'
   const canvasStage: 'hero' | 'app' = restoring ? 'app' : phase === 'landing' ? 'hero' : 'app'
 
-  // The device plays a hero -> app settle on a real login (the door -> games walk-in: the handheld
-  // flies in from the floating hero pose to center). Track when that move is done so the screen can
-  // stay black through it and only power its content on once the device is at rest. Only the
-  // landing -> app jump moves the device; onboarding -> app already sits at the app pose (the skin
-  // step's Done snap landed it there), and a restored session / reduced motion has no settle at all,
-  // so those resolve to settled immediately. A later game <-> game nav stays in 'app', so it never
-  // re-fires and content reveals right away.
+  // Tracks whether the hero -> app settle (the door -> games walk-in) is done, so the screen stays black until the device is at rest.
+  // Only the landing -> app jump actually moves the device; onboarding -> app, a restored session, and reduced motion all resolve to settled immediately, and a later game <-> game nav stays in 'app' so it never re-fires.
   const [deviceSettled, setDeviceSettled] = useState(true)
   const prevPhaseRef = useRef(phase)
-  // Pre-paint so the first app frame is already committed to "settling" (screen dark) before the
-  // browser paints, otherwise the hub would flash for a frame before the reset lands.
+  // Pre-paint so the first app frame is already committed to "settling" (screen dark), otherwise the hub flashes for a frame before the reset lands.
   useIsoLayoutEffect(() => {
     const prev = prevPhaseRef.current
     prevPhaseRef.current = phase
-    // Outside the app the screen reveal is governed by the landing/onboarding code, so never gate
-    // here. Crucially this also un-wedges a settle that the brief landing -> app render arms a frame
-    // before the phase machine detours into onboarding: without it, deviceSettled stayed false for the
-    // whole run, so the screen went black and stuck the instant onboarding handed off to the app (the
-    // "click any button on Welcome -> all black" bug), since deviceChild gates on it.
+    // Outside the app the screen reveal is governed by landing/onboarding code, so never gate here.
+    // Also un-wedges a settle armed a frame before the phase machine detours into onboarding (was the "click any button on Welcome -> all black" bug: deviceSettled stuck false, and deviceChild gates on it).
     if (phase !== 'app') {
       setDeviceSettled(true)
       return
     }
-    // Only the direct door -> games walk-in flies the device in from the hero pose; hold the screen
-    // dark until it lands. Onboarding -> app (and a restored session / reduced motion) already sits at
-    // the resting pose, so reveal at once.
+    // Only the direct door -> games walk-in flies the device in from the hero pose (hold the screen dark until it lands); onboarding -> app, a restored session, and reduced motion already sit at rest, so reveal at once.
     if (prev !== 'landing' || restoring || reduced) {
       setDeviceSettled(true)
       return
@@ -382,10 +317,8 @@ function AppLayout() {
     return () => window.clearTimeout(t)
   }, [phase, restoring, reduced])
 
-  // Keep the screen black while the device flies into place on login, then fade the content in once
-  // it has settled. The layer's backing is always black, so the screen reads as a powered-off display
-  // that turns on when the handheld arrives, not content sliding around mid-move. Other transitions
-  // (in-app nav, onboarding steps) are unaffected: deviceSettled stays true for them.
+  // Keeps the screen black while the device flies into place on login, then fades content in once settled, so it reads as a powered-off display turning on, not content sliding mid-move.
+  // Other transitions (in-app nav, onboarding steps) are unaffected: deviceSettled stays true for them.
   const screenVisible =
     phase === 'app'
       ? !showCustomizeStudio && deviceSettled
@@ -393,14 +326,11 @@ function AppLayout() {
         ? step !== 'customize'
         : true
 
-  // The content mounted on the device's screen, per phase. Onboarding's username + welcome render on
-  // the screen (instrument language); the skin step turns the screen off so the body reads cleanly.
+  // Content mounted on the device screen per phase. Onboarding's username + welcome render on-screen; the skin step turns the screen off so the body reads cleanly.
   let deviceChild: ReactNode = null
   if (phase === 'app') {
-    // Hold the screen dark while the device flies in from the hero pose on login: mount the live
-    // screen only once it has settled, so its content fades in cleanly as the device lands instead of
-    // flickering through the fade-out as the door's attract screen hands off. deviceSettled is true for
-    // every other path (in-app nav, restored session, onboarding -> app), so this only gates the login.
+    // Hold the screen dark while the device flies in on login: mount the live screen only once settled, so content fades in cleanly instead of flickering through the door handoff.
+    // deviceSettled is true for every other path, so this only gates the login.
     deviceChild = deviceSettled && DeviceScreen ? <DeviceScreen /> : null
   } else if (phase === 'landing') {
     deviceChild = <AttractScreen />
@@ -439,9 +369,8 @@ function AppLayout() {
 
           {phase === 'landing' && !restoring && <LandingOverlay onEnter={() => setEntered(true)} />}
 
-          {/* Mounted a step early (on username) so the skin canvas builds + holds at the app pose behind
-              the handle screen, then `active` flips on the skin step and it snaps in over the live device
-              and zooms out. Pre-warming is what kills the old ~500ms build stall at the hand-off. */}
+          {/* Mounted a step early (on username) so the skin canvas pre-warms behind the handle screen; `active` flips on the skin step to snap it in and zoom out.
+              Pre-warming kills the old ~500ms build stall at hand-off. */}
           {phase === 'onboarding' && (step === 'username' || step === 'customize') && (
             <ThemePicker
               selectedId={savedTheme.id}
@@ -472,8 +401,7 @@ function AppLayout() {
               onCancel={() => void navigate({ to: '/menu' })}
             />
           )}
-          {/* The drawer slides itself away (closeTo) when Customize is tapped, then the studio takes
-              over, so the device is revealed settling into the workshop. */}
+          {/* The drawer slides itself away (closeTo) when Customize is tapped, revealing the device settling into the workshop. */}
           {phase === 'app' && onMenu && !onCustomize && (
             <MenuDrawer
               returnTo={last3DPath.current}
@@ -493,8 +421,7 @@ function AppLayout() {
         {gate.active && <InstallGate {...gate} />}
       </AppFrame>
       {loadingScreen}
-      {/* Shown only while healing a re-armed session in place (devnet refresh). Never appears on a
-          healthy login, so onboarding and the normal first run are untouched. */}
+      {/* Shown only while healing a re-armed session in place (devnet refresh); never appears on a healthy login. */}
       {recovering && !showLoadingScreen && <RecoveryOverlay />}
       <AchievementCelebration />
       </ActivePlayProvider>
@@ -520,9 +447,7 @@ function RecoveryOverlay() {
   )
 }
 
-// The 3D handheld as the live shell. It reads the controls the screen registered and renders the
-// screen content on the device's screen; the physical knob/buttons drive the game. The screen
-// content is passed in (the active game's screen, the onboarding screens, or the landing attract).
+// The 3D handheld as the live shell: reads the registered controls, renders the passed-in screen content (game, onboarding, or landing attract), and the physical knob/buttons drive the game.
 function Console3DRoute({
   children,
   theme,

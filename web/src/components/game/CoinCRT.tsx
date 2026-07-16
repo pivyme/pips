@@ -1,10 +1,7 @@
 import { useEffect, useRef } from 'react'
 
-// A coin that flips on its Y axis behind the device glass, rendered as low-res amber pixels with
-// ordered (Bayer) dithering and a scanline wash, so it reads like an old monochrome arcade screen
-// rather than a crisp HD logo. The front face is the token logo (when we have one), the back is the
-// ticker struck into the disc. Lives in the in-screen language (docs/SCREEN.md): true black, one
-// amber accent, no soft 3D. `crt` toggles the dither/scanlines off for a clean readout.
+// A coin that flips on its Y axis behind the device glass: low-res amber pixels with ordered (Bayer) dithering + a scanline wash, so it reads like an old monochrome arcade screen.
+// Front is the token logo, back is the ticker struck into the disc (docs/SCREEN.md: true black, one amber accent); `crt` toggles the dither/scanlines off for a clean readout.
 
 type Props = {
   ticker: string
@@ -44,8 +41,7 @@ export function CoinCRT({
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const imgReady = useRef(false)
-  // When the coin isn't flipping, redraw only on a real change (logo loaded, crt/ticker flipped)
-  // instead of re-dithering the same frame 30x a second.
+  // When the coin isn't flipping, redraw only on a real change (logo loaded, crt/ticker flipped), not re-dithering the same frame 30x a second.
   const dirty = useRef(true)
 
   // Latest props the rAF loop reads, so we never tear down the loop just to flip a flag.
@@ -143,8 +139,7 @@ export function CoinCRT({
 
       if (!crtOn) return
 
-      // Ordered dither pass: quantize luminance onto the amber ramp with the Bayer bias, and snap
-      // alpha hard so pixels keep crisp square edges (no anti-aliased fringe = real pixel art).
+      // Ordered dither pass: quantize luminance onto the amber ramp with the Bayer bias, snap alpha hard for crisp square edges (no anti-aliased fringe = real pixel art).
       const buf = ctx.getImageData(0, 0, W, H)
       const px = buf.data
       for (let y = 0; y < H; y++) {

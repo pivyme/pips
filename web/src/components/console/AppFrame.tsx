@@ -1,17 +1,12 @@
-// PIPS is a handheld. On a phone the device fills the screen. On desktop we
-// don't sprawl wide like a trading terminal, we frame it as a tall device
-// floating on a drifting PIPS-logo field, like a product shot. It scales with
-// viewport height (~88dvh, aspect-locked) so it reads as the hero, not a chip.
-// (Landing is exempt, it gets the full width.)
+// PIPS is a handheld: full-screen on phone, but on desktop it's framed as a tall device floating on a drifting PIPS-logo field (a product shot, not a wide trading terminal), scaled to ~88dvh aspect-locked so it reads as the hero, not a chip.
+// Landing is exempt, it gets full width.
 import type { ReactNode } from 'react'
 import { useEffect, useRef } from 'react'
 import { cnm } from '@/utils/style'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
-// `bg` tints the ambient (the desktop surround + the frame the device sits in) to the active skin.
-// Defaults to black for screens that mount before a theme is known. `dimmed` is the landing door: it
-// fades the drifting logo field out and swaps in the deconstructed-device backdrop behind the device,
-// so the handheld card reads as the hero on a real surface. The device card itself is untouched.
+// `bg` tints the ambient (desktop surround + device frame) to the active skin, defaulting to black before a theme is known.
+// `dimmed` is the landing door: fades the drifting logo field out and swaps in the deconstructed-device backdrop, so the handheld card reads as the hero; the card itself is untouched.
 export function AppFrame({ children, bg, dimmed = false }: { children: ReactNode; bg?: string; dimmed?: boolean }) {
   const style = bg ? { background: bg } : undefined
   return (
@@ -24,9 +19,8 @@ export function AppFrame({ children, bg, dimmed = false }: { children: ReactNode
         className={cnm('pips-surround pointer-events-none absolute inset-0 hidden sm:block', dimmed && 'pips-surround-dim')}
         aria-hidden
       />
-      {/* Landing door surround: the deconstructed-device flatlay replaces the dimmed logo field, drifting
-          under the cursor so the handheld card reads as the hero on a real surface. Desktop-only (mobile
-          has no surround, the card is full-bleed) and behind the z-10 card, so the card stays untouched. */}
+      {/* Landing door surround: the deconstructed-device flatlay replaces the dimmed logo field, drifting under the cursor so the card reads as the hero on a real surface.
+          Desktop-only (mobile is full-bleed) and behind the z-10 card, so the card stays untouched. */}
       <LandingBackdrop active={dimmed} />
       <div
         className="relative z-10 flex h-dvh w-full flex-col overflow-hidden bg-black sm:h-auto sm:aspect-[23/44] sm:w-[min(88vw,46dvh)] sm:max-w-[720px] sm:rounded-[min(1.8vw,1.8dvh)] sm:border sm:border-white/10 sm:shadow-[0_40px_120px_-20px_rgba(0,0,0,0.9)]"
@@ -38,10 +32,8 @@ export function AppFrame({ children, bg, dimmed = false }: { children: ReactNode
   )
 }
 
-// The landing surround image with a soft cursor parallax. Desktop-only (it replaces the logo field),
-// behind the device card. The transform is driven straight on the DOM node via rAF (eased toward the
-// pointer target), no React state churn, so it stays a cheap composited translate. Oversized by 7% on
-// every side so the drift never exposes a bare edge.
+// The landing surround image with a soft cursor parallax, desktop-only, behind the device card. Transform is driven straight on the DOM node via rAF (eased toward the pointer target), no React state churn.
+// Oversized 7% on every side so the drift never exposes a bare edge.
 function LandingBackdrop({ active }: { active: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   const reduced = useReducedMotion()

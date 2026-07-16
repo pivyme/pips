@@ -1,10 +1,5 @@
-// Wallet management: withdraw DUSDC to any Sui address. The displayed balance is wallet coins +
-// PredictManager chips (chips migrate into the manager as plays run), so a withdraw sources from
-// both: it pulls the shortfall out of the manager (owner-gated on-chain) and pays the rest from the
-// wallet coins, all in ONE PTB signed for the user (dev = operator, privy = the embedded wallet via
-// a session signer). Runs under the same per-user lock as plays so owned coins never equivocate.
-//
-// Deposits need no endpoint: the user's address simply receives DUSDC, which shows up in the balance.
+// Withdraw DUSDC to any Sui address. Displayed balance is wallet coins + PredictManager chips, so a withdraw pulls the
+// shortfall from the manager and pays the rest from wallet coins in ONE PTB, under the same per-user lock as plays. Deposits need no endpoint, DUSDC sent to the address just shows up in the balance.
 
 import { Transaction, coinWithBalance, type TransactionObjectArgument } from '@mysten/sui/transactions';
 import { isValidSuiAddress, normalizeSuiAddress } from '@mysten/sui/utils';
@@ -49,10 +44,8 @@ export const httpStatusForWalletError = (code: WalletErrorCode): number =>
 export type WithdrawResult = { user: UserDTO; digest: string };
 export type FaucetResult = { user: UserDTO; amount: string; digest: string };
 
-// Request DUSDC faucet: hand the user a fixed amount of test chips, rate-limited per user. The
-// cooldown is in-memory (anti-spam only, not security-critical on a free localnet), so it resets on a
-// restart and is per-process, which is fine: a user hits one backend. Chips are paid from the treasury
-// reserve (transferDusdc), so this never signs an operator tx on a follower.
+// Request DUSDC faucet: fixed amount of test chips, rate-limited per user via an in-memory cooldown
+// (anti-spam only, not security-critical; resets on restart, fine since a user hits one backend). Paid from the treasury reserve, so it never signs an operator tx on a follower.
 const lastFaucetAt = new Map<string, number>();
 
 export async function requestDusdc(user: User): Promise<FaucetResult> {
@@ -77,9 +70,8 @@ export async function requestDusdc(user: User): Promise<FaucetResult> {
   return { user: await toUserDTO(user), amount: FAUCET_AMOUNT.toFixed(2), digest };
 }
 
-// `user.balance` is a 2dp display string, so a "Max" withdraw can land a sub-cent above the true
-// on-chain total. Treat any overshoot within one cent as "withdraw everything" and clamp to the real
-// total; a larger request is a genuine shortfall. (One cent = 10_000 raw at 6dp.)
+// `user.balance` is a 2dp display string, so a "Max" withdraw can land a sub-cent above the true on-chain
+// total; treat any overshoot within one cent as "withdraw everything" and clamp to it (one cent = 10_000 raw at 6dp), a larger request is a genuine shortfall.
 const DUST_TOLERANCE_RAW = 10_000n;
 
 export async function withdrawDusdc(
@@ -129,10 +121,8 @@ async function withdrawForkLocked(user: User, recipient: string, wantRaw: bigint
   return execWithdraw(user, tx);
 }
 
-// Real path (testnet, Mysten Predict): chips live in the wallet + the per-owner AccountWrapper's
-// internal balance (a cash-out credits it there, same as the fork keeps chips in the manager). Pull the
-// shortfall out of the wrapper via withdraw_funds (owner-authed, fresh Auth) and pay the rest from
-// wallet coins, one PTB. Off the hot path, so resolve the wrapper straight from chain (no cache).
+// Real path (testnet, Mysten Predict): chips live in the wallet + the per-owner AccountWrapper's internal
+// balance (a cash-out credits it there). Pulls the shortfall via withdraw_funds (owner-authed) and pays the rest from wallet coins in one PTB; off the hot path, so resolves the wrapper straight from chain (no cache).
 async function withdrawRealLocked(user: User, recipient: string, wantRaw: bigint): Promise<WithdrawResult> {
   const w = await resolveWrapper(user.address);
   const [walletRaw, wrapperRaw] = await Promise.all([
@@ -152,9 +142,8 @@ async function withdrawRealLocked(user: User, recipient: string, wantRaw: bigint
   return execWithdraw(user, tx);
 }
 
-// Clamp a requested withdrawal to the true on-chain total. `user.balance` is a 2dp display string, so a
-// "Max" withdraw can land a sub-cent above it: treat an overshoot within one cent as "withdraw
-// everything"; a larger request is a genuine shortfall.
+// Clamp a requested withdrawal to the true on-chain total, treating overshoot within DUST_TOLERANCE_RAW
+// as a "Max" rounding artifact (2dp display balance) rather than a genuine shortfall.
 function clampWithdraw(wantRaw: bigint, totalRaw: bigint): bigint {
   let amountRaw = wantRaw;
   if (amountRaw > totalRaw) {

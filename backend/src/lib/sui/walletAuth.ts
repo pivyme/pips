@@ -1,8 +1,5 @@
-// Wallet-connect login challenge. The user proves they own an external Sui wallet by signing a
-// nonce-bearing message off-chain (no transaction, network-agnostic). We issue the exact message,
-// hold it briefly server-side keyed by address, and verify the returned signature against it, so the
-// client can never replay an old signature or swap in a different message. Single-instance in-memory
-// store: the frontend talks to one backend, so /nonce and /verify always land on the same process.
+// Wallet-connect login: the user proves ownership of an external Sui wallet by signing a nonce-bearing
+// message off-chain, verified against the exact issued message to block replay. Single-instance in-memory store, so /nonce and /verify must land on the same backend process.
 
 import { randomBytes } from 'node:crypto';
 
@@ -21,8 +18,7 @@ function prune(): void {
   for (const [k, v] of pending) if (v.exp < now) pending.delete(k);
 }
 
-// Issue the message the wallet must sign. Stored verbatim so verify re-encodes the same bytes rather
-// than trusting any bytes the client sends back.
+// Issues the message the wallet must sign, stored verbatim so verify re-encodes the same bytes instead of trusting bytes the client sends back.
 export function issueWalletNonce(address: string): { message: string } {
   const addr = normalizeSuiAddress(address);
   const nonce = randomBytes(16).toString('hex');
@@ -44,11 +40,8 @@ export function issueWalletNonce(address: string): { message: string } {
 // The ed25519 wallet flag is 0x00; zkLogin is 0x05 (first byte of the serialized signature).
 const ZKLOGIN_FLAG = 0x05;
 
-// zkLogin (social) wallets like Slush prove a signature by checking the zk proof against the network
-// the user signed on (its current epoch + on-chain OAuth JWKs) via the node's verifyZkLoginSignature,
-// NOT against our localnet, which has neither. So those are verified against public fullnodes. Slush
-// social accounts live on mainnet; testnet is the fallback. Plain keypair / multisig / passkey sigs
-// verify offline with no client. Lazily built so non-zkLogin logins never touch an external node.
+// zkLogin (social) wallets like Slush verify against public fullnodes (mainnet, testnet fallback): the
+// zk proof needs the network's live epoch + on-chain OAuth JWKs, which our localnet has neither. Everything else verifies offline; clients build lazily so non-zkLogin logins never touch an external node.
 const ZK_FULLNODE: Record<'mainnet' | 'testnet', string> = {
   mainnet: 'https://fullnode.mainnet.sui.io:443',
   testnet: 'https://fullnode.testnet.sui.io:443',
@@ -71,9 +64,8 @@ function schemeFlag(signature: string): number | null {
   }
 }
 
-// Verify a wallet's signature over its outstanding challenge. The nonce is single-use: a successful
-// verify consumes it. Returns false (never throws) on any failure so the route can map it to a clean
-// 401. The actual failure is logged so a rejected login is diagnosable instead of a silent "invalid".
+// Verifies a wallet's signature over its outstanding challenge; the nonce is single-use, consumed on success.
+// Never throws, returns false on any failure (clean 401), but logs the real cause so a rejected login stays diagnosable.
 export async function verifyWalletSignature(address: string, signature: string): Promise<boolean> {
   const addr = normalizeSuiAddress(address);
   const entry = pending.get(addr);

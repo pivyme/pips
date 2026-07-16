@@ -13,12 +13,8 @@ import { Route as LineRiderRoute } from './_app/games/line-rider'
 import { Route as FlappyPiperRoute } from './_app/games/flappy-piper'
 import { isDemo } from '@/lib/demo'
 
-// Dev-only asset dump (personal tooling, not part of the product). Two modes:
-//  - "Bare device": the handheld dead front-on, screen off, per skin, spinnable in 3D (the original).
-//  - "Game screens": two handhelds. The LEFT one is live and playable, use the buttons + knob to set up
-//    the shot (spin Lucky, fly Flappy, etc). The RIGHT one paints a snapshot of that screen onto its 3D
-//    screen so the whole device holding the game spins in 3D and exports cleanly. Plus a screen-only PNG.
-// The games need live content with no backend, so this route forces demo mode (it reloads once into it).
+// Dev-only asset dump (personal tooling, not shipped). "Bare device" spins the screen-off handheld
+// per skin; "Game screens" pairs a live playable device with a 3D export twin that snapshots its screen, plus a screen-only PNG. Forces demo mode so the games have live content with no backend.
 export const Route = createFileRoute('/export')({ component: ExportPage })
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -43,9 +39,8 @@ function download(dataUrl: string, name: string) {
   a.click()
 }
 
-// Device aspect is 0.56 (w/h). Size the stage devices by whichever of height/width actually binds, so
-// they never overflow and crop on a narrow window. Game mode fits two side by side (the width budget is
-// halved); bare mode fits one. The px reserve leaves room for the 320px controls panel + paddings + gap.
+// Device aspect is 0.56 (w/h); size by whichever of height/width binds so it never crops on a narrow
+// window. Game mode fits two side by side (width halved); the px reserve leaves room for the 320px controls panel.
 const GAME_BOX: CSSProperties = {
   position: 'relative',
   height: 'min(74vh, (100vw - 470px) / 1.12)',
@@ -75,8 +70,8 @@ function ExportPage() {
   const rad = (deg: number) => (deg * Math.PI) / 180
   const exportRot = useMemo(() => ({ x: rad(rotX), y: rad(rotY) }), [rotX, rotY])
 
-  // The games hit the demo seam for prices/plays, so force demo on. isDemo() reads localStorage fresh,
-  // but AuthProvider (in __root) decides authed-vs-anon once at boot, so flip the flag and reload into it.
+  // The games hit the demo seam for prices/plays, so force demo mode. isDemo() reads localStorage fresh,
+  // but AuthProvider decides authed-vs-anon once at boot, so flip the flag then reload into it.
   const [ready, setReady] = useState(false)
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -92,11 +87,8 @@ function ExportPage() {
     setReady(true)
   }, [])
 
-  // Snapshot the live device's screen (the projected HTML layer, CRT finish and all) to a PNG. Feeds
-  // both the export device's screen-mesh texture and the screen-only PNG. The screen surface is
-  // absolutely positioned at the projected cutout (a non-zero left/top); html-to-image keeps that
-  // offset and would shove the content into the bottom-right with a blank top-left, so pin it to 0,0
-  // (and drop any transform) for the capture only.
+  // Snapshot the live screen (the projected HTML layer) to a PNG, feeding the export device's mesh
+  // texture and the screen-only PNG. The surface sits at a non-zero left/top; html-to-image keeps that offset and shoves content bottom-right, so pin it to 0,0 with no transform for the capture only.
   async function takeSnapshot(): Promise<string | null> {
     const node = liveRef.current?.querySelector('.console-screen-surface') as HTMLElement | null
     if (!node) return null
@@ -114,8 +106,7 @@ function ExportPage() {
     }
   }
 
-  // Mirror the live screen onto the export device while in game mode. A still tool, so a slow refresh
-  // is plenty and keeps the html-to-image cost low. Plays update the next time it ticks.
+  // Mirror the live screen onto the export device in game mode. A still tool, so a slow refresh is fine and keeps the html-to-image cost low.
   useEffect(() => {
     if (!ready || mode !== 'screens') return
     let alive = true
@@ -133,16 +124,14 @@ function ExportPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, mode, gameKey])
 
-  // Read a ConsoleCanvas's WebGL buffer straight back (lossless, transparent). exportMode keeps the
-  // buffer around. Used for both the bare shot and the textured game shot.
+  // Read a ConsoleCanvas's WebGL buffer straight back (lossless, transparent); exportMode keeps the buffer around. Used for both the bare shot and the textured game shot.
   function captureCanvas(box: HTMLDivElement | null, name: string) {
     const canvas = box?.querySelector('canvas')
     if (!canvas) return
     download(canvas.toDataURL('image/png'), name)
   }
 
-  // Refresh the texture from the current live screen, then read the export device back, so a Device PNG
-  // always captures exactly what's on the live screen right now, at the chosen angle.
+  // Refresh the texture from the live screen, then read the export device back, so Device PNG always captures exactly what's live, at the chosen angle.
   async function captureDevicePng(name: string) {
     await takeSnapshot()
     await sleep(380) // let the snapshot upload as a texture + a frame render
@@ -301,8 +290,7 @@ function ExportPage() {
 }
 
 // The live, playable shell, wired like _app's Console3DRoute: the screen registers its controls and the
-// device reads them back, so pressing the device buttons + knob actually plays the game. Switching games
-// swaps the screen content (keyed) without rebuilding the WebGL device.
+// device reads them back, so pressing the buttons + knob actually plays the game. Switching games swaps the screen content (keyed) without rebuilding the WebGL device.
 function LiveDevice({ theme, Comp, gameKey }: { theme: (typeof THEMES)[number]; Comp: ComponentType; gameKey: string }) {
   const { view, handlers } = useConsoleView()
   return (

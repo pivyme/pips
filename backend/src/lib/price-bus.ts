@@ -1,20 +1,5 @@
-// The display price bus. `displaySpot(asset)` is the single source the chart transport (SSE + the WS
-// hub) reads: Binance MOTION pinned to the on-chain oracle LEVEL. Nothing truthful reads it (L-015),
-// entry / cash-out / settle all keep reading the chain. It is a graceful degradation ladder, so the
-// worst case is exactly today's chart, never worse, never a crash.
-//
-//  1. Primary (real mode, Binance healthy): `binanceSpot + smoothedOffset`, where the offset is an
-//     EMA of `(oracleLevel - binancePrice)`, slew-limited so a Binance-only flash drifts toward the
-//     oracle instead of teleporting. The line moves freely with real BTC; only the reconciliation gap
-//     is rate-limited (never the price). `entrySpot` (the same BS oracle level) sits on the line by
-//     construction, so overlays need no client-side offset.
-//  2. Binance stale/down: fall straight through to `gameSpot()` (today's eased on-chain BS spot). The
-//     pinned level already equals the oracle, so the last good Binance value ~ the on-chain spot, the
-//     handoff does not jump. Hysteresis (a healthy streak before switching back) stops flapping.
-//  3. On-chain also cold: `gameSpot` itself falls to raw Pyth. Defense in depth, all three exist today.
-//
-// Fork mode (localnet/devnet) short-circuits to `gameSpot` verbatim, so its chart is byte-identical to
-// before (the walk engine is what settles there and is already lively, never pin it to an external feed).
+// displaySpot(asset): Binance motion EMA-pinned to the on-chain oracle, degrading to gameSpot if either stalls.
+// Display-only (L-015), entry/cash-out/settle always read the chain; fork mode short-circuits to gameSpot verbatim.
 
 import {
   IS_REAL_PREDICT,
@@ -29,11 +14,8 @@ import { allMarkets, assetSpot } from './sui/markets.ts';
 
 type Spot = { price: number; ts: number };
 
-// Pin tuning (display only, so deliberately gentle). PIN_TAU pulls the offset toward the oracle gap;
-// SLEW caps how fast that gap can correct so a flash drifts, not teleports; REENTRY is the healthy
-// streak required before trusting Binance again after an outage; BUZZER converges the pin fully as an
-// oracle nears expiry so the visual outcome lines up with settlement (the reveal still snaps to truth).
-// All four are env-overridable knobs (main-config.ts) so a live real-mode session tunes without a redeploy.
+// Pin tuning (display only, deliberately gentle): TAU eases the offset toward the oracle gap, SLEW caps
+// its correction speed, REENTRY is the healthy streak before trusting Binance again, BUZZER converges the pin near expiry so the reveal matches settlement. All four are env-overridable knobs in main-config.ts.
 const PIN_TAU_MS = PRICE_PIN_TAU_MS;
 const SLEW_FRAC_PER_SEC = PRICE_PIN_SLEW_FRAC_PER_SEC; // max offset move per second as a fraction of price
 const REENTRY_AFTER_MS = PRICE_PIN_REENTRY_MS;
@@ -59,9 +41,8 @@ function stateOf(asset: string): St {
   return st;
 }
 
-// True when the soonest live oracle for this asset is inside the buzzer window, i.e. an open play is
-// about to settle. Reads only the markets cache (no per-play coupling); real mode markets are ~cadence
-// apart, so this fires only in the last seconds before a settlement, not continuously.
+// True when the soonest live oracle for this asset is inside the buzzer window (an open play is about
+// to settle). Reads only the markets cache, so this fires only in the last seconds before settlement, not continuously.
 function buzzerConverging(asset: string, now: number): boolean {
   let soonest = Infinity;
   for (const m of allMarkets()) {
@@ -72,9 +53,8 @@ function buzzerConverging(asset: string, now: number): boolean {
   return soonest <= BUZZER_CONVERGE_MS;
 }
 
-// Pure: advance the smoothed pin offset one step. An EMA pull toward `target` (time-constant `tauMs`),
-// then slew-clamp the move to `slewFracPerSec * dt * price` so a Binance-only flash drifts toward the
-// oracle instead of teleporting. Extracted pure so the display math is unit-testable without a socket.
+// Pure: EMA-pulls the offset toward `target` (time-constant tauMs), then slew-clamps the move to
+// slewFracPerSec * dt * price so a Binance flash drifts toward the oracle instead of teleporting.
 export function pinnedOffsetStep(prev: number, target: number, dtMs: number, price: number, tauMs: number, slewFracPerSec: number): number {
   const k = 1 - Math.exp(-dtMs / tauMs);
   const desired = prev + (target - prev) * k;
@@ -85,9 +65,8 @@ export function pinnedOffsetStep(prev: number, target: number, dtMs: number, pri
   return desired;
 }
 
-// Pure: the fallback-ladder re-entry hysteresis. Binance drives only after a healthy streak of
-// `reentryMs`; any unhealthy read drops to fallback immediately (no streak needed to leave), so a single
-// gap never stutters the line between modes. Extracted pure so the anti-flap logic is unit-testable.
+// Pure: the fallback-ladder re-entry hysteresis. Binance drives only after a healthy streak of reentryMs;
+// any unhealthy read drops to fallback immediately, so a single gap never stutters the line between modes.
 export function nextPinDriver(prev: Driver, canBinance: boolean, healthySince: number, now: number, reentryMs: number): { driver: Driver; healthySince: number } {
   if (!canBinance) return { driver: 'fallback', healthySince: 0 };
   if (prev === 'binance') return { driver: 'binance', healthySince };
@@ -109,9 +88,8 @@ export async function displaySpot(asset: string): Promise<Spot | null> {
   const st = stateOf(asset);
   const canBinance = b != null && oracleSpot != null && oracleSpot > 0;
 
-  // Driver decision with re-entry hysteresis: drop to fallback the moment Binance can't drive (it is
-  // already null only after BINANCE_STALE_MS of silence), but require a healthy streak before switching
-  // back so a single recovered tick doesn't stutter the line between modes.
+  // Driver decision with re-entry hysteresis: drop to fallback the moment Binance can't drive (already
+  // null only after BINANCE_STALE_MS of silence), but require a healthy streak before switching back so a recovered tick doesn't stutter the line.
   const dec = nextPinDriver(st.driver, canBinance, st.healthySince, now, REENTRY_AFTER_MS);
   const switchedToBinance = st.driver === 'fallback' && dec.driver === 'binance';
   st.driver = dec.driver;

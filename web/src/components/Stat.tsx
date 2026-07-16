@@ -2,9 +2,8 @@ import { useEffect, useRef } from 'react'
 import { cnm } from '@/utils/style'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
-// Tabular rolling number. Counts up/down to a new value on change instead of snapping, which
-// is what makes a PnL climb or a balance tick feel alive. Drives a single span's textContent
-// from a rAF loop so React never re-renders mid-roll. Reduced motion snaps straight to value.
+// Tabular rolling number: counts to the new value instead of snapping, driving a single span's
+// textContent from a rAF loop so React never re-renders mid-roll. Reduced motion snaps straight to value.
 interface StatProps {
   value: number
   prefix?: string

@@ -69,8 +69,7 @@ function between(min: number, max: number) {
   return min + Math.random() * (max - min)
 }
 
-// Master level for all device SFX. The button/knob/roller samples are decoded at full scale, which
-// drowns out the synth game audio in sound.ts. Pull them down to a tactile, balanced level here.
+// Master level for device SFX; the button/knob/roller samples decode at full scale and would drown out sound.ts's synth audio otherwise.
 const SFX_LEVEL = 0.25
 
 export function createAudio() {
@@ -81,11 +80,8 @@ export function createAudio() {
 
   async function loadSfx() {
     if (!actx) return
-    // Paths are case-sensitive in production (Vercel/Linux); macOS local is not, which hid a
-    // mismatch here. Match the files on disk exactly. Each sample loads independently so one bad
-    // asset can't take the rest down (a shared Promise.all reject did exactly that), and any
-    // failure is logged instead of swallowed. The r.ok check stops an HTML 404 fallback from
-    // being fed into decodeAudioData as if it were audio.
+    // Paths are case-sensitive in prod (Vercel/Linux) but not macOS local, which hid a mismatch here.
+    // Each sample loads independently, so one bad asset can't sink the rest; r.ok guards against decoding an HTML 404 as audio.
     const load = async (key: SfxKey, path: string) => {
       try {
         const r = await fetch(path)
@@ -165,8 +161,7 @@ export function createAudio() {
   }
 
   function resumeAudio() {
-    // Backgrounding a standalone PWA can drain the context to 'closed' under memory pressure;
-    // a stale closed context would sit here forever producing silent no-ops.
+    // Backgrounding a standalone PWA can drain the context to 'closed' under memory pressure, leaving stale silent no-ops forever if not rebuilt.
     if (actx && actx.state === 'closed') {
       actx = null
       master = null
@@ -178,9 +173,8 @@ export function createAudio() {
       master.connect(actx.destination)
       loadSfx()
     }
-    // iOS Safari has a non-standard 'interrupted' state on backgrounding that the spec's
-    // 'suspended'/'running'/'closed' enum doesn't cover; only checking 'suspended' left it
-    // silently stuck interrupted until the app was force-quit and reopened.
+    // iOS Safari has a non-standard 'interrupted' state beyond the spec's suspended/running/closed
+    // enum; checking only for 'suspended' left it silently stuck until force-quit.
     if (actx.state !== 'running') actx.resume().catch(() => {})
   }
 

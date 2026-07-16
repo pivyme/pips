@@ -1,14 +1,5 @@
-// Native Sui wallet connect is PARKED. We ship Privy-only for now, so the live code below is
-// commented out and replaced with disabled stubs that keep the door (LandingOverlay) and the auth
-// context compiling. The "Connect Sui Wallet" CTA in LandingOverlay is already commented out to match.
-//
-// Why parked: the real implementation imports `@mysten/wallet-standard`, which is only a transitive
-// dep of `@mysten/sui` (not a declared dependency), so the production bundler can't resolve it as a
-// bare import and the Vercel build fails. Privy needs none of it.
-//
-// To bring native wallet connect back: uncomment the real implementation block at the bottom, delete
-// the stubs above it, add `@mysten/wallet-standard` to package.json, uncomment the CTA + picker in
-// LandingOverlay, and flip VITE_WALLET_CONNECT_ENABLED to 'true'.
+// Native Sui wallet connect is PARKED (Privy-only build); stubs below keep the door + auth context compiling.
+// Parked because `@mysten/wallet-standard` is only a transitive dep (bundler can't resolve it); to restore, uncomment the block below, add the dep, and flip VITE_WALLET_CONNECT_ENABLED.
 
 export type SuiWallet = { name: string; icon?: string }
 

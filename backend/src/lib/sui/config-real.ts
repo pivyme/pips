@@ -1,9 +1,5 @@
-// Real Mysten DeepBook Predict deployment ids (testnet only). SUI_NETWORK==='testnet' trades against
-// Mysten's official Predict; localnet/devnet keep our fork (config.ts). Ids are vendored from Mysten's
-// deployment.testnet.json (branch predict-testnet-6-24) into deployed-real.testnet.json; a mainnet
-// re-point swaps this record. Never hardcode an id elsewhere, read from here. The real record has a
-// different shape than the fork's Deployed (no adminCap/oracleCaps/per-oracle grid): the real protocol
-// is permissionless discovery + a per-owner account wrapper, not one-oracle-per-market.
+// Real Mysten DeepBook Predict deployment ids (testnet only, SUI_NETWORK==='testnet'); localnet/devnet keep our fork (config.ts). Vendored from Mysten's deployment.testnet.json into deployed-real.testnet.json, never hardcode an id elsewhere.
+// Different shape than the fork's Deployed (no adminCap/oracleCaps/per-oracle grid): the real protocol is permissionless discovery + a per-owner account wrapper.
 
 import fs from 'fs';
 import path from 'path';
@@ -41,8 +37,7 @@ const REAL_FILE = 'deployed-real.testnet.json';
 const REAL_PATH = path.resolve(import.meta.dir, REAL_FILE);
 
 function loadDeployedReal(): DeployedReal {
-  // Server/container builds may not ship the file: allow the whole record via PIPS_DEPLOYED_REAL_JSON
-  // (raw JSON or base64), same escape hatch the fork uses (PIPS_DEPLOYED_JSON).
+  // Server/container builds may not ship the file, so allow the whole record via PIPS_DEPLOYED_REAL_JSON (raw JSON or base64), same escape hatch as the fork's PIPS_DEPLOYED_JSON.
   const fromEnv = process.env.PIPS_DEPLOYED_REAL_JSON?.trim();
   const raw = fromEnv
     ? fromEnv.startsWith('{')
@@ -64,15 +59,13 @@ function loadDeployedReal(): DeployedReal {
 // Loaded ONLY in real mode; null on localnet/devnet so the fork path never touches this file.
 const real: DeployedReal | null = IS_REAL_PREDICT ? loadDeployedReal() : null;
 
-// Accessor that asserts real mode. Real-protocol code (predict-real.ts, real-mode market-sync/settle)
-// calls this; the fork path never does, so a stray fork-mode access fails loud instead of using ''.
+// Accessor that asserts real mode; real-protocol code calls this so a stray fork-mode access fails loud instead of silently using ''.
 export function realDeployment(): DeployedReal {
   if (!real) throw new Error('config-real accessed while SUI_NETWORK is not testnet (fork mode).');
   return real;
 }
 
-// Flat id exports ('' in fork mode). Only the real path reads these, and only in real mode, so the ''
-// fallbacks keep TS/imports happy on localnet/devnet without threading null everywhere.
+// Flat id exports ('' in fork mode); only real-mode code reads these, the '' fallback just keeps TS/imports happy on localnet/devnet.
 export const REAL_PREDICT_PACKAGE = real?.packages.predict ?? '';
 export const REAL_PROPBOOK_PACKAGE = real?.packages.propbook ?? '';
 export const REAL_ACCOUNT_PACKAGE = real?.packages.account ?? '';
@@ -95,16 +88,13 @@ export const REAL_CADENCES: RealCadence[] = real?.cadences ?? [];
 export const REAL_BTC_ASSET: RealAsset | null = real?.assets.find((a) => a.symbol === 'BTC_USD') ?? null;
 export const REAL_MINUTE_CADENCE: RealCadence | null = real?.cadences.find((c) => c.id === 0) ?? null;
 
-// Build a real-protocol Move call target off a specific package (predict/account/propbook), never
-// string-concat at call sites. Mirrors config.ts `target()` but the package is explicit because the
-// real protocol spans several packages.
+// Build a real-protocol Move call target off a specific package (predict/account/propbook), never string-concat at call sites.
+// Mirrors config.ts `target()` but the package is explicit since the real protocol spans several packages.
 export const realTarget = (pkg: string, mod: string, fn: string): `${string}::${string}::${string}` =>
   `${pkg}::${mod}::${fn}`;
 
-// Stale-id guard: a Mysten redeploy would strand us on gone objects. Read a few configured shared
-// objects and confirm they still exist with the expected type. Log a clear error (non-fatal so demo
-// mode still boots); returns false on any mismatch. Called once at boot in real mode. Lazy-imports the
-// client to avoid a config <-> client module cycle.
+// Stale-id guard: a Mysten redeploy would strand us on gone objects, so confirm a few configured shared objects still exist with the expected type. Non-fatal (demo mode still boots), returns false on mismatch.
+// Called once at boot in real mode; lazy-imports the client to avoid a config<->client module cycle.
 export async function verifyRealDeployment(): Promise<boolean> {
   if (!real) return true;
   const { suiClient } = await import('./client.ts');

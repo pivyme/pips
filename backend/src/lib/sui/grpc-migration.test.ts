@@ -5,9 +5,8 @@ import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { matchRedeemInTxPage, type RedeemKey } from './predict.ts';
 import { selectLiveOraclesFromPage } from '../../workers/market-sync.ts';
 
-// These lock the GraphQL response parsing for the two historical paths migrated off JSON-RPC
-// (market-sync event scan, predict redeem reconcile). Fixtures mirror the live schema: events/tx come
-// back oldest-first within a page, payloads under contents.json / contents.type.repr.
+// Locks the GraphQL response parsing for the two historical paths migrated off JSON-RPC (market-sync
+// event scan, predict redeem reconcile). Fixtures mirror the live schema: events/tx come back oldest-first within a page, payloads under contents.json / contents.type.repr.
 
 describe('market-sync OracleActivated page parse', () => {
   const now = 1_000_000_000_000;
@@ -94,9 +93,8 @@ describe('predict redeem tx-page match', () => {
   });
 });
 
-// Guarded live smoke: proves the gRPC client's real response shapes (getReferenceGasPrice /
-// getBalance) still match what the wrappers read. Off by default so `bun test` stays offline; run with
-// PIPS_LIVE_SUI_TEST=1 to hit devnet.
+// Guarded live smoke: proves the gRPC client's real response shapes (getReferenceGasPrice / getBalance)
+// still match what the wrappers read. Off by default so `bun test` stays offline; run with PIPS_LIVE_SUI_TEST=1 to hit devnet.
 const LIVE = process.env.PIPS_LIVE_SUI_TEST === '1';
 describe.if(LIVE)('live gRPC client shape (devnet)', () => {
   const client = new SuiGrpcClient({ network: 'devnet', baseUrl: 'https://fullnode.devnet.sui.io:443' });

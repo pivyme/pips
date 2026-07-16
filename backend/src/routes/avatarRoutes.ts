@@ -1,8 +1,5 @@
-// Avatar routes: upload / replace and remove the custom profile picture. The client pre-shrinks to a
-// 500x500 webp and sends it base64 in a JSON body (~30-90KB, well under the 1MB bodyLimit, so no
-// multipart). Bytes are validated server-side (declared mime + a RIFF/WEBP magic sniff + a hard cap),
-// never trusted by their label. Storage is gated by AVATAR_UPLOADS_ENABLED: with no S3 creds these
-// routes 503 cleanly and the app falls back to the PIPS identicon.
+// Avatar upload/remove. Client sends a pre-shrunk 500x500 webp as base64 JSON (well under the 1MB
+// bodyLimit); bytes are validated server-side (mime + RIFF/WEBP magic sniff + size cap), never trusted by label. Gated by AVATAR_UPLOADS_ENABLED: no S3 creds means a clean 503 and fallback to the identicon.
 
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 import { nanoid } from 'nanoid';

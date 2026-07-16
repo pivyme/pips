@@ -12,9 +12,8 @@ import { haptic } from '@/lib/haptics'
 import { sound, startBgm, stopBgm, hopScore, hopLose, hopResetCombo } from '@/lib/sound'
 import { cnm } from '@/utils/style'
 
-// Flappy Piper. A one-button flappy minigame (no Sui, no backend): tap the big button to fly the
-// PIPS face through scrolling candlesticks. A hit shakes the screen, then drops the character
-// before the leaderboard appears. Runs on the 3D handheld's L-shaped aperture.
+// Flappy Piper. One-button minigame (no Sui, no backend): tap the big button to fly the PIPS face
+// through scrolling candlesticks. A hit shakes the screen, drops the character, then the leaderboard appears. Runs on the 3D handheld's L-shaped aperture.
 export const Route = createFileRoute('/_app/games/flappy-piper')({ component: FlappyPiperScreen })
 
 const GAME = 'flappy-piper'
@@ -25,8 +24,7 @@ const fmt = (n: number) => Math.round(n).toLocaleString('en-US')
 function FlappyPiperScreen() {
   const reduced = useReducedMotion()
 
-  // Hold the screen black until the device has finished dropping in, then a short beat, then fade
-  // the game in, so it doesn't pop on mid-settle. No settle (nav / restore) just gives a clean fade.
+  // Hold the screen black until the device finishes dropping in, then fade the game in so it doesn't pop mid-settle. No settle (nav/restore) just gives a clean fade.
   const deviceSettled = useDeviceSettled()
   const [revealed, setRevealed] = useState(false)
   useEffect(() => {
@@ -48,8 +46,7 @@ function FlappyPiperScreen() {
 
   const best = board[0]?.score ?? 0
 
-  // The run ends from inside the engine loop. Kept in a ref so the engine (built once) always calls
-  // the latest closure. Show the score instantly; the new-best celebration fires once submit lands.
+  // The run ends inside the engine loop; kept in a ref so the engine (built once) always calls the latest closure. Score shows instantly, new-best celebration fires once submit lands.
   endRef.current = (score: number) => {
     setOver({ score, result: null })
     setPhase('over')
@@ -104,8 +101,7 @@ function FlappyPiperScreen() {
   }, [])
 
   const playing = phase === 'playing'
-  // BGM rides the run: the synth bed loops only while you're alive, and the combo ladder resets each
-  // run so every "tuiing" streak starts fresh. Cleanup covers death, navigating away, and unmount.
+  // BGM rides the run: synth bed loops only while alive, combo ladder resets each run so every "tuiing" streak starts fresh. Cleanup covers death, navigating away, and unmount.
   useEffect(() => {
     if (!playing) return
     hopResetCombo()
@@ -113,8 +109,7 @@ function FlappyPiperScreen() {
     return () => stopBgm()
   }, [playing])
 
-  // One button is the whole game: it flaps while a run is live, starts / restarts otherwise. The two
-  // idle action screens drift through an ambient light show while a run is live, calm on death/title.
+  // One button is the whole game: flaps while a run is live, starts/restarts otherwise. Ambient light show drifts while live, calm on death/title.
   useConsoleControls({
     main: playing
       ? { label: 'FLAP', color: 'amber', onPress: flap }
@@ -189,8 +184,7 @@ function TitleOverlay({ best, board }: { best: number; board: LeaderboardScoreEn
   )
 }
 
-// Game over: the banner, the final score, where it landed globally. The score shows instantly; the
-// rank + refreshed board fill in when the submit resolves (board is the pre-run fallback meanwhile).
+// Game over: banner, final score, where it landed globally. Score shows instantly; rank + refreshed board fill in when submit resolves (board is the pre-run fallback meanwhile).
 function OverOverlay({ over, board }: { over: { score: number; result: MinigameSubmit | null }; board: LeaderboardScoreEntry[] }) {
   const { score, result } = over
   const rows = result?.entries ?? board

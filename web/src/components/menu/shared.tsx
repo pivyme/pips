@@ -42,9 +42,8 @@ export function DusdcMark({
   )
 }
 
-// Shared chrome for the menu sub-screens (Stats, Achievements, Settings, Customize). Each is a
-// titled screen with the same sticky fade header, then its body. The empty and error states match
-// the screen state matrix in 07-DESIGN-SYSTEM.md.
+// Shared chrome for the menu sub-screens (Stats, Achievements, Settings, Customize): a titled screen
+// with a sticky fade header, then its body. Empty/error states match the matrix in 07-DESIGN-SYSTEM.md.
 
 export function MenuScreen({
   title,

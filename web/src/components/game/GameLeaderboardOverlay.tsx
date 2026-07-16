@@ -1,17 +1,12 @@
-// In-device leaderboard for the trading games (Lucky, Range): two boards in one screen, the top
-// GAINERS (most banked profit) over the top REKT (deepest in the red). Teenage Engineering language
-// (docs/SCREEN.md): flat black, mono, hairline-split rows, green for the money and red for the
-// damage, one amber accent for your own row. Rows show a username (or the generated handle), never
-// an address. The device screen is not clickable, so this is a pure readout: it opens and closes
-// from the physical button that toggled it (LEADERS).
+// In-device leaderboard for the trading games: top GAINERS over top REKT, TE language (docs/SCREEN.md).
+// Rows show a username (or generated handle), never an address. Screen isn't clickable, this is a pure readout toggled open/closed by the physical LEADERS button.
 
 import { useQuery } from '@tanstack/react-query'
 import { api, type Game, type LeaderboardGameEntry } from '@/lib/api'
 import { cnm } from '@/utils/style'
 import { displayHandle } from '@/utils/format'
 
-// The screen can't be scrolled by touch, so both boards have to fit at once: cap each side so the
-// gainers and the rekt always read together without spilling off the device.
+// The screen can't be scrolled by touch, so cap each side to fit both boards at once without spilling off the device.
 const PER_BOARD = 4
 
 const signedMoney = (s: string): string => {
@@ -25,9 +20,8 @@ export function GameLeaderboardOverlay({ game, title }: { game: Game; title: str
   const rekt = (board?.rekt ?? []).slice(0, PER_BOARD)
 
   return (
-    // pb clears the rim AND the occluded bottom-right body (--screen-notch). Content is natural height
-    // (no inner overflow-hidden) so the auto-fit (ConsoleCanvas recomputeScreenFit) can measure both
-    // boards and shrink the whole panel to fit, instead of the lower rows clipping off the bottom.
+    // pb clears the rim AND the occluded bottom-right body (--screen-notch). No inner overflow-hidden so
+    // the auto-fit (ConsoleCanvas recomputeScreenFit) can measure both boards and shrink the panel to fit, instead of lower rows clipping off the bottom.
     <div data-screen-overlay className="absolute inset-0 z-20 flex flex-col gap-3 bg-black/95 px-[var(--screen-rim,24px)] pb-[calc(var(--screen-rim,24px)+var(--screen-notch,0px))] pt-[calc(var(--screen-rim,24px)+2.25rem)] text-left">
       <div className="flex items-start justify-between gap-3">
         <div>

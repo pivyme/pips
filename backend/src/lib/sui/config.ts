@@ -1,8 +1,5 @@
-// The single source of truth for our FORK (localnet/devnet) Predict instance ids on the server.
-// The bootstrap (scripts/bootstrap.ts) writes deployed.<network>.json; everything reads from here.
-// testnet runs Mysten's real Predict instead, whose ids live in config-real.ts. Never inline a
-// package/object/oracle id anywhere else. Ids are unstable pre-mainnet, so a mainnet re-point is one
-// bootstrap + this file, nothing else.
+// The single source of truth for our FORK (localnet/devnet) Predict instance ids. The bootstrap (scripts/bootstrap.ts) writes deployed.<network>.json; everything reads from here. testnet runs Mysten's real Predict instead (ids in config-real.ts).
+// Never inline a package/object/oracle id anywhere else; ids are unstable pre-mainnet, so a mainnet re-point is one bootstrap + this file.
 
 import fs from 'fs';
 import path from 'path';
@@ -15,8 +12,7 @@ import {
   REAL_POOL_VAULT_ID,
 } from './config-real.ts';
 
-// Pure money math lives in math.ts (chain-free, unit-tested). Re-exported here so the
-// rest of the backend keeps importing scaling helpers from the one Sui config surface.
+// Pure money math lives in math.ts (chain-free, unit-tested); re-exported here so the rest of the backend imports scaling helpers from the one Sui config surface.
 export {
   FLOAT_SCALING,
   DUSDC_DECIMALS,
@@ -55,22 +51,18 @@ type Deployed = {
   bootstrappedAt: string;
 };
 
-// Per-network FORK deployment record (localnet/devnet only). testnet never loads a fork file: it runs
-// Mysten's real Predict via config-real.ts, so loadDeployed is never called in real mode. Each fork
-// network reads its own `deployed.<network>.json`, so switching networks never clobbers another
-// network's ids. The bootstrap writes the matching file.
+// Per-network FORK deployment record (localnet/devnet only); testnet never loads a fork file, it runs Mysten's real Predict via config-real.ts, so loadDeployed is never called in real mode.
+// Each fork network reads its own `deployed.<network>.json`, so switching networks never clobbers another's ids. The bootstrap writes the matching file.
 const DEPLOYED_FILE = `deployed.${SUI_NETWORK}.json`;
 const DEPLOYED_PATH = path.resolve(import.meta.dir, DEPLOYED_FILE);
 
-// True when the deployment was read from the on-disk file (not PIPS_DEPLOYED_JSON), so a runtime
-// update (oracle-cap rotation, see replaceOracleCap) can persist back to it. Env-provided
-// deployments have no file to own, so they stay in-memory only.
+// True when read from the on-disk file (not PIPS_DEPLOYED_JSON), so a runtime update (oracle-cap rotation, see replaceOracleCap) can persist back to it.
+// Env-provided deployments have no file to own, so they stay in-memory only.
 let deployedFromFile = false;
 
 function loadDeployed(): Deployed {
-  // Server/container builds (e.g. Dokploy from git) don't have the gitignored deploy file. Allow
-  // the whole record to come from PIPS_DEPLOYED_JSON instead (raw JSON or base64), so ids still
-  // live in config and never get hardcoded or committed. Local dev keeps using the bootstrap file.
+  // Server/container builds (e.g. Dokploy from git) don't have the gitignored deploy file, so allow the whole record to come from PIPS_DEPLOYED_JSON instead (raw JSON or base64).
+  // Local dev keeps using the bootstrap file.
   const fromEnv = process.env.PIPS_DEPLOYED_JSON?.trim();
   if (fromEnv) {
     const raw = fromEnv.startsWith('{') ? fromEnv : Buffer.from(fromEnv, 'base64').toString('utf-8');
@@ -96,10 +88,8 @@ function loadDeployed(): Deployed {
   return d;
 }
 
-// In real mode (testnet = Mysten's official Predict) config.ts's FORK ids are unused: predict-real.ts
-// + config-real.ts own the real path. We surface only the real DUSDC type/package here so the shared
-// balance/treasury code and the /config endpoint work; every fork-only id stays empty so a stray fork
-// call fails loud instead of hitting a wrong object. localnet/devnet load the fork record as before.
+// In real mode (testnet), this file's FORK ids are unused: predict-real.ts + config-real.ts own the real path. We surface only the real DUSDC type/package here so shared balance/treasury code and /config work.
+// Every fork-only id stays empty so a stray fork call fails loud instead of hitting a wrong object; localnet/devnet load the fork record as before.
 const deployed: Deployed | null = IS_REAL_PREDICT ? null : loadDeployed();
 
 export const NETWORK = IS_REAL_PREDICT ? 'testnet' : deployed!.network;
@@ -112,25 +102,19 @@ export const PLP_TREASURY_CAP_ID = deployed?.plpTreasuryCapId ?? '';
 
 export const DUSDC_TYPE = IS_REAL_PREDICT ? REAL_DUSDC_TYPE : deployed!.dusdc.type;
 export const DUSDC_PACKAGE_ID = IS_REAL_PREDICT ? REAL_DUSDC_PACKAGE_ID : deployed!.dusdc.packageId;
-// Never own the DUSDC TreasuryCap on a deployment we don't operate, so minting stays impossible in
-// real mode (DUSDC_MINTABLE is derived from this). Fork keeps its own cap.
+// Never own the DUSDC TreasuryCap on a deployment we don't operate, so minting stays impossible in real mode (DUSDC_MINTABLE derives from this); fork keeps its own cap.
 export const DUSDC_TREASURY_CAP_ID = IS_REAL_PREDICT ? '' : deployed!.dusdc.treasuryCapId;
 export const DUSDC_CURRENCY_ID = deployed?.dusdc.currencyId ?? '';
 
 export const ORACLE_CAP_IDS = deployed?.oracleCapIds ?? [];
 export const ORACLES = deployed?.oracles ?? [];
 
-// Public-facing Predict ids for the /config endpoint + explorer links, mode-aware: the real predict
-// package + PoolVault in real mode, the fork package + Predict object otherwise.
+// Public-facing Predict ids for /config + explorer links, mode-aware: real predict package + PoolVault in real mode, fork package + Predict object otherwise.
 export const PUBLIC_PREDICT_PACKAGE = IS_REAL_PREDICT ? REAL_PREDICT_PACKAGE : PACKAGE_ID;
 export const PUBLIC_PREDICT_OBJECT = IS_REAL_PREDICT ? REAL_POOL_VAULT_ID : PREDICT_ID;
 
-// Swap a rotated oracle cap into the live set and persist it. oracle-roll calls this when a cap's
-// registry bookkeeping vector (Registry.oracle_ids[cap], an unbounded vector<ID>) fills to Sui's
-// 256KB object cap and bricks create_oracle; a fresh cap starts that vector empty so creation
-// resumes. ORACLE_CAP_IDS is mutated IN PLACE (signer's operatorCaps holds the same reference, and
-// each tick re-reads it), then written back to the deploy file so a restart keeps the fresh cap
-// instead of re-rotating off the bricked one. No file write for an env-provided deployment.
+// Swap a rotated oracle cap into the live set and persist it. oracle-roll calls this when a cap's registry bookkeeping vector (Registry.oracle_ids[cap], unbounded vector<ID>) fills Sui's 256KB object cap and bricks create_oracle; a fresh cap starts empty so creation resumes.
+// ORACLE_CAP_IDS is mutated IN PLACE (signer's operatorCaps shares the reference) then written back to the deploy file so a restart keeps the fresh cap; no file write for an env-provided deployment.
 export function replaceOracleCap(fullCapId: string, freshCapId: string): void {
   const idx = ORACLE_CAP_IDS.indexOf(fullCapId);
   if (idx >= 0) ORACLE_CAP_IDS[idx] = freshCapId;
@@ -144,18 +128,13 @@ export function replaceOracleCap(fullCapId: string, freshCapId: string): void {
 export const target = (mod: string, fn: string): `${string}::${string}::${string}` =>
   `${PACKAGE_ID}::${mod}::${fn}`;
 
-// Number of strike ticks an oracle covers, mirrored from our vendored
-// constants.move (oracle_strike_grid_ticks). The grid spans tickSize * this.
+// Number of strike ticks an oracle covers, mirrored from vendored constants.move (oracle_strike_grid_ticks); the grid spans tickSize * this.
 export const ORACLE_STRIKE_GRID_TICKS = 500n;
 // Tick granularity unit: every 1e9-scaled tickSize must be a multiple of this.
 const TICK_SIZE_UNIT = 10_000n;
 
-// Per-asset tick size in display USD. Sized to ~0.15% of spot so 500 ticks span ~+-37% around spot:
-// wide enough that a strike stays on the grid as the game price strays, tight enough that the dense
-// solve resolves the near-money tiers (the common 2x-3x sit within ~+-1.5% now that implied vol is
-// game-calibrated, so a coarse grid would smear them, and the 2x floor would clamp far above 2x).
-// Keep each a clean multiple of the tick unit. NOTE: changes here only land when the operator next
-// (re)creates oracles (redeploy / oracle-roll); live oracles keep the grid they were created with.
+// Per-asset tick size in display USD, sized to ~0.15% of spot so 500 ticks span ~+-37%: wide enough that a strike stays on the grid as price strays, tight enough that the dense solve resolves near-money tiers (2x-3x sit within ~+-1.5%; a coarser grid would smear them and clamp the 2x floor above 2x).
+// Keep each a clean multiple of the tick unit. NOTE: changes only land when the operator next (re)creates oracles (redeploy / oracle-roll); live oracles keep their original grid.
 export const ASSET_TICK_USD: Record<string, number> = {
   BTC: 100, // ~0.16% at ~63k
   ETH: 3, // ~0.17% at ~1.7k
@@ -163,9 +142,8 @@ export const ASSET_TICK_USD: Record<string, number> = {
   SUI: 0.001, // ~0.14% at ~0.71 (was 0.0035 ~0.49%, too coarse to resolve the near tiers)
 };
 
-// Build a grid (minStrike, tickSize) centered on the current spot so strikes near the
-// money exist. Both 1e9-scaled. minStrike is floored to the grid and kept > 0; tickSize
-// is snapped to the protocol's tick unit. The oracle covers 500 ticks from minStrike.
+// Build a grid (minStrike, tickSize) centered on current spot so strikes near the money exist. Both 1e9-scaled; minStrike floored to the grid and kept > 0, tickSize snapped to the protocol's tick unit.
+// The oracle covers 500 ticks from minStrike.
 export function gridForSpot(asset: string, spotUsd: number): { minStrike: bigint; tickSize: bigint } {
   const tickUsd = ASSET_TICK_USD[asset];
   if (!tickUsd) throw new Error(`No tick size configured for asset ${asset}`);

@@ -1,13 +1,5 @@
-// Opt-in alerting: fire a short message to a Discord or Slack incoming webhook when something the app
-// can't self-heal breaks (a fatal crash, an operator leader-lock conflict, a worker giving up on a
-// play). It is a pure notification, never part of any recovery path, so wiring it in never changes
-// behavior. Contract:
-//  - No-op (returns at once) when PIPS_ALERT_WEBHOOK_URL is unset, so the whole feature is inert until a
-//    URL is configured. No config = no startup failure.
-//  - Never throws and never blocks the caller: fire-and-forget with a 3s timeout, all errors swallowed
-//    with one console.warn. A slow or broken webhook must not wedge a worker or the crash handler (and an
-//    unhandled rejection here would itself trip the fatal handler).
-//  - Same message throttled to once per ALERT_DEDUPE_MS so a per-tick failure loop can't spam the channel.
+// Opt-in Discord/Slack webhook alert for unrecoverable events (fatal crash, leader-lock conflict, a
+// worker giving up). No-op if PIPS_ALERT_WEBHOOK_URL is unset; fire-and-forget with a 3s timeout so a broken webhook can't wedge the caller, and same-message throttled via ALERT_DEDUPE_MS.
 
 import { ALERT_WEBHOOK_URL, ALERT_DEDUPE_MS } from '../config/main-config.ts';
 

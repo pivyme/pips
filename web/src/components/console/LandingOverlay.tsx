@@ -1,7 +1,5 @@
-// The landing "door", reimagined as an overlay over the live 3D console (not a separate page). The
-// device floats behind as the hero; this layer is mostly click-through with the wordmark up top and
-// the tagline + sign-in CTA along the bottom. Signing in flips the app phase, which settles the same
-// device to center and fades the drifting background in. App-Surface language (docs/DESIGN.md).
+// The landing "door": an overlay over the live 3D console (not a separate page), mostly click-through
+// with wordmark up top and tagline/CTA at bottom. Signing in flips the app phase, docs/DESIGN.md.
 import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { config } from '@/config'
@@ -18,9 +16,8 @@ import { listSuiWallets, onWalletsChange, isUserRejection, type SuiWallet } from
 import { probeChainWiped } from '@/lib/sui/predict'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
-// `onEnter` walks the user off the door into the shell (onboarding or app). It fires once a session
-// is ready: immediately for an already-authed session when the CTA is tapped (dev/demo auto-login, or
-// a returning privy session), or after the privy modal resolves.
+// `onEnter` walks the user off the door into the shell. Fires immediately for an already-authed
+// session on CTA tap (dev/demo, returning privy), or after the privy modal resolves.
 export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   const { status, error: authError, signIn, signInWithWallet } = useAuth()
   const reduced = useReducedMotion()
@@ -31,16 +28,14 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   const walletEnabled = env.VITE_WALLET_CONNECT_ENABLED === 'true' && !demo
   const [wallets, setWallets] = useState<SuiWallet[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
-  // The sign-in failure currently on screen. Fed by the privy bridge (via status='error') and by the
-  // direct throw paths below. Null hides the sheet.
+  // The sign-in failure currently on screen, fed by the privy bridge (status='error') and the direct
+  // throw paths below. Null hides the sheet.
   const [signInError, setSignInError] = useState<AuthError | null>(null)
-  // Private test deploy: the access-code sheet (VITE_ACCESS_GUARD). Shown when START is tapped before
-  // this device has entered the code.
+  // Private test deploy access-code sheet (VITE_ACCESS_GUARD), shown when START is tapped before this device has entered the code.
   const [codeOpen, setCodeOpen] = useState(false)
 
-  // A referral link stashed a code before landing here (see lib/referral.ts + the /@{$handle} and
-  // /r/$code capture routes). Fire-and-forget: resolves to a friendly line above START, and a failed
-  // or unknown token just renders nothing, never blocks sign-in. Skipped entirely in demo (no backend).
+  // A referral link stashed a code before landing here (lib/referral.ts, /@{$handle} and /r/$code routes).
+  // Fire-and-forget: a failed or unknown token renders nothing and never blocks sign-in; skipped in demo.
   const [inviteText, setInviteText] = useState<string | null>(null)
   useEffect(() => {
     if (demo) return
@@ -58,8 +53,8 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
     }
   }, [demo])
 
-  // Track installed Sui wallets (extensions register asynchronously, often after first paint).
-  // Client-only: getWallets touches window, and effects never run on the server.
+  // Track installed Sui wallets (extensions register async, after first paint). Client-only: effects
+  // never run on the server and getWallets touches window.
   useEffect(() => {
     if (!walletEnabled) return
     setWallets(listSuiWallets())
@@ -73,21 +68,15 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
     window.location.reload()
   }, [])
 
-  // A session landed while we are on the door: a returning real privy session auto-walks in; dev and
-  // demo always show the door and walk in only once the CTA was tapped (connecting). Demo never
-  // auto-enters even under a privy env, so the door is always part of the demo showcase. The access
-  // gate holds even an authed session at the door until the code is entered.
+  // A returning privy session auto-walks in; dev/demo always show the door and only enter once the CTA
+  // is tapped, so demo stays part of the showcase. The access gate holds even an authed session until unlocked.
   useEffect(() => {
     if (accessGuardEnabled() && !isUnlocked()) return
     if (status === 'authed' && (connecting || (isPrivy && !demo))) onEnter()
   }, [status, connecting, isPrivy, demo, onEnter])
 
-  // Raise the sign-in error sheet with the right variant. Before showing a generic failure, check
-  // whether our on-chain deployment is gone (a redeploy, or a fork devnet reset): if so, upgrade to
-  // CHAIN_UNAVAILABLE so the sheet shows "PIPS is redeploying, play demo" instead. We do this on the
-  // client too (not just from the backend's code) so it works even when the deployed backend hasn't
-  // picked up the new error code yet. The spinner stays up through the short probe so the correct
-  // copy paints on first show (no flip from generic to maintenance).
+  // Probes whether the chain deployment is gone (redeploy or devnet reset) and upgrades to
+  // CHAIN_UNAVAILABLE client-side too, since the backend may lag; spinner stays up through the probe so the right copy paints first.
   const surfaceError = useCallback(async (err: AuthError) => {
     const wiped = err.code === 'CHAIN_UNAVAILABLE' || (await probeChainWiped())
     setConnecting(false)
@@ -95,8 +84,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
     haptic('error')
   }, [])
 
-  // A failed sign-in (e.g. the verify handshake errored) raises the error sheet with the real reason,
-  // so the door stays usable and a reviewer can see what broke + reach us.
+  // A failed sign-in raises the error sheet with the real reason, so the door stays usable and a reviewer can see what broke.
   useEffect(() => {
     if (status === 'error') void surfaceError(authError ?? { message: 'Could not sign you in. Please try again.' })
   }, [status, authError, surfaceError])
@@ -114,8 +102,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
       // settles once the user finishes or backs out.
       await signIn()
     } catch (e) {
-      // Backing out of the sign-in modal is not an error, just drop the spinner. Anything else is a
-      // real failure worth surfacing (surfaceError keeps the spinner up while it probes the chain).
+      // Backing out of the modal isn't an error (just drop the spinner); any other failure is real and surfaces via surfaceError.
       if (e instanceof Error && e.message === 'login_cancelled') {
         setConnecting(false)
         return
@@ -192,9 +179,8 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
 
   return (
     <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center">
-      {/* Scrim so the copy + CTA read cleanly over the floating device behind them. Only as tall as the
-          text block needs: dark behind the headline, then feathering to clear just above it so the
-          screen, PRESS START, and most of the device stay visible. */}
+      {/* Scrim so the copy + CTA read cleanly over the floating device. Only as tall as the text needs,
+          feathering clear just above the headline so the screen and device stay visible. */}
       <div
         className="pointer-events-none absolute inset-x-0 bottom-0 h-[46%]"
         style={{
@@ -314,12 +300,8 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   )
 }
 
-// Shown when sign-in fails. App-Surface bottom sheet (same language as the wallet picker). It names
-// what broke and, for the case that matters most during a live demo, hands a reviewer a direct line
-// to us instead of a dead end. The raw cause sits in a collapsible block so it stays out of the way.
-// CHAIN_UNAVAILABLE is special-cased: that's not a bug, it's our on-chain deployment being briefly
-// unreachable (a redeploy, or a devnet reset on the fork), so we frame it as maintenance and push
-// demo mode as the way in right now.
+// Shown when sign-in fails, App-Surface bottom sheet naming what broke with a direct line to us.
+// CHAIN_UNAVAILABLE is special-cased as maintenance (chain briefly unreachable), pushing demo mode as the way in.
 function SignInErrorSheet({
   error,
   onRetry,
@@ -334,9 +316,8 @@ function SignInErrorSheet({
   const [showDetails, setShowDetails] = useState(false)
   // The technical line worth showing: the backend's underlying cause if present, else the message.
   const detail = error?.details || error?.message
-  // Our Predict deployment is unreachable until the next bootstrap (a redeploy, or a fork devnet
-  // reset). The backend tags this so the door knows it's maintenance, not a real failure (the code is
-  // the only signal in prod, where error details are stripped).
+  // Our Predict deployment is unreachable until the next bootstrap (redeploy or fork devnet reset); the
+  // backend tags this via error code since details are stripped in prod.
   const chainDown = error?.code === 'CHAIN_UNAVAILABLE'
 
   return (
@@ -694,9 +675,8 @@ function WalletGlyph({ className }: { className?: string }) {
   )
 }
 
-// The device screen while it floats on the landing: just a black backing. The "PRESS START" attract
-// text is rendered as a real plane on the 3D screen (see ConsoleCanvas), so it tilts and floats with
-// the handheld instead of detaching like a flat overlay would when the device angles in the hero pose.
+// The device screen while it floats on landing: just a black backing. "PRESS START" renders as a real
+// plane on the 3D screen (ConsoleCanvas) so it tilts with the handheld instead of detaching as a flat overlay.
 export function AttractScreen() {
   return <div className="h-full w-full bg-black" />
 }

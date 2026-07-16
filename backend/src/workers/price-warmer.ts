@@ -1,10 +1,5 @@
-// Keeps price-cache.ts hot for every display asset, independent of whether anyone is subscribed to
-// that asset's WS broadcast loop yet (wsRoutes.ts ensureAssetLoop). Without this, an asset with no
-// on-chain oracle backing it (real-Predict-testnet only ever lists BTC, see market-sync.ts) falls
-// through to a live Hermes fetch on the loop's very first tick before it can emit anything, which is
-// the multi-hundred-ms-to-seconds gap that made LUCKY's non-BTC reel charts visibly lag behind BTC's
-// instantly-live chart. Plain setInterval, not node-cron: the ~700ms cadence needs to land just under
-// price-cache's 900ms TTL, finer than cron's 1s granularity.
+// Keeps price-cache.ts hot for every display asset so a first WS subscribe never hits a cold Hermes
+// fetch (the gap that made non-BTC reel charts lag BTC's). Plain setInterval, not node-cron: the 700ms cadence needs to land under price-cache's 900ms TTL, finer than cron's 1s granularity.
 import { warmSpots } from '../lib/price-cache.ts';
 import { PYTH_FEED_IDS } from '../lib/pyth.ts';
 import { recordRun, registerWorker } from '../lib/worker-registry.ts';

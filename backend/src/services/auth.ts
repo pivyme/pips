@@ -1,7 +1,5 @@
-// Auth + onboarding. One JWT plumbing, two identity modes (dev / privy). ensureUser is the
-// idempotent onboarding called from both login paths: it upserts the row, seeds an empty stats
-// row, mints the free starting chips + SUI gas exactly once, and creates the user's
-// PredictManager. Never re-mints chips, never makes a second manager. See LUCKY.md §6-7.
+// Auth + onboarding. One JWT plumbing, two identity modes (dev / privy).
+// ensureUser is the idempotent onboarding path: upsert, seed stats, mint starting chips/gas once, create the PredictManager. See LUCKY.md §6-7.
 
 import jwt from 'jsonwebtoken';
 import { customAlphabet } from 'nanoid';
@@ -30,13 +28,11 @@ const generateHandle = (): string =>
   `${ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]} ${ANIMALS[Math.floor(Math.random() * ANIMALS.length)]}`;
 
 // Referral code alphabet: no 0/O or 1/l/I, so a code read off a screen is never ambiguous.
-// getAlphanumericId (miscUtils.ts) uses the full alphanumeric set including those, so this is its own.
+// getAlphanumericId (miscUtils.ts) uses the full alphanumeric set including those, so this stays its own.
 const generateReferralCode = customAlphabet('23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz', 8);
 
-// Resolve a referral token (`@username` or a bare referralCode) to the referring user. Never throws,
-// an unknown or malformed token just means no attribution. Returns the fields the two call sites need:
-// ensureUser/ensureWalletUser (id, for referredById) and GET /referral/resolve (username + anon, for
-// what the door shows).
+// Resolves `@username` or a bare referralCode to the referring user. Never throws, an
+// unknown or malformed token just means no attribution.
 export async function resolveReferrer(
   token: string | null | undefined,
 ): Promise<{ id: string; username: string | null; referralAnon: boolean } | null> {
@@ -56,9 +52,8 @@ export async function resolveReferrer(
   }
 }
 
-// Create + share the user's PredictManager. deposit/withdraw on it assert sender == owner, so it
-// must be created by whoever signs the plays: dev = the operator, privy = the user's embedded wallet,
-// wallet-connect = the server-held custodial wallet. Returns the shared manager id from object changes.
+// Creates + shares the user's PredictManager. deposit/withdraw assert sender == owner, so the
+// creator must match whoever signs plays (dev = operator, privy = embedded wallet, wallet-connect = custodial wallet).
 async function createManagerForUser(user: User): Promise<string> {
   const tx = new Transaction();
   buildCreateManager(tx);
@@ -97,9 +92,8 @@ export async function ensureUser(params: EnsureUserParams): Promise<User> {
     ...(twitter ? { twitterUsername: twitter.username.toLowerCase(), twitterSubject: twitter.subject, twitterName: twitter.name } : {}),
   };
 
-  // Attribution only ever happens on account creation (the `create` branch below), so an existing
-  // user clicking a friend's link is never retroactively marked as referred. Resolved up front since
-  // upsert can't branch its `where`.
+  // Attribution only happens on account creation (the `create` branch below); an existing user
+  // clicking a friend's link is never retroactively marked as referred. Resolved up front since upsert can't branch its `where`.
   const referrer = await resolveReferrer(referralCode);
 
   const user = await prismaQuery.user.upsert({
@@ -119,10 +113,8 @@ export async function ensureUser(params: EnsureUserParams): Promise<User> {
   return provisionUser(user);
 }
 
-// Idempotent onboarding for wallet-connect (custodial play-wallet model). Keyed by the connected
-// external wallet (walletAuthAddress); on first sign-in we mint a server-held custodial play wallet,
-// whose Sui address becomes user.address (so chips/funding/manager all flow through the existing
-// pipeline unchanged). The connected wallet itself never signs a transaction here.
+// Idempotent onboarding for wallet-connect (custodial play-wallet model), keyed by the connected external wallet (walletAuthAddress).
+// First sign-in mints a server-held custodial play wallet whose Sui address becomes user.address; the connected wallet itself never signs a transaction here.
 export async function ensureWalletUser(walletAuthAddress: string, referralCode?: string | null): Promise<User> {
   const authAddr = normalizeSuiAddress(walletAuthAddress);
   let user = await prismaQuery.user.findUnique({ where: { walletAuthAddress: authAddr } });
@@ -146,25 +138,22 @@ export async function ensureWalletUser(walletAuthAddress: string, referralCode?:
   return provisionUser(user);
 }
 
-// Whether the user has what createManagerForUser needs to sign: dev = the operator; privy = the
-// embedded wallet + session signer; wallet = the custodial key. If not ready, the manager is left
-// null and retried on the next login.
+// Whether the user has what createManagerForUser needs to sign: dev = operator, privy = embedded
+// wallet + session signer, wallet = custodial key. If not ready, the manager stays null and retries on the next login.
 function managerReadyToCreate(user: User): boolean {
   if (user.provider === 'wallet') return Boolean(user.playWalletSecret);
   if (user.provider === 'privy') return Boolean(user.privyWalletId && user.suiPublicKey);
   return AUTH_MODE === 'dev'; // dev provider
 }
 
-// Shared provisioning, idempotent: empty stats row, free chips once, free gas (when unsponsored), and
-// the PredictManager. Runs for every login regardless of identity mode, and is also the in-place
-// self-heal for a re-armed session (POST /auth/heal), so it must stay safe to call repeatedly.
+// Shared provisioning, idempotent: empty stats row, free chips once, free gas (when unsponsored), and the PredictManager.
+// Runs on every login and is also the self-heal for a re-armed session (POST /auth/heal), so it must stay safe to call repeatedly.
 export async function provisionUser(user: User): Promise<User> {
   // Empty stats row so the menu reads cleanly from the first login.
   await prismaQuery.userStats.upsert({ where: { userId: user.id }, update: {}, create: { userId: user.id } });
 
-  // Referral code, exactly once. Runs on every login, so existing users backfill a code on their next
-  // sign-in with no migration. Retries on a P2002 unique collision (the 8-char alphabet is large enough
-  // that this is rare, but cheap to guard).
+  // Referral code, exactly once. Runs on every login so existing users backfill a code on their next sign-in with no migration.
+  // Retries on a P2002 unique collision (rare given the 8-char alphabet, but cheap to guard).
   if (!user.referralCode) {
     for (let attempt = 0; attempt < 5 && !user.referralCode; attempt++) {
       try {
@@ -175,39 +164,28 @@ export async function provisionUser(user: User): Promise<User> {
     }
   }
 
-  // Free starting chips, exactly once. Paid from the treasury reserve (transferDusdc) so chips never
-  // come off the operator key; falls back to an operator mint when no treasury is configured.
+  // Free starting chips, exactly once. Paid from the treasury reserve (transferDusdc) so chips never come
+  // off the operator key; falls back to an operator mint when no treasury is configured.
   if (!user.dusdcFunded) {
     await transferDusdc(user.address, STARTING_BALANCE);
     user = await prismaQuery.user.update({ where: { id: user.id }, data: { dusdcFunded: true } });
   }
 
-  // Free SUI for gas, ONLY when gas sponsorship is off. With a sponsor, every play is paid from the
-  // sponsor's address balance, so users never hold SUI. Without one, fund each user once then top up
-  // below the floor so they can pay their own play gas. Always a no-op in dev mode (operator signs).
+  // Free SUI for gas, only when sponsorship is off (with one, every play pays from the sponsor's address balance so users never hold SUI).
+  // Without one, fund each user once then top up below the floor. Always a no-op in dev mode (operator signs).
   if (!SPONSOR_ENABLED && (await ensureSuiGas(user.address, user.suiGasFunded))) {
     user = await prismaQuery.user.update({ where: { id: user.id }, data: { suiGasFunded: true } });
   }
 
-  // Real mode (testnet): there is no PredictManager. The per-owner AccountWrapper is derived + created
-  // lazily inside the first mint (buildMintPlay folds new+share), self-heals a stale cache, and its id
-  // is cached on User.predictWrapperId after that first create, so onboarding does no wrapper work here.
+  // Real mode (testnet): no PredictManager. The per-owner AccountWrapper is derived + created lazily inside
+  // the first mint (buildMintPlay folds new+share) and self-heals a stale cache; its id caches on User.predictWrapperId, so onboarding does no wrapper work here.
   if (IS_REAL_PREDICT) return user;
 
-  // Self-heal a dead manager. A devnet reset/redeploy deletes the user's PredictManager while the
-  // republished package survives, leaving a stale id in the DB. Left alone, every login crashes in
-  // toUserDTO's balance read against an object that no longer exists (the AUTH_VERIFY_FAILED "Object
-  // 0x.. not found" loop). Detect the gone manager and clear it so the create block below re-mints a
-  // fresh one. managerExists rethrows a real node/chain outage, so we only null on a true not-found.
+  // Self-heals a dead manager: a devnet reset/redeploy deletes the PredictManager but not its id in the DB, and left
+  // alone every login crashes in toUserDTO's balance read (the AUTH_VERIFY_FAILED not-found loop). managerExists rethrows a real chain outage, so we only null on a true not-found.
   if (user.predictManagerId && !(await managerExists(user.predictManagerId))) {
-    // A manager is only ever deleted by a devnet reset/redeploy, never by gameplay (deposit/withdraw
-    // keep it), so a gone manager is a reliable, un-farmable "this whole deploy is stale" signal. Null
-    // it so the block below re-mints one on the live deploy. If the user's starting DUSDC died with
-    // that deploy too (wallet now reads 0 on the live coin type), clear dusdcFunded/suiGasFunded so
-    // the chips + gas re-mint as well. Gate that on an actually-empty wallet: a user whose chips
-    // survived the redeploy (they were minted on the current DUSDC package, so still read > 0) keeps
-    // them and is not double-funded. Safe against farming because a live manager, held by a player who
-    // merely lost every chip, is never deleted, so this branch can't fire from gameplay.
+    // A manager only ever dies via devnet reset/redeploy, never gameplay, so "gone" is a reliable, un-farmable stale-deploy signal.
+    // Re-fund chips/gas too, but only if the wallet reads actually empty, so redeploy survivors aren't double-funded and can't farm by losing chips.
     const chipsGone = (await getDusdcBalanceRaw(user.address)) === 0n;
     console.warn(
       `[auth] stale manager ${user.predictManagerId} gone for ${user.provider} ${user.address}, re-provisioning${chipsGone ? ' + re-funding chips' : ''}`,
@@ -218,18 +196,16 @@ export async function provisionUser(user: User): Promise<User> {
     });
   }
 
-  // PredictManager. dev creates it eagerly (operator-owned + signed). privy/wallet need a user-signed
-  // tx, so they require their signer ready (see managerReadyToCreate); if not yet, leave it null and
-  // retry on the next login.
+  // PredictManager: dev creates it eagerly (operator-owned + signed); privy/wallet need a user-signed
+  // tx, so they wait on their signer (see managerReadyToCreate). If not ready yet, leave it null and retry on the next login.
   if (!user.predictManagerId && managerReadyToCreate(user)) {
     try {
       const managerId = await createManagerForUser(user);
       user = await prismaQuery.user.update({ where: { id: user.id }, data: { predictManagerId: managerId } });
     } catch (e) {
       if (user.provider === 'dev') throw e; // dev must have a manager to play
-      // Loud, not swallowed: this is the exact reason /auth/heal can't restore a re-armed session.
-      // Most often the backend isn't on the fresh deploy (the tx aborts against a dead package), or
-      // the user's wallet is out of gas. Findable in the box logs to tell apart from a client issue.
+      // Loud, not swallowed: this is the exact reason /auth/heal can't restore a re-armed session, usually a
+      // stale deploy (tx aborts against a dead package) or an out-of-gas wallet. Findable in the box logs to tell apart from a client issue.
       console.error(
         `[auth] manager creation FAILED for ${user.provider} ${user.address}:`,
         e instanceof Error ? e.message : e,
@@ -260,15 +236,13 @@ export async function userFromToken(token: string): Promise<User | null> {
   }
 }
 
-// Fresh public view of a user, including the live on-chain DUSDC balance. Chips live in the
-// wallet (onboarding mint) and migrate into the PredictManager as plays run, so the spendable
-// balance is the sum of both.
+// Fresh public view of a user, including the live on-chain DUSDC balance. Chips live in the wallet
+// (onboarding mint) and migrate into the PredictManager as plays run, so spendable balance is the sum of both.
 export async function toUserDTO(user: User): Promise<UserDTO> {
   const [wallet, manager] = await Promise.all([
     getDusdcBalanceRaw(user.address),
-    // Real mode: chips live in the wrapper's internal balance (0 until the first play creates it); fork
-    // mode: in the PredictManager. Tolerate a vanished object (devnet reset): count it as 0 here instead
-    // of 500ing /me mid-session; the stale id is cleared + re-provisioned on the next login/heal.
+    // Real mode: chips live in the wrapper's internal balance (0 until the first play creates it); fork mode: in the PredictManager.
+    // Tolerate a vanished object (devnet reset) as 0 here instead of 500ing /me mid-session; the stale id clears + re-provisions on the next login/heal.
     IS_REAL_PREDICT
       ? readUserChipsRaw(user.address, user.predictWrapperId).catch(() => 0n)
       : user.predictManagerId

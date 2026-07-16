@@ -10,10 +10,8 @@ import { HapticOverlay } from '@/components/HapticOverlay'
 import { cnm } from '@/utils/style'
 import { displayHandle, formatExactDecimal } from '@/utils/format'
 
-// The menu leaderboard. App Surface language (rounded cards, docs/DESIGN.md), distinct from the
-// in-device TE board. One fetch pulls every board (global Gainers/REKT, the two games' winners, the
-// two arcade boards); the pill selector then switches tabs from cached data, so it's instant with no
-// refetch. Every row shows a username (or the generated handle), never an address.
+// The menu leaderboard, App Surface language (docs/DESIGN.md), distinct from the in-device TE board.
+// One fetch pulls every board; the pill selector switches tabs from cached data, instant with no refetch. Every row shows a username (or generated handle), never an address.
 export const Route = createFileRoute('/_app/menu/leaderboard')({ component: LeaderboardScreen })
 
 type Tab = 'traders' | Game | Minigame
@@ -147,9 +145,8 @@ function BoardCard({ title, sub, empty, count, tone, children }: { title: string
   )
 }
 
-// One ranked row: rank (gold for #1), name, a value on the right. Your own row is flagged by a small
-// brand triangle in the left gutter plus a brand-tinted name, instead of a full-row wash (which read
-// heavy and never inset cleanly on the right). Rows stay tight so the board scans in one glance.
+// One ranked row: rank (gold for #1), name, value on the right. Your own row gets a small brand
+// triangle in the left gutter plus a brand-tinted name, instead of a full-row wash (read heavy, inset poorly). Rows stay tight so the board scans in one glance.
 function LeaderRow({
   rank,
   name,

@@ -43,9 +43,8 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
       { name: 'darkreader-lock', content: '' },
       { name: 'theme-color', content: '#000000' },
 
-      // Standalone / "Add to Home Screen": a home-screen launch opens full-screen with no browser
-      // chrome. black-translucent goes edge-to-edge under the status bar (the app already pads with
-      // env(safe-area-inset-*)). The InstallGate guide walks users into installing.
+      // Standalone / "Add to Home Screen": full-screen launch, no browser chrome. black-translucent
+      // goes edge-to-edge under the status bar (the app already pads with env(safe-area-inset-*)).
       { name: 'apple-mobile-web-app-capable', content: 'yes' },
       { name: 'mobile-web-app-capable', content: 'yes' },
       { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
@@ -92,9 +91,8 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         <HeadContent />
-        {/* Tint the iOS status-bar strip to the saved skin before first paint, so it never flashes
-            black on load. _app caches the color; the door ("/") clears it. Runs in <head>, so it can
-            touch the theme-color meta + html bg (body isn't parsed yet, that lands in _app's effect). */}
+        {/* Tint the iOS status-bar strip to the saved skin before first paint, so it never flashes black.
+            _app caches the color, "/" clears it. Runs in <head> since body isn't parsed yet (that part lands in _app's effect). */}
         <script
           dangerouslySetInnerHTML={{
             __html: `try{var c=localStorage.getItem('pips_console_backdrop');if(c&&location.pathname!=='/'){document.documentElement.style.background=c;var m=document.querySelector('meta[name="theme-color"]');if(m)m.content=c;}}catch(e){}`,

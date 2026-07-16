@@ -1,40 +1,30 @@
-// Public Predict ids the client needs for reads (DUSDC balance, explorer links).
-// Mirrored from the backend deployed.json into web/.env by the bootstrap. The client
-// never builds a Predict moveCall itself, the backend does, so this stays minimal.
+// Public Predict ids the client needs for reads (DUSDC balance, explorer links), mirrored from the backend
+// deployed.json into web/.env by the bootstrap. The client never builds a Predict moveCall, so this stays minimal.
 
 import { env } from '@/env'
 import { isDemo } from '@/lib/demo'
 
 export const NETWORK = env.VITE_SUI_NETWORK
-// Human label for the active chain, e.g. "Sui Testnet". Drives the on-screen network badge so it
-// always reflects VITE_SUI_NETWORK instead of a hardcoded string.
+// Human label for the active chain (e.g. "Sui Testnet"), drives the network badge instead of a hardcoded string.
 export const NETWORK_LABEL = `Sui ${NETWORK.charAt(0).toUpperCase()}${NETWORK.slice(1)}`
 export const PACKAGE_ID = env.VITE_PREDICT_PACKAGE_ID ?? ''
 export const PREDICT_ID = env.VITE_PREDICT_OBJECT_ID ?? ''
 
-// DUSDC_TYPE is the one id the client reads at runtime (balance lookups in predict.ts). It changes
-// every deploy, so instead of trusting the compile-time VITE value we refresh it from the backend
-// /config at boot (refreshDeployedConfig). That way a devnet wipe + redeploy never needs a Vercel
-// rebuild: the client just re-reads the live coin type. `let` + a live import binding = consumers
-// (predict.ts reads it inside its functions) pick up the new value with no extra plumbing.
+// The one DUSDC id the client reads at runtime. Changes every deploy, so refreshDeployedConfig() refreshes it from
+// /config at boot instead of trusting the compile-time value; `let` means consumers pick up the new value with no extra plumbing.
 export let DUSDC_TYPE = env.VITE_DUSDC_TYPE ?? ''
 
-// Stake band the backend enforces per play. Defaulted synchronously from the active network so the bet
-// wheel is correct on first render (testnet = real Predict, floored at the protocol's ~$1 min-net-premium
-// -> 1.5..3; anything else is the free fork's wide 1..100). /config makes it authoritative if the backend
-// runs with custom PIPS_MIN_STAKE/PIPS_MAX_STAKE overrides. Mirrors backend IS_REAL_PREDICT (SUI_NETWORK==='testnet').
+// Stake band the backend enforces per play, defaulted synchronously from the network so the bet wheel is right on
+// first render (testnet real Predict floors at ~$1 min-net-premium -> 1.5..3, else the fork's 1..100); /config overrides it.
 let STAKE_MIN = NETWORK === 'testnet' ? 1.5 : 1
 let STAKE_MAX = NETWORK === 'testnet' ? 3 : 100
 
-// House rake (backend house.ts): the entry vig folded into position sizing, so a real play sizes off
-// `net = stake - rake`. Kept here so pre-play previews can show the true NET max payout instead of
-// stake*multiplier and never over-promise. Effective bps is 0 until /config says otherwise (and always 0
-// in demo, which never rakes). MIN_NET is the floor below which the backend skips the rake.
+// House rake (backend house.ts): a real play sizes off `net = stake - rake`, kept here so previews show the true
+// NET max payout instead of over-promising. 0 until /config says otherwise (always 0 in demo); MIN_NET is the skip-rake floor.
 let HOUSE_EDGE_BPS = 0
 let HOUSE_EDGE_MIN_NET = NETWORK === 'testnet' ? 1.2 : 0
 
-// Pull the live deploy ids from the backend and adopt the current DUSDC coin type + stake band.
-// Fire-and-forget at app boot; on any failure (no backend, demo mode, offline) we keep the defaults above.
+// Pulls live deploy ids from the backend at boot (fire-and-forget); on any failure keeps the defaults above.
 export async function refreshDeployedConfig(): Promise<void> {
   try {
     const res = await fetch(`${env.VITE_API_URL}/config`, { signal: AbortSignal.timeout(5000) })
@@ -57,10 +47,8 @@ export async function refreshDeployedConfig(): Promise<void> {
   }
 }
 
-// The net stake a REAL play sizes its position off after the house rake. Pre-play previews multiply this
-// (not the full stake) by the estimated multiplier so a projected win never promises more than the net
-// position pays. Demo mode never rakes, so it returns the full stake. Mirrors the backend houseRake split
-// including the below-floor skip; at the floor it's a hair conservative (understates, never overstates).
+// Net stake a real play sizes off after the house rake; previews multiply this (not the full stake) so a projected
+// win never over-promises. Demo never rakes. Mirrors backend houseRake's below-floor skip, understating at the floor rather than over.
 export function netStakeUsd(stakeUsd: number): number {
   if (HOUSE_EDGE_BPS <= 0 || isDemo() || !(stakeUsd > 0)) return stakeUsd
   const net = stakeUsd - (stakeUsd * HOUSE_EDGE_BPS) / 10_000
@@ -83,8 +71,7 @@ function buildBetLadder(min: number, max: number): number[] {
   return [...new Set(out)]
 }
 
-// One shared bet ladder for every game + the home idle wheel, sized to the live [min, max] band so the
-// wheel never offers an out-of-band bet. Cached by band so the reference is stable across renders.
+// One shared bet ladder for every game + the home idle wheel, sized to the live [min, max] band; cached by band so the reference stays stable across renders.
 let ladderCache: { min: number; max: number; ladder: number[] } | null = null
 export function betLadder(): number[] {
   if (!ladderCache || ladderCache.min !== STAKE_MIN || ladderCache.max !== STAKE_MAX) {
@@ -99,8 +86,7 @@ export const DUSDC_DECIMALS = 1_000_000
 export const fromDusdcRaw = (raw: bigint | string | number): number =>
   Number(BigInt(raw)) / DUSDC_DECIMALS
 
-// Suiscan explorer links. The network comes from env, so these always resolve to the active chain.
-// Suiscan natively indexes mainnet, testnet, and devnet.
+// Suiscan explorer links; network comes from env so these always resolve to the active chain (mainnet/testnet/devnet all indexed).
 const EXPLORER_BASE = `https://suiscan.xyz/${NETWORK}`
 
 export const explorerTxUrl = (digest: string): string => `${EXPLORER_BASE}/tx/${digest}`

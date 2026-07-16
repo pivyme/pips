@@ -1,9 +1,7 @@
-// Avatar helpers: the letter-fallback derivation (shared by <Avatar> and any chip surface) and a
-// dependency-free client-side shrink of an uploaded image to a square webp for the upload route.
+// Avatar helpers: the letter-fallback derivation (shared by <Avatar> and any chip) and a dependency-free client-side shrink of an uploaded image to a square webp.
 
-// The PIPS identicon palette: bright, saturated jewel tones, every one tuned for a legible white
-// glyph (WCAG contrast >= 4:1 against #fff), so the initial always pops. Pick is deterministic (djb2
-// hash of the normalized handle), so a handle always gets the same color across surfaces and reloads.
+// The PIPS identicon palette: jewel tones tuned for a legible white glyph (WCAG contrast >= 4:1 against #fff).
+// Pick is deterministic (djb2 hash of the normalized handle), so a handle always gets the same color across surfaces and reloads.
 const IDENTICON_COLORS = [
   '#7C3AED', '#9333EA', '#7E22CE', '#6D28D9', '#C026D3', '#B5179E', '#86198F',
   '#DB2777', '#E23670', '#E11D48', '#A61E4D', '#DC2626', '#BE123C', '#D9480F',
@@ -35,9 +33,8 @@ export function avatarColor(name: string): { bg: string; ink: string } {
 
 const MAX_SOURCE_DIM = 8192 // reject absurd sources before they hit the canvas
 
-// Shrink an image File to a square webp data URL, center-cover cropped (fill + center, never
-// stretched/warped). Downscale only: a source smaller than `size` keeps its native side, it's never
-// upscaled. Rejects a non-image or an unreadable/oversized source. No dependencies.
+// Shrink an image File to a square webp data URL, center-cover cropped (fill + center, never stretched). Downscale
+// only, a source smaller than `size` keeps its native side; rejects a non-image or an unreadable/oversized source.
 export async function toSquareWebp(file: File, size = 500, quality = 0.82): Promise<string> {
   if (!file.type.startsWith('image/')) throw new Error('That file is not an image')
   const img = await loadImage(file)

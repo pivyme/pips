@@ -1,6 +1,5 @@
-// Shared arcade leaderboard for the minigames (Line Rider, Flappy Piper). The board is global and
-// keyed to the player's account, so every row shows a username, never an address. One hook owns the
-// fetch + submit; the list UI is the flat Teenage Engineering scoreboard both minigames render.
+// Shared arcade leaderboard for the minigames (Line Rider, Flappy Piper): global, keyed to the player's
+// account, rows show a username never an address. One hook owns fetch + submit; the list UI is the flat TE scoreboard both minigames render.
 
 import { useCallback, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -11,9 +10,8 @@ import { displayHandle } from '@/utils/format'
 const fmt = (n: number): string => Math.round(n).toLocaleString('en-US')
 const lbKey = (game: Minigame) => ['minigame-lb', game] as const
 
-// Fetch the board + submit a finished run. Call `startRun` when a run begins and `submit` when it
-// ends; `submit` returns where the run landed (for the result screen) and seeds the board cache so
-// the title reflects the new score immediately.
+// Fetch the board + submit a finished run. Call `startRun` when a run begins and `submit` when it ends;
+// `submit` returns where the run landed and seeds the board cache so the score reflects immediately.
 export function useMinigameLeaderboard(game: Minigame): {
   board: LeaderboardScoreEntry[]
   best: number

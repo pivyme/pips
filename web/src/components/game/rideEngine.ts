@@ -1,10 +1,5 @@
-// Line Rider engine. A neon trend line scrolls right to left; the player rides a pip on it with the
-// thumbwheel. Hug the line and your score climbs (faster the tighter you hug, via a combo multiplier)
-// and grip refills; drift off and the combo resets and grip drains; grip hits zero and the run ends.
-// Pure score chase: the score only ever goes up, the challenge is surviving the ramp for a big one.
-//
-// Framework-free on purpose: the field + every bit of juice draw here at 60fps, and only a small
-// HUD snapshot is pushed out (throttled) for the DOM overlay. React owns phase + the leaderboard.
+// Line Rider: a neon trend line scrolls right to left, ride a pip on it with the thumbwheel; hugging it climbs score (combo multiplier) and refills grip, drifting off drains grip until the run ends.
+// Framework-free on purpose: the field draws here at 60fps, only a throttled HUD snapshot is pushed out; React owns phase + the leaderboard.
 
 export interface RideHud {
   score: number
@@ -197,14 +192,12 @@ export class RideEngine {
     return clamp01((this.elapsed - WARMUP_S) / RAMP_S)
   }
 
-  // Seconds past full difficulty. Drives endless escalation (speed + grip drain) so even a great
-  // run eventually breaks, which is what makes a high score worth chasing.
+  // Seconds past full difficulty; drives endless escalation (speed + grip drain) so even a great run eventually breaks, worth chasing.
   private over(): number {
     return Math.max(0, this.elapsed - WARMUP_S - RAMP_S)
   }
 
-  // Generate the next segment's y: ease toward a goal, reroll the goal periodically (more often and
-  // farther as difficulty rises), with rare sharp spikes late so the line can jab.
+  // Generate the next segment's y: ease toward a goal, reroll periodically (more often/farther as difficulty rises), with rare sharp spikes late.
   private nextY(): number {
     const d = this.difficulty()
     if (this.segsToGoal <= 0) {
@@ -297,8 +290,7 @@ export class RideEngine {
       }
     } else {
       this.mult = Math.max(1, this.mult - dt * MULT_DECAY)
-      // No grip loss during the warmup: the opening seconds are a free practice window to find
-      // the line and get a feel for the wheel, exactly as they should be.
+      // No grip loss during warmup: the opening seconds are a free practice window to find the line and feel out the wheel.
       if (this.offFor > GRACE_S && this.elapsed > WARMUP_S) {
         this.grip -= dt * (lerp(GRIP_DRAIN0, GRIP_DRAIN1, d) + this.over() * DRAIN_CREEP)
       }
@@ -371,8 +363,7 @@ export class RideEngine {
     const pipX = w * PIP_X_FRAC
     const d = this.difficulty()
     const band = lerp(BAND0, BAND1, d)
-    // Resolve the heat color once per frame; build only the varying alpha per use (hc). Was a full
-    // lerp+round per trail segment per frame.
+    // Resolve the heat color once per frame, only alpha varies per use (hc); was a full lerp+round per trail segment before.
     const [hr, hg, hb] = heatRgb(this.mult)
     const hc = (a: number) => `rgba(${hr},${hg},${hb},${a})`
     const hue = hc(1)
@@ -401,10 +392,8 @@ export class RideEngine {
     ctx.fillStyle = hc(0.07)
     ctx.fill()
 
-    // The trend line, glowing, heat-colored. Layered translucent strokes fake the neon halo: a wide
-    // faint pass, a mid pass, then the crisp bright core, all the same hue. This replaces a per-frame
-    // shadowBlur (a full-width gaussian blur every frame, the line-rider stutter). The halo still
-    // flares with the multiplier the way the old blur radius did.
+    // Trend line glow: layered translucent strokes (wide faint pass + mid pass + crisp core, same hue) fake the neon halo.
+    // Replaces a per-frame shadowBlur (a full-width gaussian blur every frame was the line-rider stutter); the halo still flares with the multiplier.
     const flare = Math.min(1, this.mult / 10) // mirrors the old 12->30px blur ramp
     ctx.lineJoin = 'round'
     ctx.lineCap = 'round'

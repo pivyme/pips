@@ -17,11 +17,8 @@ const STATUS_LABEL: Partial<Record<PlayStatus, string>> = {
   cashed_out: 'Cashed out',
 }
 
-// A floating "you have a play resolving elsewhere" pill, chrome around the device (App Surface
-// language, not the screen), so it renders identically whether you're on Home, in the Menu drawer, or
-// on a different game. Hidden while you're actually looking at the game it belongs to, that screen
-// already has its own rich live/settling UI. Also owns the off-screen settle notification: the one
-// moment worth interrupting you for is the instant a play you walked away from resolves.
+// A floating "play resolving elsewhere" pill, chrome around the device (App Surface language, not the
+// screen), so it renders identically on Home, the Menu drawer, or another game. Hidden on the game's own screen (which has its own live UI); also owns the off-screen settle notification, the one moment worth interrupting for.
 export function ActivePlayChip() {
   const { active } = useActivePlay()
   const matchRoute = useMatchRoute()

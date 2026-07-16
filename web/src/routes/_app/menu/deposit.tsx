@@ -16,9 +16,8 @@ export const Route = createFileRoute('/_app/menu/deposit')({
   component: DepositScreen,
 })
 
-// Where DUSDC comes from depends on the chain. On testnet it's DeepBook Predict's own test token, so
-// say that plainly. On the fork (localnet/devnet) it's the copy the PIPS team runs. Never claim a
-// network we're not on.
+// DUSDC origin depends on the chain: testnet uses DeepBook Predict's own test token, the fork
+// (localnet/devnet) uses the copy the PIPS team runs. Never claim a network we're not on.
 const DUSDC_ORIGIN =
   NETWORK === 'testnet'
     ? `DeepBook Predict's test token on ${NETWORK_LABEL}`

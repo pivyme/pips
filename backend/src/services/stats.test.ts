@@ -62,5 +62,7 @@ describe('computeLedgerStats accounting', () => {
     expect(result.gamesPlayed).toBe(2);
     expect(result.wins).toBe(1);
     expect(result.losses).toBe(1);
+    // Best realized multiple = payout / entryCost on the winning play; the loss never counts.
+    expect(result.bestMultiplier).toBeCloseTo(200 / 98.562719, 4);
   });
 });

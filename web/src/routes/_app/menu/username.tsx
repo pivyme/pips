@@ -12,9 +12,8 @@ import { HapticOverlay } from '@/components/HapticOverlay'
 import { displayHandle } from '@/utils/format'
 import { cnm } from '@/utils/style'
 
-// The Profile editor: avatar + handle. A plain App-Surface page in the drawer (reached from the pen on
-// the Player Card), not the device screen. Change the photo (client-shrunk to a 500x500 webp) or clear
-// it back to the PIPS identicon, and edit the @handle. No display name.
+// Profile editor: avatar + handle. Plain App-Surface page in the drawer (from the pen on the Player Card),
+// not the device screen. Photo is client-shrunk to a 500x500 webp, or clears back to the PIPS identicon; no display name.
 export const Route = createFileRoute('/_app/menu/username')({ component: UsernameScreen })
 
 const HANDLE_RE = /^[a-zA-Z0-9_]{3,20}$/

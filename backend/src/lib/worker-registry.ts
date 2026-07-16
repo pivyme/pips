@@ -1,7 +1,5 @@
-// A tiny in-process registry of the background workers (node-cron jobs, setInterval loops, the Binance
-// socket). It exists for two reasons: health visibility at GET /health/ready, and a coordinated stop on
-// graceful shutdown. Each worker keeps its own isRunning guard untouched; this only records timing +
-// holds a handle to stop the task. No external deps, no DB, no I/O.
+// Tiny in-process registry of background workers (node-cron jobs, setInterval loops, the Binance socket):
+// health visibility at GET /health/ready, plus a coordinated stop on graceful shutdown. Each worker keeps its own isRunning guard untouched; this only records timing and holds a handle to stop the task.
 
 export type WorkerHealth = {
   name: string;
@@ -9,22 +7,19 @@ export type WorkerHealth = {
   lastSuccessAt: number | null;
   lastError: string | null;
   lastDurationMs: number | null;
-  // Best-effort cadence in ms, drives staleness detection (a worker is stale past ~3x this). null for a
-  // non-periodic worker (e.g. the Binance socket), which is never flagged stale.
+  // Best-effort cadence in ms, drives staleness detection (stale past ~3x this); null for a non-periodic worker (e.g. Binance socket), never flagged stale.
   intervalMs: number | null;
 };
 
-// Anything the shutdown routine can stop. A node-cron ScheduledTask, a setInterval wrapper, or a socket
-// closer all satisfy this, so the registry never depends on node-cron's concrete type.
+// Anything the shutdown routine can stop: a node-cron ScheduledTask, a setInterval wrapper, or a socket closer all satisfy this, so the registry never depends on node-cron's concrete type.
 type Stoppable = { stop: () => void | Promise<void> };
 
 type Entry = WorkerHealth & { task: Stoppable };
 
 const registry = new Map<string, Entry>();
 
-// Parse a node-cron expression into an approximate interval in ms, good enough for staleness detection.
-// Handles the forms this project actually uses: `*/N * * * * *` (every N seconds), `*/N * * * *` (every
-// N minutes), `0 * * * *` (hourly), and plain `*`. Unknown shapes return null (never flagged stale).
+// Parses a node-cron expression into an approximate interval in ms, good enough for staleness detection.
+// Handles the forms this project uses (seconds, minutes, hourly, plain `*`); unknown shapes return null (never flagged stale).
 export function cronIntervalMs(expr: string): number | null {
   const parts = expr.trim().split(/\s+/);
   if (parts.length === 6) {
@@ -45,8 +40,7 @@ export function cronIntervalMs(expr: string): number | null {
   return null;
 }
 
-// Register (or re-register) a worker with a stop handle. Preserves any run history already recorded so a
-// worker that reports a run before registering (e.g. the socket) doesn't lose its timing on register.
+// Registers (or re-registers) a worker with a stop handle, preserving any run history already recorded so a worker that reports before registering (e.g. the socket) doesn't lose its timing.
 export function registerWorker(name: string, task: Stoppable, intervalMs: number | null = null): void {
   const prev = registry.get(name);
   registry.set(name, {
@@ -60,9 +54,8 @@ export function registerWorker(name: string, task: Stoppable, intervalMs: number
   });
 }
 
-// Record the outcome of one worker run. Cheap enough to call on every tick. A run recorded for a name
-// that was never registered still shows up in health (with no stop handle), so a worker can report
-// liveness even if it registers its stop handle elsewhere.
+// Records the outcome of one worker run, cheap enough to call on every tick. A run recorded for a name
+// never registered still shows up in health (no stop handle), so a worker can report liveness even if it registers its stop handle elsewhere.
 export function recordRun(name: string, ok: boolean, durationMs: number, error?: unknown): void {
   let e = registry.get(name);
   if (!e) {
@@ -85,8 +78,7 @@ export function allWorkerHealth(): WorkerHealth[] {
   return [...registry.values()].map(({ task: _task, ...h }) => h);
 }
 
-// Stop every registered task (graceful shutdown). Best-effort: one task failing to stop never blocks the
-// rest. In-flight runs finish on their own (each worker's isRunning guard already covers that).
+// Stops every registered task (graceful shutdown); best-effort so one failing task never blocks the rest. In-flight runs finish on their own via each worker's isRunning guard.
 export function stopAllWorkers(): void {
   for (const e of registry.values()) {
     try {

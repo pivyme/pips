@@ -1,8 +1,5 @@
-// The one server-side Predict wrapper. Every Predict moveCall on the backend is built
-// here so a mainnet re-point or id change touches only config.ts. It holds both the
-// OPERATOR surface the workers use (oracle lifecycle + price pushes + reads) and the USER
-// trade surface (preview + mint/redeem/manager/deposit PTB builders) the play flow uses.
-// All on-chain prices/strikes are 1e9-scaled; coin amounts and quantities are 6dp.
+// The one server-side Predict wrapper: every Predict moveCall lives here, so a mainnet re-point or id change touches only config.ts.
+// Holds the OPERATOR surface (oracle lifecycle, price pushes, reads) and the USER trade surface (preview/mint/redeem PTB builders); prices/strikes are 1e9-scaled, amounts/quantities 6dp.
 
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
@@ -20,13 +17,8 @@ import {
 } from './config.ts';
 import { IMPLIED_VOL } from '../../config/main-config.ts';
 
-// Flat SVI surface calibrated to IMPLIED_VOL (the move the option is priced for over a round). With
-// rho=m=0 the total variance is w(k) = a + b*sqrt(k^2 + sigma^2); sigma dwarfs our ~+-12% strike
-// range, so w stays ~= a + b*sigma = IMPLIED_VOL^2, flat across the strikes we actually trade. `a`
-// is the variance floor that keeps w strictly positive (dodges EZeroVariance / EZeroForward). Pushed
-// once per oracle right after activate; afterwards we only stream prices. The magnitude is the whole
-// game: the old 0.04/0.1/0.6 was w=0.10 (~31.6% vol), ~50x the realized move, so binaries barely
-// twitched and the big multipliers sat unreachably far OTM. See IMPLIED_VOL in main-config.
+// Flat SVI surface calibrated to IMPLIED_VOL: w(k) = a + b*sqrt(k^2+sigma^2) with rho=m=0, sigma >> our strike range so w stays ~= a + b*sigma = IMPLIED_VOL^2 across every strike we trade.
+// `a` is the variance floor guarding EZeroVariance/EZeroForward, pushed once per oracle right after activate; afterwards we only stream prices. See IMPLIED_VOL in main-config.
 const W0 = IMPLIED_VOL * IMPLIED_VOL; // ATM total variance to expiry
 const SVI_SIGMA = 0.6; // smoothing width, >> our strike range so the surface is flat where we trade
 const SVI = {
@@ -129,14 +121,12 @@ type OracleFields = {
   authorized_caps?: { contents?: string[] };
 };
 
-// gRPC throws "<id> not found" where JSON-RPC returned empty object data. Reads that mean
-// "gone -> null" catch this and return null instead of surfacing the throw. grpcErrorText decodes
-// the percent-encoded transport message (the simulate path returns "Object%20..%20not%20found").
+// gRPC throws "<id> not found" where JSON-RPC returned empty data; reads meaning "gone -> null" catch this instead of surfacing the throw.
+// grpcErrorText decodes the percent-encoded transport message (simulate returns "Object%20..%20not%20found").
 const isNotFound = (e: unknown): boolean => grpcErrorText(e).includes('not found');
 
-// Run a read-only PTB via gRPC simulate (the devInspect replacement). Sets the sender, disables
-// validation checks (so non-entry getters return values just like devInspect did), and throws a
-// labelled error on failure. Returns command return-values (for u64 getters) and mapped events.
+// Runs a read-only PTB via gRPC simulate (the devInspect replacement): sets the sender, disables validation checks so non-entry getters return values like devInspect did.
+// Throws a labelled error on failure; returns command return-values (u64 getters) and mapped events.
 type SimReturnValues = { returnValues: { bcs: Uint8Array | null }[] }[];
 async function simulateRead(
   tx: Transaction,
@@ -159,11 +149,8 @@ async function simulateRead(
   return { commandResults: (res.commandResults ?? []) as SimReturnValues, events };
 }
 
-// Read the current on-chain oracle state. Returns null if the object is gone or not an
-// oracle. `active` is the stored flag; lifecycle status is derived against the clock by
-// callers (expired = now >= expiry; settled = settlement_price set). `authorizedCapIds` is the
-// on-chain set of caps allowed to push/settle it, so the settle path can find the right cap to
-// nudge an oracle with even when it has fallen out of the in-memory ladder cache (a restart).
+// Reads the current on-chain oracle state, null if gone or not an oracle. `active` is the stored flag; callers derive lifecycle
+// against the clock (expired = now >= expiry, settled = settlement_price set). `authorizedCapIds` lets the settle path find the right cap to nudge even after a restart drops the in-memory ladder cache.
 export async function readOracle(oracleId: string): Promise<OracleState | null> {
   let f: OracleFields | null;
   try {
@@ -187,12 +174,8 @@ export async function readOracle(oracleId: string): Promise<OracleState | null> 
   };
 }
 
-// The on-chain strike grid (min strike + tick, 1e9-scaled) the vault registered for an oracle, used
-// by a follower backend (one that did not create the oracle, so it never cached the grid) to recover
-// the EXACT grid instead of re-deriving it from the current spot (which drifts off the creation
-// grid). The grid lives in Predict.oracle_config.oracle_grids, a Table<ID, OracleGrid> keyed by the
-// oracle id. The table's own id is fixed for the deployment, so resolve it once; individual grids are
-// immutable after create_oracle, so cache them forever (a follower sees at most a few hundred).
+// The on-chain strike grid (min strike + tick) for an oracle, read so a follower (didn't create the oracle) recovers the EXACT
+// grid instead of re-deriving it from the drifting current spot. Lives in Predict.oracle_config.oracle_grids (Table<ID, OracleGrid>); table id is fixed per deployment, grids are immutable after create_oracle, so both cache forever.
 let oracleGridsTableIdP: Promise<string> | null = null;
 async function oracleGridsTableId(): Promise<string> {
   if (!oracleGridsTableIdP) {
@@ -284,9 +267,8 @@ const eventString = (json: Record<string, unknown>, key: string): string => {
   return value;
 };
 
-// The emitted Predict event is the accounting receipt. Preview calls are estimates against the
-// pre-trade state; mint/redeem reprices after applying the trade's own position change, so only the
-// event contains the exact amount that moved on-chain.
+// The emitted Predict event is the accounting receipt: preview calls estimate against pre-trade state, but mint/redeem
+// reprices after applying the trade's own position change, so only the event holds the exact amount that moved on-chain.
 export function mintEventAmounts(events: TradeEvent[], kind: 'binary' | 'range'): MintEventAmounts {
   const suffix = kind === 'range' ? '::predict::RangeMinted' : '::predict::PositionMinted';
   const event = events.find((item) => item.type.endsWith(suffix));
@@ -312,17 +294,12 @@ export function redeemEventAmounts(events: TradeEvent[], kind: 'binary' | 'range
   };
 }
 
-// Find the on-chain redeem for one exact position key on a manager. The settle backstop uses this to
-// reconcile a play whose position is already gone (a cash-out whose DB write was lost): recover the
-// true payout + digest from the chain instead of retrying a redeem that can never succeed. A redeem is
-// uniquely pinned by oracle + strike(s) + side + quantity, so we scan the manager's transactions
-// newest-first (the lost redeem is among the most recent, settle runs seconds after expiry) and stop
-// after a bounded number of pages so a genuinely-absent record fails fast instead of paging forever.
+// Finds the on-chain redeem for one exact position key on a manager: the settle backstop uses this to reconcile a play whose position is already gone (a lost DB write), recovering the true payout + digest instead of retrying a doomed redeem.
+// Uniquely pinned by oracle + strike(s) + side + quantity; scans newest-first and stops after a bounded page count so a genuinely-absent record fails fast.
 export type OnChainRedeem = { payout: bigint; quantity: bigint; settled: boolean; digest: string };
 export type RedeemKey = { kind: 'binary'; params: BinaryParams } | { kind: 'range'; params: RangeParams };
 
-// Does this event json describe the exact redeem we're reconciling? A redeem is uniquely pinned by
-// oracle + strike(s) + side + quantity.
+// Does this event json describe the exact redeem being reconciled (oracle + strike(s) + side + quantity)?
 function redeemMatches(j: Record<string, unknown>, key: RedeemKey): boolean {
   if (j.oracle_id !== key.params.oracleId) return false;
   if (String(j.quantity) !== key.params.quantity.toString()) return false;
@@ -335,8 +312,8 @@ function redeemMatches(j: Record<string, unknown>, key: RedeemKey): boolean {
   );
 }
 
-// Scan one GraphQL tx page (oldest-first) reversed so the most recent matching redeem wins. Pure so
-// the migrated GraphQL parse is unit-testable against a captured response.
+// Scans one GraphQL tx page (oldest-first) reversed so the most recent matching redeem wins.
+// Pure so the migrated GraphQL parse is unit-testable against a captured response.
 export function matchRedeemInTxPage(nodes: TxByObjectResult['transactions']['nodes'], key: RedeemKey): OnChainRedeem | null {
   const suffix = key.kind === 'range' ? '::predict::RangeRedeemed' : '::predict::PositionRedeemed';
   for (let i = nodes.length - 1; i >= 0; i--) {
@@ -358,8 +335,8 @@ export function matchRedeemInTxPage(nodes: TxByObjectResult['transactions']['nod
 }
 
 export async function findRedeemOnChain(managerId: string, key: RedeemKey): Promise<OnChainRedeem | null> {
-  // Fullnode gRPC v2 has no tx-history scan, so this reconcile path uses GraphQL. `affectedObject`
-  // matches every tx that used the manager (the redeem mutates it), newest-first via last/before.
+  // Fullnode gRPC v2 has no tx-history scan, so this reconcile path uses GraphQL. `affectedObject` matches
+  // every tx that used the manager (the redeem mutates it), newest-first via last/before.
   let before: string | null = null;
   for (let page = 0; page < 6; page++) {
     const res: { data?: unknown } = await graphqlClient.query({
@@ -432,14 +409,8 @@ async function tradeAmounts(buildKey: (tx: Transaction) => TransactionObjectArgu
   return { cost: decodeU64(rv[0].bcs), payout: decodeU64(rv[1].bcs) };
 }
 
-// The user's playable chips live in the PredictManager's inner BalanceManager: mint debits
-// it, redeem credits it. Read that balance (6dp) so the wallet + manager sum is the true
-// spendable balance, and so the funding step only tops up the shortfall before a mint.
-// True iff the PredictManager object still exists on-chain. A devnet reset/redeploy can delete a
-// user's manager while the freshly republished package survives, leaving a dead id in the DB;
-// onboarding uses this to detect that and recreate. Uses getObject (clean not-found) rather than the
-// balance simulate, and rethrows any non-not-found error so a real node/chain outage isn't misread
-// as "gone" and doesn't trigger a needless recreate.
+// True iff the PredictManager still exists on-chain. A devnet reset/redeploy can delete a user's manager while the republished package survives, leaving a dead id in the DB; onboarding uses this to detect + recreate.
+// Uses getObject (clean not-found) rather than the balance simulate, and rethrows any non-not-found error so a real chain outage isn't misread as "gone".
 export async function managerExists(managerId: string): Promise<boolean> {
   try {
     await suiClient.getObject({ objectId: managerId, include: { json: true } });
@@ -450,6 +421,8 @@ export async function managerExists(managerId: string): Promise<boolean> {
   }
 }
 
+// The user's playable chips live in the PredictManager's inner BalanceManager (mint debits it, redeem credits it); read here so wallet + manager sum is the true spendable balance.
+// The funding step uses it to top up only the shortfall before a mint.
 export async function getManagerBalanceRaw(managerId: string): Promise<bigint> {
   const tx = new Transaction();
   tx.moveCall({
@@ -469,14 +442,8 @@ export const previewMint = (p: BinaryParams): Promise<TradeAmounts> =>
   tradeAmounts((tx) => binaryKey(tx, p), 'get_trade_amounts', p.oracleId, p.quantity);
 export const previewRedeem = previewMint;
 
-// Batch many binary previews into ONE devInspect. Every probe shares the oracle/side/expiry;
-// each carries its own (strike, quantity). The whole solver curve comes back in a single round
-// trip, which is the difference between a ~2s and a ~13s solve over the remote node (each
-// devInspect is ~1s of node compute + network there). Safe to batch because get_trade_amounts
-// has no per-strike abort: the only gate is the shared assert_quoteable_oracle, so the call
-// aborts as a whole iff the oracle is no longer quoteable (expired/inactive/stale), which is the
-// signal to re-route, not a partial result. Throws on a non-success devInspect so the caller can
-// detect an expired oracle. cost == 0 means unmintable (price rounded to zero / outside bounds).
+// Batches many binary previews into ONE devInspect (each probe shares oracle/side/expiry, carries its own strike+quantity): ~2s vs ~13s solving one-by-one over the remote node.
+// Safe because get_trade_amounts' only shared gate is assert_quoteable_oracle, so it aborts all-or-nothing (expired/inactive/stale = re-route signal, never a partial result); cost == 0 means unmintable.
 export async function previewBinaryBatch(
   oracleId: string,
   expiryMs: number,
@@ -485,9 +452,8 @@ export async function previewBinaryBatch(
 ): Promise<TradeAmounts[]> {
   if (probes.length === 0) return [];
   const tx = new Transaction();
-  // Each probe is two commands: build the market key, then read the trade amounts. Command k
-  // pairs are interleaved [key0, getter0, key1, getter1, ...], so the getter result for probe i
-  // lands at result index 2*i+1.
+  // Each probe is two commands (build the market key, then read trade amounts), interleaved [key0, getter0, key1, getter1, ...].
+  // So the getter result for probe i lands at result index 2*i+1.
   for (const p of probes) {
     const key = binaryKey(tx, { oracleId, expiryMs, strike1e9: p.strike1e9, side, quantity: p.quantity });
     tx.moveCall({
@@ -506,11 +472,8 @@ export async function previewBinaryBatch(
 export const previewRange = (p: RangeParams): Promise<TradeAmounts> =>
   tradeAmounts((tx) => rangeKey(tx, p), 'get_range_trade_amounts', p.oracleId, p.quantity);
 
-// Batch many range previews into ONE devInspect. Every probe shares the oracle/expiry; each carries
-// its own (lower, higher, quantity). Mirrors previewBinaryBatch: the whole band ladder is priced in
-// a single round trip against one oracle snapshot, so the multiples are consistent across band sizes
-// and cost ~1 devInspect total instead of one per band. Throws on a non-success devInspect (expired
-// oracle), the signal to re-route. cost == 0 on a probe means that band is unmintable.
+// Batches many range previews into ONE devInspect (mirrors previewBinaryBatch): the whole band ladder prices in a single round trip against one oracle snapshot, so multiples stay consistent across band sizes.
+// Throws on a non-success devInspect (expired oracle) as the re-route signal; cost == 0 on a probe means that band is unmintable.
 export async function previewRangeBatch(
   oracleId: string,
   expiryMs: number,
@@ -545,10 +508,8 @@ export const buildDeposit = (tx: Transaction, managerId: string, coin: Transacti
   tx.moveCall({ target: target('predict_manager', 'deposit'), typeArguments: [DUSDC_TYPE], arguments: [tx.object(managerId), coin] });
 };
 
-// Withdraw `amountRaw` (6dp) of DUSDC out of the manager's BalanceManager, back into the sender's
-// wallet as a fresh Coin. Owner-gated on-chain (sender must be the manager owner), so it runs under
-// executeForUser (dev = operator, privy = the user). Returns the coin to transfer or merge. Used by
-// the wallet withdraw flow to reach chips that have migrated into the manager from prior plays.
+// Withdraws `amountRaw` (6dp) DUSDC out of the manager's BalanceManager into a fresh Coin. Owner-gated on-chain, so it runs under executeForUser (dev = operator, privy = the user).
+// Used by the wallet withdraw flow to reach chips that migrated into the manager from prior plays.
 export const buildManagerWithdraw = (tx: Transaction, managerId: string, amountRaw: bigint): TransactionObjectArgument =>
   tx.moveCall({
     target: target('predict_manager', 'withdraw'),
@@ -598,9 +559,8 @@ export const buildRedeemPermissionless = (tx: Transaction, managerId: string, p:
   });
 };
 
-// The range twin of buildRedeemPermissionless: settled-only sweep of a range position into a
-// user's manager with no owner check, so the operator settles expired in-the-money range plays
-// on the user's behalf in either auth mode.
+// The range twin of buildRedeemPermissionless: settled-only sweep of a range position into a user's manager with no owner check.
+// Lets the operator settle expired in-the-money range plays on the user's behalf in either auth mode.
 export const buildRedeemRangePermissionless = (tx: Transaction, managerId: string, p: RangeParams): void => {
   tx.moveCall({
     target: target('predict', 'redeem_range_permissionless'),
@@ -609,8 +569,7 @@ export const buildRedeemRangePermissionless = (tx: Transaction, managerId: strin
   });
 };
 
-// Simulate the actual owner redeem transaction. This is the executable cash-out quote: unlike
-// get_trade_amounts, redeem first removes the position's own exposure and then computes the bid.
+// Simulates the actual owner redeem tx: the executable cash-out quote. Unlike get_trade_amounts, redeem first removes the position's own exposure, then computes the bid.
 // devInspect runs that exact Move path without committing state and returns the emitted payout.
 export async function previewExecutableRedeem(
   managerId: string,

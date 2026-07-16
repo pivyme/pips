@@ -17,28 +17,14 @@ import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { cnm } from '@/utils/style'
 import { displayHandle } from '@/utils/format'
 
-// The Home screen on the device (docs/FLOW.md §5). The console screen emulates a Teenage
-// Engineering instrument panel, so this is flat, edge-to-edge and high-contrast: true black,
-// hairline rules that bleed past the rim, mono micro-labels, crisp line glyphs, sharp corners.
-// No rounded cards, no domed surfaces, no emoji.
-//
-// Layout follows the L-shaped aperture. The game select (the one interactive thing) takes the
-// full width up top, where the wide rows have room to breathe and never crop. The read-only
-// readout (who you are, streak, chip balance) drops into the bottom-left, the notch-safe zone
-// that is never full width because the knob + PLAY body occludes the bottom-right. The screen is not
-// clickable: scrub the knob to pick a cartridge and hit PLAY. The depth (full stats, history) lives in the Menu.
-//
-// Inset rule for this L-shaped aperture: the device body masks the outer ~16px, so text sits at
-// RIM (clears the bevel) while the hairlines/fills run full width (they slide under the rim, so
-// the visible line still reaches the screen edge). That is what reads as edge-to-edge, not padded.
+// The Home screen (docs/FLOW.md §5): TE instrument style per docs/SCREEN.md. L-shaped aperture: game
+// select is full width up top, the read-only readout sits notch-safe bottom-left (bottom-right is occluded by the knob/PLAY body). Text insets at RIM, hairlines/fills bleed full width under it.
 export const Route = createFileRoute('/_app/games/')({ component: GamesConsole })
 
-// Text inset that clears the beveled rim, responsive: --screen-rim is published by ConsoleCanvas
-// per device scale (24px fallback). Rules + row fills stay full width and bleed under the rim, so
-// the screen reads edge-to-edge while text never crops as the device grows.
+// Text inset that clears the beveled rim, responsive: --screen-rim is published by ConsoleCanvas per
+// device scale (24px fallback). Rules/fills stay full width and bleed under it so the screen still reads edge-to-edge.
 const RIM = 'px-[var(--screen-rim,24px)]'
-// A little breathing room up top so the status strip doesn't kiss the bevel (kept small so the list
-// sits higher and the last minigame clears the bottom-right body).
+// A little breathing room up top so the status strip doesn't kiss the bevel, kept small so the last minigame clears the bottom-right body.
 const RIM_T = 'pt-[calc(var(--screen-rim,24px)_+_6px)]'
 const RIM_B = 'pb-[var(--screen-rim,24px)]'
 
@@ -66,19 +52,16 @@ function GamesConsole() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const reduced = useReducedMotion()
-  // Remember the last cartridge the player highlighted, so returning to the hub keeps it selected
-  // instead of snapping back to the first row. Stored by route so it survives a reorder / new game.
+  // Remember the last cartridge the player highlighted, so returning to the hub keeps it selected. Stored by route so it survives a reorder / new game.
   const [selTo, setSelTo] = useLocalStorage('pips_game_sel', ALL[0].to)
   const sel = Math.max(0, ALL.findIndex((g) => g.to === selTo))
 
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const streak = statsQ.data?.stats.currentStreak ?? 0
-  // First-run only: same signal Lucky's own idle hint uses, so it needs no extra storage and
-  // disappears for good the instant a first play lands.
+  // First-run only: same signal Lucky's idle hint uses, no extra storage, disappears for good after the first play.
   const firstRun = !statsQ.isLoading && (statsQ.data?.stats.gamesPlayed ?? 0) === 0
 
-  // Live presence ticker. The connection lives at the app shell (LivePresenceProvider) so it stays up
-  // across every game/menu screen, not just here; we only read the count to paint the readout.
+  // Live presence ticker: the connection lives at the app shell (LivePresenceProvider) across every screen; we just read the count here.
   const { online, live: liveOn } = useLivePresence()
 
   const move = useCallback(
@@ -178,8 +161,7 @@ function GamesConsole() {
       {/* black negative space absorbs the slack height (and the occluded bottom-right body) */}
       <div className="min-h-0 flex-1" />
 
-      {/* readout — left-only info zone, notch-safe (the bottom-right is the body: knob + PLAY).
-          who you are, streak, chip balance: all the read-only context lives down here now. */}
+      {/* readout — left-only, notch-safe info zone (bottom-right is the knob/PLAY body): who you are, streak, balance */}
       <Rule />
       <div className={cnm('max-w-[62%] pt-3', RIM_B, RIM)}>
         {/* who you are + streak on one line: no wallet address here, it just ate vertical space */}
@@ -216,9 +198,8 @@ function GameRow({
   onLaunch: () => void
 }) {
   const Icon = game.icon
-  // The screen renders behind the 3D device and taps land on the WebGL canvas, not this DOM. A tap
-  // still reaches this button: data-console-tap opts it into ConsoleCanvas's screen-tap-forward hit
-  // test, which clicks it directly. The knob still scrubs selection and PLAY still launches the lit row.
+  // The screen renders behind the 3D device and taps land on the WebGL canvas, not this DOM: data-console-tap
+  // opts this button into ConsoleCanvas's screen-tap-forward hit test, which clicks it directly. Knob still scrubs selection, PLAY still launches the lit row.
   return (
     <button
       type="button"
@@ -243,8 +224,7 @@ function GameRow({
   )
 }
 
-// The minigame row: deliberately smaller than GameRow so the just-for-fun lane reads as secondary.
-// Compact icon, single line, no big slot number. Knob-selectable or tappable, same as GameRow.
+// Deliberately smaller than GameRow so the just-for-fun lane reads as secondary: compact icon, no slot number. Knob-selectable or tappable, same as GameRow.
 function MiniRow({
   game,
   selected,
@@ -280,8 +260,7 @@ function Rule() {
   return <div className="h-px w-full bg-line-strong" />
 }
 
-// The live-presence pip: a breathing green square while the stream is connected, a dim static one
-// when it isn't. Square to match the instrument-panel pixels (no rounded dot, no blur).
+// The live-presence pip: breathing green square when connected, dim static otherwise. Square to match the instrument-panel pixels, no rounded dot or blur.
 function LiveDot({ on, reduced }: { on: boolean; reduced: boolean }) {
   return (
     <span className="relative inline-flex h-2 w-2 shrink-0">

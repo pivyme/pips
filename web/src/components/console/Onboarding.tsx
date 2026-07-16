@@ -1,7 +1,5 @@
-// First-run onboarding, played out on the same persistent console: type a handle on the device
-// screen, pick a skin, then a short welcome moment. The username + welcome screens render INSIDE the
-// device (docs/SCREEN.md instrument language); the skin picker reuses the menu Customize studio so it
-// looks identical, the device floating pulled-back over the workbench photo, free to spin.
+// First-run onboarding on the persistent console: type a handle, pick a skin, then a welcome moment.
+// Username + welcome render inside the device (docs/SCREEN.md); the skin picker reuses the menu Customize studio.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'motion/react'
 import ConsoleCanvas from './ConsoleCanvas'
@@ -18,9 +16,8 @@ import { cnm } from '@/utils/style'
 
 const HANDLE_RE = /^[a-zA-Z0-9_]{3,20}$/
 
-// Step 1, on the device screen. A raw flat input in the instrument language (no rounded App-Surface
-// field), auto-focused on web, tap-anywhere-to-focus so mobile reliably raises the keyboard. The
-// physical PLAY button or Enter commits. (Changing the handle later lives on the menu drawer, not here.)
+// Step 1: a raw flat input in the instrument language (no rounded App-Surface field); tap anywhere to
+// focus so mobile reliably raises the keyboard. PLAY or Enter commits; the handle can be changed later from the menu drawer.
 export function UsernameScreen({ onDone }: { onDone: (name: string) => void }) {
   const { signOut } = useAuth()
   const [name, setName] = useState('')
@@ -58,8 +55,8 @@ export function UsernameScreen({ onDone }: { onDone: (name: string) => void }) {
     }
   }, [name, onDone])
 
-  // The PLAY button commits (so does Enter). The left action button is the way out of onboarding, back
-  // to the door, since the menu doesn't exist yet at this phase. Handlers stay fresh via the controls ref.
+  // PLAY commits (so does Enter); the left action button exits onboarding back to the door since the
+  // menu doesn't exist yet at this phase. Handlers stay fresh via the controls ref.
   useConsoleControls({
     main: { label: saving ? 'SAVING' : 'CONTINUE', color: 'amber', loading: saving, onPress: () => void submit() },
     action1: {
@@ -120,11 +117,8 @@ export function UsernameScreen({ onDone }: { onDone: (name: string) => void }) {
   )
 }
 
-// Step 2: the skin picker, played in the same black-and-white workshop as the menu's Customize studio
-// so the two surfaces match exactly. Its own `customize` canvas floats the device pulled-back over the
-// workbench photo and repaints live as you scroll the rail; the persistent shell waits behind (screen
-// off, hidden under the backdrop) and takes over for the welcome zoom once Continue is tapped. The
-// selection is owned by the shell so the chosen skin survives into welcome + app.
+// Step 2: the skin picker, played in the same workshop as the menu's Customize studio so the two
+// surfaces match. The shell (hidden behind) owns the selection and takes over the zoom once Continue is tapped.
 export function ThemePicker({
   selectedId,
   onSelect,
@@ -134,14 +128,13 @@ export function ThemePicker({
   selectedId: string
   onSelect: (id: string) => void
   onDone: () => void
-  // false while it pre-warms behind the username step (the WebGL device builds + holds at the app pose,
-  // kept invisible); true once the skin step is live, which snaps the device in exactly over the live
-  // shell, releases its zoom-out, and fades the workshop + chrome in. Pre-warming kills the build lag.
+  // False while it pre-warms behind the username step (WebGL builds + holds at the app pose, invisible);
+  // true once live, snapping the device over the live shell and fading the workshop in. Kills the build lag.
   active: boolean
 }) {
   const reduced = useReducedMotion()
-  // Continue plays the menu studio's exact Done snap: the device spins + zooms back to the app pose and
-  // holds black, then hands off (onOutroComplete -> onDone advances to the welcome beat). Chrome bows out.
+  // Continue plays the studio's Done snap (spin + zoom to app pose, hold black), then hands off via
+  // onOutroComplete -> onDone to advance to the welcome beat; chrome bows out.
   const [exiting, setExiting] = useState(false)
   const theme = THEME_BY_ID[selectedId] ?? THEMES[0]
 
@@ -157,16 +150,14 @@ export function ThemePicker({
       style={{ pointerEvents: active ? undefined : 'none' }}
       aria-hidden={!active}
     >
-      {/* Workshop fades in as the device zooms out. Clear during the pre-warm so the live device behind
-          shows through, so the handheld reads as one object pulling back into the bench, not a crossfade. */}
+      {/* Workshop fades in as the device zooms out; clear during pre-warm so it reads as one object
+          pulling back into the bench, not a crossfade. */}
       <div className="absolute inset-0 transition-opacity duration-[600ms] ease-out" style={{ opacity: active ? 1 : 0 }}>
         <WorkshopBackdrop />
       </div>
 
-      {/* The floating device, repainting live from the chosen skin. Built during the pre-warm (active
-          false renders it once, held at the app pose via introFromApp) and kept invisible, then snapped
-          in the instant the skin step goes live so it sits exactly on the live device behind and zooms
-          out from there. Transparent canvas → the workshop shows around it. */}
+      {/* The floating device, repainting live from the chosen skin. Built invisible during pre-warm
+          (introFromApp holds the app pose), then snapped in live and zoomed out; transparent canvas shows the workshop around it. */}
       <div className="absolute inset-0" style={{ opacity: active ? 1 : 0 }}>
         <ConsoleCanvas customize introFromApp active={active} theme={theme} outro={exiting} onOutroComplete={onDone} />
       </div>
@@ -216,9 +207,8 @@ export function ThemePicker({
   )
 }
 
-// Step 3, on the device screen: the welcome moment. The skin step's Done snap already settled the device
-// at the app pose with a black screen; this just reveals on the screen once the black hold passes
-// (`revealed`), so the content pops + the jingle land cleanly. Any physical button continues.
+// Step 3: the welcome moment. The skin step's Done snap already settled the device at the app pose with
+// a black screen; this reveals once the hold passes (`revealed`) so content + jingle land cleanly.
 export function WelcomeScreen({
   name,
   revealed,
@@ -235,8 +225,8 @@ export function WelcomeScreen({
     haptic('success')
   }, [revealed])
 
-  // Any of the physical buttons continues, but only once the splash is up, so a stray press during the
-  // black hold can't skip it. The big button glows to pull the eye; the screen copy says press anything.
+  // Any physical button continues, but only once the splash is up so a stray press during the black
+  // hold can't skip it. The big button glows to pull the eye.
   const go = useCallback(() => {
     if (!revealed) return
     haptic('rigid')

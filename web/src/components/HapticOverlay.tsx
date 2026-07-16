@@ -1,18 +1,5 @@
-// A real, invisible native switch laid directly over a tap target. iOS Safari fires its native
-// Taptic tick only for a genuine physical tap landing on a switch-type checkbox, never for a
-// script-triggered .click() (Apple closed that loophole in 26.5). So this element has to BE the
-// literal thing the finger touches: never display:none (needs to stay in the render tree), never
-// controlled (let the browser freely flip its own checked state so the native toggle, and the
-// haptic tied to it, completes undisturbed).
-//
-// Usage: wrap the visible button in a `relative` container, add `pointer-events-none` to it (it
-// keeps its own onClick for keyboard Enter/Space), and drop this as a sibling:
-//   <div className="relative">
-//     <button className="pointer-events-none" onClick={onTap}>Label</button>
-//     <HapticOverlay className="absolute inset-0" preset="selection" onTap={onTap} />
-//   </div>
-// Pointer/touch always hits this overlay (topmost), keyboard always hits the real button
-// (tabIndex={-1} here), so there's no double-fire.
+// A real, invisible native switch over the tap target: iOS Safari's Taptic tick only fires for a genuine
+// physical tap on a switch checkbox, never a script .click() (closed in 26.5), so it must stay in the render tree, uncontrolled. Wrap the button `relative pointer-events-none` and drop this as an absolute sibling; touch hits this (topmost), keyboard hits the real button (tabIndex={-1}).
 import { cnm } from '@/utils/style'
 import { haptic } from '@/lib/haptics'
 import type { HapticPreset } from '@/lib/haptics'
@@ -21,9 +8,8 @@ export function HapticOverlay({
   preset = 'selection',
   onTap,
   disabled,
-  // Set when onTap already calls haptic() itself (e.g. a shared close/submit handler), so this
-  // overlay only forwards the tap and doesn't double up the Android vibrate call. The real iOS
-  // tick still fires either way, it's an inherent side effect of the physical tap on the switch.
+  // Set when onTap already calls haptic() itself (e.g. a shared close/submit handler), so this overlay
+  // only forwards the tap and doesn't double the Android vibrate call. The real iOS tick still fires either way, an inherent side effect of the physical tap.
   silent,
   className,
   style,

@@ -1,6 +1,5 @@
-// Achievement evaluation. evaluateMetrics is pure over (stats, plays) so it unit-tests in
-// isolation; evaluateAndUnlock runs it against the DB after each settle and persists any
-// newly crossed thresholds. The unique (userId, slug) constraint makes unlocks idempotent.
+// Achievement evaluation. evaluateMetrics is pure over (stats, plays) so it unit-tests in isolation;
+// evaluateAndUnlock runs it against the DB and persists newly crossed thresholds, idempotent via the unique (userId, slug) constraint.
 
 import { prismaQuery } from '../lib/prisma.ts';
 import { fromDusdcRaw } from '../lib/sui/math.ts';

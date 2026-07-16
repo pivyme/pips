@@ -1,10 +1,5 @@
-// Standalone localnet debug wallet. NOT part of the product path: no auth, no backend, no
-// Predict wrapper. It talks straight to a configurable Sui node over gRPC (grpc-web, matches the
-// rest of the app) so you can inspect balances and move funds on a custom / localnet chain that
-// no real wallet supports.
-//
-// Browser only. The key lives in localStorage in the clear, so this is for throwaway dev keys
-// against a local chain, never a mainnet key. Powers /tools/wallet.
+// Standalone localnet debug wallet, not part of the product path (no auth/backend/Predict wrapper); talks straight
+// to a configurable Sui node over grpc-web. Key lives in localStorage in the clear, throwaway dev keys only, never mainnet. Powers /tools/wallet.
 
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography'
 import { SuiGrpcClient } from '@mysten/sui/grpc'
@@ -23,8 +18,7 @@ const FAUCET_KEY = 'pips_devwallet_faucet'
 
 const ls = (): Storage | null => (typeof window === 'undefined' ? null : window.localStorage)
 
-// The RPC the app is built against. Editable in the UI so you can point at any custom node
-// (tunnelled localhost, a fixed-cert domain, etc.) without rebuilding.
+// The RPC the app is built against, editable in the UI so you can point at any custom node without rebuilding.
 export const defaultRpcUrl = (): string => env.VITE_SUI_FULLNODE_URL || 'http://127.0.0.1:9000'
 
 export function loadRpcUrl(): string {
@@ -34,8 +28,7 @@ export function saveRpcUrl(url: string): void {
   ls()?.setItem(RPC_KEY, url.trim())
 }
 
-// Localnet faucet (sui start --with-faucet) is :9123 alongside the :9000 RPC. Editable since a
-// remote node may expose it elsewhere or not at all.
+// Localnet faucet (sui start --with-faucet) is :9123 alongside the :9000 RPC; editable since a remote node may expose it elsewhere or not at all.
 export function defaultFaucetUrl(): string {
   const rpc = loadRpcUrl()
   try {
@@ -54,8 +47,7 @@ export function saveFaucetUrl(url: string): void {
   ls()?.setItem(FAUCET_KEY, url.trim())
 }
 
-// baseUrl is required (the `new SuiGrpcClient({ network })` shorthand throws `base.endsWith`);
-// pass the editable node url straight through.
+// baseUrl is required, the `new SuiGrpcClient({ network })` shorthand throws `base.endsWith`; pass the editable node url straight through.
 export function makeClient(url: string): SuiGrpcClient {
   return new SuiGrpcClient({ network: env.VITE_SUI_NETWORK, baseUrl: url })
 }
@@ -114,8 +106,7 @@ async function coinMeta(client: SuiGrpcClient, coinType: string): Promise<{ symb
 }
 
 export async function fetchBalances(client: SuiGrpcClient, address: string): Promise<CoinRow[]> {
-  // listBalances is paginated; walk every page so a wallet holding many coin types shows all of
-  // them (the old getAllBalances returned the full set in one call).
+  // listBalances is paginated; walk every page so a wallet holding many coin types shows all of them (getAllBalances used to return everything in one call).
   const balances: Array<{ coinType: string; balance: string }> = []
   let cursor: string | null = null
   do {

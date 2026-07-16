@@ -2,15 +2,8 @@ import type { CSSProperties, ReactNode } from 'react'
 import { cnm } from '@/utils/style'
 import { NETWORK } from '@/lib/sui/config'
 
-// Teenage-engineering style game-screen instruments, but trading-native. Crisp vivid vector
-// lines on true black, the "electric" layer that renders inside the console screen
-// (docs/DESIGN.md). Every piece speaks trading: price, leverage, bet, payout, liquidation,
-// long/short, expiry, P&L. Each is a pure SVG component: `hue` picks the accent, `frozen`
-// drops motion for reduced-motion. Motion lives in styles.css as cheap viz-* transforms.
-//
-// Color note: var(--color-*) only resolves in CSS context, never in an SVG presentation
-// attribute. Dynamic hues go through inline `style`; fixed tokens use stroke-*/fill-*
-// Tailwind utilities (also CSS). No raw stroke="var(...)" attributes.
+// TE-style trading instruments (docs/DESIGN.md), pure SVG: `hue` sets the accent, `frozen` drops the viz-* motion in styles.css.
+// var(--color-*) never resolves as an SVG presentation attribute, so dynamic hues go through inline `style`, fixed tokens use stroke-*/fill-* Tailwind.
 
 export type Hue =
   | 'up'

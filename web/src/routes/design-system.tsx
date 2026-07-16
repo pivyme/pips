@@ -1041,9 +1041,8 @@ function MiniChart({
 }
 
 // ── Teenage-engineering game-screen lab ────────────────────────────────────
-// A filterable bench of the vivid-line instruments. Each tile is a real screen
-// (true black, faint vignette, registration ticks) so a piece reads as it will
-// inside the console. Pick what fits a game, the rest is reference.
+// A filterable bench of the vivid-line instruments, each tile a real screen (true black, vignette,
+// registration ticks) so it reads as it will inside the console. Pick what fits a game, rest is reference.
 
 type LabCat = 'chart' | 'gauge' | 'timer' | 'input' | 'status' | 'schematic' | 'hero'
 

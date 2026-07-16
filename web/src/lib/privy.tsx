@@ -1,9 +1,5 @@
-// Privy auth for privy mode: Google/email login only. The embedded Sui wallet is provisioned and
-// owned server-side (the app authorization key), so the client never creates a wallet or grants a
-// session signer. It signs in, hands the Privy access token to /auth/privy/verify, and the backend
-// provisions the wallet, signs plays via rawSign, and returns our JWT. Privy's hooks must live inside
-// PrivyProvider, so this file owns the provider and a headless bridge that feeds the result into the
-// auth context (lib/auth.tsx) through AuthControlContext. dev + demo modes never mount any of this.
+// Privy auth for privy mode: Google/email login, embedded Sui wallet provisioned + owned server-side (client never creates a wallet or grants a session signer).
+// Privy's hooks must live inside PrivyProvider, so this file owns the provider and a headless bridge feeding the auth context (lib/auth.tsx) via AuthControlContext.
 
 import { useCallback, useEffect, useRef } from 'react'
 import { PrivyProvider, useLogin, usePrivy } from '@privy-io/react-auth'
@@ -23,11 +19,8 @@ function PrivyBridge() {
   const inFlight = useRef(false)
   const authedFor = useRef<string | null>(null)
 
-  // The door's CTA awaits signIn(), but Privy's login() returns void and never settles on its own, so
-  // a dismissed modal would leave the door spinning "Starting..." forever. We bridge that: signIn()
-  // returns a promise we settle from Privy's login events. Backing out fires onError('exited_auth_flow'),
-  // which rejects as a cancel (the door drops the spinner, no error toast); other errors reject as real
-  // failures; onComplete resolves it (the verify effect below then mints our session).
+// The door's CTA awaits signIn(), but Privy's login() returns void and never settles on its own (a dismissed modal would spin "Starting..." forever).
+  // We settle our own promise from Privy's login events: exited_auth_flow rejects as a cancel, other errors reject for real, onComplete resolves it.
   const pendingLogin = useRef<{ resolve: () => void; reject: (e: Error) => void } | null>(null)
   const settleLogin = useCallback((err?: Error) => {
     const p = pendingLogin.current
@@ -66,14 +59,12 @@ function PrivyBridge() {
     if (!authenticated) {
       authedFor.current = null
       inFlight.current = false
-      // Privy is unauthenticated, but the app may still be signed in by another path (a wallet-connect
-      // session, or a restored token mid-validation). Only fall back to the door when there is no app
-      // session at all, otherwise this would clobber the wallet login and bounce it back to landing.
+      // The app may still be signed in by another path (wallet-connect, a restored token); only fall
+      // back to the door with no app session at all, else this clobbers a live login back to landing.
       if (!loadToken()) control.setStatus('anon')
       return
     }
-    // Resolve our app session once per Privy session. authedFor pins it to the Privy user so we never
-    // loop, but a fresh login (or account switch) re-runs it, and a failed attempt can retry.
+    // Resolve our app session once per Privy session: authedFor pins it to the Privy user so we never loop, but a fresh login/switch re-runs it.
     if (inFlight.current || authedFor.current === (user?.id ?? '')) return
     inFlight.current = true
 
@@ -97,8 +88,8 @@ function PrivyBridge() {
         const token = await getAccessToken()
         if (!token) throw new Error('Privy access token unavailable')
 
-        // The backend provisions + owns the embedded Sui wallet keyed to this Privy user, so the
-        // client sends only the access token (+ email for display). No client wallet, no session signer.
+        // Backend provisions + owns the embedded Sui wallet keyed to this Privy user; client sends only
+        // the access token (+ email for display), no client wallet, no session signer.
         const { token: appToken, user: u } = await api.authPrivyVerify({
           token,
           email: user?.email?.address,

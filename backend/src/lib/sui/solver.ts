@@ -1,28 +1,11 @@
-// The honest tier -> strike bridge (LUCKY.md §5). The slot deals a nominal multiplier tier;
-// this finds the real grid strike whose live Predict multiple is closest to that tier and
-// sizes the quantity so the mint cost lands at the bet. The multiple is read straight from
-// the chain preview (1 / ask), so the number the UI shows is always one we can actually mint.
-//
-// Latency: over the remote node a devInspect is ~1-2s regardless of how many probes it bundles,
-// and a single batch stays flat to ~160 probes (the cost is the round trip, not the per-strike
-// compute). So we price the WHOLE grid densely in ONE devInspect (no separate coarse+refine
-// passes), then size in ONE more. That is a 2-round-trip solve. The dense scan curve is also
-// returned so the caller can cache it per (oracle, side): a warm curve drops the solve to a single
-// sizing round trip, which is what keeps a play snappy under concurrent load.
-//
-// solveStrike is pure: it takes a batch-preview function, never a chain handle, so it unit-tests
-// in isolation. The caller (games.ts) supplies a closure bound to the live oracle + side and a
-// grid from that oracle, then mints with the strike + quantity this returns.
+// The honest tier -> strike bridge (LUCKY.md §5): finds the real grid strike whose live Predict multiple is closest to the dealt tier, read straight from the chain preview (1/ask) so the UI number is always mintable.
+// A devInspect is ~1-2s flat to ~160 probes, so the whole grid prices in ONE devInspect (cacheable per oracle+side), then sizes in ONE more. Pure and chain-handle-free, so it unit-tests in isolation via games.ts's closure.
 
 import { DUSDC_DECIMALS, multiplier as multiplierOf } from './math.ts';
 import type { TradeAmounts } from './predict.ts';
 
-// The nominal multiplier tiers the reel can deal (LUCKY.md §4). Capped at 10x so the top tier stays
-// reachable on the live grid and pays a sane amount. The solver snaps a solved multiple back to the
-// nearest nominal for logging + the achieved-tier report; the live UI shows that clean nominal tier
-// (the cents of solver drift read as noise). Starts at 2x: the strike is always OTM (in the bet
-// direction) and at least `minOffset1e9` clear of entry, so the floor tier is a small but real
-// directional move (~2.0-2.2x), never an at-the-money strike sitting on the entry line.
+// The nominal multiplier tiers the reel can deal (LUCKY.md §4). Capped at 10x so the top tier stays reachable on the live grid; the solver snaps a solved multiple back to the nearest nominal for logging/UI (solver drift reads as noise).
+// Starts at 2x: the strike is always OTM and at least `minOffset1e9` clear of entry, so even the floor tier is a real directional move, never an ATM strike sitting on the entry line.
 export const LUCKY_TIERS = [2, 3, 5, 10] as const;
 
 const nearestTier = (m: number): number =>
@@ -35,9 +18,8 @@ export type Grid = { tick: bigint; min: bigint; max: bigint };
 export type Probe = { strike1e9: bigint; quantity: bigint };
 export type BatchPreviewFn = (probes: Probe[]) => Promise<Array<TradeAmounts | null>>;
 
-// The per-unit price curve for one (oracle, side): the cost to mint `probe` contracts at each
-// sampled grid strike (null = unmintable). Cacheable, since it only drifts as spot moves; the
-// caller keys it by (oracleId, side) under a short TTL so back-to-back plays skip the scan.
+// The per-unit price curve for one (oracle, side): cost to mint `probe` contracts at each sampled grid strike (null = unmintable).
+// Cacheable since it only drifts as spot moves; the caller keys it by (oracleId, side) under a short TTL so back-to-back plays skip the scan.
 export type ScanCurve = { probe: bigint; strikes: bigint[]; cost: Array<bigint | null> };
 
 export type StrikeSolution = {
@@ -71,9 +53,8 @@ function spread(n: number, lo: number, hi: number): number[] {
   return out;
 }
 
-// Candidate strikes one tick inside each grid edge, indexed so the per-unit multiple is monotonic
-// INCREASING in the index for either side (up: ascending strike, more OTM = bigger multiple; down:
-// descending strike). Monotonicity is what lets the dense scan bracket the tier cleanly.
+// Candidate strikes one tick inside each grid edge, indexed so the per-unit multiple is monotonic INCREASING in the index for either side (up: ascending strike; down: descending).
+// Monotonicity is what lets the dense scan bracket the tier cleanly.
 const strikeIndexer = (grid: Grid, side: 'up' | 'down') => {
   const count = Number((grid.max - grid.min) / grid.tick) - 1;
   if (count <= 0) throw new Error('solveStrike: grid too small');
@@ -83,30 +64,19 @@ const strikeIndexer = (grid: Grid, side: 'up' | 'down') => {
   return { lastIdx, strikeAt };
 };
 
-// Where the dense scan starts, as a fraction of the half-grid each side of ATM. The on-chain strike
-// grid is far wider than the band that actually prices: a 30s round only quotes within a few percent
-// of spot, while the grid spans ~±20%. The deep-ITM/-OTM extremes saturate the fair price to exactly
-// $1/$0, which aborts the per-strike quote (quote_spread_from_fair_price), and a devInspect aborts
-// the WHOLE batch, so a single saturating strike kills the scan. 12% covers every tier (the 25x edge
-// sits well inside) while usually clearing the saturation in one pass.
+// Where the dense scan starts, as a fraction of the half-grid each side of ATM. The grid is far wider than the quotable band (deep-ITM/-OTM strikes saturate fair price to $1/$0, aborting quote_spread_from_fair_price, and a devInspect aborts the WHOLE batch on one bad strike).
+// 12% covers every tier (the 25x edge sits well inside) while usually clearing saturation in one pass.
 const SCAN_HALF_FRAC = 0.12;
 const SCAN_SHRINK = 0.6; // on a saturation abort, pull the window this much toward ATM and retry
 
-// The grid index whose strike is nearest the live spot (ATM), per side. Centering the scan here, not
-// at the grid midpoint, is what makes it robust: the grid is built centered on spot at CREATION, but
-// spot drifts, so a midpoint-centered window can land entirely in the saturated (unquotable) deep
-// region and never recover. At ATM the fair price is ~0.5, always quotable.
+// The grid index nearest live spot (ATM), per side. Centering here (not the grid midpoint) is what makes it robust: the grid is centered on spot at CREATION but spot drifts, so a midpoint window can land entirely in the saturated deep region and never recover.
+// At ATM the fair price is ~0.5, always quotable.
 const atmIndex = (grid: Grid, side: 'up' | 'down', lastIdx: number, atm1e9: bigint): number => {
   const raw = side === 'up' ? (atm1e9 - grid.min) / grid.tick - 1n : (grid.max - atm1e9) / grid.tick - 1n;
   return Math.max(0, Math.min(lastIdx, Number(raw)));
 };
 
-// Price the grid densely in ONE devInspect. The result is cacheable per (oracle, side).
-//
-// Tries the WHOLE grid first: when every sampled strike quotes (a sanely sized grid, and every unit
-// test), that is one round trip and the original behavior. If a strike saturates and aborts the batch
-// (a grid far wider than the live quotable band, the production case), fall back to an ATM-centered
-// window that shrinks toward spot until it prices, keeping the unmintable extremes out of the curve.
+// Price the grid densely in ONE devInspect, cacheable per (oracle, side). Tries the whole grid first (one round trip when every strike quotes, e.g. unit tests); if a strike saturates and aborts the batch (grid wider than the live quotable band, the production case), falls back to an ATM-centered window that shrinks toward spot until it prices.
 // atm1e9 is the live oracle spot; without it the window falls back to the grid midpoint.
 export async function scanGrid(grid: Grid, side: 'up' | 'down', preview: BatchPreviewFn, probeArg?: bigint, atm1e9?: bigint): Promise<ScanCurve> {
   const probe = probeArg ?? DUSDC_DECIMALS;
@@ -118,10 +88,8 @@ export async function scanGrid(grid: Grid, side: 'up' | 'down', preview: BatchPr
     return { probe, strikes, cost: amts.map((a) => (a && a.cost > 0n ? a.cost : null)) };
   };
 
-  // With a live spot (the production path always supplies one) the grid is known to be far wider than
-  // the quotable band, so its extremes always saturate: go straight to the ATM window and skip the
-  // doomed full scan. Without a spot (a caller that hasn't measured one, and every unit test) scan the
-  // whole grid first and fall back to the window only if a strike actually saturates.
+  // With a live spot (the production path always supplies one), the grid is known wider than the quotable band, so extremes always saturate: skip straight to the ATM window.
+  // Without a spot (unit tests / an unmeasured caller), scan the whole grid first and fall back to the window only if a strike actually saturates.
   const hasSpot = atm1e9 != null && atm1e9 > 0n;
   let lastErr: unknown;
   if (!hasSpot) {
@@ -165,19 +133,12 @@ export async function solveStrike(args: {
   const curve = args.curve ?? (await scanGrid(grid, side, preview, probe, args.atm1e9));
   const multAt = (c: bigint | null): number => (c && c > 0n ? multiplierOf(c, probe) : Infinity);
 
-  // ---- Strike select (pure): the sampled strike whose multiple is closest to the tier among the
-  // mintable ones. The multiple is monotonic in the index, so when the tier sits past the ask
-  // bounds this naturally lands on the mintable ceiling, which is where a too-high tier clamps.
-  //
-  // Direction honesty: only consider strikes on the OTM side of spot (at or beyond it) so an UP
-  // play's target sits at/above entry and a DOWN play's at/below. That is what makes "DOWN means
-  // the price must fall" always true; the lowest reachable multiple is then ~2x (ATM), which is
-  // why the tier ladder starts at 2x. Skipped when no spot is supplied (the pure unit tests). ----
+  // Strike select (pure): the sampled strike whose multiple is closest to the tier among mintable ones, monotonic in the index so an over-tier clamps to the mintable ceiling.
+  // Direction honesty: only OTM-side strikes count (UP >= entry, DOWN <= entry), so the ladder's floor is ~2x (ATM); skipped when no spot is supplied (pure unit tests).
   const atm = args.atm1e9;
   const minOff = args.minOffset1e9 ?? 0n;
-  // Directional gate: a strike must sit on the bet's OTM side of spot AND at least `off` clear of it,
-  // so an UP target is a real move above entry and a DOWN target a real move below. off=0 is the bare
-  // OTM filter (and the pure unit tests). Skipped entirely when no spot is supplied.
+  // Directional gate: a strike must sit on the bet's OTM side of spot AND at least `off` clear of it, so UP targets are a real move above entry and DOWN a real move below.
+  // off=0 is the bare OTM filter (unit tests); skipped entirely when no spot is supplied.
   const isDirectional = (strike: bigint, off: bigint): boolean =>
     atm == null ? true : side === 'up' ? strike >= atm + off : strike <= atm - off;
   const selectBest = (off: bigint, directional: boolean): number => {
@@ -195,8 +156,7 @@ export async function solveStrike(args: {
     }
     return b;
   };
-  // Prefer a strike a real move OTM (min offset), then relax to the bare OTM side, then to any
-  // mintable strike, so a thin scan window or a coarse grid never makes a play unmintable.
+  // Prefer a strike a real move OTM (min offset), then relax to bare OTM, then to any mintable strike, so a thin scan window or coarse grid never makes a play unmintable.
   let best = selectBest(minOff, true);
   if (minOff > 0n && best < 0) best = selectBest(0n, true);
   if (best < 0) best = selectBest(0n, false);
@@ -207,12 +167,8 @@ export async function solveStrike(args: {
   const bestMul = multAt(bestPerUnit);
   const clamped = Math.abs(bestMul - tierMultiplier) > tierMultiplier * CLAMP_TOLERANCE;
 
-  // ---- Round 2 (analytic): size from the chosen strike's per-unit cost, no sizing devInspect. Cost
-  // is near-linear in quantity for small size, so q = bet/perUnit lands the entry at the bet, and
-  // entryCost/multiple come straight off the (fresh or <=3s cached) curve. The real mint prices
-  // post-trade (a touch higher); the manager is funded above the bet (FUND_BUFFER_PCT) to absorb it,
-  // and a rare overshoot aborts the mint and the caller re-resolves. This deletes a ~1.2s node round
-  // trip; the reported multiple omits the position's own slippage (<0.1% at small stakes). ----
+  // ---- Round 2 (analytic): size from the chosen strike's per-unit cost, no sizing devInspect. Cost is near-linear in quantity, so q = bet/perUnit lands the entry at the bet; entryCost/multiple come straight off the cached curve.
+  // The real mint prices post-trade a touch higher; the manager is funded above the bet (FUND_BUFFER_PCT) to absorb it, and a rare overshoot aborts the mint for the caller to re-resolve. Deletes a ~1.2s round trip; reported multiple omits <0.1% slippage. ----
   if (args.analyticSize) {
     const targetA = betRaw; // deploy the full stake; the manager's funding buffer absorbs post-trade drift
     let q = (probe * targetA) / bestPerUnit;
@@ -222,12 +178,8 @@ export async function solveStrike(args: {
     return { strike1e9: strike, quantity: q, entryCost, multiplier: mult, requestedTier: tierMultiplier, achievedTier: nearestTier(mult), clamped, curve };
   }
 
-  // ---- Round 2: size the quantity. Cost is near-linear in quantity, so estimate from the chosen
-  // strike's per-unit cost, then batch a spread of candidates around it and take the largest whose
-  // real cost stays under the cap. The cap sits a hair below the bet because the preview prices
-  // pre-trade: the real mint, sized against the post-trade vault, costs a touch more, and the
-  // manager is funded above the bet to absorb exactly that. The per-unit estimate may come from a
-  // cached (slightly older) curve, but the sizing preview re-prices fresh, so entryCost is current. ----
+  // ---- Round 2: size the quantity. Cost is near-linear, so estimate from the chosen strike's per-unit cost, batch a spread of candidates around it, and take the largest whose real cost stays under the cap.
+  // Cap sits a hair below the bet since preview prices pre-trade (the real mint costs a touch more; the manager is funded above the bet to absorb it); the per-unit estimate may be a cached curve, but the sizing preview re-prices fresh. ----
   const cap = (betRaw * 1n); // selected pre-trade cost ceiling (99.5%)
   const target = (betRaw * 1n); // aim just under so the largest candidate lands near the bet
   const q0 = (probe * target) / bestPerUnit;
@@ -249,8 +201,7 @@ export async function solveStrike(args: {
     }
   }
 
-  // Fallback: every candidate overshot the cap (steep slippage / a stale-curve estimate). Scale
-  // down from the smallest priced candidate in one more probe.
+  // Fallback: every candidate overshot the cap (steep slippage / stale curve). Scale down from the smallest priced candidate in one more probe.
   if (chosenQ === 0n) {
     const smallest = sizeAmts.find((a) => a && a.cost > 0n) ?? null;
     if (!smallest) throw new Error('solveStrike: could not price the chosen strike');

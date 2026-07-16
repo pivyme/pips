@@ -26,6 +26,7 @@ export const menuRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
         winRate: s.gamesPlayed > 0 ? s.wins / s.gamesPlayed : 0,
         currentStreak: s.currentStreak,
         maxStreak: s.maxStreak,
+        bestMultiplier: s.bestMultiplier,
         totalVolume: money(s.totalVolume),
         netPnl: money(s.netPnl),
         firstPlayAt: s.firstPlayAt?.toISOString(),

@@ -53,10 +53,8 @@ export function usePlayResolutionWatch({
   onSnapshot: (snapshot: LivePlaySnapshot) => void
   onTerminal: (status: PlayStatus, playId: string) => void
 }) {
-  // Callers pass inline closures that get a new identity every render (they close over local state
-  // setters). Keeping them as effect deps tore the EventSource down and reopened it on every single
-  // tick. Read the latest callback via a ref instead, so the effects only reopen on what should
-  // actually reopen them: enabled/playId flipping.
+  // Inline closures get a new identity every render; keeping them as effect deps tore down and reopened the
+  // EventSource on every tick. Read the latest callback via a ref so effects only reopen on enabled/playId flipping.
   const onSnapshotRef = useRef(onSnapshot)
   const onTerminalRef = useRef(onTerminal)
   const refreshOnOpenRef = useRef(refreshOnOpen)
@@ -64,11 +62,8 @@ export function usePlayResolutionWatch({
   onTerminalRef.current = onTerminal
   refreshOnOpenRef.current = refreshOnOpen
 
-  // When the SSE last delivered a frame. The backend SSE is now event-driven (it pushes the instant the
-  // status commits), so the watchdog below only hits the network when the stream has gone quiet past
-  // watchdogMs (a stalled proxy, a dropped socket mid-reconnect, or a cross-process settle the in-process
-  // play-bus never emitted to this box). On a healthy stream every frame pushes this forward and the
-  // watchdog never fires. Shared between the two effects.
+  // When the SSE last delivered a frame. The backend SSE is event-driven, so the watchdog below only hits the
+  // network once the stream goes quiet past watchdogMs (stalled proxy, dropped socket, or a cross-process settle the play-bus missed). Shared between the two effects.
   const lastFrameAtRef = useRef(0)
 
   useEffect(() => {
@@ -89,10 +84,8 @@ export function usePlayResolutionWatch({
     )
   }, [enabled, finalizedRef, playId, syncedOpenPlayIdRef])
 
-  // Lazy watchdog: a single safety net that reads the DB ONLY when the event-driven SSE has gone silent
-  // past watchdogMs. It reconciles once, feeds the same callbacks, then re-arms. On a healthy stream it
-  // keeps re-arming without ever hitting the network (this is the redundant-poll removal from
-  // TRADE_REALTIME.md §1e, degraded to a true fallback).
+  // Lazy watchdog: reads the DB only when the SSE has gone silent past watchdogMs, reconciles once, then re-arms.
+  // On a healthy stream it never hits the network (the redundant-poll removal from TRADE_REALTIME.md §1e, degraded to a true fallback).
   useEffect(() => {
     if (!enabled || !playId) return
     let stopped = false

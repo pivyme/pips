@@ -1,5 +1,4 @@
-// The knurled knob, treated as a vertical slider. Drag up to raise, down to
-// lower. Each step crossed ticks a haptic detent, like a weighted control.
+// The knurled knob, treated as a vertical slider: drag up to raise, down to lower, each step crossed ticks a haptic detent, like a weighted control.
 // The shell owns it; the active screen supplies range/value via the knob binding.
 import { useRef } from 'react'
 import { cnm } from '@/utils/style'

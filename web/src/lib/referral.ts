@@ -1,7 +1,5 @@
-// Referral link capture + build. One seam: stash/read/clear the pending token in localStorage
-// (private-mode safe, matches lib/auth.tsx's token storage pattern), plus compose the shareable
-// URL client-side. The capture routes stash `@handle` (username format) or a bare code (anon
-// format); resolveReferrer on the backend tells the two apart by the leading `@`.
+// Referral link capture + build. Stash/read/clear the pending token in localStorage (private-mode safe)
+// and compose the shareable URL client-side. Capture stashes `@handle` or a bare code; resolveReferrer on the backend tells them apart by the leading `@`.
 import { env } from '@/env'
 
 const REF_KEY = 'pips_ref'

@@ -1,7 +1,5 @@
-// Pure tests for the display pin math. The display bus is cosmetic (L-015): nothing here touches a
-// truthful number, so these verify only that the chart line eases and degrades the way it should,
-// with no socket, no chain, no timers. The two functions under test are the whole non-trivial core:
-// the slew-limited EMA offset step and the fallback-ladder re-entry hysteresis.
+// Pure tests for the display pin math (cosmetic per L-015, no truthful number touched here): verifies
+// the chart line eases/degrades correctly with no socket, chain, or timers. Covers the slew-limited EMA step and the re-entry hysteresis, the whole non-trivial core.
 
 import { describe, expect, it } from 'bun:test';
 

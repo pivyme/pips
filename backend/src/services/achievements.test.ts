@@ -1,6 +1,5 @@
-// Achievement metric tests. evaluateMetrics is pure over (stats, plays), so the whole
-// catalog's conditions verify here without a DB. Factories build full Play/UserStats rows
-// with sensible defaults; each test overrides only what it asserts on.
+// Achievement metric tests. evaluateMetrics is pure over (stats, plays), so the whole catalog's
+// conditions verify here without a DB; factories build full Play/UserStats rows with sensible defaults, each test overrides only what it asserts on.
 
 import { describe, expect, it } from 'bun:test';
 

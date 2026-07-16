@@ -1,6 +1,5 @@
-// Leaderboards: global Gainers/REKT, per-game winners (Lucky/Range), and minigame high scores
-// (Line Rider / Flappy Piper). All read-mostly and authed (so each board can flag the caller's own
-// row). Every row carries username + displayName only, never an address. See services/leaderboard.ts.
+// Leaderboards: global Gainers/REKT, per-game winners, and minigame high scores. Authed so each board
+// can flag the caller's own row; every row carries username + displayName only, never an address.
 
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 

@@ -1,23 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
-import { api, type MarketDTO } from '@/lib/api'
+import { api, streamMarkets, type MarketDTO, type MarketsTick } from '@/lib/api'
 
-// Shared market feed for the games (lucky, range, moonshot). The chain's oracle ladder rolls every few seconds
-// and the operator can briefly fall behind, so `live` flickers off for a moment now and then. Three
-// things keep that from flashing the scary "Market catching up" screen at the player:
-//
-//  1. Poll fast, and faster while nothing is live, so the UI recovers within a poll of the chain coming
-//     back instead of sitting stale for the old 10s interval.
-//  2. Grace the blackout: only surface "no market" after the chain has been empty for BLACKOUT_GRACE_MS.
-//     A real outage trips it; a single ladder roll never does. It clears the instant a market returns.
-//  3. Hold the last live set on screen through a brief blip so the device keeps its charts instead of
-//     blanking, then handing over to the message only if the outage is real.
-//
-// `liveAssets` stays instantaneous (it gates whether a play can actually mint), only the message is graced.
+// Shared market feed for the games: seeds once from api.markets(), then live-updates over /stream/markets SSE, no per-client polling.
+// Two grace mechanics stop a brief oracle-ladder blip from flashing "Market catching up": blackout only surfaces after BLACKOUT_GRACE_MS, and the last live set holds through the blip.
 
-const POLL_MS = 3_000
-const POLL_MS_EMPTY = 1_500
 const BLACKOUT_GRACE_MS = 6_000
 
 export type LiveMarkets = {
@@ -33,26 +21,34 @@ export type LiveMarkets = {
 }
 
 export function useLiveMarkets(): LiveMarkets {
-  const q = useQuery({
+  // Seed once for first paint (and as the reconnect/error fallback); no refetchInterval since updates arrive over the SSE below.
+  const seed = useQuery({
     queryKey: ['markets'],
     queryFn: () => api.markets(),
-    refetchInterval: (query) =>
-      query.state.data?.markets.some((m) => m.live) ? POLL_MS : POLL_MS_EMPTY,
-    placeholderData: (prev) => prev,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   })
 
-  const fresh = q.data?.markets ?? []
+  // Latest pushed frame from the SSE, overrides the seed once it lands; EventSource auto-reconnects and re-primes on every (re)connect, so a dropped socket self-heals with no polling.
+  const [pushed, setPushed] = useState<MarketsTick | null>(null)
+  useEffect(() => streamMarkets((t) => setPushed(t)), [])
+
+  const data = pushed ?? seed.data
+  const fresh = data?.markets ?? []
   const liveAssets = fresh.filter((m) => m.live).map((m) => m.asset)
 
   // Keep the last set that actually had a live market so a brief outage doesn't blank the device.
   const lastLiveRef = useRef<MarketDTO[]>([])
   if (liveAssets.length > 0) lastLiveRef.current = fresh
 
-  // Flip the blackout only after the chain stays empty past the grace window; clear it immediately on
-  // recovery. A cold outage (we never had a live market, e.g. opened mid-outage) shows at once, there is
-  // nothing to hold over. Timer-driven so the message appears/clears without waiting on a poll.
+  // Still loading until either a push or seed lands; error only if the seed failed AND no frame ever pushed.
+  const isLoading = !data
+  const isError = !data && seed.isError
+
+  // Flip the blackout only after the chain stays empty past the grace window, clear it immediately on recovery.
+  // A cold outage (never had a live market, e.g. opened mid-outage) shows at once since there's nothing to hold over. Timer-driven so it doesn't wait on a frame.
   const [blackout, setBlackout] = useState(false)
-  const empty = !q.isLoading && !q.isError && liveAssets.length === 0
+  const empty = !isLoading && !isError && liveAssets.length === 0
   useEffect(() => {
     if (!empty) {
       setBlackout(false)
@@ -79,9 +75,9 @@ export function useLiveMarkets(): LiveMarkets {
     allAssets: markets.map((m) => m.asset),
     spotByAsset,
     noLiveMarket: blackout,
-    playsPaused: q.data?.playsPaused ?? false,
-    isLoading: q.isLoading,
-    isError: q.isError,
-    refetch: () => void q.refetch(),
+    playsPaused: data?.playsPaused ?? false,
+    isLoading,
+    isError,
+    refetch: () => void seed.refetch(),
   }
 }

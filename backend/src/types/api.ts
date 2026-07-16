@@ -85,6 +85,7 @@ export interface UserStatsDTO {
   winRate: number; // 0..1
   currentStreak: number; // signed: + win streak, - loss streak
   maxStreak: number;
+  bestMultiplier: number; // biggest realized payout multiple on a win (payout/entryCost), 0 if none
   totalVolume: string; // DUSDC
   netPnl: string; // signed DUSDC
   firstPlayAt?: string;
@@ -190,22 +191,41 @@ export interface FullLeaderboardDTO {
 }
 
 // === Referrals ===
-// Track-only (no payout, see CLAUDE.md/.claude/REFERRALS.md): the link, the format, and who joined.
+// The link, the format, who joined, plus the revenue-share reward layer: 25% of referees' trading fees,
+// earnings + per-friend breakdown, a claimable balance, and a claim history (.claude/REVENUE_SHARING.md).
+// Never surface the underlying fee rate here, only the share % and dollar amounts.
 
 // One referee row on the referrer's list.
 export interface ReferralDTO {
   handle: string; // referee's username, falling back to displayName if they never onboarded
   joinedAt: string;
   plays: number;
+  earned: string; // what this referee has earned the referrer so far (DUSDC, exact 6dp string)
 }
 
-// GET/PATCH /referral -> the referrer's own link state + who they've brought in.
+// One claim on the referrer's history: amount, where it is in the payout lifecycle, and the tx once paid.
+export interface ReferralClaimDTO {
+  id: string;
+  amount: string; // DUSDC, exact 6dp string
+  status: 'pending' | 'paid' | 'failed';
+  txDigest: string | null; // the payout tx, set once paid
+  createdAt: string;
+}
+
+// GET/PATCH /referral -> the referrer's own link state, who they've brought in, and their rewards.
 export interface ReferralInfoDTO {
   code: string; // the anon-format token (/r/CODE)
   anon: boolean; // link format: false = /@username, true = /r/CODE
   username: string | null; // for building the /@username link client-side; null if not onboarded
   count: number;
   referrals: ReferralDTO[];
+  // Rewards
+  sharePct: number; // the share the referrer earns, e.g. 25
+  totalEarned: string; // lifetime earned across all referees (DUSDC)
+  totalClaimed: string; // lifetime claimed (pending + paid) (DUSDC)
+  claimable: string; // spendable now = earned - claimed (DUSDC)
+  minClaim: string; // the minimum claimable before the Claim button unlocks (DUSDC)
+  claims: ReferralClaimDTO[]; // recent claim history, newest first
 }
 
 // GET /referral/resolve?ref=<token> (public) -> what the door shows for a stashed referral token.

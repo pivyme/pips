@@ -1,10 +1,5 @@
-// Leaderboards. Three boards, all keyed to the user so every row reads off a username (or the
-// generated displayName as a fallback), never a wallet address:
-//   - global    : Top 10 Gainers / Top 10 REKT, summed from settled Play records (the source of truth).
-//   - per-game  : Top 10 winners of Lucky or Range, summed from settled Play records.
-//   - minigame  : Top 10 high scores of Line Rider / Flappy Piper, off MinigameScore.
-// Read-only and cheap (localnet scale); nothing here writes except submitMinigameScore.
-// Minigame submissions are validated server-side via openMinigameRun + checkRun (see below).
+// Three leaderboards, global PnL / per-game / minigame high scores, all keyed to username or displayName,
+// never a wallet address. Read-only except submitMinigameScore; minigame submissions are validated server-side via openMinigameRun + checkRun (below).
 
 import crypto from 'node:crypto';
 
@@ -30,16 +25,13 @@ const money = (raw: bigint): string => fromDusdcRaw(raw).toFixed(2);
 const nameFields = { id: true, username: true, displayName: true, twitterUsername: true, avatarUrl: true } as const;
 const noAvatar = { avatarUrl: null }; // fallback when a user row is missing
 
-// The verified-badge semantic: the displayed handle really is their OAuth-verified X account, not
-// just "some X is linked". Computed at query time (never denormalized), so a handle change or a
-// fresh link never drifts from the badge.
+// The verified badge means the displayed handle really is their OAuth-verified X account, not just "some
+// X is linked". Computed at query time (never denormalized), so a handle change never drifts from the badge.
 const isTwitterVerified = (u: { username: string | null; twitterUsername: string | null }): boolean =>
   Boolean(u.username && u.twitterUsername && u.username.toLowerCase() === u.twitterUsername.toLowerCase());
 
-// Global PnL board: gainers (net-positive) and rekt (net-negative, worst first), plus the caller's
-// own standing so they always see where they sit even when off the top 10. Summed straight from the
-// settled Play ledger (same source as the stats card and per-game boards), so every PnL surface
-// agrees and none drifts off a stale counter.
+// Global PnL board: gainers (net-positive) and rekt (net-negative, worst first), plus the caller's own
+// standing even off the top 10. Summed straight from the settled Play ledger, the same source as the stats card and per-game boards, so every PnL surface agrees.
 export async function globalLeaderboard(userId: string): Promise<GlobalLeaderboardDTO> {
   const grouped = await prismaQuery.play.groupBy({
     by: ['userId'],
@@ -80,9 +72,8 @@ export async function globalLeaderboard(userId: string): Promise<GlobalLeaderboa
   };
 }
 
-// Per-game leaderboard: sum settled PnL per player for one game, then split into the top gainers
-// (net-positive, most profit first) and the top REKT (net-negative, deepest in the red first).
-// Aggregated in JS off a single groupBy (localnet scale), so no aggregate-orderBy assumptions.
+// Per-game leaderboard: sums settled PnL per player for one game, split into top gainers (net-positive) and
+// top REKT (net-negative, deepest first). Aggregated in JS off a single groupBy, so no aggregate-orderBy assumptions.
 export async function gameLeaderboard(game: string, userId: string): Promise<GameLeaderboardDTO> {
   const grouped = await prismaQuery.play.groupBy({
     by: ['userId'],
@@ -149,8 +140,7 @@ export async function minigameLeaderboard(game: Minigame, userId: string): Promi
   };
 }
 
-// Record a finished run. Keeps the player's best (a lower score is a no-op), then reports the
-// refreshed top 10 and where this run lands globally, mirroring the old local SubmitResult shape.
+// Records a finished run, keeping the player's best (a lower score is a no-op), and reports the refreshed top 10 plus where this run lands globally.
 export async function submitMinigameScore(userId: string, game: Minigame, score: number): Promise<MinigameSubmitDTO> {
   const existing = await prismaQuery.minigameScore.findUnique({ where: { userId_game: { userId, game } } });
   const prevBest = existing?.score ?? 0;
@@ -169,8 +159,7 @@ export async function submitMinigameScore(userId: string, game: Minigame, score:
   return { entries, rank, best, isBest: score > prevBest && rank === 1, prevBest };
 }
 
-// Every board in one round-trip, run in parallel. Powers the menu leaderboard so switching tabs is
-// instant (no per-tab fetch). The in-game overlays still call the focused functions above.
+// Every board in one round-trip, run in parallel, so the menu leaderboard's tab switching is instant; in-game overlays still call the focused functions above.
 export async function fullLeaderboard(userId: string): Promise<FullLeaderboardDTO> {
   const [global, lucky, range, moonshot, lineRider, flappyPiper] = await Promise.all([
     globalLeaderboard(userId),
@@ -219,8 +208,7 @@ export function openMinigameRun(userId: string, game: Minigame): string {
   } as jwt.SignOptions);
 }
 
-// A rejection carries a `reason` for server-side logging only; the route returns one generic error
-// to the client so a failed submit doesn't reveal which check it tripped.
+// A rejection carries a `reason` for server-side logging only; the route returns one generic error so a failed submit doesn't reveal which check tripped.
 export type RunCheck = { ok: true } | { ok: false; reason: string };
 
 // Validate a submitted run. Returns a typed result; the route maps any failure to a single response.

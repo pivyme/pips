@@ -1,10 +1,5 @@
-// Flappy Piper engine. A one-button flappy: the PIPS face flies through the gaps between
-// candlesticks that scroll right to left. Tap to flap (a kick upward), gravity pulls it back
-// down. Clear a gap and the score ticks up; clip a candle, the ceiling or the floor and the run
-// ends after a short impact and fall animation. Pure score chase, no chain, no funds.
-//
-// Framework-free on purpose, same as the line rider: the field draws here at 60fps and only a
-// small HUD snapshot is pushed out for the DOM overlay. React owns phase + the leaderboard.
+// Flappy Piper: one-button flappy, tap to flap through gaps in scrolling candlesticks, pure score chase, no chain, no funds.
+// Framework-free like the line rider: draws at 60fps here, pushes only a HUD snapshot out to React, which owns phase and the leaderboard.
 
 export interface FlapHud {
   score: number

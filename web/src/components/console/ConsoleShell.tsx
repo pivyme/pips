@@ -1,6 +1,4 @@
-// The persistent device shell. The screen swaps per route (children), the
-// chrome (status strip, action buttons, knob, Menu/Games tabs) stays put and
-// is driven by whatever screen registered via useConsoleControls().
+// The persistent device shell: the screen swaps per route (children), the chrome (status strip, action buttons, knob, Menu/Games tabs) stays put, driven by whatever screen registered via useConsoleControls().
 // CSS/SVG fidelity for now; a 3D pass comes later (docs/DESIGN.md "The Device").
 import { Link, useNavigate } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
@@ -103,9 +101,8 @@ function TabPill({ label, active }: { label: string; active: boolean }) {
   )
 }
 
-// Device sensor bar: network + connection on the left, live chip balance on the right. The
-// balance is persistent chrome (it reflects the auth session, refreshed as plays settle), so
-// it wins over any screen-supplied status.right.
+// Device sensor bar: network/connection on the left, live chip balance on the right.
+// Balance is persistent chrome (reflects the auth session, refreshed as plays settle), so it wins over any screen-supplied status.right.
 function StatusStrip({ status, balance }: { status: ConsoleView['status']; balance: string | null }) {
   return (
     <div className="flex h-8 items-center justify-between px-5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-3">

@@ -10,10 +10,8 @@ import { HapticOverlay } from '@/components/HapticOverlay'
 import { cnm } from '@/utils/style'
 import { formatExactDecimal } from '@/utils/format'
 
-// The full play history across every game, the canonical record (the in-game overlays are just a
-// quick glance). App Surface language: rounded cards on black. Tap a row to expand the full debug
-// panel, duration, entry/exit price, target, cost, payout, oracle, and links to both transactions.
-// Settled rounds only, newest first; in-flight plays are left out (they still move).
+// Full play history, the canonical record (in-game overlays are just a glance). Tap a row to expand
+// duration, entry/exit, target, cost, payout, oracle, and tx links. Settled rounds only, newest first.
 export const Route = createFileRoute('/_app/menu/history')({ component: HistoryPage })
 
 type Filter = 'all' | Game

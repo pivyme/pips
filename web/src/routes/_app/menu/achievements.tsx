@@ -12,9 +12,8 @@ import { api } from '@/lib/api'
 import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import { cnm } from '@/utils/style'
 
-// The docs catalog is the visual source of truth for this page. API data is merged in when the
-// backend has a matching achievement; missing entries render locked with the same sticker art as
-// a black silhouette.
+// The docs catalog is the visual source of truth here; API data merges in for matching achievements.
+// Missing entries render locked, with the same sticker art as a black silhouette.
 export const Route = createFileRoute('/_app/menu/achievements')({
   component: AchievementsScreen,
 })

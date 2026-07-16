@@ -1,20 +1,15 @@
-// The shared DB is the source of truth for the live Predict deployment. Both this box and the local
-// deployer point at the same Postgres (DATABASE_URL), so after a devnet wipe the deployer publishes a
-// fresh stack and writes the new deploy record here. The box then reloads those ids on its next boot
-// (hydrateDeploymentFromDB, called before src/lib/sui/config.ts loads) and the deploy-watch worker
-// triggers that restart on its own. Net effect: a redeploy self-heals with no Dokploy env paste, no
-// manual redeploy, downtime = one container restart.
-//
-// IMPORTANT: this module must NOT import src/lib/sui/config.ts (directly or transitively). It runs in
-// the boot hook before config is allowed to load, so it stays on prisma + main-config only.
+// The shared DB is the source of truth for the live Predict deployment: after a devnet wipe the deployer
+// publishes a fresh stack here, and this box reloads those ids on next boot (hydrateDeploymentFromDB), so a redeploy self-heals with no Dokploy env paste.
+
+// IMPORTANT: must NOT import src/lib/sui/config.ts (directly or transitively); this runs in the boot hook
+// before config is allowed to load, so it stays on prisma + main-config only.
 
 import { prismaQuery } from './prisma.ts';
 import { SUI_NETWORK, IS_REAL_PREDICT } from '../config/main-config.ts';
 
 const keyFor = (network: string): string => `deployment.${network}`;
 
-// A cheap identity for a deploy record: the package id plus when it was bootstrapped. A change here
-// means a fresh deployment landed, which is what the watcher compares against to decide to restart.
+// A cheap identity for a deploy record (packageId + bootstrappedAt); a change here means a fresh deployment landed, which the watcher compares against to decide to restart.
 export function fingerprint(raw: string | null | undefined): string | null {
   if (!raw) return null;
   try {
@@ -25,9 +20,8 @@ export function fingerprint(raw: string | null | undefined): string | null {
   }
 }
 
-// Read the live deploy record (raw JSON string) for a network, or null. Resilient by design: a missing
-// AppConfig table (pre db:push) or an unreachable DB just reads as "no record", so callers fall back to
-// the env/file path and the app still boots.
+// Reads the live deploy record (raw JSON) for a network, or null. Resilient by design: a missing AppConfig
+// table (pre db:push) or unreachable DB just reads as "no record", so callers fall back to env/file.
 export async function readDeploymentRecord(network: string = SUI_NETWORK): Promise<string | null> {
   try {
     const row = await prismaQuery.appConfig.findUnique({ where: { key: keyFor(network) } });
@@ -37,8 +31,7 @@ export async function readDeploymentRecord(network: string = SUI_NETWORK): Promi
   }
 }
 
-// Publish a fresh deploy record to the shared DB (called by scripts/publish-deploy-record.ts after a
-// successful bootstrap). Validates the record is for the expected network so we never cross-wire chains.
+// Publishes a fresh deploy record to the shared DB (called by scripts/publish-deploy-record.ts after bootstrap); validates the record is for the expected network so we never cross-wire chains.
 export async function writeDeploymentRecord(value: string, network: string = SUI_NETWORK): Promise<void> {
   const d = JSON.parse(value) as { network?: string; packageId?: string };
   if (!d.packageId) throw new Error('deploy record has no packageId');
@@ -50,12 +43,10 @@ export async function writeDeploymentRecord(value: string, network: string = SUI
   });
 }
 
-// Boot hook: if the DB holds a deploy record for this network, expose it via PIPS_DEPLOYED_JSON so
-// config.ts loads the live ids (DB wins over a stale env/file). MUST run before anything imports
-// src/lib/sui/config.ts. No-op when the table/record is absent (env/file path takes over).
+// Boot hook: if the DB holds a deploy record for this network, exposes it via PIPS_DEPLOYED_JSON so config.ts
+// loads the live ids (DB wins over stale env/file); must run before anything imports src/lib/sui/config.ts.
 export async function hydrateDeploymentFromDB(): Promise<void> {
-  // Real mode (testnet) uses Mysten's fixed deployment (config-real.ts), not a self-published fork
-  // record, so a stale fork "deployment.testnet" row in the DB must not hijack PIPS_DEPLOYED_JSON.
+  // Real mode (testnet) uses Mysten's fixed deployment (config-real.ts), so a stale fork "deployment.testnet" row in the DB must not hijack PIPS_DEPLOYED_JSON.
   if (IS_REAL_PREDICT) return;
   const raw = await readDeploymentRecord();
   if (!raw) return;

@@ -31,17 +31,12 @@ import { useAuth } from '@/lib/auth'
 import { useActivePlay } from '@/lib/activePlay'
 import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
-// LUCKY, the hero. Hit SPIN: three reels (asset, direction, multiplier) snap to a server-dealt slot
-// pull, the position opens on the chart with a TARGET line, then ride the live value and CASH OUT, or
-// hold to the buzzer for a spread-free WIN/LOSE. Every round is a real Predict mint/redeem; demo mode
-// runs the same flow on the in-memory model. The screen layout, top to bottom: a header (live price,
-// balance) over a full-width slot band, a bounded chart, then a full-width readout footer (the device
-// body owns the bottom-right). Teenage Engineering language throughout (docs/SCREEN.md): flat black,
-// mono labels, one amber accent, green/red for facts.
+// LUCKY, the hero: SPIN deals three reels (asset, direction, multiplier) from a server-dealt pull, opens
+// a real Predict position with a TARGET line, then ride the value to CASH OUT or the buzzer for a spread-free WIN/LOSE. Demo mirrors the flow. Layout/style: header+slot, bounded chart, footer, docs/SCREEN.md.
 export const Route = createFileRoute('/_app/games/lucky')({ component: LuckyScreen })
 
-// BET ladder is sized to the live stake band (betLadder(), read inside the component).
-// Shared persisted stake index (home idle wheel writes the same key, see ConsoleCanvas).
+// Persisted stake index shared with the home idle wheel (same key, see ConsoleCanvas); ladder sized
+// live via betLadder().
 const STAKE_KEY = 'pips_stake_idx'
 // Reel cycle pools (cosmetic blur before the snap). The real targets come from the dealt play.
 // Preferred order for the stacked asset panel (the rest of the live markets follow, capped at 3).
@@ -50,32 +45,25 @@ const DIR_POOL = ['UP', 'DOWN']
 const MULT_POOL = ['2x', '3x', '5x', '10x']
 const SPIN_STOPS = [720, 980, 1240] // staggered reel stops (ms)
 const SPIN_TOTAL = 1320
-// After the reels lock, the dealt chart holds lit + flashed (the slot "locking in" its pick) for this
-// long before it expands to fill, so the selection reads as a beat, not an instant snap.
+// Dealt chart holds lit+flashed (the slot "locking in") this long before expanding, so the selection reads as a beat.
 const LOCKIN_MS = 650
-// The chart's grow/collapse ease (matches the CSS flex-grow duration). The entry/target overlays only
-// reveal once the expand has finished, so the chart is fully open before the reference lines draw on it.
+// Chart grow/collapse ease (matches the CSS flex-grow duration); entry/target overlays reveal only once expand finishes.
 const EXPAND_MS = 600
-// The result screen is dismissed with a button (CONTINUE), so this is only a safety auto-advance for an
-// idle player. Generous, so it never yanks the result away mid-read, but still recovers an AFK screen.
+// Safety auto-advance for an idle player (result is normally dismissed via CONTINUE); generous so it never cuts a read short.
 const RESULT_MS = 6500
 const ROUND_SEC = 15 // fallback only; the play's real on-chain expiry drives the countdown
-// Safety-net poll of the play, independent of the live SSE. The SSE carries the smooth PnL but its
-// socket can silently drop (expired stream token, proxy timeout), which is what stranded the screen
-// on OPENING / SETTLING forever. This guarantees the terminal frame always lands.
+// Safety-net poll independent of the live SSE (which carries the smooth PnL), whose socket can silently
+// drop (expired token, proxy timeout) and strand the screen on OPENING/SETTLING forever. Guarantees the terminal frame lands.
 const WATCHDOG_MS = 3000
 const SETTLE_EXPECT_MS = 12000 // the settle progress bar eases toward (never to) full over this window
-// Cash-out settling beat: min dwell + the progress-bar window. The redeem itself can land in ~120ms
-// (demo), too fast to read, so doCashOut holds the beat open this long and the bar eases over it.
+// Min settling dwell; redeem can land in ~120ms (demo, too fast to read), so doCashOut holds the beat and the bar eases over it.
 const CASHOUT_SETTLE_MS = 1100
-// Cash-out is a pre-expiry redeem; a tap in the final beat builds a tx that lands AFTER the buzzer,
-// when the oracle is no longer quoteable (EOracleExpired) and the round can only settle. So we disarm
-// CASH OUT this far ahead of expiry (a tx round-trip's worth) and let the round auto-settle. The
-// countdown already knows the exact close, so there is nothing to cash out in this window.
+// Cash-out is a pre-expiry redeem; a tap in the final beat could land after the buzzer when the oracle
+// is no longer quoteable (EOracleExpired), so CASH OUT disarms a tx round-trip ahead of expiry and the round auto-settles.
 const CASHOUT_LOCKOUT_MS = 1500
 const TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out', 'error'])
-// Terminal states that resolve to a win/loss RESULT screen. 'error' is excluded: an errored play is
-// a background mint that could not open (chips safe), handled as a clean re-rack, not a result.
+// Terminal states that resolve to a win/loss RESULT screen. 'error' is excluded: it's a background
+// mint that could not open (chips safe), handled as a clean re-rack, not a result.
 const RESULT_TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out'])
 
 type Phase = 'idle' | 'placing' | 'spinning' | 'open' | 'cashing' | 'result'
@@ -108,35 +96,28 @@ function LuckyScreen() {
   const [live, setLive] = useState<Live | null>(null)
   const [spot, setSpot] = useState<number | null>(null)
   const [overlay, setOverlay] = useState<Overlay>('none')
-  // Which stacked chart is lit while the reels spin (the slot picking an asset). Locks to the dealt
-  // asset on open, then that chart expands.
+  // Chart lit while the reels spin (the slot picking an asset); locks to the dealt asset on open, then expands.
   const [highlightAsset, setHighlightAsset] = useState<string | null>(null)
-  // Decoupled from the lock: the dealt chart first holds highlighted (LOCKIN_MS), THEN this flips and
-  // it expands. So the selection plays as a beat instead of the chart snapping open the instant it lands.
+  // Decoupled from the lock: the dealt chart holds highlighted for LOCKIN_MS, then this flips it to expand as a beat.
   const [expandChart, setExpandChart] = useState(false)
-  // The entry/target overlays hold off until the chart has finished expanding, so they draw onto the
-  // open chart rather than flashing onto the still-collapsing stack.
+  // Entry/target overlays hold off until the chart finishes expanding, so they draw onto the open chart, not the collapsing stack.
   const [revealOverlays, setRevealOverlays] = useState(false)
 
   const finalized = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const balanceSyncedPlayId = useRef<string | null>(null)
-  // Latest focused-asset spot + the asset it belongs to (set together in onPrice), for the header big
-  // price and the play-time debug log. The ENTRY line is never derived from this display feed, it only
-  // ever draws the backend's real oracle entrySpot.
+  // Latest focused-asset spot + its asset (set together in onPrice), for the header price and debug log.
+  // The ENTRY line is never derived from this display feed, only ever the backend's real oracle entrySpot.
   const spotRef = useRef<number | null>(null)
   const spotAssetRef = useRef<string | null>(null)
-  // Latest live price per asset, written by every chart row without a re-render. The header big
-  // price tracks the focused asset; the play-time debug log reads the dealt asset off here.
+  // Latest live price per asset, written by every chart row with no re-render; header tracks the focused asset, debug log reads the dealt asset.
   const pricesRef = useRef<Record<string, number>>({})
   const focusAssetRef = useRef<string>('')
-  // The chart's eased leading price, written every frame by the Chart for visual tracking only.
-  // Financial values come from the backend's on-chain Predict quote.
+  // Chart's eased leading price, written every frame for visual tracking only; financial values come from the backend's Predict quote.
   const livePriceRef = useRef(0)
 
-  // spotByAsset feeds each chart its initial price so it paints a live line on mount; allAssets keeps
-  // the stack full when fewer than three are live this instant. Both come from the shared feed, which
-  // graces brief chain blips so a ladder roll never flashes "Market catching up".
+  // spotByAsset seeds each chart's initial price on mount; allAssets pads the stack when fewer than three
+  // are live. Both come from the shared feed, which graces brief chain blips so a ladder roll never flashes "Market catching up".
   const { liveAssets, allAssets, spotByAsset, noLiveMarket, playsPaused, isLoading: marketsLoading, isError: marketsError } = useLiveMarkets()
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const canPlay = liveAssets.length > 0
@@ -148,14 +129,12 @@ function LuckyScreen() {
   const maxBetIdx = Math.max(0, BET_LADDER.reduce((acc, v, i) => (v <= balance ? i : acc), 0))
   const safeBetIdx = Math.min(betIdx, maxBetIdx)
   const bet = BET_LADDER[safeBetIdx]
-  // Below the cheapest rung entirely: SPIN would just round-trip an INSUFFICIENT_DUSDC rejection, so
-  // the idle button becomes the actual next step instead of a dead-end error toast.
+  // Below the cheapest rung: SPIN would just round-trip INSUFFICIENT_DUSDC, so the button becomes TOP UP instead of a dead-end toast.
   const cantAfford = balance < BET_LADDER[0]
 
   const lp = play ? (play.params as LuckyParams) : null
-  // The asset panel: up to three live markets stacked as live charts (BTC/SUI/ETH first). The dealt
-  // asset is always included so a spin always has a chart to expand into. focusAsset is the one the
-  // header price + the entry pipeline track (the dealt asset mid-round, the primary at rest).
+  // Asset panel: up to three live markets stacked (BTC/SUI/ETH first); the dealt asset is always included
+  // so a spin always has a chart to expand into. focusAsset is the dealt asset mid-round, else the primary at rest.
   const displayAssets = useMemo(() => {
     const rank = (a: string) => {
       const i = PREFERRED.indexOf(a)
@@ -166,11 +145,8 @@ function LuckyScreen() {
     const add = (a: string | undefined) => {
       if (a && !out.includes(a) && out.length < 3) out.push(a)
     }
-    // The dealt asset always leads so its chart is in the stack to expand into mid-round. Then a stable
-    // preferred order over every market we have (so the stack never reshuffles as oracles roll live in
-    // and out), finally padded with the feed-known fallbacks, so the stack is ALWAYS three charts even
-    // when only one or two are live this instant. Non-live charts are display-only; you always play a
-    // live one (the dealt asset).
+    // Dealt asset leads (so it's always in the stack), then a stable preferred order over all known
+    // markets (so the stack never reshuffles as oracles roll), padded to always show three charts. Non-live ones are display-only.
     if (lp?.asset) add(lp.asset)
     byPref(allAssets).forEach(add)
     byPref([...PREFERRED]).forEach(add)
@@ -178,29 +154,23 @@ function LuckyScreen() {
   }, [allAssets.join(','), lp?.asset])
   const focusAsset = lp?.asset ?? displayAssets[0]
   focusAssetRef.current = focusAsset
-  // The position is real on-chain only once the mint confirms and the status leaves 'pending' (a failed
-  // mint goes 'error'). We gate the entry/target on this, never on the optimistic 'pending' window, so
-  // the line only ever shows for a play that actually opened, not one still landing or dead on gas.
+  // The position is real on-chain only once status leaves 'pending' (a failed mint goes 'error'); gate
+  // the entry/target on this, never the optimistic 'pending' window, so the line only shows for a play that actually opened.
   const status = live?.status ?? play?.status
   const entered = status != null && status !== 'pending' && status !== 'error'
-  // The entry line shows while a live round is confirmed open. Not in 'result': once the round ends the
-  // screen behind the result overlay resets to the default stack, so no entry/target lingers on it.
+  // Entry line shows only while confirmed open, not in 'result': the screen behind the overlay resets to the default stack.
   const showEntry = entered && (phase === 'open' || phase === 'cashing')
   const strike = play?.market.strike ? parseFloat(play.market.strike) : undefined
   const spinning = phase === 'spinning'
-  // Reels tumble from the instant SPIN is pressed through to the snap: the 'placing' wait (the
-  // server deal) and the 'spinning' window. This is what makes the multi-second deal feel instant.
+  // Reels tumble from SPIN press through the snap ('placing' server deal + 'spinning' window), masking the deal latency.
   const reelsCycling = phase === 'placing' || phase === 'spinning'
-  // The live round readout (header price, footer P/L, the expanded chart). Excludes 'result': the round
-  // is over, so the screen behind the result overlay falls back to the default stack + masked header.
+  // Live round readout (header price, footer P/L, expanded chart); excludes 'result', which falls back to the default stack + masked header.
   const showReadouts = play != null && (phase === 'open' || phase === 'cashing')
-  // The reels carry the dealt direction/multiplier only while a round is genuinely in play. Otherwise
-  // (result, idle) they reset to '?', so a finished round never leaves the last deal sitting in the slot.
+  // Reels carry the dealt direction/multiplier only while a round is genuinely in play, else reset to '?'.
   const roundActive = phase === 'spinning' || phase === 'open' || phase === 'cashing'
   const multiplier = live?.multiplier ?? play?.multiplier ?? 0
-  // Entry reference: the real on-chain spot the strike was solved against (read live at the tap on the
-  // backend), so the ENTRY line, the TARGET line, and settlement all agree. Never a client-guessed
-  // display-feed value, so nothing fake ever flashes on the line, same rule as RANGE and MOONSHOT.
+  // Entry reference: the real on-chain spot the strike was solved against (read live at the tap), so
+  // ENTRY, TARGET, and settlement all agree. Never a client-guessed display value, same rule as RANGE and MOONSHOT.
   const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
   const entryVal = Number.isFinite(entrySpotNum) && entrySpotNum > 0 ? entrySpotNum : null
   // Chart overlays: the ENTRY line plus the directional TARGET line + winning-zone shading.
@@ -264,10 +234,8 @@ function LuckyScreen() {
     [refresh, qc],
   )
 
-  // Resolve a round from a status, idempotent via `finalized` so the SSE and the watchdog below can
-  // both feed it and only the first one acts. 'error' = the background mint never opened (chips safe,
-  // a failed mint debits nothing), so we re-rack cleanly. A win/loss/cashout refetches the finalized
-  // play for the payout + redeem digest (the result screen + explorer link).
+  // Resolves a round from a status, idempotent via `finalized` so the SSE and the watchdog can both feed it.
+  // 'error' = the mint never opened (chips safe, clean re-rack); a win/loss/cashout refetches the finalized play.
   const resolveTerminal = useCallback(
     (status: PlayStatus, playId: string) => {
       if (finalized.current) return
@@ -314,9 +282,8 @@ function LuckyScreen() {
 
   useEffect(() => () => clearResetTimer(), [])
 
-  // The bed rides the whole round: it fades in as the reels are dealt and out the moment the phase
-  // leaves the live window (result, re-rack, or navigating away). finishResult also cuts it explicitly
-  // so the win/lose sting always lands over silence. Bright + bouncy, the counterpart to Range's tension.
+  // Bed rides the whole round: fades in as reels deal, out the moment the phase leaves the live window.
+  // finishResult also cuts it so the sting lands over silence. Bright + bouncy, the counterpart to Range's tension.
   const bedPlaying = reelsCycling || roundActive
   useEffect(() => {
     if (!bedPlaying) return
@@ -324,17 +291,15 @@ function LuckyScreen() {
     return () => stopLuckyBgm()
   }, [bedPlaying])
 
-  // Ratchet under the spin: a quiet tick stream while the reels tumble, ended the moment they
-  // settle. One stream for the whole slot (not per reel) keeps the texture subtle.
+  // Quiet tick stream while the reels tumble, ended the moment they settle; one stream for the whole slot keeps it subtle.
   useEffect(() => {
     if (!reelsCycling) return
     const iv = setInterval(() => slotTick(), 70)
     return () => clearInterval(iv)
   }, [reelsCycling])
 
-  // Every stacked chart reports its ticks here. We stash them per asset (no re-render) and, for the
-  // focused asset, drive the header price (same single ~1/s parent re-render as the old single chart).
-  // Per-row label prices stay local to each row, so a tick never re-renders this.
+  // Every stacked chart reports ticks here, stashed per asset with no re-render; the focused asset alone
+  // drives the header price. Per-row label prices stay local, so a tick never re-renders this component.
   const handleRowPrice = useCallback((asset: string, p: number) => {
     pricesRef.current[asset] = p
     if (asset === focusAssetRef.current) {
@@ -344,9 +309,8 @@ function LuckyScreen() {
     }
   }, [])
 
-  // Spin choreography for the asset panel: while the reels tumble, run the lit chart straight down
-  // the stack on a steady loop (top, middle, bottom, repeat), like a slot reel scanning, not random
-  // flicker. It locks onto the dealt asset the moment the round opens (below), then that chart expands.
+  // While the reels tumble, run the lit chart down the stack on a steady loop (top/middle/bottom repeat),
+  // like a slot scanning, not random flicker. It locks onto the dealt asset the moment the round opens, then expands.
   useEffect(() => {
     if (!reelsCycling || displayAssets.length === 0) return
     let i = 0
@@ -364,9 +328,8 @@ function LuckyScreen() {
     else if (phase === 'idle') setHighlightAsset(null)
   }, [showReadouts, lp?.asset, phase])
 
-  // Hold the dealt chart highlighted for a beat (with a confirm beep), then expand it, then reveal the
-  // entry/target overlays once it has finished opening. Reset the instant we leave a round so the next
-  // spin starts from the collapsed stack and the whole sequence plays again.
+  // Holds the dealt chart highlighted for a beat (with a confirm beep), then expands it, then reveals the
+  // entry/target overlays once open. Resets the instant we leave a round so the next spin replays from collapsed.
   useEffect(() => {
     if (showReadouts && lp?.asset) {
       slotPick() // the slot commits to its market: a short ascending confirm under the lock-in flash
@@ -382,8 +345,7 @@ function LuckyScreen() {
   }, [showReadouts, lp?.asset])
 
   const doPlay = useCallback(async () => {
-    // Idle only: a finished round must be dismissed back to the default screen first (CONTINUE), never
-    // re-spun straight from the result. That keeps the post-round always landing on the 3-up stack.
+    // Idle only: a finished round must be dismissed (CONTINUE) before spinning again, never straight from the result.
     if (phase !== 'idle') return
     if (playsPaused) {
       toast.error('Plays paused while we top up. Back in a moment.', { id: 'paused' })
@@ -403,9 +365,8 @@ function LuckyScreen() {
       const { play: p } = await placePlay('lucky', { stake: bet })
       setPlay(p)
       track({ id: p.id, game: 'lucky' })
-      // Price debug: line up what the chart is showing for the dealt asset against the prices the
-      // backend actually solved the round on. entrySpot/target now read the live on-chain spot at the
-      // tap, so any gap to chartLive is just the display feed's micro-motion, not a stale snapshot.
+      // Price debug: compares the chart's dealt-asset display price against what the backend solved the
+      // round on. entrySpot/target read the live on-chain spot at the tap, so any gap is just display micro-motion, not staleness.
       if (import.meta.env.DEV) {
         const d = p.params as LuckyParams
         console.debug('[lucky] dealt', {
@@ -435,15 +396,13 @@ function LuckyScreen() {
     }
   }, [phase, canPlay, bet, playsPaused, track])
 
-  // Trade confirmation (opt-in, off by default). When on, SPIN arms first and CONFIRM places; the reel
-  // deals the asset/side/multiplier, so the sheet honestly guards only the stake commitment. With the
-  // setting off, press() short-circuits straight to doPlay(), so behavior is unchanged for everyone else.
+  // Trade confirmation (opt-in, off by default): SPIN arms, CONFIRM places; the reel deals the
+  // asset/side/multiplier so the sheet only guards the stake commitment. Off, press() short-circuits straight to doPlay().
   const confirm = useTradeConfirm(
     () => void doPlay(),
     () => ({ stake: bet, headline: 'I Feel Lucky', note: 'Reel deals the play' }),
   )
-  // Keep an armed trade honest: disarm the moment placement would be blocked or the round leaves idle,
-  // so CONFIRM can never fire a play the ready-state would have rejected.
+  // Disarms the moment placement would be blocked or idle ends, so CONFIRM can't fire a play the ready-state rejected.
   useEffect(() => {
     if (phase !== 'idle' || cantAfford || !canPlay || playsPaused) confirm.disarm()
   }, [phase, cantAfford, canPlay, playsPaused, confirm.disarm])
@@ -475,9 +434,8 @@ function LuckyScreen() {
     }
   }, [phase, play, finishResult, closeLocked])
 
-  // Leave the result screen on any console button. Drops straight back to the default idle screen (the
-  // 3-up stack + masked header), it does NOT re-spin. The auto-advance timer is the same destination,
-  // so a button just gets there sooner. Touches only refs + setters, so a stable identity is fine.
+  // Any console button leaves the result straight to idle (the 3-up stack + masked header), never a
+  // re-spin; the auto-advance timer lands the same place, sooner. Touches only refs/setters, so a stable identity is fine.
   const dismissResult = useCallback(() => {
     clearResetTimer()
     haptic('selection')
@@ -498,19 +456,15 @@ function LuckyScreen() {
     setOverlay((o) => (o === 'board' ? 'none' : 'board'))
   }, [])
 
-  // The mint lands a beat after the reels snap, so CASH OUT only arms once the play is confirmed
-  // 'open' on-chain; until then the button reads OPENING (cashing a not-yet-minted play would revert).
+  // CASH OUT arms only once the play confirms 'open' on-chain (cashing a not-yet-minted play would revert); until then it reads OPENING.
   const confirmed = live?.status === 'open'
-  // Cash-out arms only while the round is comfortably pre-expiry. In the final beat (closeLocked) the
-  // button flips to SETTLING and the round auto-settles, so a redeem can never land in the expiry gap.
+  // Cash-out arms only pre-expiry; in the final beat (closeLocked) the button flips to SETTLING so a redeem never lands in the expiry gap.
   const isOpen = phase === 'open' && confirmed && !closeLocked
   const isOpening = phase === 'open' && !confirmed
   const closing = phase === 'open' && confirmed && closeLocked
-  // On the result screen every button just continues, so the player never has to find the right one (and
-  // the screen itself stays a pure, untappable readout). All three drop back to the default idle screen.
+  // On the result screen every button just continues (the player never hunts for the right one); all three drop back to idle.
   const isResult = phase === 'result'
-  // The two side buttons blink the outcome's color on the result screen (green win / red lose), so
-  // CONTINUE reads at a glance instead of sitting as two neutral caps.
+  // Side buttons blink the outcome's color on the result screen (green win/red lose), so CONTINUE reads at a glance.
   const resultPositive =
     isResult && play != null && (play.status === 'won' || (play.status === 'cashed_out' && parseFloat(play.pnl ?? '0') >= 0))
   const resultColor: 'up' | 'down' = resultPositive ? 'up' : 'down'
@@ -554,9 +508,8 @@ function LuckyScreen() {
                   },
   })
 
-  // Layout: a solid header (price/balance over the reel cluster) divides off the chart with a foot
-  // hairline, so the live line never runs behind the slot. The chart then bleeds full width to the
-  // very bottom, and the readout hangs off the bottom-left as a flat black panel over it.
+  // Layout: header (price/balance over the reel cluster) hairline-divided from the chart, so the live
+  // line never runs behind the slot. Chart bleeds full width to the bottom; readout hangs bottom-left as a flat black panel.
   return (
     <GameScreen>
       {marketsLoading ? (
@@ -571,8 +524,7 @@ function LuckyScreen() {
         <ScreenMessage title="Market catching up" />
       ) : (
         <div className="relative flex h-full flex-col">
-          {/* HEADER — persistent context (price · balance) over the slot band. No foot hairline; the
-              full-width slot runs straight into the chart to save vertical room. */}
+          {/* HEADER: persistent context (price/balance) over the slot band; no foot hairline, the slot runs straight into the chart to save vertical room. */}
           <div className="shrink-0 bg-black pt-[calc(var(--screen-rim,24px)+12px)]">
             <div className="flex items-start justify-between gap-3 px-[var(--screen-rim,24px)] pb-4">
               <div className="min-w-0">
@@ -599,8 +551,7 @@ function LuckyScreen() {
               </div>
             </div>
 
-            {/* Two reels: direction + multiplier. The asset is no longer a reel, it is the chart the
-                spin lights up and expands. One full-width slot band, hairline-divided, no foot border. */}
+            {/* Two reels: direction + multiplier. The asset is the chart the spin lights up and expands, not a reel. */}
             <div className="flex border-t border-line-strong">
               <Reel
                 index={0}
@@ -626,13 +577,11 @@ function LuckyScreen() {
             </div>
           </div>
 
-          {/* ASSET PANEL — up to three live markets as stacked charts, bounded between the slot
-              header and the footer. A spin lights one at random; on open the dealt chart expands to
-              fill and the others collapse away, so the round plays out on the chosen market. */}
+          {/* ASSET PANEL: up to three live markets as stacked charts, bounded between the slot header and the footer. */}
+          {/* A spin lights one at random; on open the dealt chart expands to fill and the others collapse away. */}
           <div className="relative min-h-0 flex-1">
-            {/* COUNTDOWN — a big faded watermark sitting behind the chart line. The canvas is transparent
-                (clearRect), so a layer under LuckyCharts shows through behind the line. Only while a round
-                runs; it tracks the real on-chain buzzer the timer counts to. */}
+            {/* COUNTDOWN: big faded watermark behind the chart line (canvas clears via clearRect, so it shows through). */}
+            {/* Only while a round runs, tracking the real on-chain buzzer the timer counts to. */}
             {showReadouts && secsLeft != null && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
                 <span className="tnum font-black leading-none text-text opacity-15 text-[clamp(64px,18vh,128px)]">{secsLeft}</span>
@@ -654,17 +603,11 @@ function LuckyScreen() {
             ) : null}
           </div>
 
-          {/* FOOTER — full-width readout bar under the chart, one top hairline. The live VALUE while
-              a round runs, the bet + how-to-start at rest. Content hugs the left, clear of the PLAY
-              body in the bottom-right. */}
-          {/* Tall enough to span the device's occluded bottom-right (the PLAY body): the chart ends
-              at this band's top, so the bottom-most chart never runs under the button. Content stays
-              left-only; the empty space below it is the notch the body covers. */}
+          {/* FOOTER: full-width readout under the chart, live VALUE while running, bet + how-to-start at rest. Content hugs the left, clear of the PLAY body. */}
+          {/* Tall enough that the chart ends at this band's top, so the bottom-most chart never runs under the PLAY button. */}
           <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5 min-h-[var(--screen-notch,21%)]">
-            {/* Height tracks the device's occluded bottom-right band, projected as --screen-notch by
-                ConsoleCanvas, so this readout's top meets the PLAY button's top at any device scale or
-                browser zoom (a fixed px would drift). 21% ~ the notch's share of the natural screen,
-                the fallback before the canvas has projected. */}
+            {/* Height tracks the device's occluded bottom-right, projected as --screen-notch by ConsoleCanvas, so this */}
+            {/* readout's top meets the PLAY button's top at any scale/zoom (a fixed px would drift); 21% is the pre-projection fallback. */}
             <div className="max-w-[60%]">
               {confirm.armed ? (
                 <TradeConfirmSheet details={confirm.armed} remainingMs={confirm.remainingMs} />

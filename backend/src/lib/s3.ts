@@ -1,6 +1,5 @@
-// Thin S3 wrapper over Bun's native S3Client (Bun 1.3.5, no extra deps). Talks to a shared
-// DigitalOcean Spaces bucket; every object lives under S3_FOLDER_PREFIX. Powers the custom avatar
-// uploads. Callers gate on AVATAR_UPLOADS_ENABLED, so this module assumes creds are present.
+// Thin S3 wrapper over Bun's native S3Client, talks to a shared DigitalOcean Spaces bucket (every object
+// under S3_FOLDER_PREFIX). Powers avatar uploads; callers gate on AVATAR_UPLOADS_ENABLED so creds are assumed present.
 
 import { S3Client } from 'bun';
 
@@ -13,10 +12,8 @@ import {
   S3_REGION,
 } from '../config/main-config.ts';
 
-// One client for the process. Path-style against the regional endpoint (the Bun default for a custom
-// endpoint): the object lands in the bucket and is served publicly at the virtual-hosted public URL
-// (`${S3_BUCKET_URL}/<key>`). Do NOT set virtualHostedStyle:true here, DO Spaces rejects Bun's
-// vhost URL composition with "The specified bucket does not exist" (verified against the live bucket).
+// One client for the process, path-style against the regional endpoint (Bun's default for a custom
+// endpoint). Do NOT set virtualHostedStyle:true, DO Spaces rejects Bun's vhost URL composition with "bucket does not exist" (verified against the live bucket).
 const client = new S3Client({
   accessKeyId: S3_ACCESS_KEY,
   secretAccessKey: S3_SECRET_KEY,

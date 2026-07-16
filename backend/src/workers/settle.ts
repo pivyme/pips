@@ -1,10 +1,5 @@
-// settle: resolves expired rounds on a tight cadence. The real work lives in settleDuePlays
-// (plays.ts), which is the self-healing, play-driven authority: for each open play whose round has
-// expired it reads the backing oracle straight from chain, drives it to settlement if the chain has
-// not frozen it yet (a post-expiry price push settles it, gotcha #3), then sweeps any in-the-money
-// payout into the user's manager. Because it reads the chain (not the in-memory ladder), a play
-// settles even if its oracle fell out of the cache on a restart, which is what stopped rounds from
-// sitting on SETTLING forever. This worker just ticks it and prunes retired oracles from the cache.
+// settle: resolves expired rounds on a tight cadence via settleDuePlays (plays.ts), which reads the backing
+// oracle straight from chain per expired play. Reading the chain (not the in-memory ladder) means a play settles even after its oracle falls out of cache on restart, fixing the old SETTLING-forever bug.
 
 import cron from 'node-cron';
 
@@ -16,9 +11,8 @@ import { isOperatorLeader } from '../lib/leader-lock.ts';
 
 let isRunning = false;
 
-// Long enough that any open play on an expired oracle has settled before we drop it. settleDuePlays
-// reads the chain directly, so even pruning early would not strand a settle, this is pure memory
-// hygiene so a long-lived process doesn't accumulate dead oracles in the cache.
+// Long enough that any open play on an expired oracle has settled before we drop it. settleDuePlays reads
+// the chain directly, so this is pure memory hygiene, not a correctness dependency.
 const ORACLE_PRUNE_GRACE_MS = 5 * 60_000;
 
 const settleTick = async (): Promise<void> => {
@@ -27,8 +21,8 @@ const settleTick = async (): Promise<void> => {
   const startedAt = Date.now();
   let runErr: unknown = null;
   try {
-    // Real mode: redeem_settled per expired play (no operator nudge; Mysten/Pyth settle the market).
-    // Fork mode: the self-healing operator/follower settle. Both prune the retired market cache.
+    // Real mode: redeem_settled per expired play (Mysten/Pyth settle the market, no operator nudge). Fork
+    // mode: the self-healing operator/follower settle. Both prune the retired market cache.
     if (IS_REAL_PREDICT) await settleDuePlaysReal();
     else await settleDuePlays();
     pruneRetiredOracles();
@@ -41,9 +35,8 @@ const settleTick = async (): Promise<void> => {
   }
 };
 
-// Drop oracles the live set no longer needs: settled, or expired well past the point any open play
-// could still reference them. Routing already ignores expired oracles (liveByAsset/tradeableMarkets
-// filter on remaining life), so this only bounds the cache's memory.
+// Drops oracles the live set no longer needs: settled, or expired well past the point any open play could
+// reference them. Routing already ignores expired oracles (liveByAsset/tradeableMarkets), so this only bounds cache memory.
 const pruneRetiredOracles = (): void => {
   const cutoff = Date.now() - ORACLE_PRUNE_GRACE_MS;
   for (const m of allMarkets()) {
@@ -52,10 +45,8 @@ const pruneRetiredOracles = (): void => {
 };
 
 export const startSettleWorker = (): void => {
-  // Runs in BOTH modes. The operator also nudges expired oracles to settlement (settleDuePlays
-  // Phase 1); a follower skips the nudge and only finalizes its OWN database's plays against the
-  // oracles the leader settles on the shared chain. Without this, a follower's plays (separate DB,
-  // invisible to the deployed operator) sit on SETTLING forever. settleDuePlays gates per phase.
+  // Runs in both modes; the operator also nudges expired oracles to settlement (settleDuePlays Phase 1), while
+  // a follower skips the nudge and only finalizes its own DB's plays, else they'd sit on SETTLING forever.
   const role = IS_REAL_PREDICT
     ? 'real: redeem_settled per play'
     : isOperatorLeader()

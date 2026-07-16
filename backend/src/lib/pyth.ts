@@ -1,6 +1,5 @@
-// Pyth Hermes spot prices over HTTP (no key). Source of truth for what we push to our
-// oracles and for the UI price stream. Feed ids are the canonical Pyth USD feeds, the
-// same across networks. https://hermes.pyth.network
+// Pyth Hermes spot prices over HTTP (no key); source of truth for what we push to our oracles and the
+// UI price stream. Feed ids are the canonical Pyth USD feeds, same across networks. https://hermes.pyth.network
 
 import { PYTH_HERMES_URL } from '../config/main-config.ts';
 
@@ -17,9 +16,7 @@ type HermesPrice = {
   price: { price: string; expo: number; conf: string; publish_time: number };
 };
 
-// Fetch latest USD spot for one or more assets. Returns a map symbol -> price.
-// Hermes is an external service with variable latency; one slow response should not kill a
-// solve/settle/push flow, so retry a couple times on timeout before giving up.
+// Hermes is an external service with variable latency; one slow response shouldn't kill a solve/settle/push flow, so retry a couple times on timeout before giving up.
 export async function fetchSpots(assets: string[]): Promise<Record<string, number>> {
   const ids = assets.map((a) => PYTH_FEED_IDS[a]).filter(Boolean);
   if (ids.length === 0) return {};

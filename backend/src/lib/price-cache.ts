@@ -1,6 +1,5 @@
-// A tiny shared spot cache over Pyth Hermes. Many SSE clients can subscribe to the same
-// asset without each one hitting Hermes: a fetch refreshes at most ~once/second per asset,
-// and a transient Pyth blip serves the last good price instead of dropping the stream.
+// Tiny shared spot cache over Pyth Hermes so many SSE clients don't each hit Hermes directly: a fetch
+// refreshes at most ~once/second per asset, and a transient Pyth blip serves the last good price instead of dropping the stream.
 
 import { fetchSpots } from './pyth.ts';
 
@@ -23,9 +22,8 @@ export async function getSpot(asset: string): Promise<{ price: number; ts: numbe
   }
 }
 
-// Batched proactive refresh for price-warmer.ts: one Hermes round-trip for every asset instead of N
-// lazy per-asset ones, so a cold WS asset loop (wsRoutes.ts ensureAssetLoop) never has to block its
-// first broadcast on a live fetch. Silent on failure, the TTL cache just serves stale a bit longer.
+// Batched proactive refresh for price-warmer.ts: one Hermes round-trip for every asset instead of N lazy
+// per-asset ones, so a cold WS asset loop never blocks its first broadcast on a live fetch. Silent on failure, the TTL cache just serves stale longer.
 export async function warmSpots(assets: string[]): Promise<void> {
   const spots = await fetchSpots(assets).catch(() => null);
   if (!spots) return;

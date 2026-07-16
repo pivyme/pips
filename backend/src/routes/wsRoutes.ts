@@ -1,13 +1,5 @@
-// WebSocket price hub. Replaces the per-connection SSE interval with ONE shared broadcast loop per
-// active asset: each tick reads `displaySpot(asset)` once and fans the same value out to every socket
-// subscribed to that asset, so every user's chart moves on the same frame with the same value (the
-// "consistent chart" requirement, solved structurally). One socket multiplexes all a client's assets
-// (Lucky's up-to-3 charts share a single connection), and the subscription set can change live via a
-// `{type:'sub',assets}` control message (resubscribe on reconnect, no per-asset socket).
-//
-// Auth rides the query token (`?t=`) exactly like SSE, because the browser can't set WS headers. The
-// message shape matches the SSE `PriceTick` plus a type + asset tag: `{type:'price',asset,price,ts}`.
-// The display bus is cosmetic (L-015); nothing truthful streams here.
+// One shared broadcast loop per asset (not per-connection) so every socket sees the same value on the
+// same frame; one socket multiplexes all of a client's assets via a `{type:'sub',assets}` control message. Auth rides the query token since a browser can't set WS headers. Cosmetic display bus only (L-015).
 
 import type { FastifyInstance, FastifyPluginCallback, FastifyRequest } from 'fastify';
 

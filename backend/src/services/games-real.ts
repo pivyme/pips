@@ -4,6 +4,7 @@ import {
   LUCKY_ROUND_MS,
   RANGE_MAX_ORACLE_LIFE_MS,
   RANGE_MIN_ORACLE_LIFE_MS,
+  REAL_BINARY_MIN_OFFSET_SIGMA,
   REAL_BTC_ANNUAL_VOL,
   REAL_RANGE_MAX_PROB,
   REAL_STRIKE_MAX_OFFSET_FRAC,
@@ -71,12 +72,8 @@ function realEcon(market: Market): { spot1e9: bigint; tickSize: bigint; admissio
   };
 }
 
-// The recorded entry (and the strike solved off it) anchors to a click-time on-chain read of the BS
-// spot, the same feed load_live_pricer marks and settles the round against, mirroring the fork's
-// freshSpot(). The synced market spot lags by up to a market-sync tick (~2s), so reading live here keeps
-// the ENTRY line sitting on the true chain price at the moment of the tap, not a stale snapshot. Falls
-// back to the last synced spot if the live read fails, so a transient gRPC hiccup never blocks a play
-// (still a real chain value, just a tick old).
+// Reads the on-chain spot live at tap time, not the ~2s-stale synced market spot, so the recorded entry
+// matches what load_live_pricer marks and settles against. Falls back to the last synced spot on failure.
 async function freshRealSpot(fallback: bigint): Promise<bigint> {
   try {
     const live = await readBtcSpot();
@@ -127,21 +124,23 @@ export function binaryOffsetFrac(strikeTier: number, seconds: number): number {
   return Math.max(-REAL_STRIKE_MAX_OFFSET_FRAC, Math.min(REAL_STRIKE_MAX_OFFSET_FRAC, off));
 }
 
-// Shared by LUCKY and MOONSHOT (both binary): size leverage off the nominal multiplier so the
-// strike lands near LEVERAGE_TARGET_WIN_PROB instead of an OTM distance the probability/offset
-// floors would otherwise clip. See the LEVERAGE_TARGET_WIN_PROB comment in main-config.ts.
+// The offset a binary strike actually mints at: the tier's raw offset, floored to REAL_BINARY_MIN_OFFSET_SIGMA
+// so the 2x tier (raw offset ~0, an ATM coinflip) becomes a visible directional move instead of sitting on the
+// entry line. The floor is sigma-scaled to stay admissible on a short round (L-013); 3x+ already clear it.
+export function binaryOffsetFloored(strikeTier: number, seconds: number): number {
+  return Math.max(binaryOffsetFrac(strikeTier, seconds), REAL_BINARY_MIN_OFFSET_SIGMA * roundSigmaFrac(seconds));
+}
+
+// Shared by LUCKY and MOONSHOT (both binary): sizes leverage off the nominal multiplier so the strike
+// lands near LEVERAGE_TARGET_WIN_PROB instead of getting clipped by the probability/offset floors.
 function binaryLeverage(nominalMult: number, maxLeverage1e9: bigint): bigint {
   const want1e9 = BigInt(Math.round(nominalMult * LEVERAGE_TARGET_WIN_PROB * 1e9));
   const capped = want1e9 < maxLeverage1e9 ? want1e9 : maxLeverage1e9;
   return capped > LEVERAGE_ONE ? capped : LEVERAGE_ONE;
 }
 
-// RANGE keeps the user's chosen band width (their real risk pick) and stacks leverage ON TOP of its
-// raw odds, unlike the binary split above. The real admission cap grants more leverage the more
-// ATM-like (higher win probability) a position is (L-012), so request leverage that scales with the
-// band's own win probability: wide/safe bands land close to the market cap (a real multiplier boost
-// for the same width), tight/risky bands request little and fall back to 1x on the existing
-// admission-abort retry (plays.ts) if even that is rejected.
+// RANGE stacks leverage ON TOP of the band width (unlike the binary split above): the admission cap grants
+// more leverage the more ATM-like a position is (L-012), so wide bands request near the cap, tight bands fall back to 1x on retry.
 function rangeLeverage(winProb: number, maxLeverage1e9: bigint): bigint {
   const p1e9 = BigInt(Math.round(Math.max(0, Math.min(1, winProb)) * 1e9));
   const lev1e9 = LEVERAGE_ONE + ((maxLeverage1e9 - LEVERAGE_ONE) * p1e9) / FLOAT_SCALING;
@@ -151,9 +150,29 @@ function rangeLeverage(winProb: number, maxLeverage1e9: bigint): bigint {
 const premiumBudget = (stakeRaw: bigint): bigint => (stakeRaw * (100n - REAL_FEE_HEADROOM_PCT)) / 100n;
 const realFmt = (value: bigint): string => String(Number(value) / 1e9);
 
-// The strike a binary tier/leverage split prices to (LUCKY.md §5b): strikeTier = tier/leverage,
-// priced at p = 1/strikeTier. Shared by the initial resolve and the admission-abort restrike below,
-// so a leverage fallback always re-prices the strike for the leverage that actually lands.
+// Half a cent (1e9-scaled). The screen rounds spot to 2dp, so a strike inside this of spot renders equal to
+// the entry even though it's a real move; when that happens we push it one more admission step out.
+const STRIKE_DISPLAY_EPS = 5_000_000n;
+
+// Snaps a binary strike to the nearest admission boundary on the OTM side, at least one admission step clear
+// of spot: the 2x floor prices at p=0.5 (raw offset ~0), which would otherwise land the strike on the entry line.
+export function otmStrike1e9(side: Side, raw1e9: bigint, spot1e9: bigint, admissionTickSize: bigint): bigint {
+  const belowSpot = (spot1e9 / admissionTickSize) * admissionTickSize; // boundary at or below spot
+  if (side === 'up') {
+    let floor = belowSpot + admissionTickSize; // first boundary strictly above spot
+    if (floor - spot1e9 <= STRIKE_DISPLAY_EPS) floor += admissionTickSize; // would round onto the entry line
+    const ceilRaw = ((raw1e9 + admissionTickSize - 1n) / admissionTickSize) * admissionTickSize;
+    return ceilRaw > floor ? ceilRaw : floor;
+  }
+  const onBoundary = spot1e9 % admissionTickSize === 0n;
+  let cap = onBoundary ? belowSpot - admissionTickSize : belowSpot; // first boundary strictly below spot
+  if (spot1e9 - cap <= STRIKE_DISPLAY_EPS) cap -= admissionTickSize; // would round onto the entry line
+  const floorRaw = (raw1e9 / admissionTickSize) * admissionTickSize;
+  return floorRaw < cap ? floorRaw : cap;
+}
+
+// The strike a binary tier/leverage split prices to (LUCKY.md §5b): strikeTier = tier/leverage, p = 1/strikeTier.
+// Shared by the initial resolve and the admission-abort restrike below, so a leverage fallback always re-prices.
 function strikeFor(
   side: Side,
   tier: number,
@@ -164,15 +183,15 @@ function strikeFor(
   seconds: number,
 ): { strike1e9: bigint; lowerTick: bigint; higherTick: bigint } {
   const strikeTier = tier / (Number(leverage1e9) / 1e9);
-  const offset = BigInt(Math.round(binaryOffsetFrac(strikeTier, seconds) * 1e9));
-  const strike1e9 = side === 'up' ? (spot1e9 * (FLOAT_SCALING + offset)) / FLOAT_SCALING : (spot1e9 * (FLOAT_SCALING - offset)) / FLOAT_SCALING;
+  const offset = BigInt(Math.round(binaryOffsetFloored(strikeTier, seconds) * 1e9));
+  const raw1e9 = side === 'up' ? (spot1e9 * (FLOAT_SCALING + offset)) / FLOAT_SCALING : (spot1e9 * (FLOAT_SCALING - offset)) / FLOAT_SCALING;
+  const strike1e9 = otmStrike1e9(side, raw1e9, spot1e9, admissionTickSize);
   const { lowerTick, higherTick } = ticksForBinary(side, strike1e9, tickSize, admissionTickSize);
   return { strike1e9, lowerTick, higherTick };
 }
 
-// The requested leverage got rejected by the real admission check (ELeverageAboveAdmission etc,
-// L-012); re-price the strike for the leverage that actually lands instead of leaving it sized for
-// the rejected one, so the fallback lands close to the nominal tier instead of far short of it.
+// Called when the requested leverage is rejected by the admission check (ELeverageAboveAdmission, L-012);
+// re-prices the strike for the leverage that actually lands, so the fallback lands close to the nominal tier.
 export function restrikeBinary(r: ResolvedReal, leverage1e9: bigint): ResolvedReal {
   if (r.kind !== 'binary' || !r.side) return r;
   const seconds = Math.max(1, (r.expiryMs - now()) / 1000);
@@ -198,8 +217,7 @@ async function resolveRealBinary(game: 'lucky' | 'moonshot', netRaw: bigint, sta
     lowerTick,
     higherTick,
     leverage1e9,
-    // Size the mint off NET (stake - rake); the wrapper is still funded to the full STAKE so the rake can
-    // be peeled out after the mint (see lib/sui/house.ts, predict-real buildMintPlay, plays.ts realDeposit).
+    // Mint sizes off NET (stake - rake); wrapper is funded to full STAKE so the rake peels out after mint (lib/sui/house.ts).
     amountRaw: premiumBudget(netRaw),
     minQuantityRaw: POSITION_LOT_SIZE,
     expiryMs: market.expiryMs,
@@ -272,8 +290,8 @@ export function quoteRangeBatchReal(widthPcts: number[]): RangeQuote[] {
   }
 }
 
-// netRaw sizes the position (stake - house rake); stakeRaw is the full commit that funds the wrapper so
-// the rake can be withdrawn after the mint. At rake = 0, netRaw === stakeRaw (byte-identical to no-rake).
+// netRaw sizes the position (stake - house rake); stakeRaw funds the wrapper fully so the rake can be
+// withdrawn after mint. At rake = 0, netRaw === stakeRaw (byte-identical to no-rake).
 export async function resolveReal(input: CreatePlayInputShape, netRaw: bigint, stakeRaw: bigint, seed?: string): Promise<ResolvedReal> {
   if (input.game === 'lucky') {
     const actualSeed = seed ?? newSeed();

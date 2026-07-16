@@ -2,10 +2,8 @@ import { describe, expect, it } from 'bun:test';
 
 import { decodeOrderId, matchRealRedeemInPage } from './predict-real.ts';
 
-// decodeOrderId derives the full-close quantity + strike ticks straight from the packed u256 order id
-// (order.move), so the settle worker needs no extra column. Fixture is a REAL testnet OrderMinted:
-// the event carries both the id AND its own quantity/ticks, and all 25 sampled live events decoded
-// exactly, so this locks the offsets/masks against a source drift.
+// decodeOrderId derives the full-close quantity + strike ticks straight from the packed u256 order id, so
+// the settle worker needs no extra column. Fixture is a real testnet OrderMinted event (all 25 sampled live events decoded exactly), locking the offsets/masks against source drift.
 describe('decodeOrderId', () => {
   it('decodes quantity + ticks from a real packed order id', () => {
     const d = decodeOrderId(100433603470183673232442518552005688471077296132715848925186n);
@@ -16,8 +14,7 @@ describe('decodeOrderId', () => {
 });
 
 // The settle backstop reconciles an already-closed real position against its on-chain redeem event.
-// Fixture mirrors the live GraphQL tx shape: events under effects.events.nodes, payload at
-// contents.json + contents.type.repr, oldest-first within a page (so the scan iterates reversed).
+// Fixture mirrors the live GraphQL tx shape (events under effects.events.nodes, payload at contents.json + contents.type.repr), oldest-first within a page, so the scan iterates reversed.
 describe('matchRealRedeemInPage', () => {
   const ORDER = 100433603470183673232442518552005688471077296132715848925186n;
   const settledEvent = (orderId: bigint, payout: string) => ({

@@ -1,7 +1,5 @@
-// The menu lives in a near-fullscreen bottom drawer that slides up over the device. While it is
-// open the console sits behind it, dimmed and blurred, so the drawer is the whole interface. It is
-// route-driven (mounted whenever a /menu route matches), so the menu sub-screens render through the
-// child Outlet. Closing slides it back down, then routes to `returnTo` (where the user came from).
+// The menu lives in a near-fullscreen bottom drawer that slides up over the device; the console sits behind it, dimmed and blurred. Route-driven (mounted whenever a /menu route matches), sub-screens render through the child Outlet.
+// Closing slides it back down, then routes to `returnTo` (where the user came from).
 import {
   createContext,
   useCallback,
@@ -17,8 +15,7 @@ import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
-// Lets a menu item slide the drawer away before navigating (e.g. Customize handing off to its
-// full-screen studio). Reuses the proven close animation instead of an unmount transition.
+// Lets a menu item slide the drawer away before navigating (e.g. Customize's handoff), reusing the proven close animation instead of an unmount transition.
 const MenuDrawerContext = createContext<{
   closeTo: (to: string) => void
 } | null>(null)
@@ -39,12 +36,8 @@ export function MenuDrawer({
   onLaunchStart?: (to: string) => void
 }) {
   const router = useRouter()
-  // resolvedLocation (not location) on purpose: location flips the instant a nav starts, before the
-  // Outlet has actually swapped to the new match. Keying/reset off that fires while this div still
-  // shows the OUTGOING page, snapping IT to the top for a frame before the real transition even
-  // plays. resolvedLocation only updates once the navigation has fully settled (TanStack Router's own
-  // scroll-restoration module uses the same fallback pattern), so by the time this remounts, the
-  // Outlet is already on the new page.
+  // resolvedLocation (not location) on purpose: location flips the instant a nav starts, before the Outlet swaps, so keying off it would snap the still-showing OUTGOING page to the top for a frame.
+  // resolvedLocation updates only once the nav fully settles (same fallback TanStack's own scroll-restoration uses), so by remount the Outlet is already on the new page.
   const pathname = useRouterState({
     select: (state) => (state.resolvedLocation ?? state.location).pathname,
   })
@@ -55,16 +48,14 @@ export function MenuDrawer({
   const closeTargetRef = useRef<string | null>(null)
   const closeTimerRef = useRef<number | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  // Drag-to-dismiss: the grabber pulls the whole sheet down, native bottom-sheet style. We drive the
-  // transform straight on the node (no per-move re-render) and only flip React state on release.
+  // Drag-to-dismiss: the grabber pulls the sheet down, native bottom-sheet style; transform drives straight on the node (no per-move re-render), React state flips only on release.
   const sheetRef = useRef<HTMLDivElement>(null)
   const scrimRef = useRef<HTMLDivElement>(null)
   const restedRef = useRef(false) // true once the rise settles, so a drag never fights the open
   const draggedRef = useRef(false) // distinguishes a real drag from a plain tap on the grabber
   const dragRef = useRef({ active: false, startY: 0, dy: 0, maxDy: 0, lastY: 0, lastT: 0, vel: 0 })
 
-  // Each route owns its scroll viewport (a fresh node per pathname, see key={pathname} below), so it
-  // always mounts at scrollTop 0, forward or back. No saved-position map, nothing to go stale.
+  // Each route owns its scroll viewport (a fresh node per pathname, see key={pathname} below), so it always mounts at scrollTop 0; no saved-position map, nothing to go stale.
   useLayoutEffect(() => {
     const scrollElement = scrollRef.current
     if (scrollElement) scrollElement.scrollTop = 0
@@ -82,8 +73,7 @@ export function MenuDrawer({
     void router.navigate({ to })
   }, [router])
 
-  // Slide down, then route. `to` defaults to where the user came from (a normal close); Customize
-  // passes its own route so the drawer clears before the studio takes over.
+  // Slide down, then route. `to` defaults to where the user came from; Customize passes its own route so the drawer clears before the studio takes over.
   const closeTo = useCallback(
     (to: string) => {
       if (closingRef.current) return
@@ -107,8 +97,7 @@ export function MenuDrawer({
   )
   const close = useCallback(() => closeTo(returnTo), [closeTo, returnTo])
 
-  // Reduced motion skips the rise keyframe, so there's no animationend to mark it settled: treat the
-  // sheet as ready right away so the grabber drag still works.
+  // Reduced motion skips the rise keyframe (no animationend to mark it settled), so treat the sheet as ready right away so the grabber drag still works.
   useEffect(() => {
     if (reduced) restedRef.current = true
   }, [reduced])
@@ -232,8 +221,7 @@ export function MenuDrawer({
 
   const handleSheetAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
     if (event.currentTarget !== event.target) return
-    // Rise done: the keyframe no longer holds the transform (fill: backwards), so inline transform
-    // from the grabber drag takes over from here. Just mark it ready.
+    // Rise done: the keyframe no longer holds the transform (fill: backwards), so inline transform from the grabber drag takes over; just mark it ready.
     if (event.animationName === 'drawer-rise') {
       restedRef.current = true
       return
@@ -283,8 +271,7 @@ export function MenuDrawer({
           <span className="h-1.5 w-10 rounded-full bg-text-3/60" />
         </button>
 
-        {/* This named surface is snapshotted by the browser during menu route changes, preserving
-            the actual outgoing page while the next page slides over it. */}
+        {/* This named surface is snapshotted by the browser during menu route changes, preserving the outgoing page while the next slides over it. */}
         <div className="menu-page-transition min-h-0 flex-1 overflow-hidden bg-black">
           <div
             key={pathname}

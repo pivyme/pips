@@ -1,9 +1,5 @@
-// The achievement celebration. A single app-level watcher + overlay that surfaces every unlock,
-// whoever it happened (early cash-out, expiry settle, either game, real or demo). Plays settle in the
-// background worker, which has no channel back to the client, so we don't thread the unlocked slugs
-// through the play result. Instead we observe the ['achievements'] query (both games invalidate it on
-// every resolve) and diff it against a per-user "seen" set in localStorage. Anything newly unlocked
-// blooms in: the screen blurs, the sticker(s) pop big with a warm "zwooong", then it auto-closes.
+// A single app-level watcher + overlay that surfaces every unlock, however it happened. The settle
+// worker has no channel back to the client, so this diffs the ['achievements'] query against a per-user "seen" set in localStorage, blooming in anything newly unlocked.
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
@@ -16,12 +12,10 @@ import { achievementUnlock } from '@/lib/sound'
 import { haptic } from '@/lib/haptics'
 
 const SEEN_PREFIX = 'pips_ach_seen:'
-// On the very first run for a user we suppress the historical backlog (they'd never want their whole
-// shelf dumped at once), EXCEPT anything just earned: an unlock fresher than this still surfaces, so a
-// play that settled right before load isn't swallowed. Afterwards every new unlock celebrates.
+// On a user's first run we suppress the historical backlog, except anything just earned: an unlock
+// fresher than RECENT_MS still surfaces so a play that settled right before load isn't swallowed.
 const RECENT_MS = 120_000
-// Let the round's result land and read for a beat before the celebration blooms over it (the ask:
-// "after I played and see the results a bit"). The query refetch already lags the result slightly.
+// Let the round's result land and read for a beat before the celebration blooms over it; the query refetch already lags slightly anyway.
 const SHOW_DELAY_MS = 1400
 const AUTO_CLOSE_MS = 3000
 

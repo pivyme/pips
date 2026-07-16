@@ -7,10 +7,8 @@ type LoadingIconProps = {
   size?: number
 }
 
-// Two stacked svgs: a static body and a moving eyes layer. The eyes animate via a transform on the
-// root <svg> (a composited HTML box) rather than an inner <g>, so the motion runs on the GPU instead
-// of re-rasterizing the whole mark on the main thread every frame. Paths are inlined (no external
-// <use> fetch) since this paints on first load.
+// Two stacked svgs: a static body and a moving eyes layer, eyes animated via a transform on the root <svg> (not an inner <g>) so it runs on the GPU.
+// Paths are inlined, no external <use> fetch, since this paints on first load.
 export function LoadingIcon({
   className,
   label = 'Loading',

@@ -1,9 +1,8 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { cnm } from '@/utils/style'
 
-// The in-screen button primitive (docs/DESIGN.md section 10). Wraps the styles.css recipes so
-// every screen button shares one set of variants and states. Console chrome buttons stay in
-// ConsoleShell; this is for buttons rendered inside a screen (share, retry, confirm).
+// The in-screen button primitive (docs/DESIGN.md section 10), wraps the styles.css variants and states.
+// Console chrome buttons stay in ConsoleShell; this is for buttons rendered inside a screen.
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 
 const VARIANTS: Record<Variant, string> = {

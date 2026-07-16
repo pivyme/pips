@@ -15,8 +15,7 @@ import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
 
 // Linked Accounts: Google, Email, X, driven live off the Privy session (link/unlink), with X singled
-// out as the special one (a promo card + the payoff of a verified leaderboard badge). Read-only in
-// dev/demo, where no Privy provider is mounted (see StaticLinkedAccounts).
+// out (promo card + verified leaderboard badge). Read-only in dev/demo where no Privy provider is mounted (see StaticLinkedAccounts).
 export const Route = createFileRoute('/_app/menu/account')({ component: AccountScreen })
 
 function AccountScreen() {
@@ -34,8 +33,7 @@ function LiveLinkedAccounts() {
   const { user: pUser, unlinkGoogle, unlinkEmail, unlinkTwitter } = usePrivy()
   const [busy, setBusy] = useState<Kind | null>(null)
 
-  // The one write path for linked-account state: re-read Privy server-side and persist it, so the
-  // leaderboard badge never trusts a client-reported handle.
+  // The one write path for linked-account state: re-read Privy server-side and persist it, so the leaderboard badge never trusts a client-reported handle.
   const afterChange = async () => {
     try {
       await api.linkRefresh()
@@ -67,9 +65,8 @@ function LiveLinkedAccounts() {
     START_LINK[kind]()
   }
 
-  // Bounded to this app's actual login methods (google/email/twitter, see lib/privy.tsx loginMethods),
-  // so a plain presence count is enough: never let it drop to 0, that would orphan the login and the
-  // embedded wallet.
+  // Bounded to this app's actual login methods (google/email/twitter, see lib/privy.tsx loginMethods), so
+  // a plain presence count is enough: never let it drop to 0, that would orphan the login and the embedded wallet.
   const linkedLoginCount = [pUser?.google, pUser?.email, pUser?.twitter].filter(Boolean).length
 
   const doUnlink = async (kind: Kind) => {
@@ -142,8 +139,7 @@ function LiveLinkedAccounts() {
   )
 }
 
-// dev / demo: no Privy provider is mounted (PRIVY_ENABLED is false), so this shows whatever the
-// backend session already carries, with no link/unlink actions.
+// dev / demo: no Privy provider is mounted (PRIVY_ENABLED false), shows whatever the backend session already carries, no link/unlink actions.
 function StaticLinkedAccounts() {
   const { user } = useAuth()
   return (

@@ -9,9 +9,8 @@ import { withdrawDusdc, requestDusdc, WalletError, httpStatusForWalletError } fr
 import { RATE_LIMIT_FAUCET_MAX, RATE_LIMIT_WITHDRAW_MAX, RATE_LIMIT_WINDOW } from '../config/main-config.ts';
 
 export const walletRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
-  // Per-IP rate limits on top of each route's existing per-user gate: withdraw is fund-moving, and
-  // request-dusdc already has a per-user FAUCET_COOLDOWN_MS in wallet.ts, so this is a second IP-scoped
-  // gate against multi-account draining of the finite treasury.
+  // Per-IP rate limits on top of each route's per-user gate: withdraw is fund-moving and request-dusdc
+  // already has a per-user FAUCET_COOLDOWN_MS, so this is a second IP-scoped gate against multi-account draining of the finite treasury.
   const withdrawLimit = { rateLimit: { max: RATE_LIMIT_WITHDRAW_MAX, timeWindow: RATE_LIMIT_WINDOW } };
   const faucetLimit = { rateLimit: { max: RATE_LIMIT_FAUCET_MAX, timeWindow: RATE_LIMIT_WINDOW } };
 

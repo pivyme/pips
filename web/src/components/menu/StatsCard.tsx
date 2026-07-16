@@ -1,20 +1,25 @@
-import { Pencil } from 'lucide-react'
+import { Loader2, Pencil, Share2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { UserStatsDTO } from '@/lib/api'
+import type { CardTone } from '@/lib/playerCard'
+import { buildCardModel } from '@/lib/playerCard'
 import { Avatar } from '@/components/Avatar'
 import { cnm } from '@/utils/style'
-import { formatCompactCount, formatCompactMoney } from '@/utils/format'
 
-// The shareable trader card, styled as a little PIPS handheld: a bright amber bezel with a
-// branded screen window sunk into it. Shown on the menu home (tap to open the share detail) and
-// on the Stats screen (where Share renders the same card to a PNG via shareCard.ts). Keep this and
-// the canvas renderer in sync. Presentational, no data fetching.
+// Tone -> ink. Gold is the featured/brag color, up/down for signed facts, white for neutral.
+const toneText = (t: CardTone): string =>
+  t === 'gold' ? 'text-brand-400' : t === 'up' ? 'text-up' : t === 'down' ? 'text-down' : 'text-white'
+
+// The shareable trader card, styled as a little PIPS handheld: a bright amber bezel with a branded
+// screen window. Shown on menu home (pen + share icons) and the Stats screen (Share renders this to a PNG via shareCard.ts, keep them in sync). Presentational, no data fetching.
 
 export function StatsCard({
   stats,
   displayName,
   avatarUrl,
   onEdit,
+  onShare,
+  sharing,
 }: {
   stats: UserStatsDTO
   displayName: string
@@ -22,14 +27,15 @@ export function StatsCard({
   avatarUrl?: string | null
   // When set, a pen sits next to the handle so it can be changed. Omitted on the shareable card.
   onEdit?: () => void
+  // When set, a share icon sits beside the pen for one-tap PNG export (renders the card via shareCard.ts).
+  onShare?: () => void
+  sharing?: boolean // share in progress: the icon spins and disables
 }) {
-  const net = parseFloat(stats.netPnl)
-  const winPct = Math.round(stats.winRate * 100)
+  const card = buildCardModel(stats)
 
   return (
-    // @container: the card sizes its text + padding off its OWN width (cqi), not the viewport, so it
-    // shrinks gracefully in a narrow drawer instead of the big win-rate + P&L numbers colliding. The
-    // clamp maxes match the original sizes, so at a normal width it looks exactly as before.
+    // @container: the card sizes text + padding off its OWN width (cqi), not the viewport, so it shrinks
+    // gracefully in a narrow drawer instead of numbers colliding. Clamp maxes match the original sizes, so a normal width looks exactly as before.
     <div className="trader-bezel @container overflow-hidden rounded-[26px] p-2.5">
       <CardHeader />
       <div className="trader-screen relative overflow-hidden rounded-[18px] p-[clamp(13px,5cqi,20px)]">
@@ -42,36 +48,58 @@ export function StatsCard({
               className="shrink-0 ring-1 ring-white/15"
             />
             <div className="min-w-0 truncate text-[clamp(17px,6cqi,24px)] font-extrabold leading-tight text-white">{displayName}</div>
+            {card.title && (
+              <span className="shrink-0 rounded-md border border-brand-400/30 bg-brand-400/15 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.1em] text-brand-400">
+                {card.title}
+              </span>
+            )}
           </div>
-          {onEdit && (
-            <button
-              type="button"
-              onClick={onEdit}
-              aria-label="Change your handle"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.1] text-white/80 transition active:scale-90"
-            >
-              <Pencil className="h-[18px] w-[18px]" strokeWidth={2.4} />
-            </button>
-          )}
+          <div className="flex shrink-0 items-center gap-2">
+            {onShare && (
+              <button
+                type="button"
+                onClick={onShare}
+                disabled={sharing}
+                aria-label="Share your card"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.1] text-white/80 transition active:scale-90 disabled:opacity-60"
+              >
+                {sharing ? (
+                  <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={2.4} />
+                ) : (
+                  <Share2 className="h-[18px] w-[18px]" strokeWidth={2.4} />
+                )}
+              </button>
+            )}
+            {onEdit && (
+              <button
+                type="button"
+                onClick={onEdit}
+                aria-label="Change your handle"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.1] text-white/80 transition active:scale-90"
+              >
+                <Pencil className="h-[18px] w-[18px]" strokeWidth={2.4} />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="mt-[clamp(12px,5cqi,20px)] flex items-end justify-between gap-3">
           <div className="min-w-0">
-            <Label>Win rate</Label>
-            <div className="text-[clamp(32px,13cqi,52px)] font-extrabold leading-none text-brand-400">{winPct}%</div>
+            <Label>{card.hero.label}</Label>
+            <div className={cnm('tnum truncate text-[clamp(32px,13cqi,52px)] font-extrabold leading-none', toneText(card.hero.tone))}>{card.hero.value}</div>
           </div>
           <div className="min-w-0 text-right">
-            <Label>Net P&L</Label>
-            <div className={cnm('tnum truncate text-[clamp(18px,7.5cqi,30px)] font-extrabold leading-none', net >= 0 ? 'text-up' : 'text-down')}>
-              {net >= 0 ? '+' : '-'}${formatCompactMoney(stats.netPnl)}
+            <Label>{card.netPnl.label}</Label>
+            <div className={cnm('tnum truncate text-[clamp(18px,7.5cqi,30px)] font-extrabold leading-none', toneText(card.netPnl.tone))}>
+              {card.netPnl.value}
             </div>
           </div>
         </div>
 
         <div className="mt-4 grid grid-cols-3 divide-x divide-white/[0.08] overflow-hidden rounded-xl border border-white/[0.07] bg-black/40">
-          <Cell label="Plays" value={formatCompactCount(stats.gamesPlayed)} />
-          <Cell label="Volume" value={`$${formatCompactMoney(stats.totalVolume)}`} />
-          <Cell label="Streak" value={formatCompactCount(Math.max(0, stats.currentStreak))} />
+          {card.grid.map((c) => (
+            <Cell key={c.label} label={c.label} value={c.value} tone={c.tone} />
+          ))}
         </div>
       </div>
     </div>
@@ -96,11 +124,11 @@ function Label({ children }: { children: ReactNode }) {
   return <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/55">{children}</div>
 }
 
-function Cell({ label, value }: { label: string; value: string }): ReactNode {
+function Cell({ label, value, tone }: { label: string; value: string; tone: CardTone }): ReactNode {
   return (
     <div className="min-w-0 px-[clamp(8px,3cqi,12px)] py-2.5">
       <div className="text-[10px] font-bold uppercase tracking-[0.06em] text-white/55">{label}</div>
-      <div className="tnum mt-1 truncate text-[clamp(13px,4.3cqi,17px)] font-extrabold text-white">{value}</div>
+      <div className={cnm('tnum mt-1 truncate text-[clamp(13px,4.3cqi,17px)] font-extrabold', toneText(tone))}>{value}</div>
     </div>
   )
 }

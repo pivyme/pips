@@ -1,10 +1,8 @@
 import * as THREE from 'three'
 import { roundedRect, roundedRectPath, circlePath, frontZeroed, setBoxUVs } from './consoleGeo'
 
-// Pure geometry/mesh factories for the handheld's physical controls. Each builds its meshes, parents
-// them to the `device` group, registers raycast targets in `interactive`, and hands back only the
-// handles the canvas still needs (for the render loop, theming, geometry rebuilds, and the dev GUI).
-// ConsoleCanvas owns placement, the scene, the loop, and all interaction; this file owns the shapes.
+// Pure geometry/mesh factories for the handheld's controls: builds meshes, parents them to `device`,
+// registers raycast targets. ConsoleCanvas owns placement/scene/interaction; this file only owns shapes.
 
 export interface ButtonCfg {
   w: number; h: number; r: number; depth: number
@@ -43,8 +41,7 @@ function makeButton(
   return mesh
 }
 
-// The five face buttons (main, the two action pills, the two nav pills) plus their dark pocket floors.
-// Returns the meshes in BTN_PX order so the canvas can index them as bm[0..4].
+// The five face buttons (main, two action pills, two nav pills) plus their pocket floors; returned in BTN_PX order so the canvas indexes them as bm[0..4].
 export function createButtons(
   device: THREE.Group, interactive: THREE.Mesh[], matPocket: THREE.Material,
   buttons: ButtonCfg[], BTN_PX: { x: number; y: number }[],
@@ -59,7 +56,7 @@ export function createButtons(
     ),
   )
 
-  // pocket floors — dark inset plane visible in the gap between button edge and chamfered rim
+  // pocket floors: dark inset plane visible in the gap between button edge and chamfered rim
   bm.forEach((btn, i) => {
     const c = buttons[i]
     const pad = c.pad
@@ -75,8 +72,7 @@ export function createButtons(
   return bm
 }
 
-// Lathe knob: pocket floor, a chamfered bevel ring sloping into the recess, the ridged drag texture,
-// and the slab itself. Returns the slab/texture/material plus the rebuild closures the GUI drives.
+// Lathe knob: pocket floor, chamfered bevel ring, ridged drag texture, and the slab; returns handles plus the rebuild closures the GUI drives.
 export function createKnob(
   device: THREE.Group, interactive: THREE.Mesh[], matPocket: THREE.Material,
   matKnob: THREE.MeshStandardMaterial, kp: KnobParams, knobPocket: PocketCfg,
@@ -93,9 +89,8 @@ export function createKnob(
   knobFloor.receiveShadow = true
   device.add(knobFloor)
 
-  // pocket bevel — chamfered ring sloping from the body front face inward into the pocket, so the rim
-  // reads as a real machined recess. Outer ring matches the body hole (pocket pad), inner ring sits at
-  // the pocket edge one `pad` deep (45° slope).
+  // pocket bevel: a chamfered ring sloping from the front face into the pocket so the rim reads as a
+  // machined recess. Outer ring matches the body hole, inner ring sits `pad` deep (45 degree slope).
   {
     const ow = knobPocket.w + knobPocket.pad * 2
     const oh = knobPocket.h + knobPocket.pad * 2
@@ -175,8 +170,7 @@ export function createKnob(
   matKnobSlab.roughness = 0.88
   knobBump.repeat.set(kp.ridgeRepeat, 1)
 
-  // Quarter-circle rounds at each end of the profile. LatheGeometry has no flat cap faces, so the
-  // ridge bump never bleeds a UV stripe across a hard edge the way a capped cylinder does.
+  // Quarter-circle rounds at each end of the profile; LatheGeometry has no flat cap faces, so the ridge bump never bleeds a UV stripe like a capped cylinder would.
   function knobProfile(): THREE.Vector2[] {
     const { radius, height, edgeCurve: r } = kp
     const pts: THREE.Vector2[] = []
@@ -206,9 +200,8 @@ export function createKnob(
   return { knobSlab, knobBump, matKnobSlab, redrawBump, knobProfile }
 }
 
-// Compact number drum: pocket floor, a black beveled housing, and a curved drum on a horizontal axle
-// whose values wrap around the face like a mechanical counter. The canvas hangs the digit labels off
-// `numberWheelRoll` and spins it in the loop.
+// Compact number drum: pocket floor, beveled housing, and a curved drum on a horizontal axle whose
+// values wrap like a mechanical counter. The canvas hangs digit labels off `numberWheelRoll` and spins it.
 export function createNumberWheel(
   device: THREE.Group, interactive: THREE.Mesh[], matPocket: THREE.Material,
   numberWheelPocket: PocketCfg, wx: Px, wy: Px, bodyZ: number,
@@ -255,21 +248,17 @@ export function createNumberWheel(
   return { numberWheelHousing, numberWheelRoll, numberWheelDrum }
 }
 
-// Turns the two flat action caps into framed mini-screens: a machined metal bezel mounted on the body
-// (with corner screws), the cap recessed inside it as the lit LCD, and a glossy domed acrylic window
-// over it. The bezel stays put; the cap + acrylic press together (the acrylic is parented to the cap).
-// The cap itself is still bm[i], so it stays the raycast target and the canvas drives its screen color.
+// Turns the flat action caps into framed mini-screens: a metal bezel, the cap recessed as the lit LCD,
+// and a domed acrylic window parented to the cap. The cap stays bm[i], still the raycast target.
 export function createActionScreens(
   device: THREE.Group, bm: THREE.Mesh[], indices: number[],
   buttons: ButtonCfg[], BTN_PX: { x: number; y: number }[], wx: Px, wy: Px,
-  // The screen overlays (scanlines, sheen, bloom) draw depth-test-free so the label stays crisp over
-  // the glossy acrylic. That makes them bleed through the body/knob when the device is spun. The export
-  // tool spins it, so it opts into real occlusion to keep the side views clean.
+  // Screen overlays draw depth-test-free so the label stays crisp over the glossy acrylic, but that
+  // bleeds through the body when spun. The export tool opts into real occlusion (`occlude`) to fix this.
   occlude = false,
 ): { dispose(): void; glow: Record<number, THREE.MeshBasicMaterial> } {
   const trash: { dispose(): void }[] = []
-  // Shared so both screens read as the same part. No envMap in the scene, so metalness stays moderate
-  // and the beveled edges do the light-catching; a fully metallic frame would just go black.
+  // Shared so both screens read as the same part; no envMap in the scene, so metalness stays moderate (fully metallic would go black).
   const bezelMat = new THREE.MeshStandardMaterial({ color: 0x44474e, metalness: 0.82, roughness: 0.34 })
   const screwMat = new THREE.MeshStandardMaterial({ color: 0x767a83, metalness: 0.9, roughness: 0.28 })
   const screwGeo = new THREE.CylinderGeometry(0.032, 0.038, 0.04, 16)
@@ -278,8 +267,7 @@ export function createActionScreens(
 
   const FRAME = 0.1 // metal rim thickness: just enough to read as a machined bezel, screen takes the rest
 
-  // Faint glass glint: just a hint of acrylic catching the upper-left key light. Kept low so it reads
-  // as a sheen on the cover, not a glare blowing out the screen.
+  // Faint glass glint from the upper-left key light, kept low so it reads as a sheen, not a glare blowing out the screen.
   const sheenCanvas = document.createElement('canvas')
   sheenCanvas.width = sheenCanvas.height = 256
   const sg = sheenCanvas.getContext('2d')!
@@ -298,8 +286,7 @@ export function createActionScreens(
   const sheenGeo = new THREE.PlaneGeometry(1, 1)
   trash.push(sheenTex, sheenMat, sheenGeo)
 
-  // CRT face: fine horizontal scanlines plus an edge vignette, baked once and overlaid on every screen.
-  // Darkening the lit color in bands and at the rim is what makes it read as a real display behind glass.
+  // CRT face: horizontal scanlines + edge vignette baked once, darkening the lit color in bands so it reads as a real display behind glass.
   const crtCanvas = document.createElement('canvas')
   crtCanvas.width = crtCanvas.height = 256
   const cg = crtCanvas.getContext('2d')!
@@ -317,9 +304,8 @@ export function createActionScreens(
   const crtGeo = new THREE.PlaneGeometry(1, 1)
   trash.push(crtTex, crtMat, crtGeo)
 
-  // Bloom: a soft glow that bleeds the screen color past the window onto the frame, the light spill a
-  // lit display gives off. One per screen so the canvas can tint it live (a dark neutral screen tints
-  // it near-black, so it barely glows; green/red glow strongly, for free).
+  // Bloom: a soft glow bleeding the screen color onto the frame, the light spill a lit display gives
+  // off. One per screen, tinted live by the canvas so a dark screen barely glows, green/red strongly.
   const haloCanvas = document.createElement('canvas')
   haloCanvas.width = haloCanvas.height = 128
   const hg = haloCanvas.getContext('2d')!
@@ -351,9 +337,8 @@ export function createActionScreens(
     device.add(bezel)
     trash.push(bezelGeo)
 
-    // Four corner screws, the machined detail the references lean on. Tiny and low so they read as
-    // hardware, not buttons. Seated on the diagonal midline of the frame corner so they sit centered,
-    // not crowding the inner window edge.
+    // Four corner screws, the machined detail the references lean on, tiny and low so they read as
+    // hardware not buttons. Seated on the frame corner's diagonal midline so they don't crowd the window edge.
     const sx = outerW / 2 - 0.095, sy = outerH / 2 - 0.095
     for (const [dx, dy] of [[-sx, sy], [sx, sy], [-sx, -sy], [sx, -sy]]) {
       const screw = new THREE.Mesh(screwGeo, screwMat)
@@ -362,9 +347,8 @@ export function createActionScreens(
       device.add(screw)
     }
 
-    // Domed acrylic window: a thin slab with a bevel wider than its depth so the top pillows and a
-    // single specular streak rolls across it (sells the gloss without an envMap). Clear, so the lit
-    // screen color reads straight through; parented to the cap so it sinks on press.
+    // Domed acrylic window: a bevel wider than its depth so the top pillows with a specular streak,
+    // selling the gloss without an envMap. Clear and parented to the cap, so it sinks on press.
     const acrGeo = frontZeroed(roundedRect(innerW - 0.04, innerH - 0.04, 0.16), 0.05, 0.07)
     const acrMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff, transparent: true, opacity: 0.16, depthWrite: false,
@@ -376,8 +360,7 @@ export function createActionScreens(
     bm[i].add(acrylic)
     trash.push(acrGeo, acrMat)
 
-    // CRT scanlines + vignette, on the screen face under the glass. The label (depth-test-free, drawn
-    // later) stays crisp over the lines.
+    // CRT scanlines + vignette on the screen face under the glass; the label (depth-test-free, drawn later) stays crisp over them.
     const crt = new THREE.Mesh(crtGeo, crtMat)
     crt.scale.set(innerW - 0.02, innerH - 0.02, 1)
     crt.position.z = acrylic.position.z - 0.02
@@ -408,12 +391,8 @@ export function createActionScreens(
   return { dispose: () => trash.forEach((t) => t.dispose()), glow }
 }
 
-// Back-of-device dress: a parting seam that wraps the whole side at the front/back shell joint, four
-// gunmetal corner screws, a drilled speaker grille, a louvered vent, a printed spec label, and a strap
-// eyelet. Everything is low-relief on the rear face (dark decals + raised hardware) so the panel never
-// needs a real cavity cut, and it all parents to the back panel (the seam to the device, since it lives
-// on the side) so it tracks the screen stretch and the flip. The canvas owns the colors (recolored per
-// theme) and re-seats the corner-anchored pieces via place() when the panel grows on a tall frame.
+// Back-of-device dress: parting seam, corner screws, speaker grille, vent, spec label, strap eyelet, all
+// low-relief so no cavity cut is needed. Parented to the back panel to track stretch/flip; canvas recolors per theme.
 const BD_FONT = '-apple-system,"Segoe UI",system-ui,sans-serif'
 
 export function createBackDetails(
@@ -434,10 +413,8 @@ export function createBackDetails(
 
   const WALL = (bodyW + 0.16) / 2 // the side wall sits ~here; features crown here to read without poking
 
-  /* side grip — a ribbed patch down the flat back-shell wall on each side: short vertical ribs whose
-     crown sits right at the wall surface, so they read as a grip texture from any side angle while the
-     crown never passes the front silhouette (the front stays untouched). Lives on `device` and rides the
-     body center; re-seated with the seam when it grows. */
+  /* side grip: ribbed patch on each back-shell wall, crown at the wall surface so it reads as grip
+     texture without passing the front silhouette. Lives on `device`, re-seated with the seam on grow. */
   const gripGroup = new THREE.Group()
   device.add(gripGroup)
   const ribR = 0.03
@@ -451,10 +428,8 @@ export function createBackDetails(
       gripGroup.add(rib)
     }
 
-  /* parting seam — a recessed line on the body outline, its crown at the side-wall surface so it reads
-     as a crisp parting groove, yet still tucked under the front silhouette. Follows the rounded-rect
-     perimeter; rebuilt when the height grows. Lives on `device`, not the back panel, so it shows on the
-     side through the whole spin, not only when flipped. */
+  /* parting seam: a recessed line on the body outline, crown at the side-wall surface, tucked under
+     the front silhouette. Lives on `device` (not the back panel), so it shows through the whole spin, not just when flipped. */
   let seam: THREE.Mesh | null = null
   const SEAM_R = 0.032
   function buildSeamGeo(ext: number) {
@@ -504,9 +479,8 @@ export function createBackDetails(
     screwGroups.push(g)
   }
 
-  /* speaker grille — a thin shell-tone boss that stands proud of the back with a cluster of real
-     punched holes (true extrude openings, chamfered so the rims catch light), over a dark backing the
-     holes reveal. The depth is genuine: you look down each hole onto the dark cavity floor. */
+  /* speaker grille: a shell-tone boss standing proud of the back with real punched holes (chamfered so
+     rims catch light), over a dark backing. The depth is genuine, you look down each hole onto the cavity floor. */
   const grilleGroup = new THREE.Group()
   backPanel.add(grilleGroup)
   const padW = 1.9
@@ -540,7 +514,7 @@ export function createBackDetails(
   grilleGroup.add(bossMesh)
   trash.push(bossGeo)
 
-  /* vent — a short centered run of dark louver slots near the bottom edge. */
+  /* vent: a short centered run of dark louver slots near the bottom edge. */
   const ventGroup = new THREE.Group()
   backPanel.add(ventGroup)
   const ventGeo = new THREE.ShapeGeometry(roundedRect(0.045, 0.46, 0.022), 4)
@@ -556,8 +530,7 @@ export function createBackDetails(
   ventGroup.add(vents)
   trash.push(vents)
 
-  /* spec label — printed silkscreen block (model no + a fine line + a regulatory row), faced toward
-     the rear so it reads when the device is flipped. Recolored to the theme's label ink. */
+  /* spec label: printed silkscreen block (model no, fine line, regulatory row), faced toward the rear so it reads when flipped, recolored to the theme's label ink. */
   const labelGroup = new THREE.Group()
   backPanel.add(labelGroup)
   const lc = document.createElement('canvas')
@@ -588,8 +561,7 @@ export function createBackDetails(
   labelGroup.add(lplane)
   trash.push(ltex, lplaneGeo, lmat)
 
-  // Re-seat the corner/edge-anchored pieces against the current panel half-extents, and float every
-  // decal just proud of the rear face (faceZ is the most-negative panel z, so proud is faceZ - eps).
+  // Re-seats the corner/edge-anchored pieces against the current panel half-extents; decals float just proud of the rear face (faceZ - eps).
   function place(halfW: number, halfH: number, faceZ: number) {
     const inset = 0.5
     const sx = halfW - inset
@@ -619,14 +591,8 @@ export function createBackDetails(
   return { place, rebuildSeam, recolorInk, dispose }
 }
 
-// The guts. Built once, parented to `device`, hidden until a transparent (Nothing-style) skin is on.
-// Sits in a thin slab between the two shells (z ~ -0.62..-0.28) so it reads as packed inside the case
-// once the body goes to frosted acrylic. Coordinates are body-local (origin at the body center). The
-// screen L-cutout only ever grows UPWARD in Y (never in X), so the bottom deck (below the screen) and
-// the two side frames (beside it in X) are always safe to fill without occluding the live HTML screen.
-// It frames the screen on three sides with black PCB and stacks real mechanical parts, battery, RF
-// shield cans, copper coil, electrolytic caps, a vibration motor, ribbon and glyph light strips, for
-// parallax and weight through the frost.
+// The guts: built once, parented to `device`, hidden until a transparent skin is on. Coordinates are
+// body-local; the screen L-cutout only ever grows UPWARD in Y (never X), so the bottom deck and side frames are always safe to fill without occluding the live HTML screen.
 export function createInternals(device: THREE.Group, accent: string, full: boolean) {
   const group = new THREE.Group()
   group.visible = false
@@ -725,12 +691,8 @@ export function createInternals(device: THREE.Group, accent: string, full: boole
   const matLed = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1.35, roughness: 0.4 }) // glyph glow
   trash.push(matPcb, matCopper, matGold, matIc, matCell, matShield, matRibbon, matMetal, matCap, matAccent, matLed)
 
-  // HARD screen clearance. The L-cutout in body-local is x[-2.775,2.775]; its left column drops to
-  // y -2.75, its right column only to y -0.975 (the notch below it is body). The screen only grows in
-  // Y, never X, so the side frames are always safe. NOTHING may enter the cutout, so every part is kept
-  // clear of these with real margin (the rounded rim overlaps the live HTML screen):
-  //   deck parts keep their TOP <= -3.05 ; notch parts keep their TOP <= -1.2 ; side parts center on
-  //   |x| = FRAME_X with width <= ~0.18 so their inner edge stays ~0.13 off the screen sides.
+  // HARD screen clearance: the L-cutout in body-local is x[-2.775,2.775], y down to -2.75 (left column)
+  // or -0.975 (right). Deck parts stay TOP <= -3.05, notch parts TOP <= -1.2, side parts at |x|=FRAME_X width <= 0.18.
   const FRAME_X = 3.0
 
   // --- the boards: bottom deck + notch (behind the play button) + two side strips framing the screen ---
@@ -766,8 +728,7 @@ export function createInternals(device: THREE.Group, accent: string, full: boole
   const chipBig = G(frontZeroed(roundedRect(0.58, 0.42, 0.04), 0.07, 0.012))
   const pinGeo = G(new THREE.BoxGeometry(0.58, 0.05, 0.03))
 
-  // densely dress each side frame strip: a running column of small ICs + chip passives + connectors,
-  // all width-capped and pinned to the frame edge so nothing creeps onto the screen.
+  // Densely dress each side frame strip: small ICs + chip passives + connectors, width-capped and pinned to the frame edge so nothing creeps onto the screen.
   const smdIc = G(frontZeroed(roundedRect(0.16, 0.13, 0.025), 0.045, 0.008))
   const r04 = G(new THREE.BoxGeometry(0.1, 0.06, 0.04)) // 0402-style chip resistor/cap
   const sideConn = G(frontZeroed(roundedRect(0.16, 0.13, 0.03), 0.06, 0.008))
@@ -815,8 +776,7 @@ export function createInternals(device: THREE.Group, accent: string, full: boole
   cap(2.5, -1.5) // top -1.4
   cap(1.15, -1.55) // top -1.45
 
-  // --- top frame: a slim board with the selfie-camera module, sensor, earpiece bar + SMD row + glyph.
-  // Gated to showcase contexts; the live screen can grow up into this band, so a played skin skips it. ---
+  // --- top frame: selfie-camera module, sensor, earpiece bar, SMD row, glyph. Gated to showcase; a played skin's screen can grow into this band. ---
   if (full) {
     const topBoard = G(new THREE.ShapeGeometry(roundedRect(5.4, 0.28, 0.07), 12))
     setBoxUVs(topBoard)
@@ -832,8 +792,7 @@ export function createInternals(device: THREE.Group, accent: string, full: boole
     M(G(frontZeroed(roundedRect(0.28, 0.14, 0.03), 0.06, 0.008)), matAccent, 2.3, 5.82, LOW + 0.05)
   }
 
-  // --- glyph lighting: the signature Nothing light. Brighter emissive runs down both frames, a ring
-  // around the charging coil and a bar along the bottom edge. All clear of the screen. ---
+  // --- glyph lighting: brighter emissive runs down both frames, a ring around the coil, a bar along the bottom edge, all clear of the screen. ---
   const led = (w: number, h: number, x: number, y: number) =>
     M(G(frontZeroed(roundedRect(w, h, Math.min(w, h) / 2), 0.04, 0.01)), matLed, x, y, LED_Z)
   led(0.1, 7.4, -FRAME_X, 1.1) // left frame glyph

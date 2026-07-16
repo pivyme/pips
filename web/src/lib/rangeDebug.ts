@@ -1,10 +1,5 @@
-// RANGE console audit. At each lifecycle moment (PLAY press, OPEN, LOCK, SETTLE / CASH OUT) it prints
-// the number the UI showed next to the value the chain actually recorded, plus the delta, so a devnet
-// round can be checked end to end against Predict. Every "On-chain" column is sourced from the chain:
-// entrySpot = the oracle read at entry, multiplier + cost = the mint receipt, lock/settle = the oracle
-// settlement price, payout = the redeem event. The backend price bus now pins the chart line to the
-// oracle level, so overlays are drawn raw (no client feed offset) and the UI value == the on-chain one.
-// On by default; silence with `localStorage.pips_range_debug = '0'` (re-enable with '1').
+// RANGE console audit: at each lifecycle moment (PLAY, OPEN, LOCK, SETTLE/CASH OUT) prints the UI-shown number next
+// to the chain-recorded one plus the delta, so a devnet round can be checked end to end. On by default; silence with `localStorage.pips_range_debug = '0'`.
 
 import type { PlayDTO } from './api'
 
@@ -80,9 +75,8 @@ export function entry(it: RangeEntryIntent): void {
   )
 }
 
-// OPEN: the mint confirmed. Compare the entry, multiplier, and cost the UI promised against what
-// minted on-chain. Overlays are drawn raw (the backend pins the line to the oracle), so the on-chain
-// band IS what the chart shows.
+// OPEN: the mint confirmed, compares the entry/multiplier/cost the UI promised against what minted on-chain.
+// Overlays are drawn raw (the backend pins the line to the oracle), so the on-chain band IS what the chart shows.
 export function open(play: PlayDTO, it: RangeEntryIntent | null): void {
   if (!enabled()) return
   const entry = num(play.entrySpot)
@@ -121,8 +115,7 @@ export function open(play: PlayDTO, it: RangeEntryIntent | null): void {
   console.groupEnd()
 }
 
-// LOCK: the round entered the freeze window and the chain froze its settlement price. The chart keeps
-// walking, so show how far the live line has drifted from the locked value and the predicted verdict.
+// LOCK: the chain froze its settlement price while the chart keeps walking; shows the drift from the locked value and the predicted verdict.
 export function lock(
   play: PlayDTO,
   opts: { uiLivePrice: number; predictedInZone: boolean | null },
@@ -146,9 +139,8 @@ export function lock(
   console.groupEnd()
 }
 
-// SETTLE / CASH OUT: the terminal frame. Validate the UI's predicted outcome against the chain verdict,
-// confirm the early-locked price equals the final settlement, and compare the shown payout to the
-// redeem event. Mismatches are flagged with ⚠ so a drift is obvious at a glance.
+// SETTLE / CASH OUT: the terminal frame, validates the UI's predicted outcome against the chain verdict, confirms
+// the early-locked price equals final settlement, and compares payout to the redeem event. Mismatches flagged with ⚠.
 export function result(
   play: PlayDTO,
   opts: {

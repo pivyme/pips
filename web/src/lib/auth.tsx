@@ -1,8 +1,5 @@
-// Auth context. One token, two modes. dev auto-logs-in the testing wallet on load; privy runs the
-// Google/email login + non-custodial embedded Sui wallet handshake so our JWT-protected API works.
-// The token lives in localStorage and is mirrored into the api client so every request carries it.
-// The Privy hooks live inside PrivyProvider, so privy mode is driven by a bridge (lib/privy.tsx)
-// that talks to this context through AuthControlContext. dev + demo never touch Privy.
+// Auth context. One token, two modes: dev auto-logs-in the testing wallet; privy runs the Google/email
+// + embedded Sui wallet handshake through a bridge (lib/privy.tsx, AuthControlContext), since Privy's hooks must live inside PrivyProvider.
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -44,8 +41,7 @@ export const isSessionRejected = (e: unknown): e is ApiError => e instanceof Api
 
 type AuthStatus = 'loading' | 'authed' | 'anon' | 'error'
 
-// What blew up during sign-in, kept around so the door can show a real reason (and a contact link)
-// instead of a generic toast. `details` is the backend's underlying cause (dev only).
+// What blew up during sign-in, so the door can show a real reason instead of a generic toast. `details` is the backend's cause (dev only).
 export interface AuthError {
   code?: string
   message: string
@@ -67,8 +63,7 @@ interface AuthContextValue {
   // True while re-provisioning a re-armed session in place (drives the recovery overlay).
   recovering: boolean
   signIn: () => Promise<void>
-  // Native Sui wallet connect (custodial login): connect the wallet, sign the nonce, verify. The
-  // wallet object comes from the door's picker. Throws on cancel/failure so the caller can react.
+  // Native Sui wallet connect (custodial login): connect, sign the nonce, verify; throws on cancel/failure.
   signInWithWallet: (wallet: SuiWallet) => Promise<void>
   signOut: () => void
   refresh: () => Promise<void>
@@ -76,8 +71,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
-// Internal seam for the Privy bridge: apply a session, set status, and register Privy's own
-// login/logout so signIn/signOut can drive them. Not part of the public auth surface.
+// Internal seam for the Privy bridge: apply a session, set status, and register Privy's login/logout. Not part of the public auth surface.
 interface AuthControl {
   apply: (token: string, user: UserDTO) => void
   // Second arg carries the failure reason when moving to 'error'; cleared on any other status.
@@ -93,35 +87,26 @@ export function useAuthControl(): AuthControl {
 
 const isPrivy = env.VITE_AUTH_MODE === 'privy'
 
-// After a devnet refresh the backend re-arms every user: the on-chain PredictManager is nulled and
-// chips/gas are re-issued on the next login. A live session then carries a stale null manager, so
-// every play 409s MANAGER_NOT_READY. /auth/me reports managerReady; when it comes back false we
-// self-heal in place (POST /auth/heal re-provisions server-side) behind a brief overlay. We NEVER
-// log the user out for this: if the heal can't restore the manager yet (the backend isn't on the
-// fresh deploy), we keep them signed in and just retry later. A healthy login is never managerLost,
-// so onboarding and the normal first run never touch this path.
+// After a devnet refresh every user re-arms (PredictManager nulled), so a live session 409s MANAGER_NOT_READY
+// until POST /auth/heal re-provisions it in place; never sign out for this, just stay signed in and retry later.
 const managerLost = (u: UserDTO): boolean => !isDemo() && !u.managerReady
-// After a heal that couldn't restore the manager, wait this long before another attempt, so a player
-// hammering PLAY doesn't reopen the overlay on every tap. The periodic refresh retries past it.
+// Backoff after a failed heal, so a player hammering PLAY doesn't reopen the overlay on every tap.
 const HEAL_BACKOFF_MS = 15_000
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading')
   const [user, setUser] = useState<UserDTO | null>(null)
   const [error, setError] = useState<AuthError | null>(null)
-  // True while self-healing a re-armed session (see recoverSession). Drives a thin "getting your
-  // account ready" overlay so the heal is seamless, not a flash of broken plays.
+  // True while self-healing a re-armed session (recoverSession); drives the "getting your account ready" overlay.
   const [recovering, setRecovering] = useState(false)
   const started = useRef(false)
   const privyControl = useRef<{ signIn: () => Promise<void>; signOut: () => Promise<void> } | null>(null)
-  // Single-flights the heal so a burst of MANAGER_NOT_READY 409s (a frustrated player tapping PLAY)
-  // triggers one recovery, not many.
+  // Single-flights the heal so a burst of MANAGER_NOT_READY 409s triggers one recovery, not many.
   const recoveringRef = useRef(false)
   // Epoch ms until which we skip heal attempts after one that couldn't restore the manager.
   const healBackoffUntil = useRef(0)
 
-  // Single entry point for status + error so the two never drift: an error carries a reason and
-  // clears on any healthy transition.
+  // Single entry point for status + error so the two never drift: error clears on any healthy transition.
   const move = useCallback((s: AuthStatus, err?: AuthError | null) => {
     setError(s === 'error' ? err ?? { message: 'Could not sign you in. Please try again.' } : null)
     setStatus(s)
@@ -134,9 +119,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthToken(token)
     setUser(u)
     move('authed')
-    // The backend only ever attributes a stashed referral on account creation, so this is safe to
-    // clear unconditionally: a real attribution already landed, and a no-op resolve just leaves a
-    // stale code around for no reason.
+    // The backend only attributes a stashed referral on account creation, so clearing it unconditionally
+    // is safe: real attribution already landed, a no-op resolve just leaves a stale code around.
     clearRef()
   }, [move])
 
@@ -146,9 +130,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [apply])
 
   const signOut = useCallback(async () => {
-    // Await Privy's logout so the session is fully cleared before the door shows again. Fire-and-forget
-    // left Privy still authenticated, so the next login skipped the modal and the bridge silently
-    // re-authed the same account. Then drop our app session.
+    // Await Privy's logout fully before dropping our session: fire-and-forget left Privy still
+    // authenticated, so the next login skipped the modal and silently re-authed the same account.
     if (isPrivy && privyControl.current) {
       try {
         await privyControl.current.signOut()
@@ -161,11 +144,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     move('anon')
   }, [move])
 
-  // Self-heal a re-armed session in place: ask the backend to re-provision (new PredictManager +
-  // re-funded chips) and adopt the fresh user, behind a brief overlay so the player never sees the
-  // broken state. Always runs in the background of an already-authed session, so it never changes
-  // status and never signs anyone out: if the heal can't restore the manager yet (the backend isn't
-  // on the fresh deploy), we keep the user signed in, back off, and the periodic refresh retries.
+  // Self-heal a re-armed session: ask the backend to re-provision (new PredictManager + chips) behind a
+  // brief overlay. Never changes status or signs out; if it can't heal yet, stay signed in and back off.
   const recoverSession = useCallback(async () => {
     if (recoveringRef.current || Date.now() < healBackoffUntil.current) return
     recoveringRef.current = true
@@ -200,9 +180,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = useCallback(async () => {
     setError(null) // a fresh attempt clears the last failure so the error sheet drops
-    // A failed Privy verify can leave the provider session alive while our own app session never
-    // lands. The next "login" is then not a real restart, Privy just says the user is already in.
-    // Tear the provider session down on retry so START always means a fresh auth pass.
+    // A failed Privy verify can leave the provider session alive while our app session never lands, so
+    // the next "login" isn't a real restart. Tear it down on retry so START always means a fresh pass.
     if (isPrivy && status === 'error' && privyControl.current) {
       try {
         await privyControl.current.signOut()
@@ -227,9 +206,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [apply, devLogin, move, status])
 
-  // Wallet-connect: connect -> ask the backend for a nonce -> sign it with the wallet -> verify ->
-  // apply the session. Demo never uses this (the door hides it). No bridge needed, the Wallet
-  // Standard is plain async, so this lives directly in the context.
+  // Wallet-connect: connect -> nonce -> sign -> verify -> apply session. Demo never uses this (door
+  // hides it); no bridge needed, the Wallet Standard is plain async so it lives directly here.
   const signInWithWallet = useCallback(async (wallet: SuiWallet) => {
     const account = await connectWallet(wallet)
     const { message } = await api.authWalletNonce(account.address)
@@ -238,9 +216,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     apply(token, u)
   }, [apply])
 
-  // The instant case: a play (or any call) that 409s MANAGER_NOT_READY means this session's manager
-  // was re-armed away. Heal on the first one (recoverSession single-flights, so the burst of 409s
-  // from a player tapping PLAY collapses to one recovery).
+  // Any call 409ing MANAGER_NOT_READY means this session's manager was re-armed away; heal on the first
+  // one (recoverSession single-flights, so a burst of 409s collapses to one recovery).
   useEffect(() => {
     if (isDemo()) return
     setManagerNotReadyHandler(() => void recoverSession())
@@ -287,9 +264,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [address])
 
-  // Keep the globally displayed available balance current even when funds move outside the active
-  // game screen (external deposits, another tab, or a background settlement). Each refresh reads
-  // wallet DUSDC + PredictManager cash directly from chain.
+  // Keep the displayed balance current even when funds move outside the active game screen (external
+  // deposits, another tab, background settlement); each refresh reads wallet + manager cash from chain.
   useEffect(() => {
     if (status !== 'authed' || isDemo()) return
     const onFocus = () => void refresh()
@@ -344,13 +320,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return
       }
 
-      // privy: the bridge resolves status from the live Privy session (anon, or run the verify
-      // handshake once Privy is ready). Stay 'loading' until it does.
+      // privy: the bridge resolves status from the live Privy session; stay 'loading' until it does.
     })()
   }, [apply, devLogin, move, fail, recoverSession])
 
-  // Stable so the Privy bridge's effects don't re-run every render (an unstable control made the
-  // bridge re-assert 'anon' right after a wallet login set 'authed', bouncing the user to the door).
+  // Stable so the bridge's effects don't re-run every render (was bouncing a fresh wallet login back to the door).
   const registerPrivy = useCallback((c: { signIn: () => Promise<void>; signOut: () => Promise<void> } | null) => {
     privyControl.current = c
   }, [])

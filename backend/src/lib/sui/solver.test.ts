@@ -1,7 +1,5 @@
-// Tier -> strike solver tests (LUCKY.md §5). Chain-free: a mock preview models the live
-// Predict price so we can assert the solver picks the grid strike whose real multiple matches
-// the tier, sizes quantity so cost lands at the bet, reports the honest solved multiple, and
-// falls back to the closest achievable tier when the requested one is past the ask bounds.
+// Tier -> strike solver tests (LUCKY.md §5). Chain-free: a mock preview models the live Predict price.
+// Asserts the solver picks the strike matching the tier's real multiple, sizes quantity to the bet, and falls back to the closest achievable tier past the ask bounds.
 
 import { describe, expect, it } from 'bun:test';
 
@@ -14,11 +12,8 @@ const SPOT = usd1e9(100); // $100 spot
 const GRID: Grid = { tick: TICK, min: usd1e9(1), max: usd1e9(1) + TICK * 499n }; // 500-tick grid
 const BET = toDusdcRaw(10); // $10 bet
 
-// Model the binary ITM probability as a logistic of the strike's distance from spot, so the
-// per-unit multiple (1 / ask, ask = ITM probability) is monotonic in the strike for each side:
-// up pays bigger the further the strike is ABOVE spot, down the further BELOW. An optional ask
-// floor makes deep-OTM strikes unmintable (null), which is how we exercise the fallback path.
-// Batched: the solver hands a list of probes and gets results aligned to it, one round trip.
+// Models binary ITM probability as a logistic of strike distance from spot, so the per-unit multiple (1/ask) is monotonic per side: up pays more the further ABOVE spot, down the further BELOW.
+// An optional ask floor makes deep-OTM strikes unmintable (null) to exercise the fallback path; batched so the solver gets aligned results in one round trip.
 function mockPreview(side: Side, opts: { k?: number; mintFloorAsk?: number } = {}): BatchPreviewFn {
   const k = opts.k ?? 8;
   const floor = opts.mintFloorAsk ?? 0;
