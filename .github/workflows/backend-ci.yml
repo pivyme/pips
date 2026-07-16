@@ -1,0 +1,39 @@
+name: backend-ci
+
+# Typecheck, lint, and unit-test the backend on any change under backend/. No live DB or real
+# secrets are needed: main-config.ts only requires DATABASE_URL/JWT_SECRET to be PRESENT (the
+# placeholders below satisfy that), and no test opens a Postgres connection. signer.ts loads an
+# operator key at import time (a deliberate fail-fast), so a throwaway key is generated per run
+# purely to let the module graph initialize; it signs nothing and controls no funds on any chain.
+
+on:
+  push:
+    paths: ['backend/**']
+  pull_request:
+    paths: ['backend/**']
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci_placeholder
+      JWT_SECRET: ci-placeholder-not-a-real-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      # The Prisma client generates into prisma/generated (gitignored) and prisma.ts imports it,
+      # so it must be regenerated before anything that typechecks, lints, or runs it.
+      - run: bun run db:generate
+      # Throwaway operator key so signer.ts's import-time load doesn't abort the module graph
+      # during `bun test`. 32 random bytes, base64: a valid ed25519 secret that controls nothing.
+      - name: Provision throwaway operator key for module init
+        run: echo "TESTING_WALLET_PK=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun test
