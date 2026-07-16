@@ -380,12 +380,38 @@ export function buildRedeemSettled(
   });
 }
 
+// plp::rebalance_expiry_cash: permissionlessly fund the routed market's payout backing from the pool
+// vault's idle liquidity (or initial-fund a freshly rolled, still-unfunded market). Mint only ASSERTS
+// backing, it never pulls pool cash (plp.move: "this is what makes a market mintable"), so a market
+// that just rolled on the 1-minute cadence, or whose backing was drained by open interest, is
+// un-mintable until someone rebalances it. All shared inputs, no Auth, so it folds cleanly into a
+// sponsored mint PTB ahead of the mint, and it is a no-op (top_up == 0) when backing is already at
+// target. Only added on the backing-abort retry, never on the healthy path (keeps the pool vault off
+// the common mint's mutable-input set, and off a valuation-in-progress window). Refs plp.move.
+export function buildRebalanceExpiryCash(tx: Transaction, marketId: string): void {
+  tx.moveCall({
+    target: realTarget(REAL_PREDICT_PACKAGE, 'plp', 'rebalance_expiry_cash'),
+    arguments: [
+      tx.object(REAL_POOL_VAULT_ID),
+      tx.object(marketId),
+      tx.object(REAL_PROTOCOL_CONFIG_ID),
+      tx.object(REAL_ORACLE_REGISTRY_ID),
+      tx.object(btcFeeds().pyth),
+      tx.object(REAL_CLOCK),
+    ],
+  });
+}
+
 // === Play-shaped composition (one PTB) ===
 
 export type MintPlayParams = {
   marketId: string;
   wrapperId: string; // the derived wrapper id (== derived address)
   wrapperExists: boolean; // false -> new+share is folded into this PTB
+  // Fund the market's payout backing from the pool vault before minting (plp::rebalance_expiry_cash).
+  // Set ONLY on a retry after the previous mint aborted on expiry_cash::assert_backing, so fund+mint is
+  // one atomic sponsored tx and the healthy path never touches the pool vault. See buildRebalanceExpiryCash.
+  rebalanceBacking?: boolean;
   depositRaw: bigint; // wallet DUSDC to fold into the internal balance first (0 = mint from existing chips)
   amountRaw: bigint; // net-premium budget for mint_exact_amount (<= internal balance, leaving fee headroom)
   minQuantityRaw: bigint;
@@ -414,6 +440,11 @@ export function buildMintPlay(tx: Transaction, p: MintPlayParams): void {
         target: realTarget(REAL_ACCOUNT_PACKAGE, 'account_registry', 'new'),
         arguments: [tx.object(REAL_ACCOUNT_REGISTRY_ID)],
       });
+
+  // Backing self-heal (retry only): top the market's payout backing from the pool vault before the mint
+  // asserts it. Mutations within one PTB are visible to later commands, so the mint below sees the funded
+  // cash_balance. No-op when backing is already sufficient.
+  if (p.rebalanceBacking) buildRebalanceExpiryCash(tx, p.marketId);
 
   if (p.depositRaw > 0n) {
     const coin = coinWithBalance({ type: DUSDC_TYPE, balance: p.depositRaw })(tx);

@@ -6,11 +6,7 @@ import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyReque
 
 import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
-import { EXPIRY_SAFETY_MS, GAME_DURATIONS } from '../config/main-config.ts';
-import { allMarkets, tradeableMarkets } from '../lib/sui/markets.ts';
-import { sponsorPaused } from '../lib/sui/play-safety.ts';
-import { gameSpot } from '../lib/game-price.ts';
-import { PYTH_FEED_IDS } from '../lib/pyth.ts';
+import { buildMarketsPayload } from '../lib/markets-feed.ts';
 import { PlayError, httpStatusForPlayError, quoteRangeBatch } from '../services/games.ts';
 import {
   createPlay,
@@ -19,18 +15,9 @@ import {
   getPlay,
   type CreatePlayInput,
 } from '../services/plays.ts';
-import type { Game, MarketDTO } from '../types/api.ts';
+import type { Game } from '../types/api.ts';
 
 const GAMES: Game[] = ['lucky', 'range', 'moonshot'];
-
-// Stable display order for the market list. The live oracle set reshuffles as the ladder rolls
-// (oracles added/retired every few seconds), so without a fixed order the client's asset picker
-// would keep jumping to a different token. Unknown assets sort after these, alphabetically.
-const ASSET_ORDER = ['BTC', 'ETH', 'SOL', 'SUI', 'DEEP'];
-const assetRank = (a: string): number => {
-  const i = ASSET_ORDER.indexOf(a);
-  return i < 0 ? ASSET_ORDER.length : i;
-};
 
 // Funnel any thrown value to the envelope: PlayError keeps its friendly code, anything else
 // is a 500 we do not leak details of. A PlayError is an EXPECTED business outcome (no live market,
@@ -51,29 +38,15 @@ const fail = async (reply: FastifyReply, e: unknown, fallbackCode: string, fallb
 };
 
 export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
-  // The markets the games can trade right now. Spot comes from Pyth; `live` reflects whether
-  // an oracle is fresh and far enough from expiry to mint against. We list every priceable asset,
-  // not just the ones with a live oracle: real-Predict-testnet only stands up BTC oracles, but LUCKY
-  // stacks BTC/SUI/ETH charts and seeds each from this spot, so a display-only asset needs its spot
-  // here or its chart lags behind BTC's until the first WS tick lands (the "only BTC shows" bug).
-  // `live` stays oracle-driven, so a non-tradeable asset is charted but never dealt (canPlay unaffected).
+  // The markets the games can trade right now (first paint; live updates ride /stream/markets). The
+  // builder lists every priceable asset with an oracle-driven `live` flag, so display-only assets chart
+  // but never deal. See markets-feed.ts.
   app.get('/markets', { preHandler: [authMiddleware] }, async (_request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const now = Date.now();
-      const live = new Set(tradeableMarkets(now, EXPIRY_SAFETY_MS).map((m) => m.underlying));
-      const assets = [...new Set([...allMarkets().map((m) => m.underlying), ...Object.keys(PYTH_FEED_IDS)])].sort(
-        (a, b) => assetRank(a) - assetRank(b) || a.localeCompare(b),
-      );
-
-      const markets: MarketDTO[] = await Promise.all(
-        assets.map(async (asset) => {
-          const spot = await gameSpot(asset);
-          return { asset, spot: spot ? String(spot.price) : '0', durations: GAME_DURATIONS, live: live.has(asset) };
-        }),
-      );
-      // Real-mode sponsor-floor pause: a global flag the games poll (with the market set) so they can
-      // show a clear "topping up" state instead of letting a PLAY hard-fail. Always false in fork mode.
-      return reply.code(200).send({ success: true, error: null, data: { markets, playsPaused: sponsorPaused().paused } });
+      // One-shot for first paint; live updates ride /stream/markets. Same builder, so they never drift.
+      // The payload carries the real-mode sponsor-floor pause so a game can show "topping up" instead of
+      // letting a PLAY hard-fail (always false in fork mode).
+      return reply.code(200).send({ success: true, error: null, data: await buildMarketsPayload() });
     } catch (error) {
       return handleError(reply, 500, 'Could not load markets', 'MARKETS_FAILED', error as Error);
     }

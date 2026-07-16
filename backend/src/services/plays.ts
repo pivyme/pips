@@ -84,7 +84,7 @@ const roundLog = (msg: string): void => console.log(`\x1b[33m${msg}\x1b[0m`);
 // stay on the raw client, they never flip status so there is nothing to push.
 async function commitPlay(playId: string, data: Prisma.PlayUpdateInput): Promise<Play> {
   const updated = await prismaQuery.play.update({ where: { id: playId }, data });
-  publishPlay(playId);
+  publishPlay(playId, updated); // hand the fresh row through so the SSE pushes it with no DB re-read
   return updated;
 }
 
@@ -502,10 +502,19 @@ const isAdmissionAbort = (e: unknown): boolean =>
     e instanceof Error ? e.message : String(e),
   );
 
+// The routed expiry market's payout backing is below what this mint needs (expiry_cash::assert_backing,
+// abort 0): the market just rolled on the 1-minute cadence and Mysten's keeper hasn't funded it from the
+// pool vault yet, or open interest drained it. Mint only asserts backing, it never pulls pool cash, so
+// the recovery is to permissionlessly rebalance the market first (plp::rebalance_expiry_cash) then mint,
+// folded into one atomic PTB on the retry.
+const isBackingAbort = (e: unknown): boolean =>
+  /expiry_cash|assert_backing|EInsufficientBacking/i.test(e instanceof Error ? e.message : String(e));
+
 async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: bigint, rakeRaw: bigint, playId: string, input: CreatePlayInput): Promise<void> {
   let cur = resolved;
   const net = stakeRaw - rakeRaw; // sizing stake a re-route re-prices against (== stake at rake 0)
   let acct = user; // may lose a stale wrapper-id cache mid-flight (self-heal)
+  let rebalanceBacking = false; // set after an assert_backing abort: fund the market in the retry PTB
   try {
     const MAX_ATTEMPTS = 3;
     let lastErr: unknown;
@@ -533,6 +542,7 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
         marketId: cur.marketId,
         wrapperId: w.wrapperId,
         wrapperExists: w.exists,
+        rebalanceBacking,
         depositRaw,
         amountRaw: cur.amountRaw,
         minQuantityRaw: cur.minQuantityRaw,
@@ -600,6 +610,14 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
           await prismaQuery.play
             .update({ where: { id: playId }, data: cur.kind === 'binary' ? { leverage: 1, strike: cur.strikeDisplay } : { leverage: 1 } })
             .catch(() => {});
+          continue;
+        }
+        // Market backing short (freshly rolled / drained market Mysten hasn't funded): prepend a
+        // permissionless rebalance into the retry PTB so fund+mint lands atomically. Sticky once set, so
+        // every later attempt keeps funding; if it still aborts backing, the pool's idle liquidity is
+        // genuinely dry (unrecoverable here) and it falls through to error with chips safe.
+        if (isBackingAbort(e) && !rebalanceBacking) {
+          rebalanceBacking = true;
           continue;
         }
         if (isRetriableMint(e)) continue; // transient owned-coin version race: rebuild + resubmit

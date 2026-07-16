@@ -1,10 +1,12 @@
-// Play-bus contract. Pure and dependency-free (the module imports nothing), so this runs hermetically
-// with no DB / env. It locks the guarantees the event-driven play SSE relies on: publish notifies live
-// subscribers, unsubscribe stops delivery and frees the id, a publish to nobody is a harmless no-op, and
-// one throwing listener never starves the publisher or its siblings.
+// Play-bus contract. Runtime dependency-free (it imports only a type, erased at build), so this runs
+// hermetically with no DB / env. It locks the guarantees the event-driven play SSE relies on: publish
+// notifies live subscribers, carries the committed row through to them (so the SSE skips a DB read),
+// unsubscribe stops delivery and frees the id, a publish to nobody is a harmless no-op, and one throwing
+// listener never starves the publisher or its siblings.
 
 import { describe, expect, it } from 'bun:test';
 
+import type { Play } from '../../prisma/generated/client.js';
 import { onPlay, publishPlay } from './play-bus.ts';
 
 describe('play-bus', () => {
@@ -18,6 +20,22 @@ describe('play-bus', () => {
     expect(b).toBe(1);
     unA();
     unB();
+  });
+
+  it('hands the committed row through to subscribers, or undefined when omitted', () => {
+    let seen: Play | undefined = undefined;
+    let calls = 0;
+    const un = onPlay('p1', (row) => {
+      seen = row;
+      calls++;
+    });
+    const committed = { id: 'p1', status: 'open' } as Play;
+    publishPlay('p1', committed);
+    expect(seen).toBe(committed); // the SSE reads straight off this, no DB round trip
+    publishPlay('p1'); // a bulk sweep with no row in hand
+    expect(seen).toBeUndefined(); // the SSE falls back to reading the row itself
+    expect(calls).toBe(2);
+    un();
   });
 
   it('scopes delivery to the published id only', () => {

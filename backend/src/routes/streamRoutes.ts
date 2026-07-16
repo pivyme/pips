@@ -10,6 +10,7 @@ import { PLAY_STREAM_INTERVAL_MS } from '../config/main-config.ts';
 import { userFromToken } from '../services/auth.ts';
 import { displaySpot } from '../lib/price-bus.ts';
 import { onPlay } from '../lib/play-bus.ts';
+import { buildMarketsPayload, liveSetSignature } from '../lib/markets-feed.ts';
 import { getLiveMarkCached, toPlayDTO } from '../services/plays.ts';
 import { prismaQuery } from '../lib/prisma.ts';
 import { PYTH_FEED_IDS } from '../lib/pyth.ts';
@@ -184,17 +185,18 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
       return false;
     };
 
-    // Instant status push. The bus fires the moment a status write commits; read the one row and push it
-    // WITHOUT the live-mark devInspect (the felt live P/L is client-side chart-synced), so pending->open
-    // is one RTT. A pending->open row is pre-expiry and a terminal row is closed, so toPlayDTO takes no
-    // chain read on this path either. Never let a listener error escape into the bus.
-    const onEvent = async (): Promise<void> => {
+    // Instant status push. The bus fires the moment a status write commits, carrying the freshly committed
+    // row, so this pushes it with NO DB read on the hot path (a bulk sweep may omit the row, in which case
+    // read the one row). Push WITHOUT the live-mark devInspect (the felt live P/L is client-side
+    // chart-synced), so pending->open is one RTT. A pending->open row is pre-expiry and a terminal row is
+    // closed, so toPlayDTO takes no chain read here either. Never let a listener error escape into the bus.
+    const onEvent = async (row?: Play): Promise<void> => {
       if (closed) return;
-      const current = await prismaQuery.play.findUnique({ where: { id } }).catch(() => null);
+      const current = row ?? (await prismaQuery.play.findUnique({ where: { id } }).catch(() => null));
       if (closed || !current) return;
       await pushFrame(current);
     };
-    unsub = onPlay(id, () => void onEvent());
+    unsub = onPlay(id, (row) => void onEvent(row));
 
     // Mark cadence: the slow, chain-bound trickle P/L, and the safety net that re-reads status each tick
     // in case a bus emit was missed or came from another process. While open and pre-buzzer, refresh the
