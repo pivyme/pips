@@ -4,6 +4,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import FastifyCors from '@fastify/cors';
 import FastifyWebsocket from '@fastify/websocket';
 import FastifyRateLimit from '@fastify/rate-limit';
+import FastifyHelmet from '@fastify/helmet';
 import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, OPERATOR_ENABLED, IS_REAL_PREDICT, SHUTDOWN_TIMEOUT_MS, RATE_LIMIT_WINDOW, RATE_LIMIT_GLOBAL_MAX } from './src/config/main-config.ts';
 import { NETWORK, PUBLIC_PREDICT_PACKAGE, PUBLIC_PREDICT_OBJECT, DUSDC_TYPE } from './src/lib/sui/config.ts';
 import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
@@ -51,6 +52,10 @@ const fastify = Fastify({
   // errorHandler.ts's logged `ip` then reflect the real client IP (X-Forwarded-For) instead of the
   // proxy's. Revisit to a specific hop count if a CDN is ever added in front of Traefik.
   trustProxy: true,
+  // Explicit 1MB request-body ceiling (matches Fastify's own default, made a conscious choice). No route
+  // here takes file/blob uploads (confirmed across every route file); if one ever does, it gets its own
+  // larger per-route limit, not a global bump.
+  bodyLimit: 1_000_000,
 });
 
 // === Process resilience: crash handlers + graceful shutdown ===
@@ -128,6 +133,16 @@ fastify.register(FastifyCors, {
   origin: IS_PROD ? corsOrigins : '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'token'],
+});
+
+// Security headers. This is a pure JSON API serving no HTML, so CSP has no target and only risks
+// breaking things for no benefit (off). COEP/CORP defaults are meant for browser-rendered content and
+// would fight the web app's cross-origin fetches, so allow cross-origin resource policy (the actual
+// origin allow-list is CORS above). The rest of helmet's defaults stay on: X-Content-Type-Options,
+// X-Frame-Options, and HSTS (meaningful because Traefik terminates TLS in front of this).
+fastify.register(FastifyHelmet, {
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
 });
 
 // Transport-layer rate limiting, keyed by the real client IP (trustProxy above). Generous global default
