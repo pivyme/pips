@@ -10,7 +10,7 @@ import { Route as LuckyRoute } from './_app/games/lucky'
 import { Route as RangeRoute } from './_app/games/range'
 import { Route as MoonshotRoute } from './_app/games/moonshot'
 import { Route as LineRiderRoute } from './_app/games/line-rider'
-import { Route as CandleHopRoute } from './_app/games/candle-hop'
+import { Route as FlappyPiperRoute } from './_app/games/flappy-piper'
 import { isDemo } from '@/lib/demo'
 
 // Dev-only asset dump (personal tooling, not part of the product). Two modes:
@@ -33,7 +33,7 @@ const SCREENS: { key: string; name: string; Comp: ComponentType }[] = [
   { key: 'range', name: 'Range', Comp: routeComponent(RangeRoute) },
   { key: 'moonshot', name: 'Moonshot', Comp: routeComponent(MoonshotRoute) },
   { key: 'line-rider', name: 'Line Rider', Comp: routeComponent(LineRiderRoute) },
-  { key: 'candle-hop', name: 'Candle Hop', Comp: routeComponent(CandleHopRoute) },
+  { key: 'flappy-piper', name: 'Flappy Piper', Comp: routeComponent(FlappyPiperRoute) },
 ]
 
 function download(dataUrl: string, name: string) {

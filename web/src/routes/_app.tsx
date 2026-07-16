@@ -7,7 +7,7 @@ import { Route as LuckyRoute } from './_app/games/lucky'
 import { Route as RangeRoute } from './_app/games/range'
 import { Route as MoonshotRoute } from './_app/games/moonshot'
 import { Route as LineRiderRoute } from './_app/games/line-rider'
-import { Route as CandleHopRoute } from './_app/games/candle-hop'
+import { Route as FlappyPiperRoute } from './_app/games/flappy-piper'
 import { AppFrame } from '@/components/console/AppFrame'
 import { ActivePlayChip } from '@/components/console/ActivePlayChip'
 import { AchievementCelebration } from '@/components/AchievementCelebration'
@@ -57,7 +57,7 @@ const DEVICE_SCREENS: Record<string, ComponentType> = {
   '/games/range': routeComponent(RangeRoute),
   '/games/moonshot': routeComponent(MoonshotRoute),
   '/games/line-rider': routeComponent(LineRiderRoute),
-  '/games/candle-hop': routeComponent(CandleHopRoute),
+  '/games/flappy-piper': routeComponent(FlappyPiperRoute),
 }
 
 type OnboardingStep = 'username' | 'customize' | 'welcome'
@@ -103,7 +103,7 @@ function AppLayout() {
   const onLucky = Boolean(matchRoute({ to: '/games/lucky' }))
   const onMoonshot = Boolean(matchRoute({ to: '/games/moonshot' }))
   const onLineRider = Boolean(matchRoute({ to: '/games/line-rider' }))
-  const onCandleHop = Boolean(matchRoute({ to: '/games/candle-hop' }))
+  const onFlappyPiper = Boolean(matchRoute({ to: '/games/flappy-piper' }))
   const on3D = Boolean(matchRoute({ to: '/games', fuzzy: true }))
   // Customize takes over the device: the menu drawer slides away and the device drops into the
   // workshop studio. It rides the same persistent 3D branch so the WebGL stays warm.
@@ -192,8 +192,8 @@ function AppLayout() {
           ? '/games/moonshot'
           : onLineRider
             ? '/games/line-rider'
-            : onCandleHop
-              ? '/games/candle-hop'
+            : onFlappyPiper
+              ? '/games/flappy-piper'
               : '/games'
   const DeviceScreen = DEVICE_SCREENS[last3DPath.current]
 

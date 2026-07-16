@@ -3265,10 +3265,12 @@ export default function ConsoleCanvas({
               {...{ switch: '' }}
               aria-hidden="true"
               tabIndex={-1}
-              onChange={() => {
-                haptic(preset)
-                overlayPressRef.current?.(i)
-              }}
+              // Press must fire on pointer-DOWN so the cap sinks, sounds, and dispatches the instant the
+              // finger lands (and holds while held), same as the keyboard + raycast paths. release() pops
+              // it on pointerup. onChange stays only for the switch-toggle haptic: iOS grants its native
+              // Taptic tick solely on a genuine toggle of a real <input switch>, and that lands on click.
+              onPointerDown={() => overlayPressRef.current?.(i)}
+              onChange={() => haptic(preset)}
               style={{
                 position: 'absolute',
                 left: 0,
@@ -3278,6 +3280,7 @@ export default function ConsoleCanvas({
                 appearance: 'none',
                 opacity: 0,
                 pointerEvents: 'auto',
+                touchAction: 'none',
               }}
             />
           ))}

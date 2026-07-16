@@ -31,7 +31,7 @@ function LineRiderScreen() {
   const [phase, setPhase] = useState<Phase>('title')
   const [wheel, setWheel] = useState(CENTER)
   const [hud, setHud] = useState<RideHud>(EMPTY_HUD)
-  const { board, submit } = useMinigameLeaderboard(GAME)
+  const { board, submit, startRun } = useMinigameLeaderboard(GAME)
   const [over, setOver] = useState<{ score: number; result: MinigameSubmit | null } | null>(null)
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -82,6 +82,7 @@ function LineRiderScreen() {
     setHud(EMPTY_HUD)
     setWheel(CENTER) // recenter so the run opens with the pip on the (flat) line
     setPhase('playing')
+    startRun() // open the run before playing
     const eng = engineRef.current
     if (eng) {
       eng.setTarget(0.5)
@@ -89,7 +90,7 @@ function LineRiderScreen() {
     }
     haptic('rigid')
     rideStart() // takeoff whoosh as the line flows in (the bed itself starts on the phase effect)
-  }, [])
+  }, [startRun])
 
   // The glide bed rides only the active run: start on play, fade out on game over or when the screen unmounts.
   useEffect(() => {

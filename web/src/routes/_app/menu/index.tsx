@@ -195,7 +195,7 @@ function StatsSection() {
   }
 
   return (
-    <StatsCard stats={stats} displayName={displayHandle(user)} address={user?.address ?? ''} email={user?.email} onEdit={editHandle} />
+    <StatsCard stats={stats} displayName={displayHandle(user)} onEdit={editHandle} />
   )
 }
 
@@ -204,10 +204,12 @@ function StatsSection() {
 function NavGrid() {
   return (
     <div className="grid grid-cols-3 gap-3">
-      <NavTile to="/menu/customize" icon="/assets/icons/icon-customize.webp" label="Customize" launch />
+      {/* Row 1: your play world (your plays, your rank, your crew). */}
+      <NavTile to="/menu/history" icon="/assets/icons/icon-history.webp" label="History" />
       <NavTile to="/menu/leaderboard" icon="/assets/icons/leaderboard-icon.webp" label="Leaderboard" />
       <NavTile to="/menu/referrals" icon="/assets/icons/icon-referrals.webp" label="Referrals" />
-      <NavTile to="/menu/history" icon="/assets/icons/icon-history.webp" label="History" />
+      {/* Row 2: make it yours + manage (skin, preferences, account). */}
+      <NavTile to="/menu/customize" icon="/assets/icons/icon-customize.webp" label="Customize" launch />
       <NavTile to="/menu/settings" icon="/assets/icons/icon-settings.webp" label="Settings" />
       <NavTile to="/menu/account" icon="/assets/icons/icon-account-settings.webp" label="Account" />
     </div>

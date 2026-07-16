@@ -108,7 +108,7 @@ export interface WithdrawResult {
 // === Leaderboards ===
 // Every board exposes username (or the generated displayName as a fallback), never the address.
 
-export type Minigame = 'line-rider' | 'candle-hop';
+export type Minigame = 'line-rider' | 'flappy-piper';
 
 // A PnL-ranked row (global Gainers / REKT).
 export interface LeaderboardPnlEntryDTO {
@@ -181,7 +181,7 @@ export interface MinigameSubmitDTO {
 export interface FullLeaderboardDTO {
   global: GlobalLeaderboardDTO;
   games: Record<Game, LeaderboardGameEntryDTO[]>; // lucky, range, moonshot
-  minigames: Record<Minigame, MinigameLeaderboardDTO>; // line-rider, candle-hop
+  minigames: Record<Minigame, MinigameLeaderboardDTO>; // line-rider, flappy-piper
 }
 
 // === Referrals ===

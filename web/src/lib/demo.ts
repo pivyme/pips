@@ -319,7 +319,7 @@ function freshState(): DemoState {
   const unlocked: Record<string, string> = {}
   for (const c of CATALOG) if (meets(c.metric, c.threshold, counters)) unlocked[c.slug] = past(60 * 24)
   // Seed the demo account's minigame bests so the arcade boards look played-in (mid-table, beatable).
-  const minigameScores: Record<string, number> = { 'line-rider': 1240, 'candle-hop': 14 }
+  const minigameScores: Record<string, number> = { 'line-rider': 1240, 'flappy-piper': 14 }
   return {
     v: STATE_VERSION,
     balance: 2847.5,
@@ -780,7 +780,7 @@ const DEMO_REFERRALS: ReferralDTO[] = [
 // Seed scores for the arcade boards (the demo account is mixed in via its own best).
 const MINIGAME_BOTS: Record<string, Array<[string, number]>> = {
   'line-rider': [['kweklabs', 3800], ['pivyme', 2650], ['axelrod', 1850], ['voidkat', 1240], ['kelpin', 820], ['moonlee', 520], ['febi', 310], ['devkai', 160]],
-  'candle-hop': [['kweklabs', 52], ['pivyme', 38], ['axelrod', 27], ['voidkat', 19], ['kelpin', 13], ['moonlee', 8], ['febi', 5], ['devkai', 2]],
+  'flappy-piper': [['kweklabs', 52], ['pivyme', 38], ['axelrod', 27], ['voidkat', 19], ['kelpin', 13], ['moonlee', 8], ['febi', 5], ['devkai', 2]],
 }
 
 type Trader = { username: string | null; displayName: string; netPnl: number; games: number; isYou: boolean }
@@ -840,7 +840,7 @@ function fullLeaderboardDTO(): FullLeaderboard {
   return {
     global: globalLeaderboardDTO(),
     games: { lucky: gameLeaderboardDTO('lucky').entries, range: gameLeaderboardDTO('range').entries, moonshot: gameLeaderboardDTO('moonshot').entries },
-    minigames: { 'line-rider': minigameLeaderboardDTO('line-rider'), 'candle-hop': minigameLeaderboardDTO('candle-hop') },
+    minigames: { 'line-rider': minigameLeaderboardDTO('line-rider'), 'flappy-piper': minigameLeaderboardDTO('flappy-piper') },
   }
 }
 
@@ -1008,7 +1008,12 @@ export const demoApi = {
     return { leaderboard: minigameLeaderboardDTO(game) }
   },
 
-  submitMinigameScore: async (game: Minigame, score: number): Promise<{ result: MinigameSubmit }> => {
+  startMinigameRun: async (_game: Minigame): Promise<{ runToken: string }> => {
+    await delay(60)
+    return { runToken: 'demo' }
+  },
+
+  submitMinigameScore: async (game: Minigame, score: number, _runToken?: string | null): Promise<{ result: MinigameSubmit }> => {
     await delay(120)
     const prevBest = state.minigameScores[game] ?? 0
     const best = Math.max(prevBest, score)

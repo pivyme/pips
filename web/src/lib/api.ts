@@ -156,7 +156,7 @@ export interface ReferralResolveDTO {
 
 // === Leaderboards === (every row exposes username/displayName, never an address)
 
-export type Minigame = 'line-rider' | 'candle-hop'
+export type Minigame = 'line-rider' | 'flappy-piper'
 
 export interface LeaderboardPnlEntry {
   rank: number
@@ -338,7 +338,10 @@ const realApi = {
   leaderboard: () => request<{ leaderboard: FullLeaderboard }>('GET', '/leaderboard'),
   gameLeaderboard: (game: Game) => request<{ leaderboard: GameLeaderboard }>('GET', `/leaderboard/game/${game}`),
   minigameLeaderboard: (game: Minigame) => request<{ leaderboard: MinigameLeaderboard }>('GET', `/leaderboard/minigame/${game}`),
-  submitMinigameScore: (game: Minigame, score: number) => request<{ result: MinigameSubmit }>('POST', `/leaderboard/minigame/${game}`, { score }),
+  // Open a run before playing; the returned token is passed to submitMinigameScore.
+  startMinigameRun: (game: Minigame) => request<{ runToken: string }>('POST', `/leaderboard/minigame/${game}/start`),
+  submitMinigameScore: (game: Minigame, score: number, runToken?: string | null) =>
+    request<{ result: MinigameSubmit }>('POST', `/leaderboard/minigame/${game}`, { score, runToken }),
 }
 
 // Demo mode swaps the whole client for an in-memory mock (no server, no chain). Resolved per

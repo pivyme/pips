@@ -2,6 +2,7 @@
 // keyed to the player's account, so every row shows a username, never an address. One hook owns the
 // fetch + submit; the list UI is the flat Teenage Engineering scoreboard both minigames render.
 
+import { useCallback, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type LeaderboardScoreEntry, type Minigame, type MinigameSubmit } from '@/lib/api'
 import { cnm } from '@/utils/style'
@@ -10,25 +11,44 @@ import { displayHandle } from '@/utils/format'
 const fmt = (n: number): string => Math.round(n).toLocaleString('en-US')
 const lbKey = (game: Minigame) => ['minigame-lb', game] as const
 
-// Fetch the board + submit a finished run. Submit returns where the run landed (for the result
-// screen) and seeds the board cache so the title screen reflects the new score immediately.
+// Fetch the board + submit a finished run. Call `startRun` when a run begins and `submit` when it
+// ends; `submit` returns where the run landed (for the result screen) and seeds the board cache so
+// the title reflects the new score immediately.
 export function useMinigameLeaderboard(game: Minigame): {
   board: LeaderboardScoreEntry[]
   best: number
   loading: boolean
+  startRun: () => void
   submit: (score: number) => Promise<MinigameSubmit>
 } {
   const qc = useQueryClient()
   const q = useQuery({ queryKey: lbKey(game), queryFn: () => api.minigameLeaderboard(game) })
+  // Held in a ref (not state) so opening a run never re-renders the game.
+  const runToken = useRef<string | null>(null)
   const m = useMutation({
-    mutationFn: (score: number) => api.submitMinigameScore(game, score),
+    mutationFn: (score: number) => api.submitMinigameScore(game, score, runToken.current),
     onSuccess: ({ result }) => qc.setQueryData(lbKey(game), { leaderboard: { entries: result.entries, best: result.best } }),
   })
+  // Fire-and-forget so it's ready by the time the run ends; never blocks or delays play.
+  const startRun = useCallback(() => {
+    runToken.current = null
+    void api
+      .startMinigameRun(game)
+      .then(({ runToken: t }) => {
+        runToken.current = t
+      })
+      .catch(() => {})
+  }, [game])
   return {
     board: q.data?.leaderboard.entries ?? [],
     best: q.data?.leaderboard.best ?? 0,
     loading: q.isLoading,
-    submit: async (score) => (await m.mutateAsync(score)).result,
+    startRun,
+    submit: async (score) => {
+      const { result } = await m.mutateAsync(score)
+      runToken.current = null
+      return result
+    },
   }
 }
 

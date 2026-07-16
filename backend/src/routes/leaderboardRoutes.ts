@@ -7,15 +7,17 @@ import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyReque
 import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { handleError } from '../utils/errorHandler.ts';
 import {
+  checkRun,
   fullLeaderboard,
   gameLeaderboard,
   minigameLeaderboard,
+  openMinigameRun,
   submitMinigameScore,
 } from '../services/leaderboard.ts';
 import type { Game, Minigame } from '../types/api.ts';
 
 const GAMES = new Set<Game>(['lucky', 'range', 'moonshot']);
-const MINIGAMES = new Set<Minigame>(['line-rider', 'candle-hop']);
+const MINIGAMES = new Set<Minigame>(['line-rider', 'flappy-piper']);
 const MAX_SCORE = 100_000_000; // a sane ceiling so a tampered client can't park garbage at #1
 
 export const leaderboardRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
@@ -54,14 +56,27 @@ export const leaderboardRoutes: FastifyPluginCallback = (app: FastifyInstance, _
     }
   });
 
-  // Submit a finished minigame run; keeps the player's best.
+  // Open a run before playing; returns the token required to submit its score.
+  app.post('/minigame/:game/start', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const game = (request.params as { game: string }).game as Minigame;
+    if (!MINIGAMES.has(game)) return handleError(reply, 400, 'Unknown minigame', 'BAD_GAME');
+    const runToken = openMinigameRun(request.user!.id, game);
+    return reply.code(200).send({ success: true, error: null, data: { runToken } });
+  });
+
+  // Submit a finished minigame run; keeps the player's best. The run is validated first.
   app.post('/minigame/:game', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const game = (request.params as { game: string }).game as Minigame;
     if (!MINIGAMES.has(game)) return handleError(reply, 400, 'Unknown minigame', 'BAD_GAME');
-    const raw = (request.body as { score?: unknown })?.score;
-    const score = Math.floor(Number(raw));
+    const body = (request.body as { score?: unknown; runToken?: unknown }) ?? {};
+    const score = Math.floor(Number(body.score));
     if (!Number.isFinite(score) || score < 0 || score > MAX_SCORE) {
       return handleError(reply, 400, 'Invalid score', 'BAD_SCORE');
+    }
+    const check = checkRun(request.user!.id, game, score, body.runToken);
+    if (!check.ok) {
+      request.log.warn({ game, userId: request.user!.id, reason: check.reason }, 'minigame run rejected');
+      return handleError(reply, 400, 'Could not record that run', 'RUN_REJECTED');
     }
     try {
       const result = await submitMinigameScore(request.user!.id, game, score);

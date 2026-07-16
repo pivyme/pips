@@ -37,7 +37,7 @@ import { Route as AppGamesRangeRouteImport } from './routes/_app/games/range'
 import { Route as AppGamesMoonshotRouteImport } from './routes/_app/games/moonshot'
 import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
 import { Route as AppGamesLineRiderRouteImport } from './routes/_app/games/line-rider'
-import { Route as AppGamesCandleHopRouteImport } from './routes/_app/games/candle-hop'
+import { Route as AppGamesFlappyPiperRouteImport } from './routes/_app/games/flappy-piper'
 
 const PitchRoute = PitchRouteImport.update({
   id: '/pitch',
@@ -178,9 +178,9 @@ const AppGamesLineRiderRoute = AppGamesLineRiderRouteImport.update({
   path: '/games/line-rider',
   getParentRoute: () => AppRoute,
 } as any)
-const AppGamesCandleHopRoute = AppGamesCandleHopRouteImport.update({
-  id: '/games/candle-hop',
-  path: '/games/candle-hop',
+const AppGamesFlappyPiperRoute = AppGamesFlappyPiperRouteImport.update({
+  id: '/games/flappy-piper',
+  path: '/games/flappy-piper',
   getParentRoute: () => AppRoute,
 } as any)
 
@@ -194,7 +194,7 @@ export interface FileRoutesByFullPath {
   '/pitch': typeof PitchRoute
   '/r/$code': typeof RCodeRoute
   '/tools/wallet': typeof ToolsWalletRoute
-  '/games/candle-hop': typeof AppGamesCandleHopRoute
+  '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/moonshot': typeof AppGamesMoonshotRoute
@@ -224,7 +224,7 @@ export interface FileRoutesByTo {
   '/r/$code': typeof RCodeRoute
   '/tools/wallet': typeof ToolsWalletRoute
   '/': typeof AppIndexRoute
-  '/games/candle-hop': typeof AppGamesCandleHopRoute
+  '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/moonshot': typeof AppGamesMoonshotRoute
@@ -256,7 +256,7 @@ export interface FileRoutesById {
   '/r/$code': typeof RCodeRoute
   '/tools/wallet': typeof ToolsWalletRoute
   '/_app/': typeof AppIndexRoute
-  '/_app/games/candle-hop': typeof AppGamesCandleHopRoute
+  '/_app/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/_app/games/line-rider': typeof AppGamesLineRiderRoute
   '/_app/games/lucky': typeof AppGamesLuckyRoute
   '/_app/games/moonshot': typeof AppGamesMoonshotRoute
@@ -288,7 +288,7 @@ export interface FileRouteTypes {
     | '/pitch'
     | '/r/$code'
     | '/tools/wallet'
-    | '/games/candle-hop'
+    | '/games/flappy-piper'
     | '/games/line-rider'
     | '/games/lucky'
     | '/games/moonshot'
@@ -318,7 +318,7 @@ export interface FileRouteTypes {
     | '/r/$code'
     | '/tools/wallet'
     | '/'
-    | '/games/candle-hop'
+    | '/games/flappy-piper'
     | '/games/line-rider'
     | '/games/lucky'
     | '/games/moonshot'
@@ -349,7 +349,7 @@ export interface FileRouteTypes {
     | '/r/$code'
     | '/tools/wallet'
     | '/_app/'
-    | '/_app/games/candle-hop'
+    | '/_app/games/flappy-piper'
     | '/_app/games/line-rider'
     | '/_app/games/lucky'
     | '/_app/games/moonshot'
@@ -580,11 +580,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppGamesLineRiderRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/games/candle-hop': {
-      id: '/_app/games/candle-hop'
-      path: '/games/candle-hop'
-      fullPath: '/games/candle-hop'
-      preLoaderRoute: typeof AppGamesCandleHopRouteImport
+    '/_app/games/flappy-piper': {
+      id: '/_app/games/flappy-piper'
+      path: '/games/flappy-piper'
+      fullPath: '/games/flappy-piper'
+      preLoaderRoute: typeof AppGamesFlappyPiperRouteImport
       parentRoute: typeof AppRoute
     }
   }
@@ -592,7 +592,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
-  AppGamesCandleHopRoute: typeof AppGamesCandleHopRoute
+  AppGamesFlappyPiperRoute: typeof AppGamesFlappyPiperRoute
   AppGamesLineRiderRoute: typeof AppGamesLineRiderRoute
   AppGamesLuckyRoute: typeof AppGamesLuckyRoute
   AppGamesMoonshotRoute: typeof AppGamesMoonshotRoute
@@ -615,7 +615,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
-  AppGamesCandleHopRoute: AppGamesCandleHopRoute,
+  AppGamesFlappyPiperRoute: AppGamesFlappyPiperRoute,
   AppGamesLineRiderRoute: AppGamesLineRiderRoute,
   AppGamesLuckyRoute: AppGamesLuckyRoute,
   AppGamesMoonshotRoute: AppGamesMoonshotRoute,

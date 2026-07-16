@@ -77,8 +77,8 @@ export const DUSDC_DECIMALS = 1_000_000
 export const fromDusdcRaw = (raw: bigint | string | number): number =>
   Number(BigInt(raw)) / DUSDC_DECIMALS
 
-// Suiscan explorer links. The network comes from env (devnet now, mainnet later), so these always
-// resolve to the right chain. Suiscan natively indexes mainnet, testnet, and devnet.
+// Suiscan explorer links. The network comes from env, so these always resolve to the active chain.
+// Suiscan natively indexes mainnet, testnet, and devnet.
 const EXPLORER_BASE = `https://suiscan.xyz/${NETWORK}`
 
 export const explorerTxUrl = (digest: string): string => `${EXPLORER_BASE}/tx/${digest}`

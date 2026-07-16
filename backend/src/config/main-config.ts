@@ -233,6 +233,12 @@ export const GAME_DURATIONS: number[] = (process.env.PIPS_GAME_DURATIONS || '10,
   .map((s) => Number(s.trim()))
   .filter((n) => Number.isFinite(n) && n > 0);
 
+// Minigame (Line Rider / Flappy Piper) run-validation window. TTL is how long an opened run stays
+// valid (generous, to cover a long Line Rider run); MIN_RUN_MS is the shortest run length accepted.
+// Applied in services/leaderboard.ts.
+export const MINIGAME_RUN_TTL_S: number = Number(process.env.PIPS_MINIGAME_RUN_TTL_S) || 1200;
+export const MINIGAME_MIN_RUN_MS: number = Number(process.env.PIPS_MINIGAME_MIN_RUN_MS) || 500;
+
 // Operator workers (price-pusher / oracle-roll / settle). OFF by default because it's the single-leader switch:
 // with multiple instances, set it true on exactly ONE (the operator) so oracles aren't double-pushed, false on the
 // rest. Localnet gas is free. LUCKY 30s cadence: push spot ~1s (also drives the chart's liveliness), roll the
@@ -387,6 +393,8 @@ export default {
   MIN_STAKE,
   MAX_STAKE,
   GAME_DURATIONS,
+  MINIGAME_RUN_TTL_S,
+  MINIGAME_MIN_RUN_MS,
   SUI_NETWORK,
   IS_REAL_PREDICT,
   SUI_FULLNODE_URL,

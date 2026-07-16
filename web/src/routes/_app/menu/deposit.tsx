@@ -6,7 +6,7 @@ import toast from 'react-hot-toast'
 import { MenuScreen } from '@/components/menu/shared'
 import { useAuth } from '@/lib/auth'
 import { api, ApiError } from '@/lib/api'
-import { explorerAddressUrl } from '@/lib/sui/config'
+import { explorerAddressUrl, NETWORK, NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 
@@ -15,6 +15,14 @@ import { HapticOverlay } from '@/components/HapticOverlay'
 export const Route = createFileRoute('/_app/menu/deposit')({
   component: DepositScreen,
 })
+
+// Where DUSDC comes from depends on the chain. On testnet it's DeepBook Predict's own test token, so
+// say that plainly. On the fork (localnet/devnet) it's the copy the PIPS team runs. Never claim a
+// network we're not on.
+const DUSDC_ORIGIN =
+  NETWORK === 'testnet'
+    ? `DeepBook Predict's test token on ${NETWORK_LABEL}`
+    : `a test token the PIPS team runs on ${NETWORK_LABEL}`
 
 function DepositScreen() {
   const { user, refresh } = useAuth()
@@ -67,7 +75,7 @@ function DepositScreen() {
           copy the address below.
         </p>
 
-        {/* What DUSDC is, up front: a test token we mint, not the real thing. */}
+        {/* What DUSDC is, up front: a test token, not the real thing. Origin is network-aware. */}
         <div className="surface-skeuo flex items-start gap-3 rounded-card p-4">
           <img
             src="/assets/icons/dusdc-logo.webp"
@@ -76,9 +84,8 @@ function DepositScreen() {
             draggable={false}
           />
           <p className="text-[13px] leading-snug text-text-2">
-            <span className="font-bold text-text">DUSDC</span> is a test token
-            deployed by the PIPS team on Sui Devnet. It is free play money with
-            no real value, use it to try every game.
+            <span className="font-bold text-text">DUSDC</span> is {DUSDC_ORIGIN}.
+            It is free play money with no real value, use it to try every game.
           </p>
         </div>
 
@@ -101,7 +108,7 @@ function DepositScreen() {
           onClick={copy}
           className="surface-skeuo flex items-center gap-3 rounded-card p-4 text-left transition-transform active:scale-[0.99]"
         >
-          <span className="tnum min-w-0 flex-1 break-all text-[13px] leading-snug text-text-2">
+          <span className="tnum min-w-0 flex-1 truncate text-[13px] leading-snug text-text-2">
             {address || '—'}
           </span>
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-text">
@@ -113,7 +120,7 @@ function DepositScreen() {
           </span>
         </button>
 
-        {/* Open the address on the Sui devnet explorer in a new tab. */}
+        {/* Open the address on the Sui explorer for the active chain in a new tab. */}
         {address && (
           <div className="relative">
             <a
@@ -135,8 +142,8 @@ function DepositScreen() {
         )}
 
         <p className="px-1 text-[13px] leading-snug text-text-3">
-          Sui Devnet DUSDC only. Funds appear in your balance once the transfer
-          confirms.
+          {NETWORK_LABEL} DUSDC only. Funds appear in your balance once the
+          transfer confirms.
         </p>
 
         {/* Test faucet: free play money so anyone can jump in without a real deposit. */}
@@ -157,7 +164,7 @@ function DepositScreen() {
           {claiming ? 'Sending…' : 'Get 500 test DUSDC'}
         </button>
         <p className="px-1 text-[13px] leading-snug text-text-3">
-          Instant test DUSDC on Sui Devnet. One batch per minute.
+          Instant test DUSDC on {NETWORK_LABEL}. One batch per minute.
         </p>
       </div>
     </MenuScreen>

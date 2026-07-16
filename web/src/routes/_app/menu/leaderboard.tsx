@@ -22,7 +22,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'range', label: 'Range' },
   { key: 'moonshot', label: 'Moonshot' },
   { key: 'line-rider', label: 'Line Rider' },
-  { key: 'candle-hop', label: 'Flappy Piper' },
+  { key: 'flappy-piper', label: 'Flappy Piper' },
 ]
 
 const fmtMoney = (s: string): string => {

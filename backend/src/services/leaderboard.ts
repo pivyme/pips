@@ -4,8 +4,14 @@
 //   - per-game  : Top 10 winners of Lucky or Range, summed from settled Play records.
 //   - minigame  : Top 10 high scores of Line Rider / Flappy Piper, off MinigameScore.
 // Read-only and cheap (localnet scale); nothing here writes except submitMinigameScore.
+// Minigame submissions are validated server-side via openMinigameRun + checkRun (see below).
+
+import crypto from 'node:crypto';
+
+import jwt from 'jsonwebtoken';
 
 import { prismaQuery } from '../lib/prisma.ts';
+import { JWT_SECRET, MINIGAME_MIN_RUN_MS, MINIGAME_RUN_TTL_S } from '../config/main-config.ts';
 import { fromDusdcRaw } from '../lib/sui/math.ts';
 import type {
   FullLeaderboardDTO,
@@ -161,17 +167,91 @@ export async function submitMinigameScore(userId: string, game: Minigame, score:
 // Every board in one round-trip, run in parallel. Powers the menu leaderboard so switching tabs is
 // instant (no per-tab fetch). The in-game overlays still call the focused functions above.
 export async function fullLeaderboard(userId: string): Promise<FullLeaderboardDTO> {
-  const [global, lucky, range, moonshot, lineRider, candleHop] = await Promise.all([
+  const [global, lucky, range, moonshot, lineRider, flappyPiper] = await Promise.all([
     globalLeaderboard(userId),
     gameLeaderboard('lucky', userId),
     gameLeaderboard('range', userId),
     gameLeaderboard('moonshot', userId),
     minigameLeaderboard('line-rider', userId),
-    minigameLeaderboard('candle-hop', userId),
+    minigameLeaderboard('flappy-piper', userId),
   ]);
   return {
     global,
     games: { lucky: lucky.entries, range: range.entries, moonshot: moonshot.entries },
-    minigames: { 'line-rider': lineRider, 'candle-hop': candleHop },
+    minigames: { 'line-rider': lineRider, 'flappy-piper': flappyPiper },
   };
+}
+
+// === Minigame run validation ============================================================
+
+// Per-game score bound coefficients used by checkRun.
+const SCORE_BOUND: Record<Minigame, { a: number; b: number; slack: number }> = {
+  'flappy-piper': { a: 2, b: 0, slack: 3 },
+  'line-rider': { a: 70, b: 60, slack: 20 },
+};
+
+// jti -> expiry epoch ms, so a token is honored once. Pruned opportunistically.
+const usedRuns = new Map<string, number>();
+function pruneUsed(now: number): void {
+  if (usedRuns.size < 4096) return;
+  for (const [jti, exp] of usedRuns) if (exp <= now) usedRuns.delete(jti);
+}
+
+interface RunClaims {
+  sub: string;
+  game: Minigame;
+  typ: 'run';
+  iat: number; // seconds
+  jti: string;
+}
+
+// Open a run and return the token required to submit its score.
+export function openMinigameRun(userId: string, game: Minigame): string {
+  return jwt.sign({ typ: 'run', game }, JWT_SECRET, {
+    subject: userId,
+    jwtid: crypto.randomUUID(),
+    expiresIn: MINIGAME_RUN_TTL_S,
+  } as jwt.SignOptions);
+}
+
+// A rejection carries a `reason` for server-side logging only; the route returns one generic error
+// to the client so a failed submit doesn't reveal which check it tripped.
+export type RunCheck = { ok: true } | { ok: false; reason: string };
+
+// Validate a submitted run. Returns a typed result; the route maps any failure to a single response.
+export function checkRun(userId: string, game: Minigame, score: number, runToken: unknown): RunCheck {
+  if (typeof runToken !== 'string' || runToken.length === 0) {
+    return { ok: false, reason: 'no-token' };
+  }
+
+  let claims: RunClaims;
+  try {
+    claims = jwt.verify(runToken, JWT_SECRET) as RunClaims;
+  } catch (err) {
+    return { ok: false, reason: err instanceof jwt.TokenExpiredError ? 'expired' : 'bad-token' };
+  }
+
+  const now = Date.now();
+  pruneUsed(now);
+
+  if (claims.typ !== 'run' || claims.sub !== userId || claims.game !== game) {
+    return { ok: false, reason: 'mismatch' };
+  }
+  if (usedRuns.has(claims.jti)) {
+    return { ok: false, reason: 'reused' };
+  }
+  usedRuns.set(claims.jti, (claims.iat + MINIGAME_RUN_TTL_S) * 1000);
+
+  const elapsedMs = now - claims.iat * 1000;
+  if (elapsedMs < MINIGAME_MIN_RUN_MS) {
+    return { ok: false, reason: 'too-short' };
+  }
+
+  const { a, b, slack } = SCORE_BOUND[game];
+  const t = elapsedMs / 1000;
+  if (score > a * t + b * t * t + slack) {
+    return { ok: false, reason: 'out-of-bounds' };
+  }
+
+  return { ok: true };
 }

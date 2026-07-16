@@ -1,8 +1,6 @@
-import { Check, Copy, Mail, Pencil } from 'lucide-react'
-import { useState } from 'react'
+import { Pencil } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { UserStatsDTO } from '@/lib/api'
-import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
 import { formatCompactCount, formatCompactMoney } from '@/utils/format'
 
@@ -11,42 +9,18 @@ import { formatCompactCount, formatCompactMoney } from '@/utils/format'
 // on the Stats screen (where Share renders the same card to a PNG via shareCard.ts). Keep this and
 // the canvas renderer in sync. Presentational, no data fetching.
 
-const shortAddr = (a: string): string => (a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a)
-
 export function StatsCard({
   stats,
   displayName,
-  address,
-  email,
   onEdit,
 }: {
   stats: UserStatsDTO
   displayName: string
-  address: string
-  // The login email (Privy Google/email). Shown so the user knows which account this is. Owner-only:
-  // the shareable PNG (shareCard.ts) never includes it, so this stays off anything public.
-  email?: string | null
   // When set, a pen sits next to the handle so it can be changed. Omitted on the shareable card.
   onEdit?: () => void
 }) {
   const net = parseFloat(stats.netPnl)
   const winPct = Math.round(stats.winRate * 100)
-  const [copied, setCopied] = useState(false)
-
-  // Show the truncated address, copy the full one. Brief check on success.
-  const copyAddress = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!address) return
-    haptic('selection')
-    try {
-      await navigator.clipboard.writeText(address)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1400)
-    } catch {
-      const { default: toast } = await import('react-hot-toast')
-      toast.error('Could not copy address')
-    }
-  }
 
   return (
     // @container: the card sizes its text + padding off its OWN width (cqi), not the viewport, so it
@@ -58,32 +32,6 @@ export function StatsCard({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="truncate text-[clamp(17px,6cqi,24px)] font-extrabold leading-tight text-white">{displayName}</div>
-            {(email || address) && (
-              <div className="mt-1 flex max-w-full items-center gap-2 text-xs">
-                {email && (
-                  <span className="flex min-w-0 items-center gap-1.5 text-white/55">
-                    <Mail className="h-3 w-3 shrink-0" strokeWidth={2.2} />
-                    <span className="truncate">{email}</span>
-                  </span>
-                )}
-                {email && address && <span className="h-3 w-px shrink-0 bg-white/15" />}
-                {address && (
-                  <button
-                    type="button"
-                    onClick={copyAddress}
-                    aria-label="Copy wallet address"
-                    className="tnum flex shrink-0 items-center gap-1.5 text-white/45 transition hover:text-white/70 active:scale-95"
-                  >
-                    <span>{shortAddr(address)}</span>
-                    {copied ? (
-                      <Check className="h-3 w-3 shrink-0 text-up" strokeWidth={2.6} />
-                    ) : (
-                      <Copy className="h-3 w-3 shrink-0" strokeWidth={2.2} />
-                    )}
-                  </button>
-                )}
-              </div>
-            )}
           </div>
           {onEdit && (
             <button

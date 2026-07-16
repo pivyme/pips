@@ -83,11 +83,11 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   }, [status, connecting, isPrivy, demo, onEnter])
 
   // Raise the sign-in error sheet with the right variant. Before showing a generic failure, check
-  // whether Sui Devnet was reset under us (our on-chain deployment gone): if so, upgrade to
+  // whether our on-chain deployment is gone (a redeploy, or a fork devnet reset): if so, upgrade to
   // CHAIN_UNAVAILABLE so the sheet shows "PIPS is redeploying, play demo" instead. We do this on the
   // client too (not just from the backend's code) so it works even when the deployed backend hasn't
   // picked up the new error code yet. The spinner stays up through the short probe so the correct
-  // copy paints on first show (no flip from generic to devnet).
+  // copy paints on first show (no flip from generic to maintenance).
   const surfaceError = useCallback(async (err: AuthError) => {
     const wiped = err.code === 'CHAIN_UNAVAILABLE' || (await probeChainWiped())
     setConnecting(false)
@@ -317,8 +317,9 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
 // Shown when sign-in fails. App-Surface bottom sheet (same language as the wallet picker). It names
 // what broke and, for the case that matters most during a live demo, hands a reviewer a direct line
 // to us instead of a dead end. The raw cause sits in a collapsible block so it stays out of the way.
-// CHAIN_UNAVAILABLE is special-cased: that's not a bug, it's Sui Devnet getting reset (which deletes
-// our deployment until we redeploy), so we say so plainly and push demo mode as the way in right now.
+// CHAIN_UNAVAILABLE is special-cased: that's not a bug, it's our on-chain deployment being briefly
+// unreachable (a redeploy, or a devnet reset on the fork), so we frame it as maintenance and push
+// demo mode as the way in right now.
 function SignInErrorSheet({
   error,
   onRetry,
@@ -333,9 +334,9 @@ function SignInErrorSheet({
   const [showDetails, setShowDetails] = useState(false)
   // The technical line worth showing: the backend's underlying cause if present, else the message.
   const detail = error?.details || error?.message
-  // Sui Devnet was reset and our Predict deployment is gone until the next bootstrap. The backend
-  // tags this so the door knows it's maintenance, not a real failure (the code is the only signal in
-  // prod, where error details are stripped).
+  // Our Predict deployment is unreachable until the next bootstrap (a redeploy, or a fork devnet
+  // reset). The backend tags this so the door knows it's maintenance, not a real failure (the code is
+  // the only signal in prod, where error details are stripped).
   const chainDown = error?.code === 'CHAIN_UNAVAILABLE'
 
   return (
@@ -366,9 +367,9 @@ function SignInErrorSheet({
 
                 <h2 className="text-center text-lg font-extrabold tracking-tight text-text">PIPS is back soon</h2>
                 <p className="mx-auto mt-1.5 max-w-xs text-center text-[13.5px] leading-snug text-text-2">
-                  Sui Devnet just got reset, so we're putting PIPS back online. Sign-in is down for a
-                  bit, usually back within a couple of hours. You can play demo mode right now with
-                  free practice chips.
+                  We're doing some maintenance to get PIPS back online. Sign-in is down for a bit,
+                  usually back within a couple of hours. You can play demo mode right now with free
+                  practice chips.
                 </p>
 
                 <button

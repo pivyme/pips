@@ -15,14 +15,14 @@ import { cnm } from '@/utils/style'
 // Flappy Piper. A one-button flappy minigame (no Sui, no backend): tap the big button to fly the
 // PIPS face through scrolling candlesticks. A hit shakes the screen, then drops the character
 // before the leaderboard appears. Runs on the 3D handheld's L-shaped aperture.
-export const Route = createFileRoute('/_app/games/candle-hop')({ component: CandleHopScreen })
+export const Route = createFileRoute('/_app/games/flappy-piper')({ component: FlappyPiperScreen })
 
-const GAME = 'candle-hop'
+const GAME = 'flappy-piper'
 type Phase = 'title' | 'playing' | 'over'
 const EMPTY_HUD: FlapHud = { score: 0, elapsed: 0, alive: false }
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US')
 
-function CandleHopScreen() {
+function FlappyPiperScreen() {
   const reduced = useReducedMotion()
 
   // Hold the screen black until the device has finished dropping in, then a short beat, then fade
@@ -39,7 +39,7 @@ function CandleHopScreen() {
 
   const [phase, setPhase] = useState<Phase>('title')
   const [hud, setHud] = useState<FlapHud>(EMPTY_HUD)
-  const { board, submit } = useMinigameLeaderboard(GAME)
+  const { board, submit, startRun } = useMinigameLeaderboard(GAME)
   const [over, setOver] = useState<{ score: number; result: MinigameSubmit | null } | null>(null)
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -93,9 +93,10 @@ function CandleHopScreen() {
     setOver(null)
     setHud(EMPTY_HUD)
     setPhase('playing')
+    startRun() // open the run before playing
     engineRef.current?.start()
     haptic('rigid')
-  }, [])
+  }, [startRun])
 
   const flap = useCallback(() => {
     engineRef.current?.flap()
