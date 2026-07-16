@@ -6,9 +6,9 @@
 
 import cron from 'node-cron';
 
-import { OPERATOR_ENABLED } from '../config/main-config.ts';
 import { ensureOpsFunded } from '../lib/sui/gas.ts';
 import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
+import { isOperatorLeader } from '../lib/leader-lock.ts';
 
 const OPS_FUNDING_CRON = '*/2 * * * *';
 
@@ -31,7 +31,7 @@ const tick = async (): Promise<void> => {
 };
 
 export const startOpsFunding = (): void => {
-  if (!OPERATOR_ENABLED) return; // only the leader funds the ops wallets
+  if (!isOperatorLeader()) return; // only the single operator leader funds the ops wallets
   console.log('[ops-funding] Scheduled: every 2 min (sponsor + settlement + treasury)');
   const task = cron.schedule(OPS_FUNDING_CRON, tick);
   registerWorker('ops-funding', task, cronIntervalMs(OPS_FUNDING_CRON));

@@ -9,7 +9,7 @@
 
 import cron from 'node-cron';
 
-import { EXPIRY_SAFETY_MS, IS_REAL_PREDICT, MARKET_SYNC_CRON, OPERATOR_ENABLED, ORACLE_LIFETIME_MS } from '../config/main-config.ts';
+import { EXPIRY_SAFETY_MS, IS_REAL_PREDICT, MARKET_SYNC_CRON, ORACLE_LIFETIME_MS } from '../config/main-config.ts';
 import { PACKAGE_ID } from '../lib/sui/config.ts';
 import { REAL_BTC_ASSET } from '../lib/sui/config-real.ts';
 import { graphqlClient } from '../lib/sui/client.ts';
@@ -23,6 +23,7 @@ import {
 } from '../lib/sui/predict-real.ts';
 import { allMarkets, getMarket, removeMarket, upsertMarket } from '../lib/sui/markets.ts';
 import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
+import { isOperatorLeader } from '../lib/leader-lock.ts';
 
 // Game asset symbol for the only underlying live on Mysten's testnet Predict (propbook id 1). The
 // games route every selected asset to this BTC market in real mode; discovery tags it with the symbol
@@ -215,10 +216,12 @@ export const startMarketSync = (): void => {
     realSync();
     return;
   }
-  if (OPERATOR_ENABLED) {
-    console.log('[MarketSync] Operator enabled; oracle-roll owns the market set, follower sync not scheduled');
+  if (isOperatorLeader()) {
+    console.log('[MarketSync] Operator leader; oracle-roll owns the market set, follower sync not scheduled');
     return;
   }
+  // Not the leader (follower, or an OPERATOR_ENABLED instance that lost the advisory lock): discover the
+  // live oracle set from chain so this instance can still serve games against whoever IS the operator.
   console.log(`[MarketSync] Follower mode: scheduled ${MARKET_SYNC_CRON}`);
   const task = cron.schedule(MARKET_SYNC_CRON, sync);
   registerWorker('market-sync', task, cronIntervalMs(MARKET_SYNC_CRON));

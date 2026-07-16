@@ -22,7 +22,6 @@ import {
   ORACLE_ROLL_MAX_PER_TICK,
   EXPIRY_SAFETY_MS,
   ORACLE_ROLL_CRON,
-  OPERATOR_ENABLED,
   IS_REAL_PREDICT,
 } from '../config/main-config.ts';
 import { gridForSpot, usd1e9, replaceOracleCap } from '../lib/sui/config.ts';
@@ -33,6 +32,7 @@ import { liveByAsset, upsertMarket } from '../lib/sui/markets.ts';
 import { engineSpot } from '../lib/game-price.ts';
 import { fetchSpot } from '../lib/pyth.ts';
 import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
+import { isOperatorLeader } from '../lib/leader-lock.ts';
 import { Transaction } from '@mysten/sui/transactions';
 
 // Spacing between ladder rungs, measured in remaining life: an oracle should exist at each life from
@@ -239,8 +239,8 @@ export const startOracleRoll = (): void => {
     console.log('[OracleRoll] Real Predict mode (Mysten rolls markets), not scheduling');
     return;
   }
-  if (!OPERATOR_ENABLED) {
-    console.log('[OracleRoll] Operator disabled (PIPS_OPERATOR_ENABLED != true), not scheduling');
+  if (!isOperatorLeader()) {
+    console.log('[OracleRoll] Not the operator leader (disabled or lost the advisory lock), not scheduling');
     return;
   }
   console.log(`[OracleRoll] Scheduled: ${ORACLE_ROLL_CRON}`);

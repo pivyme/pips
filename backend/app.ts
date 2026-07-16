@@ -5,11 +5,12 @@ import FastifyCors from '@fastify/cors';
 import FastifyWebsocket from '@fastify/websocket';
 import FastifyRateLimit from '@fastify/rate-limit';
 import FastifyHelmet from '@fastify/helmet';
-import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, OPERATOR_ENABLED, IS_REAL_PREDICT, SHUTDOWN_TIMEOUT_MS, RATE_LIMIT_WINDOW, RATE_LIMIT_GLOBAL_MAX } from './src/config/main-config.ts';
+import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, IS_REAL_PREDICT, SHUTDOWN_TIMEOUT_MS, RATE_LIMIT_WINDOW, RATE_LIMIT_GLOBAL_MAX } from './src/config/main-config.ts';
 import { NETWORK, PUBLIC_PREDICT_PACKAGE, PUBLIC_PREDICT_OBJECT, DUSDC_TYPE } from './src/lib/sui/config.ts';
 import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
 import { prismaQuery } from './src/lib/prisma.ts';
 import { allWorkerHealth, stopAllWorkers } from './src/lib/worker-registry.ts';
+import { acquireLeaderLock, releaseLeaderLock, isOperatorLeader } from './src/lib/leader-lock.ts';
 
 // Routes
 import { exampletRoute } from './src/routes/exampleRoutes.ts';
@@ -81,6 +82,7 @@ async function shutdown(signal: string): Promise<void> {
   hardExit.unref();
   try {
     stopAllWorkers(); // stop cron/interval/socket workers; in-flight runs finish under their own guard
+    await releaseLeaderLock(); // hand operator leadership to the next instance before we finish draining
     await fastify.close(); // drain HTTP + WS connections, run registered onClose hooks
     await prismaQuery.$disconnect();
     console.log('[shutdown] drained cleanly');
@@ -272,6 +274,12 @@ const start = async (): Promise<void> => {
     // container restart if the DB never comes up, instead of booting into a broken state.
     await waitForDb();
 
+    // Operator leader election (advisory lock). Attempted only when OPERATOR_ENABLED; if another
+    // instance already holds it, this one boots as a plain follower (isOperatorLeader() stays false, so
+    // the fund-moving workers below never start). Awaited before any worker starts so every gate reads
+    // the settled leadership state. Follower-only instances skip it entirely.
+    await acquireLeaderLock();
+
     // Start workers
     startErrorLogCleanupWorker();
 
@@ -292,10 +300,10 @@ const start = async (): Promise<void> => {
     }
 
     // Ops wallets: the operator seeds/tops up the sponsor (SUI), settlement (SUI), and treasury
-    // (SUI + DUSDC reserve) on boot so the first play, redeem, and chip payout don't stall. Behind
-    // OPERATOR_ENABLED so only the leader funds it. Best-effort: warn and continue (each step is
-    // independently guarded inside ensureOpsFunded; already-funded wallets just no-op).
-    if (OPERATOR_ENABLED) {
+    // (SUI + DUSDC reserve) on boot so the first play, redeem, and chip payout don't stall. Behind the
+    // operator leader lock so only the single leader funds it. Best-effort: warn and continue (each step
+    // is independently guarded inside ensureOpsFunded; already-funded wallets just no-op).
+    if (isOperatorLeader()) {
       try {
         await ensureOpsFunded();
       } catch (e) {

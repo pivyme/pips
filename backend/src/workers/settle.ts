@@ -8,10 +8,11 @@
 
 import cron from 'node-cron';
 
-import { IS_REAL_PREDICT, OPERATOR_ENABLED, SETTLE_CRON } from '../config/main-config.ts';
+import { IS_REAL_PREDICT, SETTLE_CRON } from '../config/main-config.ts';
 import { allMarkets, removeMarket } from '../lib/sui/markets.ts';
 import { settleDuePlays, settleDuePlaysReal } from '../services/plays.ts';
 import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
+import { isOperatorLeader } from '../lib/leader-lock.ts';
 
 let isRunning = false;
 
@@ -57,7 +58,7 @@ export const startSettleWorker = (): void => {
   // invisible to the deployed operator) sit on SETTLING forever. settleDuePlays gates per phase.
   const role = IS_REAL_PREDICT
     ? 'real: redeem_settled per play'
-    : OPERATOR_ENABLED
+    : isOperatorLeader()
       ? 'operator'
       : 'follower: settle-only, no oracle nudge';
   console.log(`[Settle] Scheduled: ${SETTLE_CRON} (${role})`);

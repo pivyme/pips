@@ -9,7 +9,7 @@ import { coinWithBalance } from '@mysten/sui/transactions';
 
 import type { Play, User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
-import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS, OPERATOR_ENABLED, IS_REAL_PREDICT } from '../config/main-config.ts';
+import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS, IS_REAL_PREDICT } from '../config/main-config.ts';
 import { DUSDC_TYPE, fromDusdcRaw, multiplier as multiplierOf, usd1e9 } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import {
@@ -47,6 +47,7 @@ import {
   resolveWrapper,
 } from '../lib/sui/predict-real.ts';
 import { operatorCaps } from '../lib/sui/signer.ts';
+import { isOperatorLeader } from '../lib/leader-lock.ts';
 import { checkPlayAllowed, recordPlay, clearPlay } from '../lib/sui/play-safety.ts';
 import { gameSpot } from '../lib/game-price.ts';
 import { executeForUser, executeAsOperator, executeAsSettlement, executeRealSettle, userContext } from '../lib/sui/execute.ts';
@@ -833,10 +834,12 @@ export async function settleDuePlays(): Promise<void> {
   // but it is not the leader: a second writer racing the leader on the same oracle just makes the
   // loser's push abort EOracleSettled (abort code 6) and churns the one shared gas coin, which is the
   // storm in the logs. A follower instead lets the leader settle the oracle on the shared chain and
-  // finalizes its own DB's plays in Phase 2. (The price-pusher and oracle-roll workers gate on
-  // OPERATOR_ENABLED the same way; settle runs in both modes because a follower still needs Phase 2/3.)
+  // finalizes its own DB's plays in Phase 2. (The price-pusher and oracle-roll workers gate on the same
+  // operator leader lock; settle runs in both modes because a follower still needs Phase 2/3. Gating on
+  // isOperatorLeader() not OPERATOR_ENABLED means a lock-losing operator also stops nudging, so two
+  // misconfigured operators can never both race the same oracle.)
   const now = Date.now();
-  if (OPERATOR_ENABLED) {
+  if (isOperatorLeader()) {
     const toNudge: Array<{ st: OracleState; cap: string; spotUsd: number }> = [];
     for (const [oracleId, plays] of byOracle) {
       const st = states.get(oracleId);
