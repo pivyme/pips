@@ -27,8 +27,8 @@ import type {
 const TOP = 10;
 const SETTLED = ['won', 'lost', 'cashed_out'];
 const money = (raw: bigint): string => fromDusdcRaw(raw).toFixed(2);
-const nameFields = { id: true, username: true, displayName: true, twitterUsername: true, avatarUrl: true, avatarDefaultUrl: true } as const;
-const noAvatar = { avatarUrl: null, avatarDefaultUrl: null }; // fallback when a user row is missing
+const nameFields = { id: true, username: true, displayName: true, twitterUsername: true, avatarUrl: true } as const;
+const noAvatar = { avatarUrl: null }; // fallback when a user row is missing
 
 // The verified-badge semantic: the displayed handle really is their OAuth-verified X account, not
 // just "some X is linked". Computed at query time (never denormalized), so a handle change or a

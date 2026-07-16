@@ -47,7 +47,7 @@ import {
   resolveWrapper,
 } from '../lib/sui/predict-real.ts';
 import { operatorCaps } from '../lib/sui/signer.ts';
-import { rakeOf, appendForkRake, revenueAddress, REVENUE_ENABLED } from '../lib/sui/house.ts';
+import { rakeOf, appendForkRake, revenueAddress } from '../lib/sui/house.ts';
 import { isOperatorLeader } from '../lib/leader-lock.ts';
 import { alert } from '../lib/alert.ts';
 import { checkPlayAllowed, recordPlay, clearPlay } from '../lib/sui/play-safety.ts';
@@ -262,11 +262,15 @@ export async function createPlay(user: User, input: CreatePlayInput): Promise<Cr
 // Fork path (localnet/devnet): per-user PredictManager, direct-coin mint via predict.ts, unchanged.
 async function createPlayFork(user: User, input: CreatePlayInput, stakeRaw: bigint): Promise<CreateResult> {
   if (!user.predictManagerId) throw new PlayError('MANAGER_NOT_READY', 'Your account is still getting ready');
+  // Split the stake into net + house rake (house.ts). Size the position off net; keep the full stake on
+  // the Play row and as the funding target so the rake can be peeled out in the mint PTB. rake = 0 unless
+  // a revenue wallet is configured, in which case this is byte-identical to the pre-rake path.
+  const { rake, net } = rakeOf(stakeRaw);
   // Resolve + price the deal off the live oracle (honest multiplier). The player waits only on this.
-  const resolved = await resolveByGame(input, stakeRaw);
-  const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw) });
+  const resolved = await resolveByGame(input, net);
+  const play = await prismaQuery.play.create({ data: mapResolvedToPlay(user.id, resolved, stakeRaw, rake) });
   // Mint behind the spin animation; mintPending never throws (it marks the play 'error' on failure).
-  void withUserLock(user.id, () => mintPending(user, resolved, stakeRaw, play.id, input));
+  void withUserLock(user.id, () => mintPending(user, resolved, stakeRaw, rake, play.id, input));
   return { play: await toPlayDTO(play) };
 }
 
@@ -275,9 +279,12 @@ async function createPlayFork(user: User, input: CreatePlayInput, stakeRaw: bigi
 // player waits on), persist it 'pending' with the market id in oracleId, return so the reel snaps, then
 // mint in the background (mintPendingReal fills in the order id + the REAL minted multiplier).
 async function createPlayReal(user: User, input: CreatePlayInput, stakeRaw: bigint): Promise<CreateResult> {
-  const resolved = resolveReal(input, stakeRaw);
-  const play = await prismaQuery.play.create({ data: mapRealResolvedToPlay(user.id, resolved, stakeRaw) });
-  void withUserLock(user.id, () => mintPendingReal(user, resolved, stakeRaw, play.id, input));
+  // Same net/stake split as the fork: mint budget sized off net, wrapper funded to the full stake so the
+  // rake withdraws cleanly after the mint (predict-real buildMintPlay). rake = 0 unless a wallet is set.
+  const { rake, net } = rakeOf(stakeRaw);
+  const resolved = resolveReal(input, net, stakeRaw);
+  const play = await prismaQuery.play.create({ data: mapRealResolvedToPlay(user.id, resolved, stakeRaw, rake) });
+  void withUserLock(user.id, () => mintPendingReal(user, resolved, stakeRaw, rake, play.id, input));
   return { play: await toPlayDTO(play) };
 }
 
@@ -297,16 +304,18 @@ function fundingPlan(stakeRaw: bigint, total: bigint): { cappedNeed: bigint; ref
 // race (a coin version still settling, a momentary tight price) and NEVER re-deals a result already
 // shown; a dead oracle or a real failure marks the play 'error' so the player re-racks. Chips are
 // safe either way: the fund+mint is one atomic PTB, so a failed mint debits nothing. Resolves quietly.
-async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, playId: string, input: CreatePlayInput): Promise<void> {
+async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, rakeRaw: bigint, playId: string, input: CreatePlayInput): Promise<void> {
   const managerId = user.predictManagerId!;
+  const net = stakeRaw - rakeRaw; // the sizing stake a re-route must re-price against (== stake at rake 0)
   try {
     const balances = await loadBalances(user);
     if (balances.total < stakeRaw) {
       await prismaQuery.play.update({ where: { id: playId }, data: { status: 'error' } });
       return;
     }
-    // Funding is sized off the stake (unchanged by a re-route), and a failed mint reverts atomically
-    // so nothing moves, so the plan + the on-hand manager figure stay valid across every attempt.
+    // Funding is sized off the FULL stake (net position + rake), unchanged by a re-route, and a failed
+    // mint reverts atomically so nothing moves. Funding to stake (not net) leaves the manager holding
+    // >= rake after the mint consumes ~net, so appendForkRake can always peel the rake out.
     const { cappedNeed, refillTo } = fundingPlan(stakeRaw, balances.total);
 
     const MAX_ATTEMPTS = 3;
@@ -317,6 +326,9 @@ async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, pla
       fundManager(tx, managerId, cappedNeed, refillTo, balances.manager);
       if (cur.kind === 'binary') buildMint(tx, managerId, cur.params);
       else buildMintRange(tx, managerId, cur.params);
+      // House rake: peel it out of the manager and send it to the revenue wallet, in the same atomic PTB
+      // as the mint (no-op at rake 0). A reverted mint moves nothing, so chips stay safe (house.ts).
+      appendForkRake(tx, managerId, rakeRaw);
       try {
         const exec = await executeForUser(tx, userCtx(user));
         const receipt = mintEventAmounts(exec.events, cur.kind);
@@ -342,7 +354,9 @@ async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, pla
           data: {
             status: 'open',
             txMint: exec.digest,
-            entryCost: receipt.cost,
+            // All-in cost the player actually paid = on-chain mint cost + the rake that left to revenue.
+            // Byte-identical to receipt.cost at rake 0. Keeps the PnL ledger honest (stats.ts).
+            entryCost: receipt.cost + rakeRaw,
             multiplier: actualMultiplier,
             openedAt: new Date(),
           },
@@ -356,7 +370,7 @@ async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, pla
           // The routed oracle expired/settled mid-mint: re-route to a fresh one (same deal via the
           // seed) and persist the new market params so the result + countdown match what minted.
           // If no market is available to re-route to, give up with the original error.
-          const next = await reResolve(input, stakeRaw, cur).catch(() => null);
+          const next = await reResolve(input, net, cur).catch(() => null);
           if (!next) throw e;
           cur = next;
           await prismaQuery.play.update({ where: { id: playId }, data: marketFieldsOf(next) });
@@ -395,9 +409,11 @@ function marketFieldsOf(r: Resolved) {
   return { ...base, lower: r.lowerDisplay, upper: r.upperDisplay, widthPct: r.widthPct ?? null };
 }
 
-function mapResolvedToPlay(userId: string, r: Resolved, stakeRaw: bigint) {
+function mapResolvedToPlay(userId: string, r: Resolved, stakeRaw: bigint, rakeRaw: bigint) {
   const seed = r.kind === 'binary' ? { rngSeed: r.seed } : {};
-  return { userId, game: r.game, status: 'pending', stake: stakeRaw, ...seed, ...marketFieldsOf(r) };
+  // Provisional all-in cost = the previewed mint cost + the rake the player pays; snapped to the real
+  // receipt cost + rake once the mint lands (mintPending). At rake = 0 this equals marketFieldsOf's cost.
+  return { userId, game: r.game, status: 'pending', stake: stakeRaw, ...seed, ...marketFieldsOf(r), entryCost: r.entryCost + rakeRaw };
 }
 
 // === Real-mode create / mint (IS_REAL_PREDICT) ===
@@ -414,7 +430,7 @@ function realMarketFieldsOf(r: ResolvedReal) {
   return { ...base, lower: r.lowerDisplay, upper: r.upperDisplay, widthPct: r.widthPct ?? null };
 }
 
-function mapRealResolvedToPlay(userId: string, r: ResolvedReal, stakeRaw: bigint) {
+function mapRealResolvedToPlay(userId: string, r: ResolvedReal, stakeRaw: bigint, rakeRaw: bigint) {
   const seed = r.game === 'lucky' && r.seed ? { rngSeed: r.seed } : {};
   return {
     userId,
@@ -422,7 +438,7 @@ function mapRealResolvedToPlay(userId: string, r: ResolvedReal, stakeRaw: bigint
     status: 'pending',
     stake: stakeRaw,
     marketKey: '', // real: filled with the u256 order id after mint (settle reads this)
-    entryCost: r.amountRaw, // provisional budget; snapped to the real all-in cost after mint
+    entryCost: r.amountRaw + rakeRaw, // provisional all-in budget (mint budget + rake); snapped after mint
     multiplier: r.tierMultiplier, // reel estimate; snapped to the real minted multiplier after mint
     leverage: Number(r.leverage1e9) / 1e9, // reel/quote estimate; snapped to the REAL admitted leverage after mint
     ...seed,
@@ -432,9 +448,9 @@ function mapRealResolvedToPlay(userId: string, r: ResolvedReal, stakeRaw: bigint
 
 // A fresh real resolve on a live market for the same bet, to re-route a mint whose market expired
 // mid-flight. Lucky keeps its seed (the reels already snapped to the dealt draw); null if none is live.
-function reResolveReal(input: CreatePlayInput, stakeRaw: bigint, prev: ResolvedReal): ResolvedReal | null {
+function reResolveReal(input: CreatePlayInput, netRaw: bigint, stakeRaw: bigint, prev: ResolvedReal): ResolvedReal | null {
   try {
-    return resolveReal(input, stakeRaw, prev.game === 'lucky' ? prev.seed : undefined);
+    return resolveReal(input, netRaw, stakeRaw, prev.game === 'lucky' ? prev.seed : undefined);
   } catch {
     return null;
   }
@@ -461,8 +477,9 @@ const isAdmissionAbort = (e: unknown): boolean =>
     e instanceof Error ? e.message : String(e),
   );
 
-async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: bigint, playId: string, input: CreatePlayInput): Promise<void> {
+async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: bigint, rakeRaw: bigint, playId: string, input: CreatePlayInput): Promise<void> {
   let cur = resolved;
+  const net = stakeRaw - rakeRaw; // sizing stake a re-route re-prices against (== stake at rake 0)
   let acct = user; // may lose a stale wrapper-id cache mid-flight (self-heal)
   try {
     const MAX_ATTEMPTS = 3;
@@ -493,6 +510,9 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
         leverage1e9: cur.leverage1e9,
         lowerTick: cur.lowerTick,
         higherTick: cur.higherTick,
+        // House rake: withdrawn from the wrapper after the mint and sent to revenue (no-op at rake 0).
+        rakeRaw,
+        revenueAddress: rakeRaw > 0n ? revenueAddress : undefined,
       });
 
       try {
@@ -515,7 +535,8 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
             status: 'open',
             txMint: exec.digest,
             marketKey: mint.orderId.toString(), // the settle worker's key (decodeOrderId derives the close qty)
-            entryCost: mint.costRaw,
+            // All-in cost = on-chain mint cost + the rake withdrawn to revenue (== mint.costRaw at rake 0).
+            entryCost: mint.costRaw + rakeRaw,
             multiplier: actualMultiplier,
             leverage: Number(mint.leverage1e9) / 1e9, // the REAL admitted leverage (may be trimmed from the request)
             openedAt: new Date(),
@@ -534,7 +555,7 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
         }
         // Routed market expired/settled mid-mint: re-route to a fresh live one (keeps the dealt draw).
         if (isRealMarketGone(e)) {
-          const next = reResolveReal(input, stakeRaw, cur);
+          const next = reResolveReal(input, net, stakeRaw, cur);
           if (!next) throw e;
           cur = next;
           await prismaQuery.play.update({ where: { id: playId }, data: realMarketFieldsOf(next) });
@@ -571,10 +592,10 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
 // expired mid-flight. Lucky reuses the original seed so the dealt asset/side/tier (already on the
 // reels) stay identical; range re-derives from the same asset + band width. The strike/quantity/
 // multiplier re-price against the new oracle, which is honest (the closest mintable to the deal).
-function reResolve(input: CreatePlayInput, stakeRaw: bigint, prev: Resolved): Promise<Resolved> {
-  if (input.game === 'lucky') return resolveLucky(stakeRaw, prev.kind === 'binary' ? prev.seed : undefined);
-  if (input.game === 'moonshot') return resolveMoonshot(stakeRaw, input.asset, input.side, input.reach);
-  return resolveRange(stakeRaw, input.asset, input.widthPct);
+function reResolve(input: CreatePlayInput, netRaw: bigint, prev: Resolved): Promise<Resolved> {
+  if (input.game === 'lucky') return resolveLucky(netRaw, prev.kind === 'binary' ? prev.seed : undefined);
+  if (input.game === 'moonshot') return resolveMoonshot(netRaw, input.asset, input.side, input.reach);
+  return resolveRange(netRaw, input.asset, input.widthPct);
 }
 
 // === Cash out (redeem at the live mark) ===

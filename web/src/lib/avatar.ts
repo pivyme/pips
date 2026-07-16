@@ -1,10 +1,16 @@
 // Avatar helpers: the letter-fallback derivation (shared by <Avatar> and any chip surface) and a
 // dependency-free client-side shrink of an uploaded image to a square webp for the upload route.
 
-// On-brand chip palette, tuned to styles.css. Pick is deterministic (djb2 hash of the lowercased
-// handle), so a handle always gets the same color across surfaces and reloads.
-const CHIP_COLORS = ['#ffc016', '#34d399', '#ff5a4d', '#a78bfa', '#38bdf8', '#f472b6', '#facc15', '#4ade80'] as const
-const CHIP_INK = '#0b0b0f'
+// The PIPS identicon palette: bright, saturated jewel tones, every one tuned for a legible white
+// glyph (WCAG contrast >= 4:1 against #fff), so the initial always pops. Pick is deterministic (djb2
+// hash of the normalized handle), so a handle always gets the same color across surfaces and reloads.
+const IDENTICON_COLORS = [
+  '#7C3AED', '#9333EA', '#7E22CE', '#6D28D9', '#C026D3', '#B5179E', '#86198F',
+  '#DB2777', '#E23670', '#E11D48', '#A61E4D', '#DC2626', '#BE123C', '#D9480F',
+  '#C2410C', '#4F46E5', '#5B5BD6', '#2563EB', '#1E6FD9', '#3538CD', '#0284C7',
+  '#0E7490', '#0F766E', '#047857', '#15803D',
+] as const
+const IDENTICON_INK = '#ffffff'
 
 function djb2(s: string): number {
   let h = 5381
@@ -12,16 +18,19 @@ function djb2(s: string): number {
   return Math.abs(h)
 }
 
+// Normalize so '@Pips', 'pips', and 'PIPS ' all resolve to the same color.
+const seedOf = (name: string): string => (name || '').trim().toLowerCase().replace(/^@+/, '')
+
 // First alphanumeric char of the handle, uppercased; '?' when there isn't one.
 export function avatarInitial(name: string): string {
   const m = (name || '').match(/[a-z0-9]/i)
   return m ? m[0].toUpperCase() : '?'
 }
 
-// { bg, ink } for the letter chip, deterministic per handle.
+// { bg, ink } for the identicon disc, deterministic per handle. ink is always white.
 export function avatarColor(name: string): { bg: string; ink: string } {
-  const bg = CHIP_COLORS[djb2((name || '').toLowerCase()) % CHIP_COLORS.length]
-  return { bg, ink: CHIP_INK }
+  const bg = IDENTICON_COLORS[djb2(seedOf(name)) % IDENTICON_COLORS.length]
+  return { bg, ink: IDENTICON_INK }
 }
 
 const MAX_SOURCE_DIM = 8192 // reject absurd sources before they hit the canvas

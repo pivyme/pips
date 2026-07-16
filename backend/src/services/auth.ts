@@ -20,7 +20,6 @@ import { isChainUnavailableError } from '../lib/sui/client.ts';
 import { buildCreateManager, getManagerBalanceRaw, managerExists } from '../lib/sui/predict.ts';
 import { readUserChipsRaw } from '../lib/sui/predict-real.ts';
 import { fromDusdcRaw } from '../lib/sui/config.ts';
-import { ensureDefaultAvatar } from '../lib/avatar-default.ts';
 import { effectiveAvatar } from '../utils/miscUtils.ts';
 import type { UserDTO } from '../types/api.ts';
 
@@ -174,15 +173,6 @@ export async function provisionUser(user: User): Promise<User> {
         if ((e as { code?: string })?.code !== 'P2002') throw e;
       }
     }
-  }
-
-  // Default avatar (DiceBear bottts), generated + stored exactly once. Runs before the real-mode early
-  // return below so every user gets one regardless of chain mode, and lazily backfills pre-existing
-  // users on their next login. Best-effort: a failure leaves it null (the client shows a letter chip)
-  // and the next provision retries. Patch the in-memory user so this login's DTO already reflects it.
-  if (!user.avatarDefaultUrl) {
-    const url = await ensureDefaultAvatar(user);
-    if (url) user.avatarDefaultUrl = url;
   }
 
   // Free starting chips, exactly once. Paid from the treasury reserve (transferDusdc) so chips never

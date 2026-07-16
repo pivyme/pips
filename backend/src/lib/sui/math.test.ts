@@ -8,6 +8,7 @@ import {
   FLOAT_SCALING,
   formatDusdcRaw,
   fromDusdcRaw,
+  houseRake,
   mulScaled,
   multiplier,
   quantityForStake,
@@ -87,5 +88,40 @@ describe('multiplier (payout / cost)', () => {
 
   it('is zero when there is no cost', () => {
     expect(multiplier(0n, toDusdcRaw(40))).toBe(0);
+  });
+});
+
+describe('houseRake (entry vig split)', () => {
+  const minNet = toDusdcRaw(1.2); // real-mode-style floor
+
+  it('splits a stake into net + rake at the given bps', () => {
+    // $10 at 1.5% (150 bps) -> $0.15 rake, $9.85 net.
+    const { rake, net } = houseRake(toDusdcRaw(10), 150n, 0n);
+    expect(rake).toBe(toDusdcRaw(0.15));
+    expect(net).toBe(toDusdcRaw(9.85));
+    expect(rake + net).toBe(toDusdcRaw(10)); // conserves the stake exactly
+  });
+
+  it('is a clean no-op at 0 bps (net == stake, rake == 0)', () => {
+    const stake = toDusdcRaw(10);
+    expect(houseRake(stake, 0n, 0n)).toEqual({ rake: 0n, net: stake });
+    expect(houseRake(stake, -5n, 0n)).toEqual({ rake: 0n, net: stake });
+  });
+
+  it('skips the rake when net would fall below the floor, never breaking a mint', () => {
+    // $1.20 at 1.5% would net $1.182 < the $1.20 floor -> skip (rake 0, full stake sizes the position).
+    const stake = toDusdcRaw(1.2);
+    expect(houseRake(stake, 150n, minNet)).toEqual({ rake: 0n, net: stake });
+    // A comfortably-above-floor stake still rakes.
+    const { rake, net } = houseRake(toDusdcRaw(3), 150n, minNet);
+    expect(rake).toBe(toDusdcRaw(0.045));
+    expect(net).toBe(toDusdcRaw(2.955));
+    expect(net).toBeGreaterThanOrEqual(minNet);
+  });
+
+  it('handles a non-positive stake and a sub-unit rake', () => {
+    expect(houseRake(0n, 150n, 0n)).toEqual({ rake: 0n, net: 0n });
+    // A stake so small the rake floors to 0 raw units -> no-op (never a negative or phantom rake).
+    expect(houseRake(1n, 150n, 0n)).toEqual({ rake: 0n, net: 1n });
   });
 });

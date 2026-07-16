@@ -24,7 +24,7 @@ export interface UserDTO {
   provider: 'privy' | 'dev' | 'wallet'
   // wallet-connect: the connected external wallet (login + default withdraw target).
   walletAuthAddress?: string
-  avatarUrl: string | null // effective avatar (custom or DiceBear default); null falls back to a letter chip
+  avatarUrl: string | null // custom uploaded avatar, or null (the client renders the PIPS identicon)
   customAvatar: boolean // a custom upload is set (drives the remove-X in the profile editor)
   balance: string
   managerReady: boolean

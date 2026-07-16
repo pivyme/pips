@@ -34,7 +34,7 @@ import {
 } from '@/lib/sound'
 import { api, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
-import { betLadder } from '@/lib/sui/config'
+import { betLadder, netStakeUsd } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { useActivePlay } from '@/lib/activePlay'
@@ -327,7 +327,9 @@ function MoonshotScreen() {
       stake,
       headline: `${asset} · ${sideLabel(side)} · ${reach}x`,
       multiplier: reach,
-      maxPayout: stake * reach,
+      // Net of the house rake (config.ts netStakeUsd): the position sizes off net, so this is the true
+      // max win, never stake * reach. No-op (full stake) in demo / when the rake is off.
+      maxPayout: netStakeUsd(stake) * reach,
       note: 'Hold to the buzzer',
     }),
   )
@@ -581,7 +583,8 @@ function MoonshotScreen() {
                   </div>
                   <div className="mt-2.5 grid grid-cols-2 gap-x-3">
                     <Cell label="Bet" value={`$${stake}`} />
-                    <Cell label="Win up to" value={`$${money(stake * reach)}`} />
+                    {/* Net of the house rake, so this never over-promises the aimed win (config.ts). */}
+                    <Cell label="Win up to" value={`$${money(netStakeUsd(stake) * reach)}`} />
                   </div>
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
                     Further reach, bigger multiple

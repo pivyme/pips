@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { cnm } from '@/utils/style'
 import { avatarColor, avatarInitial } from '@/lib/avatar'
 
-// One avatar component every surface uses. Renders the image when `src` is set; on a load error (a
-// dead or blocked URL) or when there's no src, it falls back to a deterministic on-brand letter chip,
-// so a broken URL never shows a busted <img>. `name` is the handle, used for the fallback letter + color.
+// One avatar component every surface uses. Renders the uploaded image when `src` is set; on a load
+// error (a dead or blocked URL) or when there's no src, it falls back to the PIPS identicon: a bright
+// deterministic disc with the handle's initial in Open Runde Bold. So a broken URL never shows a busted
+// <img>, and a user with no photo still gets a distinct, on-brand avatar. `name` is the handle.
 export function Avatar({
   name,
   src,
@@ -40,8 +41,14 @@ export function Avatar({
       ) : (
         <div
           aria-hidden
-          className="flex h-full w-full items-center justify-center font-black leading-none"
-          style={{ backgroundColor: bg, color: ink, fontSize: Math.round(size * 0.44) }}
+          className="flex h-full w-full items-center justify-center leading-none"
+          style={{
+            backgroundColor: bg,
+            color: ink,
+            fontSize: Math.round(size * 0.52),
+            fontFamily: "'Open Runde', var(--font-sans)",
+            fontWeight: 700,
+          }}
         >
           {avatarInitial(name)}
         </div>

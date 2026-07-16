@@ -18,7 +18,7 @@ export function StatsCard({
 }: {
   stats: UserStatsDTO
   displayName: string
-  // The effective avatar (custom or DiceBear default); a letter chip renders when absent.
+  // The custom uploaded avatar, or null (the PIPS identicon renders when absent).
   avatarUrl?: string | null
   // When set, a pen sits next to the handle so it can be changed. Omitted on the shareable card.
   onEdit?: () => void

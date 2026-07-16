@@ -3,6 +3,7 @@
 // never builds a Predict moveCall itself, the backend does, so this stays minimal.
 
 import { env } from '@/env'
+import { isDemo } from '@/lib/demo'
 
 export const NETWORK = env.VITE_SUI_NETWORK
 // Human label for the active chain, e.g. "Sui Testnet". Drives the on-screen network badge so it
@@ -25,6 +26,13 @@ export let DUSDC_TYPE = env.VITE_DUSDC_TYPE ?? ''
 let STAKE_MIN = NETWORK === 'testnet' ? 1.5 : 1
 let STAKE_MAX = NETWORK === 'testnet' ? 3 : 100
 
+// House rake (backend house.ts): the entry vig folded into position sizing, so a real play sizes off
+// `net = stake - rake`. Kept here so pre-play previews can show the true NET max payout instead of
+// stake*multiplier and never over-promise. Effective bps is 0 until /config says otherwise (and always 0
+// in demo, which never rakes). MIN_NET is the floor below which the backend skips the rake.
+let HOUSE_EDGE_BPS = 0
+let HOUSE_EDGE_MIN_NET = NETWORK === 'testnet' ? 1.2 : 0
+
 // Pull the live deploy ids from the backend and adopt the current DUSDC coin type + stake band.
 // Fire-and-forget at app boot; on any failure (no backend, demo mode, offline) we keep the defaults above.
 export async function refreshDeployedConfig(): Promise<void> {
@@ -32,7 +40,7 @@ export async function refreshDeployedConfig(): Promise<void> {
     const res = await fetch(`${env.VITE_API_URL}/config`, { signal: AbortSignal.timeout(5000) })
     if (!res.ok) return
     const body = (await res.json()) as {
-      data?: { dusdcType?: string; minStake?: number; maxStake?: number }
+      data?: { dusdcType?: string; minStake?: number; maxStake?: number; houseEdgeBps?: number; houseEdgeMinNetUsd?: number }
     }
     const live = body?.data?.dusdcType
     if (live && live !== DUSDC_TYPE) DUSDC_TYPE = live
@@ -40,9 +48,23 @@ export async function refreshDeployedConfig(): Promise<void> {
     const max = body?.data?.maxStake
     if (typeof min === 'number' && min > 0) STAKE_MIN = min
     if (typeof max === 'number' && max >= STAKE_MIN) STAKE_MAX = max
+    const bps = body?.data?.houseEdgeBps
+    const minNet = body?.data?.houseEdgeMinNetUsd
+    if (typeof bps === 'number' && bps >= 0) HOUSE_EDGE_BPS = bps
+    if (typeof minNet === 'number' && minNet >= 0) HOUSE_EDGE_MIN_NET = minNet
   } catch {
     // keep the defaults
   }
+}
+
+// The net stake a REAL play sizes its position off after the house rake. Pre-play previews multiply this
+// (not the full stake) by the estimated multiplier so a projected win never promises more than the net
+// position pays. Demo mode never rakes, so it returns the full stake. Mirrors the backend houseRake split
+// including the below-floor skip; at the floor it's a hair conservative (understates, never overstates).
+export function netStakeUsd(stakeUsd: number): number {
+  if (HOUSE_EDGE_BPS <= 0 || isDemo() || !(stakeUsd > 0)) return stakeUsd
+  const net = stakeUsd - (stakeUsd * HOUSE_EDGE_BPS) / 10_000
+  return net >= HOUSE_EDGE_MIN_NET ? net : stakeUsd
 }
 
 // The curated tiers we prefer when the band is wide enough (the free fork). A tight real band gets even rungs.

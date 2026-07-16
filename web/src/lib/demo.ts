@@ -68,10 +68,6 @@ export function setDemoOverride(on: boolean | null): void {
 // A realistic-looking Sui address so demo reads as the real thing on screen recordings.
 const DEMO_ADDRESS = '0xa3f08c7e5b1d49260e8a3f7c6d20b9e41f5c8a037e94d2b60a3c5f81e9b27d4c'
 const DEMO_HANDLE = '@pips'
-// Demo default avatar: a DiceBear bottts robot from the public API, seeded by the demo address (mirrors
-// the real "seed = wallet address" rule). Demo-only + display-only; offline it just falls back to the
-// letter chip via <Avatar>. A custom upload (state.avatarUrl) wins over this when set.
-const DEMO_DEFAULT_AVATAR = `https://api.dicebear.com/9.x/bottts-neutral/svg?seed=${encodeURIComponent(DEMO_ADDRESS)}`
 // A linked-but-not-adopted X account by default (username starts as 'pips', not 'pips_demo'), so the
 // Account Settings screen, the "Use your X username" button, and the verified pill are all demoable
 // with no backend: tap the button, save, and the badge flips on, mirroring the real verifiedX rule.
@@ -713,8 +709,8 @@ function createMoonshot(body: Record<string, unknown>): PlayDTO {
 
 // === The mock api surface (mirrors lib/api.ts `api`) ===
 
-// The demo user's effective avatar: a custom upload wins, else the seeded DiceBear default.
-const demoAvatar = (): string => state.avatarUrl ?? DEMO_DEFAULT_AVATAR
+// The demo user's effective avatar: a custom upload if set, else null (the PIPS identicon renders).
+const demoAvatar = (): string | null => state.avatarUrl ?? null
 
 function userDTO(): UserDTO {
   return {

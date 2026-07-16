@@ -14,7 +14,6 @@ export const shortenAddress = (address: string, startLength: number = 6, endLeng
   return address.slice(0, startLength) + '...' + address.slice(-endLength);
 };
 
-// The avatar a user actually shows: a custom upload wins, else the stored DiceBear default, else null
-// (the client renders a letter chip). Pure + dependency-free so any read path can use it.
-export const effectiveAvatar = (u: { avatarUrl: string | null; avatarDefaultUrl: string | null }): string | null =>
-  u.avatarUrl ?? u.avatarDefaultUrl ?? null;
+// The avatar a user actually shows: a custom upload if set, else null (the client renders the PIPS
+// identicon, a colored disc with the handle's initial). Pure + dependency-free so any read path can use it.
+export const effectiveAvatar = (u: { avatarUrl: string | null }): string | null => u.avatarUrl ?? null;

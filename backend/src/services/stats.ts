@@ -23,7 +23,7 @@ export type LedgerStats = {
   losses: number;
   currentStreak: number; // signed: + current win run, - current loss run
   maxStreak: number; // best win run
-  totalVolume: bigint; // Σ actual on-chain mint cost, base units
+  totalVolume: bigint; // Σ all-in entry cost (on-chain mint cost + house rake), base units
   netPnl: bigint; // Σ pnl (payout - entryCost), base units
   firstPlayAt: Date | null;
   lastPlayAt: Date | null;

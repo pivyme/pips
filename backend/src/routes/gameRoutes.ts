@@ -10,6 +10,7 @@ import { EXPIRY_SAFETY_MS, GAME_DURATIONS } from '../config/main-config.ts';
 import { allMarkets, tradeableMarkets } from '../lib/sui/markets.ts';
 import { sponsorPaused } from '../lib/sui/play-safety.ts';
 import { gameSpot } from '../lib/game-price.ts';
+import { PYTH_FEED_IDS } from '../lib/pyth.ts';
 import { PlayError, httpStatusForPlayError, quoteRangeBatch } from '../services/games.ts';
 import {
   createPlay,
@@ -51,12 +52,16 @@ const fail = async (reply: FastifyReply, e: unknown, fallbackCode: string, fallb
 
 export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
   // The markets the games can trade right now. Spot comes from Pyth; `live` reflects whether
-  // an oracle is fresh and far enough from expiry to mint against.
+  // an oracle is fresh and far enough from expiry to mint against. We list every priceable asset,
+  // not just the ones with a live oracle: real-Predict-testnet only stands up BTC oracles, but LUCKY
+  // stacks BTC/SUI/ETH charts and seeds each from this spot, so a display-only asset needs its spot
+  // here or its chart lags behind BTC's until the first WS tick lands (the "only BTC shows" bug).
+  // `live` stays oracle-driven, so a non-tradeable asset is charted but never dealt (canPlay unaffected).
   app.get('/markets', { preHandler: [authMiddleware] }, async (_request: FastifyRequest, reply: FastifyReply) => {
     try {
       const now = Date.now();
       const live = new Set(tradeableMarkets(now, EXPIRY_SAFETY_MS).map((m) => m.underlying));
-      const assets = [...new Set(allMarkets().map((m) => m.underlying))].sort(
+      const assets = [...new Set([...allMarkets().map((m) => m.underlying), ...Object.keys(PYTH_FEED_IDS)])].sort(
         (a, b) => assetRank(a) - assetRank(b) || a.localeCompare(b),
       );
 

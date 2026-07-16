@@ -35,7 +35,7 @@ import {
 } from '@/lib/sound'
 import { api } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
-import { NETWORK, betLadder } from '@/lib/sui/config'
+import { NETWORK, betLadder, netStakeUsd } from '@/lib/sui/config'
 import { rangeDebug, type RangeEntryIntent } from '@/lib/rangeDebug'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
@@ -487,7 +487,9 @@ function RangeScreen() {
       stake,
       headline: `${asset} · ±${halfPct.toFixed(1)}%`,
       multiplier: idleMult,
-      maxPayout: stake * idleMult,
+      // Net of the house rake (config.ts netStakeUsd): the position sizes off net, so this is the true
+      // max win, never stake * idleMult. No-op (full stake) in demo / when the rake is off.
+      maxPayout: netStakeUsd(stake) * idleMult,
       note: 'Hold to the buzzer',
     }),
   )

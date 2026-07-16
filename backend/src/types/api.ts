@@ -14,7 +14,7 @@ export interface UserDTO {
   twitter: { username: string; name: string | null } | null; // linked X account, server-verified via Privy
   provider: 'privy' | 'dev' | 'wallet';
   walletAuthAddress?: string; // wallet-connect: the connected external wallet (login + default withdraw target)
-  avatarUrl: string | null; // effective avatar (custom upload or the stored DiceBear default); null falls back to a letter chip
+  avatarUrl: string | null; // custom uploaded avatar, or null (the client renders the PIPS identicon)
   customAvatar: boolean; // a custom upload is set (drives the remove-X in the profile editor)
   balance: string; // available DUSDC (wallet + manager cash), 2dp display, e.g. "983.50"
   managerReady: boolean; // PredictManager exists
@@ -117,7 +117,7 @@ export interface LeaderboardPnlEntryDTO {
   rank: number;
   username: string | null; // user-chosen handle; null until onboarded
   displayName: string; // generated handle fallback, never the wallet address
-  avatarUrl: string | null; // effective avatar (custom or DiceBear default); null falls back to a letter chip
+  avatarUrl: string | null; // custom uploaded avatar, or null (the client renders the PIPS identicon)
   netPnl: string; // signed DUSDC, e.g. "342.00" or "-128.50"
   gamesPlayed: number;
   isYou: boolean;

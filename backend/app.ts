@@ -41,9 +41,9 @@ import { startBinance } from './src/lib/binance-ws.ts';
 // treasury (SUI + DUSDC reserve) wallets so plays, redeems, and chip payouts never stall.
 import { ensureOpsFunded } from './src/lib/sui/gas.ts';
 import { SPONSOR_ENABLED, sponsorAddress, ensureSponsorAccumulator } from './src/lib/sui/sponsor.ts';
-import { treasuryAddress } from './src/lib/sui/signer.ts';
+import { treasuryAddress, REVENUE_ENABLED } from './src/lib/sui/signer.ts';
 import { startSponsorMonitor } from './src/lib/sui/play-safety.ts';
-import { SPONSOR_FLOOR_SUI, TREASURY_MIN_DUSDC, MIN_STAKE, MAX_STAKE } from './src/config/main-config.ts';
+import { SPONSOR_FLOOR_SUI, TREASURY_MIN_DUSDC, MIN_STAKE, MAX_STAKE, HOUSE_EDGE_BPS, HOUSE_EDGE_MIN_NET_USD } from './src/config/main-config.ts';
 
 console.log(
   '======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n'
@@ -258,6 +258,11 @@ fastify.get('/config', async (_request: FastifyRequest, reply: FastifyReply) => 
       // offers an out-of-band bet (testnet-real is a tight 1.5..3, the fork is a wide 1..100).
       minStake: MIN_STAKE,
       maxStake: MAX_STAKE,
+      // House rake the play endpoints apply, so pre-play previews show the true NET max payout (net *
+      // multiplier) instead of stake * multiplier and never over-promise. Effective value: 0 when the
+      // revenue wallet is unset (rake disabled). minNetUsd = the floor below which the rake is skipped.
+      houseEdgeBps: REVENUE_ENABLED ? Number(HOUSE_EDGE_BPS) : 0,
+      houseEdgeMinNetUsd: HOUSE_EDGE_MIN_NET_USD,
     },
   });
 });

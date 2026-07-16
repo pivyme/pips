@@ -2,7 +2,7 @@
 // 500x500 webp and sends it base64 in a JSON body (~30-90KB, well under the 1MB bodyLimit, so no
 // multipart). Bytes are validated server-side (declared mime + a RIFF/WEBP magic sniff + a hard cap),
 // never trusted by their label. Storage is gated by AVATAR_UPLOADS_ENABLED: with no S3 creds these
-// routes 503 cleanly and the app falls back to the DiceBear default / letter chip.
+// routes 503 cleanly and the app falls back to the PIPS identicon.
 
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 import { nanoid } from 'nanoid';
@@ -59,7 +59,7 @@ export const avatarRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
     }
   });
 
-  // Remove the custom avatar, reverting to the DiceBear default.
+  // Remove the custom avatar, reverting to the PIPS identicon.
   app.delete('/avatar', { preHandler: [authMiddleware], config: avatarLimit }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     try {

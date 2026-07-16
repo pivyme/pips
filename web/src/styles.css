@@ -2,6 +2,15 @@
 @import '@heroui/styles';
 @import '@fontsource-variable/gabarito';
 
+/* Open Runde: the geometric rounded face used for the identicon initial. Single bold weight. */
+@font-face {
+  font-family: 'Open Runde';
+  src: url('/fonts/OpenRunde-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* PIPS is always pure black. Dark is the only theme. */
 @custom-variant dark (&:where(.dark, .dark *));
 

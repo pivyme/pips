@@ -18,7 +18,7 @@ export interface TradeDetails {
   stake: number // dollars at risk
   headline: string // the play in one line, e.g. "BTC · LONG · 5x", or "I Feel Lucky" when the reel deals it
   multiplier?: number // for the payout line, when known pre-place
-  maxPayout?: number // stake * multiplier, when known pre-place
+  maxPayout?: number // the NET max win (net-of-house-rake stake * multiplier), when known pre-place
   note?: string // a small subline, e.g. "Hold to the buzzer"
 }
 

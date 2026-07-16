@@ -20,6 +20,7 @@ import { type Transaction } from '@mysten/sui/transactions';
 
 import { HOUSE_EDGE_BPS, HOUSE_EDGE_MIN_NET_USD } from '../../config/main-config.ts';
 import { toDusdcRaw } from './config.ts';
+import { houseRake } from './math.ts';
 import { buildManagerWithdraw } from './predict.ts';
 import { REVENUE_ENABLED, revenueAddress } from './signer.ts';
 
@@ -34,13 +35,12 @@ const MIN_NET_RAW = toDusdcRaw(HOUSE_EDGE_MIN_NET_USD);
 export type Rake = { rake: bigint; net: bigint };
 
 // Split a stake into { net, rake }. Returns rake = 0 / net = stake (byte-identical to no-rake) when the
-// revenue wallet is unset, the edge is 0, or taking the rake would drop net below the min-net floor.
+// revenue wallet is unset (nowhere to send it); otherwise delegates to the pure houseRake split, which
+// also zeroes the rake when the edge is 0 or the net would fall below the floor. The wallet gate lives
+// here (not in math.ts) so the arithmetic stays chain/config-free and unit-testable.
 export function rakeOf(stakeRaw: bigint): Rake {
-  if (!REVENUE_ENABLED || HOUSE_EDGE_BPS <= 0n || stakeRaw <= 0n) return { rake: 0n, net: stakeRaw };
-  const rake = (stakeRaw * HOUSE_EDGE_BPS) / 10_000n;
-  const net = stakeRaw - rake;
-  if (rake <= 0n || net < MIN_NET_RAW) return { rake: 0n, net: stakeRaw };
-  return { rake, net };
+  if (!REVENUE_ENABLED) return { rake: 0n, net: stakeRaw };
+  return houseRake(stakeRaw, HOUSE_EDGE_BPS, MIN_NET_RAW);
 }
 
 // Append the FORK rake to a mint PTB: peel `rakeRaw` out of the user's PredictManager (owner-gated

@@ -39,3 +39,16 @@ export const quantityForStake = (ask1e9: bigint, stakeRaw: bigint): bigint => {
 // Gross payout multiple on a position: payout / cost. 0 cost -> 0 (no position, no payout).
 export const multiplier = (costRaw: bigint, payoutRaw: bigint): number =>
   costRaw <= 0n ? 0 : Number(payoutRaw) / Number(costRaw);
+
+// The house-rake split of a stake into { rake, net } (all 6dp). rake = floor(stake * bps / 10_000), net
+// = stake - rake. Returns rake = 0 / net = stake (byte-identical to no-rake) when bps <= 0, the stake is
+// non-positive, or taking the rake would drop net below `minNetRaw` (the floor that protects real
+// Predict's ~$1 net-premium minimum, L-011). Pure so the vig arithmetic is unit-tested here; the enabled/
+// disabled gate + config wiring live in house.ts.
+export const houseRake = (stakeRaw: bigint, bps: bigint, minNetRaw: bigint): { rake: bigint; net: bigint } => {
+  if (bps <= 0n || stakeRaw <= 0n) return { rake: 0n, net: stakeRaw };
+  const rake = (stakeRaw * bps) / 10_000n;
+  const net = stakeRaw - rake;
+  if (rake <= 0n || net < minNetRaw) return { rake: 0n, net: stakeRaw };
+  return { rake, net };
+};

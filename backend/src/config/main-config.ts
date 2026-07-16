@@ -46,8 +46,8 @@ export const RATE_LIMIT_FAUCET_MAX: number = Number(process.env.PIPS_RATE_LIMIT_
 export const RATE_LIMIT_WITHDRAW_MAX: number = Number(process.env.PIPS_RATE_LIMIT_WITHDRAW_MAX) || 20;
 export const RATE_LIMIT_AVATAR_MAX: number = Number(process.env.PIPS_RATE_LIMIT_AVATAR_MAX) || 10;
 
-// Avatar storage (S3 / DigitalOcean Spaces). Custom uploads and the stored DiceBear default live in a
-// shared Spaces bucket, everything under S3_FOLDER_PREFIX. Creds come from .env; bucket/region/endpoint
+// Avatar storage (S3 / DigitalOcean Spaces). Custom avatar uploads live in a shared Spaces bucket,
+// everything under S3_FOLDER_PREFIX. Creds come from .env; bucket/region/endpoint
 // are derived from the virtual-hosted bucket URL so there's a single source of truth. Missing any piece
 // disables uploads AND default-SVG storage cleanly (route 503s, the client shows a letter chip). This is
 // fail-soft, not a boot fail: no avatar feature never blocks the app from starting.

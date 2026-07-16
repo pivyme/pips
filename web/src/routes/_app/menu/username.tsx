@@ -14,7 +14,7 @@ import { cnm } from '@/utils/style'
 
 // The Profile editor: avatar + handle. A plain App-Surface page in the drawer (reached from the pen on
 // the Player Card), not the device screen. Change the photo (client-shrunk to a 500x500 webp) or clear
-// it back to the DiceBear default, and edit the @handle. No display name.
+// it back to the PIPS identicon, and edit the @handle. No display name.
 export const Route = createFileRoute('/_app/menu/username')({ component: UsernameScreen })
 
 const HANDLE_RE = /^[a-zA-Z0-9_]{3,20}$/
@@ -68,7 +68,7 @@ function UsernameScreen() {
     }
   }
 
-  // Clear the custom photo, reverting to the DiceBear default.
+  // Clear the custom photo, reverting to the PIPS identicon.
   const removeAvatar = async () => {
     if (avatarBusy) return
     setAvatarBusy(true)
