@@ -51,7 +51,8 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 
 ```
 /
-├── index.ts                 # Entry point - registers all routes & workers
+├── index.ts                 # Thin bootstrapper: load env, hydrate deploy ids from DB, then dynamic-import app.ts
+├── app.ts                   # The app: builds Fastify, registers routes + workers, GET /health + /health/ready, graceful shutdown, crash handlers
 ├── dotenv.ts                # Environment loader (imported first, before any module)
 ├── prisma/
 │   ├── schema.prisma        # Database schema
@@ -81,7 +82,10 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   ├── types/api.ts         # DTO contract (mirrors web/src/lib/api.ts)
 │   ├── utils/               # errorHandler, validationUtils, miscUtils, timeUtils
 │   └── lib/
-│       ├── prisma.ts        # Database client
+│       ├── prisma.ts        # Database client (pg adapter, PIPS_DB_POOL_MAX pool ceiling)
+│       ├── worker-registry.ts # Tracks every cron/interval worker for /health/ready + coordinated shutdown
+│       ├── leader-lock.ts   # Postgres advisory lock so only one OPERATOR_ENABLED instance moves funds
+│       ├── alert.ts         # Opt-in Discord/Slack webhook for unrecoverable events (no-op if PIPS_ALERT_WEBHOOK_URL unset)
 │       ├── pyth.ts          # Pyth price reads
 │       ├── price-cache.ts   # In-memory price cache
 │       ├── game-price.ts    # Unified follower price feed for games (gameSpot: eased on-chain oracle)
@@ -100,7 +104,7 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 import { JWT_SECRET, APP_PORT, AUTH_MODE, OPERATOR_ENABLED } from '../config/main-config.ts';
 ```
 
-It covers, grouped: **core** (`APP_PORT`, `NODE_ENV`, `IS_DEV`/`IS_PROD`, `DATABASE_URL`, `JWT_SECRET`, `ALLOWED_ORIGIN`), **auth** (`AUTH_MODE` dev|privy, the `PRIVY_*` keys, `TESTING_WALLET_PK`), **Sui** (`SUI_NETWORK`, `SUI_FULLNODE_URL`, the `PREDICT_*` ids, `PYTH_HERMES_URL`), **economy** (`STARTING_BALANCE`, `MIN_STAKE`/`MAX_STAKE`, `GAME_DURATIONS`), **gas** (`GAS_FUND_SUI`, `PLAY_GAS_BUDGET`, `GAS_SPONSORSHIP_WALLET_PK` + the `SPONSOR_*` topup knobs), and the **operator** (`OPERATOR_ENABLED`, the `*_CRON` schedules for price-push / oracle-roll / settle / market-sync, plus the oracle ladder + `LUCKY_*` tuning). Add a new tunable here, not inline.
+It covers, grouped: **core** (`APP_PORT`, `NODE_ENV`, `IS_DEV`/`IS_PROD`, `DATABASE_URL`, `JWT_SECRET`, `ALLOWED_ORIGIN`), **auth** (`AUTH_MODE` dev|privy, the `PRIVY_*` keys, `TESTING_WALLET_PK`), **Sui** (`SUI_NETWORK`, `SUI_FULLNODE_URL`, the `PREDICT_*` ids, `PYTH_HERMES_URL`), **economy** (`STARTING_BALANCE`, `MIN_STAKE`/`MAX_STAKE`, `GAME_DURATIONS`), **gas** (`GAS_FUND_SUI`, `PLAY_GAS_BUDGET`, `GAS_SPONSORSHIP_WALLET_PK` + the `SPONSOR_*` topup knobs), the **operator** (`OPERATOR_ENABLED`, the `*_CRON` schedules for price-push / oracle-roll / settle / market-sync, plus the oracle ladder + `LUCKY_*` tuning), and **hardening** (`PIPS_SHUTDOWN_TIMEOUT_MS` graceful-drain budget default 8000ms, `PIPS_DB_POOL_MAX` pg pool ceiling default 10, `PIPS_ALERT_WEBHOOK_URL` opt-in Discord/Slack alerts empty default, the `PIPS_RATE_LIMIT_*` HTTP caps). Add a new tunable here, not inline.
 
 ---
 
