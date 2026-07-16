@@ -11,6 +11,7 @@ import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
 import { prismaQuery } from './src/lib/prisma.ts';
 import { allWorkerHealth, stopAllWorkers } from './src/lib/worker-registry.ts';
 import { acquireLeaderLock, releaseLeaderLock, isOperatorLeader } from './src/lib/leader-lock.ts';
+import { alert } from './src/lib/alert.ts';
 
 // Routes
 import { exampletRoute } from './src/routes/exampleRoutes.ts';
@@ -96,6 +97,9 @@ async function shutdown(signal: string): Promise<void> {
 
 function handleFatal(kind: string, err: unknown): void {
   console.error(`\n[FATAL] ${kind}:`, err instanceof Error ? (err.stack ?? err.message) : err);
+  // Notify a human before we exit: the container restart brings up a fresh process, but a crash loop is
+  // invisible without this. No-op unless a webhook is configured; can't throw (would re-enter here).
+  alert('critical', `process crashed (${kind}), restarting`, { error: err instanceof Error ? err.message : String(err) });
   void shutdown('FATAL');
 }
 

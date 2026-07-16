@@ -48,6 +48,7 @@ import {
 } from '../lib/sui/predict-real.ts';
 import { operatorCaps } from '../lib/sui/signer.ts';
 import { isOperatorLeader } from '../lib/leader-lock.ts';
+import { alert } from '../lib/alert.ts';
 import { checkPlayAllowed, recordPlay, clearPlay } from '../lib/sui/play-safety.ts';
 import { gameSpot } from '../lib/game-price.ts';
 import { executeForUser, executeAsOperator, executeAsSettlement, executeRealSettle, userContext } from '../lib/sui/execute.ts';
@@ -895,7 +896,12 @@ export async function settleDuePlays(): Promise<void> {
   }
   if (giveUp.length > 0) {
     const res = await prismaQuery.play.updateMany({ where: { id: { in: giveUp }, status: 'open' }, data: { status: 'error' } });
-    if (res.count > 0) console.log(`[Settle] gave up on ${res.count} unsettleable play(s)`);
+    if (res.count > 0) {
+      console.log(`[Settle] gave up on ${res.count} unsettleable play(s)`);
+      // Real positions we genuinely cannot settle (dead deployment / wiped chain), flipped to error.
+      // Recovery is unchanged; this only surfaces it, since a batch here means user funds are stuck.
+      alert('critical', `settle gave up on ${res.count} unsettleable play(s) (dead oracle / wiped chain)`);
+    }
   }
 }
 
@@ -1095,6 +1101,9 @@ async function reconcileRealSettle(play: Play, wrapperId: string, orderId: bigin
   if (play.expiry < cutoff) {
     await prismaQuery.play.update({ where: { id: play.id }, data: { status: 'error', settledAt: new Date() } });
     console.warn(`[Settle] real ${play.id} unsettleable (${unreadable ? 'market gone' : 'not settled'}); marked error`);
+    // Real-mode give-up: a real testnet position we can't settle after the orphan window. Recovery
+    // unchanged; alert so a human can look, since real chips are involved (L-008/L-011).
+    alert('critical', 'real play unsettleable after orphan window, marked error', { playId: play.id, reason: unreadable ? 'market gone' : 'not settled' });
     return;
   }
   // Market not settled yet, or a transient tx failure: leave 'open' to retry on a later tick.

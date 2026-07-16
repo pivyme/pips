@@ -16,6 +16,7 @@
 import { Client } from 'pg';
 
 import { DATABASE_URL, OPERATOR_ENABLED } from '../config/main-config.ts';
+import { alert } from './alert.ts';
 
 // hashtext(...) maps the lock name to the bigint key pg_try_advisory_lock wants; the exact number is
 // irrelevant, it only has to be identical across every instance sharing this DB.
@@ -52,6 +53,9 @@ export async function acquireLeaderLock(): Promise<boolean> {
     console.warn(
       '[leader-lock] another operator instance already holds the lock; this instance stays a FOLLOWER despite PIPS_OPERATOR_ENABLED=true (no oracle/price/settle-nudge/funding writes here)',
     );
+    // Fires once per boot (dedupe covers the rest): a genuine two-operator misconfig is worth a ping so a
+    // human can fix the duplicate before an intended operator sits idle behind the wrong instance.
+    alert('warn', 'operator leader-lock already held by another instance; this instance stays a follower despite OPERATOR_ENABLED=true');
     return false;
   } catch (e) {
     // Could not determine leadership (connection/query error). Fail safe: no operator writes, so a DB

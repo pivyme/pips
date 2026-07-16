@@ -28,6 +28,14 @@ export const DATABASE_URL: string = process.env.DATABASE_URL as string;
 // the container stop grace is ever lowered below ~10s, lower this to match with headroom (09-DEPLOYMENT).
 export const SHUTDOWN_TIMEOUT_MS: number = Number(process.env.PIPS_SHUTDOWN_TIMEOUT_MS) || 8000;
 
+// Opt-in alerting. When PIPS_ALERT_WEBHOOK_URL is set, events the app can't self-heal (a fatal crash, an
+// operator leader-lock conflict, a worker giving up on a play) POST a short message to a Discord or Slack
+// incoming webhook. Empty (default) = alerting is a silent no-op, never a boot failure, so the feature is
+// fully inert until a URL is configured. ALERT_DEDUPE_MS throttles the SAME message to once per window so
+// a tight failure loop can't spam the channel.
+export const ALERT_WEBHOOK_URL: string = (process.env.PIPS_ALERT_WEBHOOK_URL || '').trim();
+export const ALERT_DEDUPE_MS: number = Number(process.env.PIPS_ALERT_DEDUPE_MS) || 5 * 60_000;
+
 // Authentication
 export const JWT_SECRET: string = process.env.JWT_SECRET as string;
 export const JWT_EXPIRES_IN: string = process.env.JWT_EXPIRES_IN || '7d';
@@ -453,6 +461,8 @@ export default {
   IS_PROD,
   DATABASE_URL,
   SHUTDOWN_TIMEOUT_MS,
+  ALERT_WEBHOOK_URL,
+  ALERT_DEDUPE_MS,
   RATE_LIMIT_WINDOW,
   RATE_LIMIT_GLOBAL_MAX,
   RATE_LIMIT_AUTH_MAX,
