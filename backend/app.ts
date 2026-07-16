@@ -7,7 +7,7 @@ import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, OPERATOR_ENABLED, IS_REAL_PREDICT, S
 import { NETWORK, PUBLIC_PREDICT_PACKAGE, PUBLIC_PREDICT_OBJECT, DUSDC_TYPE } from './src/lib/sui/config.ts';
 import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
 import { prismaQuery } from './src/lib/prisma.ts';
-import { stopAllWorkers } from './src/lib/worker-registry.ts';
+import { allWorkerHealth, stopAllWorkers } from './src/lib/worker-registry.ts';
 
 // Routes
 import { exampletRoute } from './src/routes/exampleRoutes.ts';
@@ -136,6 +136,50 @@ fastify.get('/', async (_request: FastifyRequest, reply: FastifyReply) => {
     message: 'Hello there!',
     error: null,
     data: null,
+  });
+});
+
+// Liveness: always 200 if the process can respond at all. No dependency checks, so it can never itself
+// get stuck. This is what the container orchestrator (Docker HEALTHCHECK) polls every 30s: a hung
+// dependency must NOT bounce an otherwise-alive instance and drop every in-flight connection with it.
+fastify.get('/health', async (_request: FastifyRequest, reply: FastifyReply) => {
+  return reply.status(200).send({
+    success: true,
+    error: null,
+    data: { uptime: Math.round(process.uptime()), shuttingDown },
+  });
+});
+
+// Bounded DB ping for readiness. Races SELECT 1 against a short timeout so a wedged connection can't hang
+// the endpoint (which would otherwise make the orchestrator's readiness probe itself time out).
+async function pingDb(timeoutMs = 2000): Promise<boolean> {
+  try {
+    await Promise.race([
+      prismaQuery.$queryRaw`SELECT 1`,
+      new Promise((_resolve, reject) => setTimeout(() => reject(new Error('db ping timeout')), timeoutMs)),
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Readiness: reports whether this instance can actually serve. DB down => 503 (the one case an
+// orchestrator should stop routing traffic here). A stale non-critical worker sets `degraded` but stays
+// 200: a wedged price-warmer must not bounce a healthy API instance, it should just be visible so a
+// human or the alert path can look. A worker is stale once it hasn't run in ~3x its own cadence.
+fastify.get('/health/ready', async (_request: FastifyRequest, reply: FastifyReply) => {
+  const now = Date.now();
+  const dbOk = await pingDb();
+  const workers = allWorkerHealth().map((w) => ({
+    ...w,
+    stale: w.intervalMs != null && w.lastRunAt != null && now - w.lastRunAt > 3 * w.intervalMs,
+  }));
+  const degraded = !dbOk || workers.some((w) => w.stale);
+  return reply.status(dbOk ? 200 : 503).send({
+    success: dbOk,
+    error: null,
+    data: { db: dbOk ? 'ok' : 'down', workers, degraded },
   });
 });
 

@@ -42,5 +42,9 @@ RUN cd backend && bunx prisma generate --config prisma/prisma.config.ts
 
 EXPOSE 3780
 
+# Same liveness probe as the lean image: /health is a cheap always-200 check via Bun's fetch.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD bun -e "fetch('http://localhost:3780/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
 # Seeds backend/.env + the sui CLI config, then execs `bun index.ts`.
 CMD ["bash", "scripts/operator-entrypoint.sh"]
