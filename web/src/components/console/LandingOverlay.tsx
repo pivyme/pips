@@ -408,14 +408,19 @@ function SignInErrorSheet({
               </>
             ) : (
               <>
-                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-down/15">
-                  <img src="/assets/icons/icon-warning.webp" alt="" className="h-7 w-7" draggable={false} />
-                </div>
+                <img
+                  src="/assets/icons/icon-warning.webp"
+                  alt=""
+                  className="mx-auto mb-3 h-16 w-16"
+                  draggable={false}
+                />
 
-                <h2 className="text-center text-lg font-extrabold tracking-tight text-text">Sign-in hit a snag</h2>
+                <h2 className="text-center text-lg font-extrabold tracking-tight text-text">
+                  We couldn't sign you in
+                </h2>
                 <p className="mx-auto mt-1.5 max-w-xs text-center text-[13.5px] leading-snug text-text-2">
-                  Something on our end is misbehaving, so we could not finish signing you in. If you are
-                  reviewing PIPS, message us and we will fix it on the spot.
+                  Something went wrong on our end, so sign-in didn't finish. If you are reviewing PIPS,
+                  message us and we will fix it right away.
                 </p>
 
                 {error.code && (

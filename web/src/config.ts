@@ -10,7 +10,7 @@ export const config = {
   links: {
     twitter: '',
     github: 'https://github.com/kelvinkn17/pips',
-    docs: 'https://docs.sui.io/onchain-finance/deepbook-predict/',
+    docs: 'https://blog.sui.io/introducing-deepbook-predict/',
     // Direct line for reviewers/judges when something breaks mid-demo.
     support: 'https://t.me/KelvinAdithya',
     pivy: 'https://pivy.me',

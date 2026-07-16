@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { ExternalLink, Sparkles } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { MenuScreen } from '@/components/menu/shared'
 import { HapticOverlay } from '@/components/HapticOverlay'
@@ -49,48 +49,33 @@ function AboutScreen() {
 
         <div className="flex flex-col gap-3">
           <AboutRow
-            leading={
-              <div className="flex h-12 w-[92px] shrink-0 items-center justify-center rounded-2xl bg-white p-2">
-                <img
-                  src="/assets/pivy-horizontal-badge.png"
-                  alt="PIVY"
-                  draggable={false}
-                  className="h-full w-full object-contain"
-                />
-              </div>
-            }
-            title="Made by PIVY"
+            leading={<LogoBadge src="/assets/images/pivy-logo.jpg" />}
+            title="Made by PIVY Team"
             sub="A user-friendly privacy platform on Sui"
             href={config.links.pivy}
           />
           <AboutRow
-            leading={
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-text-2">
-                <Sparkles className="h-5 w-5" strokeWidth={2.2} />
-              </div>
-            }
+            leading={<LogoBadge src="/assets/images/deepbook-logo.jpg" />}
+            title="Powered by DeepBook Predict"
+            sub="Every play settles on-chain, never simulated"
+            href={config.links.docs}
+          />
+          <AboutRow
+            leading={<LogoBadge src="/assets/images/overflow-logo.jpg" />}
             title="Born at Sui Overflow 2026"
             sub="Built during Sui's global hackathon"
           />
-
-          <TapCard href={config.links.docs} className="flex flex-col gap-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">
-                Powered by
-              </span>
-              <ExternalLink className="h-4 w-4 text-text-3" strokeWidth={2.4} />
-            </div>
-            <img
-              src="/assets/db-predict-horizontal-logo.svg"
-              alt="DeepBook Predict"
-              draggable={false}
-              className="h-5 w-auto select-none"
-            />
-            <p className="text-sm text-text-2">Every play settles on-chain, never simulated.</p>
-          </TapCard>
         </div>
       </div>
     </MenuScreen>
+  )
+}
+
+function LogoBadge({ src }: { src: string }) {
+  return (
+    <div className="h-12 w-12 shrink-0 overflow-hidden rounded-2xl">
+      <img src={src} alt="" className="h-full w-full object-cover" draggable={false} />
+    </div>
   )
 }
 
@@ -110,7 +95,7 @@ function AboutRow({
       {leading}
       <div className="min-w-0 flex-1">
         <div className="text-[15px] font-bold">{title}</div>
-        <div className="truncate text-sm text-text-3">{sub}</div>
+        <div className="text-sm leading-snug text-text-3">{sub}</div>
       </div>
       {href && <ExternalLink className="h-4 w-4 shrink-0 text-text-3" strokeWidth={2.4} />}
     </>
