@@ -369,6 +369,11 @@ const start = async (): Promise<void> => {
     // Loud, dev-only notice that the review-harness auth bypass is live. Refused under prod.
     if (!IS_PROD && process.env.TESTING_TOKEN) {
       console.warn('[TESTING_TOKEN] dev auth bypass ENABLED. Any Bearer == TESTING_TOKEN resolves to the dev user. Never ship this token.');
+    } else if (IS_PROD && process.env.TESTING_TOKEN) {
+      // Inert in prod: authMiddleware hard-gates the bypass on NODE_ENV !== 'production', so the token
+      // does nothing here. But its presence in a prod environment is a config smell, so flag it loudly
+      // to get it removed rather than leaving a dead secret sitting in production config.
+      console.warn('[TESTING_TOKEN] set in a PRODUCTION environment. The auth bypass is INERT under NODE_ENV=production, but remove this from prod config to avoid confusion.');
     }
   } catch (error) {
     console.log('Error starting server: ', error);
