@@ -137,9 +137,12 @@ const corsOrigins = ALLOWED_ORIGIN.split(',')
   .map((o) => o.trim())
   .filter(Boolean);
 if (IS_PROD && corsOrigins.length === 0) {
-  console.warn(
-    '[cors] NODE_ENV=production but ALLOWED_ORIGIN is empty: every cross-origin request will be blocked. Set ALLOWED_ORIGIN to your frontend origin(s).',
+  // Fail fast, not warn-and-drift: a prod backend that blocks 100% of cross-origin frontend requests is
+  // not meaningfully "up". Better to abort the deploy loudly than serve every request into a CORS wall.
+  console.error(
+    'FATAL: NODE_ENV=production but ALLOWED_ORIGIN is empty: every cross-origin frontend request would be blocked. Set ALLOWED_ORIGIN to your frontend origin(s).',
   );
+  process.exit(1);
 }
 fastify.register(FastifyCors, {
   origin: IS_PROD ? corsOrigins : '*',

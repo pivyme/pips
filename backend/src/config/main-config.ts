@@ -137,6 +137,32 @@ export const PRIVY_AUTHORIZATION_KEY_ID: string = process.env.PRIVY_AUTHORIZATIO
 export const PRIVY_AUTHORIZATION_PRIVATE_KEY: string = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY || '';
 export const PRIVY_JWT_VERIFICATION_KEY: string = process.env.PRIVY_JWT_VERIFICATION_KEY || '';
 
+// Fail fast in production when privy auth is selected but its server credentials are incomplete: better
+// to abort the deploy loudly than boot and let the FIRST user's login discover the misconfig. Dev is
+// left to warn-and-continue (a local privy setup may be partial). This upgrades an existing silent-degrade
+// path to fail-fast; it invents no new required vars beyond the four the privy server SDK already needs.
+if (AUTH_MODE === 'privy') {
+  const missingPrivy = (
+    [
+      ['PRIVY_APP_ID', PRIVY_APP_ID],
+      ['PRIVY_APP_SECRET', PRIVY_APP_SECRET],
+      ['PRIVY_AUTHORIZATION_KEY_ID', PRIVY_AUTHORIZATION_KEY_ID],
+      ['PRIVY_AUTHORIZATION_PRIVATE_KEY', PRIVY_AUTHORIZATION_PRIVATE_KEY],
+    ] as const
+  )
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+  if (missingPrivy.length > 0) {
+    const msg = `PIPS_AUTH_MODE=privy but missing required Privy key(s): ${missingPrivy.join(', ')}`;
+    if (IS_PROD) {
+      console.error(`FATAL: ${msg}`);
+      process.exit(1);
+    } else {
+      console.warn(`[config] ${msg} (privy logins will fail until these are set)`);
+    }
+  }
+}
+
 // Native Sui wallet-connect login (custodial play-wallet model), independent of AUTH_MODE. When on,
 // /auth/wallet/* is exposed: a user proves they own an external Sui wallet by signing a nonce, then
 // the server provisions a per-user custodial play wallet and signs their plays with it (the fast
