@@ -1065,3 +1065,17 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
     }
   }
 }
+
+/* HeroUI modal: give open and close a matching, considered motion (the stock exit is a 100ms flash
+   against a 250ms open). Keyed on the data-entering/exiting presence react-aria sets; scoped to
+   duration + easing so the library's own fade+zoom keyframes still supply the movement. */
+.modal__backdrop[data-entering],
+.modal__container[data-entering] {
+  animation-duration: 240ms !important;
+  animation-timing-function: var(--ease-out-quart) !important;
+}
+.modal__backdrop[data-exiting],
+.modal__container[data-exiting] {
+  animation-duration: 200ms !important;
+  animation-timing-function: var(--ease-out-quart) !important;
+}

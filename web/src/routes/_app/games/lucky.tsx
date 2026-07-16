@@ -107,7 +107,6 @@ function LuckyScreen() {
   const [play, setPlay] = useState<PlayDTO | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [spot, setSpot] = useState<number | null>(null)
-  const [entryPrice, setEntryPrice] = useState<number | null>(null)
   const [overlay, setOverlay] = useState<Overlay>('none')
   // Which stacked chart is lit while the reels spin (the slot picking an asset). Locks to the dealt
   // asset on open, then that chart expands.
@@ -122,11 +121,9 @@ function LuckyScreen() {
   const finalized = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const balanceSyncedPlayId = useRef<string | null>(null)
-  // The play id the entry line was marked for, so an immediate replay re-marks for the new round
-  // instead of holding the previous round's price (which left ENTRY and TARGET out of sync).
-  const entryPlayId = useRef<string | null>(null)
-  // Entry line marks the dealt asset's first live price. Track the latest spot and the asset it
-  // belongs to (set together in onPrice) so a round on a new asset never marks entry at the old one.
+  // Latest focused-asset spot + the asset it belongs to (set together in onPrice), for the header big
+  // price and the play-time debug log. The ENTRY line is never derived from this display feed, it only
+  // ever draws the backend's real oracle entrySpot.
   const spotRef = useRef<number | null>(null)
   const spotAssetRef = useRef<string | null>(null)
   // Latest live price per asset, written by every chart row without a re-render. The header big
@@ -181,9 +178,14 @@ function LuckyScreen() {
   }, [allAssets.join(','), lp?.asset])
   const focusAsset = lp?.asset ?? displayAssets[0]
   focusAssetRef.current = focusAsset
-  // The entry line shows while a round is live. Not in 'result': once the round ends the screen behind
-  // the result overlay resets to the default stack, so no entry/target lingers on it.
-  const showEntry = play != null && (phase === 'spinning' || phase === 'open' || phase === 'cashing')
+  // The position is real on-chain only once the mint confirms and the status leaves 'pending' (a failed
+  // mint goes 'error'). We gate the entry/target on this, never on the optimistic 'pending' window, so
+  // the line only ever shows for a play that actually opened, not one still landing or dead on gas.
+  const status = live?.status ?? play?.status
+  const entered = status != null && status !== 'pending' && status !== 'error'
+  // The entry line shows while a live round is confirmed open. Not in 'result': once the round ends the
+  // screen behind the result overlay resets to the default stack, so no entry/target lingers on it.
+  const showEntry = entered && (phase === 'open' || phase === 'cashing')
   const strike = play?.market.strike ? parseFloat(play.market.strike) : undefined
   const spinning = phase === 'spinning'
   // Reels tumble from the instant SPIN is pressed through to the snap: the 'placing' wait (the
@@ -196,10 +198,11 @@ function LuckyScreen() {
   // (result, idle) they reset to '?', so a finished round never leaves the last deal sitting in the slot.
   const roundActive = phase === 'spinning' || phase === 'open' || phase === 'cashing'
   const multiplier = live?.multiplier ?? play?.multiplier ?? 0
-  // Entry reference: the spot the strike was solved against, so the ENTRY line, the TARGET line, and
-  // the settlement all agree. Falls back to the chart's first captured price if entrySpot is absent.
+  // Entry reference: the real on-chain spot the strike was solved against (read live at the tap on the
+  // backend), so the ENTRY line, the TARGET line, and settlement all agree. Never a client-guessed
+  // display-feed value, so nothing fake ever flashes on the line, same rule as RANGE and MOONSHOT.
   const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
-  const entryVal = Number.isFinite(entrySpotNum) && entrySpotNum > 0 ? entrySpotNum : entryPrice
+  const entryVal = Number.isFinite(entrySpotNum) && entrySpotNum > 0 ? entrySpotNum : null
   // Chart overlays: the ENTRY line plus the directional TARGET line + winning-zone shading.
   const overlays =
     showEntry && entryVal != null
@@ -329,23 +332,9 @@ function LuckyScreen() {
     return () => clearInterval(iv)
   }, [reelsCycling])
 
-  // Mark the entry line at the dealt asset's first live price. Waits until the chart has switched
-  // to the round's asset (spotAssetRef matches) so it never anchors at the previous asset's price.
-  useEffect(() => {
-    if (!play) {
-      entryPlayId.current = null
-      return
-    }
-    if (entryPlayId.current === play.id) return // already marked for this round
-    if (spotAssetRef.current === play.market.asset && spotRef.current != null) {
-      entryPlayId.current = play.id
-      setEntryPrice(spotRef.current)
-    }
-  }, [spot, play])
-
   // Every stacked chart reports its ticks here. We stash them per asset (no re-render) and, for the
-  // focused asset, drive the header price + the entry pipeline (same single ~1/s parent re-render as
-  // the old single chart). Per-row label prices stay local to each row, so a tick never re-renders this.
+  // focused asset, drive the header price (same single ~1/s parent re-render as the old single chart).
+  // Per-row label prices stay local to each row, so a tick never re-renders this.
   const handleRowPrice = useCallback((asset: string, p: number) => {
     pricesRef.current[asset] = p
     if (asset === focusAssetRef.current) {
@@ -408,7 +397,6 @@ function LuckyScreen() {
     finalized.current = false
     setOverlay('none')
     setPhase('placing')
-    setEntryPrice(null) // re-marked at the dealt asset's first live price (capture effect below)
     haptic('rigid')
     slotSpin()
     try {
@@ -416,8 +404,8 @@ function LuckyScreen() {
       setPlay(p)
       track({ id: p.id, game: 'lucky' })
       // Price debug: line up what the chart is showing for the dealt asset against the prices the
-      // backend actually solved the round on. entrySpot/target come from the oracle's pushed spot
-      // (a beat behind the live feed), so a small gap to chartLive at this instant is expected.
+      // backend actually solved the round on. entrySpot/target now read the live on-chain spot at the
+      // tap, so any gap to chartLive is just the display feed's micro-motion, not a stale snapshot.
       if (import.meta.env.DEV) {
         const d = p.params as LuckyParams
         console.debug('[lucky] dealt', {

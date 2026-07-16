@@ -19,7 +19,7 @@ import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { fromBase64 } from '@mysten/sui/utils';
 import { Transaction, coinWithBalance } from '@mysten/sui/transactions';
 
-import { GAS_SPONSORSHIP_WALLET_PK, SPONSOR_TOPUP_SUI } from '../../config/main-config.ts';
+import { GAS_SPONSORSHIP_WALLET_PK, PLAY_GAS_BUDGET, SPONSOR_TOPUP_SUI } from '../../config/main-config.ts';
 import { suiClient } from './client.ts';
 
 // Same parser as the operator key (signer.ts): a suiprivkey envelope, or base64 (32-byte secret or
@@ -70,16 +70,37 @@ export async function signAsSponsor(txBytes: Uint8Array): Promise<string> {
 // splitCoins(tx.gas) form failed with InsufficientCoinBalance on that fragmentation). Single-flighted
 // so a burst of plays triggers one deposit. The sponsor keeps SUI in coins via the devnet faucet.
 const SUI_TYPE = '0x2::sui::SUI';
+// Kept in the sponsor's owned coins so the top-up deposit tx can always pay its own gas.
+const TOPUP_GAS_RESERVE = 100_000_000n; // 0.1 SUI
 let warmedThisProcess = false;
 let inflightTopup: Promise<void> | null = null;
+
+// The sponsor's OWNED SUI coins (getBalance reports owned coins, not the address-balance accumulator).
+async function ownedSuiRaw(): Promise<bigint> {
+  const bal = await suiClient.getBalance({ owner: sponsorAddress, coinType: SUI_TYPE });
+  return BigInt(bal.balance.balance);
+}
 
 export async function ensureSponsorAccumulator(force = false): Promise<void> {
   if (!sponsorKeypair) return;
   if (!force && warmedThisProcess) return;
   if (inflightTopup) return inflightTopup;
   inflightTopup = (async () => {
+    // Move SUI from the sponsor's owned coins into its address-balance accumulator (what empty-payment
+    // sponsored gas is drawn from). Cap the move to what the sponsor can actually afford, keeping a
+    // small reserve for this deposit's own gas: a low sponsor then tops up as much as it can instead of
+    // throwing InsufficientCoinBalance (SPONSOR_TOPUP_SUI > owned) and failing the very play it was
+    // meant to unblock. If it can't even fund one play's gas, log loudly and bail: the wallet needs SUI.
+    const owned = await ownedSuiRaw();
+    const affordable = owned > TOPUP_GAS_RESERVE ? owned - TOPUP_GAS_RESERVE : 0n;
+    const want = BigInt(Math.round(SPONSOR_TOPUP_SUI * 1e9));
+    const amount = want < affordable ? want : affordable;
+    if (amount < PLAY_GAS_BUDGET) {
+      console.warn(`[sponsor] accumulator empty and sponsor ${sponsorAddress} owned SUI (${owned}) too low to refill it; fund this wallet with testnet SUI`);
+      return; // don't mark warmed: a later play retries once the wallet is funded
+    }
     const tx = new Transaction();
-    const coin = coinWithBalance({ type: SUI_TYPE, balance: BigInt(Math.round(SPONSOR_TOPUP_SUI * 1e9)) })(tx);
+    const coin = coinWithBalance({ type: SUI_TYPE, balance: amount })(tx);
     // send_funds credits the coin into the recipient's SUI address balance (the accumulator).
     tx.moveCall({ target: '0x2::coin::send_funds', typeArguments: [SUI_TYPE], arguments: [coin, tx.pure.address(sponsorAddress)] });
     tx.setSender(sponsorAddress);
@@ -91,7 +112,7 @@ export async function ensureSponsorAccumulator(force = false): Promise<void> {
     }
     await suiClient.waitForTransaction({ digest: t.digest });
     warmedThisProcess = true;
-    console.log(`[sponsor] topped up gas accumulator with ${SPONSOR_TOPUP_SUI} SUI (${t.digest})`);
+    console.log(`[sponsor] topped up gas accumulator with ${Number(amount) / 1e9} SUI (${t.digest})`);
   })();
   try {
     await inflightTopup;

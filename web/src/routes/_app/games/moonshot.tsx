@@ -161,6 +161,11 @@ function MoonshotScreen() {
   const lp = play ? (play.params as LuckyParams) : null
   const roundLive = phase === 'open' || phase === 'cashing'
   const showReadouts = play != null && roundLive
+  // The position is real on-chain only once the mint confirms (status leaves 'pending'; a failed mint
+  // goes 'error'). The entry/strike overlay is gated on this, never on the optimistic 'pending' window,
+  // so nothing is drawn for a position that hasn't actually opened.
+  const status = live?.status ?? play?.status
+  const entered = status != null && status !== 'pending' && status !== 'error'
   const multiplier = live?.multiplier ?? play?.multiplier ?? reach
 
   const strike = play?.market.strike ? parseFloat(play.market.strike) : undefined
@@ -173,8 +178,9 @@ function MoonshotScreen() {
       ? spot * (1 + (side === 'up' ? 1 : -1) * Math.max(ROUND_VOL_EST * (REACH_Z[reach] ?? 0), MIN_TARGET_FRAC))
       : null
 
-  // Chart overlays: the real strike + entry while a round runs; the live preview aim while idle/placing.
-  const overlays: ChartOverlays | undefined = showReadouts && lp
+  // Chart overlays: the real strike + entry only once the position has opened on-chain; the live preview
+  // aim while idle/placing. During the mint (open + still pending) nothing locked is drawn.
+  const overlays: ChartOverlays | undefined = entered && lp
     ? {
         ...(entryVal != null ? { entry: entryVal } : {}),
         ...(strike != null ? { target: { price: strike, side: lp.side } } : {}),

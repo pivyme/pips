@@ -282,7 +282,7 @@ async function createPlayReal(user: User, input: CreatePlayInput, stakeRaw: bigi
   // Same net/stake split as the fork: mint budget sized off net, wrapper funded to the full stake so the
   // rake withdraws cleanly after the mint (predict-real buildMintPlay). rake = 0 unless a wallet is set.
   const { rake, net } = rakeOf(stakeRaw);
-  const resolved = resolveReal(input, net, stakeRaw);
+  const resolved = await resolveReal(input, net, stakeRaw);
   const play = await prismaQuery.play.create({ data: mapRealResolvedToPlay(user.id, resolved, stakeRaw, rake) });
   void withUserLock(user.id, () => mintPendingReal(user, resolved, stakeRaw, rake, play.id, input));
   return { play: await toPlayDTO(play) };
@@ -448,9 +448,9 @@ function mapRealResolvedToPlay(userId: string, r: ResolvedReal, stakeRaw: bigint
 
 // A fresh real resolve on a live market for the same bet, to re-route a mint whose market expired
 // mid-flight. Lucky keeps its seed (the reels already snapped to the dealt draw); null if none is live.
-function reResolveReal(input: CreatePlayInput, netRaw: bigint, stakeRaw: bigint, prev: ResolvedReal): ResolvedReal | null {
+async function reResolveReal(input: CreatePlayInput, netRaw: bigint, stakeRaw: bigint, prev: ResolvedReal): Promise<ResolvedReal | null> {
   try {
-    return resolveReal(input, netRaw, stakeRaw, prev.game === 'lucky' ? prev.seed : undefined);
+    return await resolveReal(input, netRaw, stakeRaw, prev.game === 'lucky' ? prev.seed : undefined);
   } catch {
     return null;
   }
@@ -555,7 +555,7 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
         }
         // Routed market expired/settled mid-mint: re-route to a fresh live one (keeps the dealt draw).
         if (isRealMarketGone(e)) {
-          const next = reResolveReal(input, net, stakeRaw, cur);
+          const next = await reResolveReal(input, net, stakeRaw, cur);
           if (!next) throw e;
           cur = next;
           await prismaQuery.play.update({ where: { id: playId }, data: realMarketFieldsOf(next) });

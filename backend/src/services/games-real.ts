@@ -11,7 +11,7 @@ import {
 } from '../config/main-config.ts';
 import { FLOAT_SCALING } from '../lib/sui/config.ts';
 import { liveByAsset, type Market } from '../lib/sui/markets.ts';
-import { LEVERAGE_ONE, POSITION_LOT_SIZE, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
+import { LEVERAGE_ONE, POSITION_LOT_SIZE, readBtcSpot, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
 import type { Side } from '../lib/sui/predict.ts';
 import type { Game, RangeQuoteDTO as RangeQuote } from '../types/api.ts';
 import { PlayError } from './games-base.ts';
@@ -70,6 +70,22 @@ function realEcon(market: Market): { spot1e9: bigint; tickSize: bigint; admissio
     admissionTickSize: BigInt(market.admissionTickSizeRaw),
     maxLeverage1e9: market.maxLeverage1e9 ? BigInt(market.maxLeverage1e9) : LEVERAGE_ONE,
   };
+}
+
+// The recorded entry (and the strike solved off it) anchors to a click-time on-chain read of the BS
+// spot, the same feed load_live_pricer marks and settles the round against, mirroring the fork's
+// freshSpot(). The synced market spot lags by up to a market-sync tick (~2s), so reading live here keeps
+// the ENTRY line sitting on the true chain price at the moment of the tap, not a stale snapshot. Falls
+// back to the last synced spot if the live read fails, so a transient gRPC hiccup never blocks a play
+// (still a real chain value, just a tick old).
+async function freshRealSpot(fallback: bigint): Promise<bigint> {
+  try {
+    const live = await readBtcSpot();
+    if (live && live.spot1e9 > 0n) return live.spot1e9;
+  } catch {
+    // fall through to the last synced market spot
+  }
+  return fallback;
 }
 
 export function probit(p: number): number {
@@ -165,9 +181,10 @@ export function restrikeBinary(r: ResolvedReal, leverage1e9: bigint): ResolvedRe
   return { ...r, leverage1e9, lowerTick, higherTick, strikeDisplay: realFmt(strike1e9) };
 }
 
-function resolveRealBinary(game: 'lucky' | 'moonshot', netRaw: bigint, stakeRaw: bigint, side: Side, tier: number, seed?: string): ResolvedReal {
+async function resolveRealBinary(game: 'lucky' | 'moonshot', netRaw: bigint, stakeRaw: bigint, side: Side, tier: number, seed?: string): Promise<ResolvedReal> {
   const market = realMarket(LUCKY_ROUND_MS);
-  const { spot1e9, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
+  const { spot1e9: cachedSpot, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
+  const spot1e9 = await freshRealSpot(cachedSpot);
   const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
   const leverage1e9 = binaryLeverage(tier, maxLeverage1e9);
   const { strike1e9, lowerTick, higherTick } = strikeFor(side, tier, leverage1e9, spot1e9, tickSize, admissionTickSize, seconds);
@@ -197,10 +214,11 @@ function resolveRealBinary(game: 'lucky' | 'moonshot', netRaw: bigint, stakeRaw:
   };
 }
 
-function resolveRealRange(netRaw: bigint, stakeRaw: bigint, widthPct: number): ResolvedReal {
+async function resolveRealRange(netRaw: bigint, stakeRaw: bigint, widthPct: number): Promise<ResolvedReal> {
   if (!(widthPct > 0) || widthPct > 10) throw new PlayError('INVALID_PARAMS', 'Band width out of range');
   const market = realMarket(Math.round((RANGE_MIN_ORACLE_LIFE_MS + RANGE_MAX_ORACLE_LIFE_MS) / 2));
-  const { spot1e9, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
+  const { spot1e9: cachedSpot, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
+  const spot1e9 = await freshRealSpot(cachedSpot);
   const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
   const sigma = roundSigmaFrac(seconds);
   const maxHalfFrac = probit((1 + REAL_RANGE_MAX_PROB) / 2) * sigma;
@@ -259,7 +277,7 @@ export function quoteRangeBatchReal(widthPcts: number[]): RangeQuote[] {
 
 // netRaw sizes the position (stake - house rake); stakeRaw is the full commit that funds the wrapper so
 // the rake can be withdrawn after the mint. At rake = 0, netRaw === stakeRaw (byte-identical to no-rake).
-export function resolveReal(input: CreatePlayInputShape, netRaw: bigint, stakeRaw: bigint, seed?: string): ResolvedReal {
+export async function resolveReal(input: CreatePlayInputShape, netRaw: bigint, stakeRaw: bigint, seed?: string): Promise<ResolvedReal> {
   if (input.game === 'lucky') {
     const actualSeed = seed ?? newSeed();
     const side: Side = seedFloat(actualSeed, 1) < 0.5 ? 'up' : 'down';

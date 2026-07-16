@@ -219,6 +219,12 @@ function RangeScreen() {
   const canPlay = liveAssets.length > 0
   const roundLive =
     phase === 'open' || phase === 'cashing' || phase === 'result'
+  // The position is real on-chain only once the mint confirms (status leaves 'pending'; a failed mint
+  // goes 'error'). The locked band + entry line are gated on this, never on the optimistic 'pending'
+  // window, so we never draw locked bounds for a position that hasn't actually opened. During the mint
+  // the band falls back to the live ±halfPct preview (which only tracks the line, claims no fixed level).
+  const enteredStatus = live?.status ?? play?.status
+  const entered = enteredStatus != null && enteredStatus !== 'pending' && enteredStatus !== 'error'
 
   // Multiplier quotes for the whole band ladder, off the real Predict ask. Fetched once per asset on
   // select and cached, so every band size shows its true locked multiple the instant the knob lands on
@@ -274,7 +280,7 @@ function RangeScreen() {
   const bandSealed =
     phase === 'open' && remainingMs != null && remainingMs <= SETTLE_LOCK_MS
   const band: BandOverlay | undefined =
-    roundLive && lower != null && upper != null
+    entered && lower != null && upper != null
       ? { lower, upper, locked: true, sealed: bandSealed }
       : spot != null
         ? { pct: halfPct }
@@ -286,7 +292,7 @@ function RangeScreen() {
   const bandCenter = lower != null && upper != null ? (lower + upper) / 2 : null
   const entryLevel =
     Number.isFinite(entrySpotNum) && entrySpotNum > 0 ? entrySpotNum : bandCenter
-  const showEntryLine = entryLevel != null && roundLive
+  const showEntryLine = entryLevel != null && entered
 
   // Phase machine, derived from the live status + the countdown. The settlement price freezes
   // SETTLE_LOCK_MS before the buzzer, so the round has a clear lock-in window:
