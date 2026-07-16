@@ -219,12 +219,15 @@ function RangeScreen() {
   const canPlay = liveAssets.length > 0
   const roundLive =
     phase === 'open' || phase === 'cashing' || phase === 'result'
-  // The position is real on-chain only once the mint confirms (status leaves 'pending'; a failed mint
-  // goes 'error'). The locked band + entry line are gated on this, never on the optimistic 'pending'
-  // window, so we never draw locked bounds for a position that hasn't actually opened. During the mint
-  // the band falls back to the live ±halfPct preview (which only tracks the line, claims no fixed level).
+  // The play carries its REAL resolved band + entry the instant PLAY returns: entrySpot and the bounds
+  // are fixed at resolve and never change once minted (a RANGE admission fallback only trims leverage,
+  // never the band). So we draw them straight away, held through the ~1s the background mint takes to
+  // confirm on chain, marked 'confirming' rather than hidden. Nothing here is a guessed number.
+  // 'positioned' = a real band exists (the confirming window included); 'confirming' = that pre-open
+  // sub-window. Cash-out and the live win/lose verdict stay gated on the confirmed 'open' status below.
   const enteredStatus = live?.status ?? play?.status
-  const entered = enteredStatus != null && enteredStatus !== 'pending' && enteredStatus !== 'error'
+  const positioned = enteredStatus != null && enteredStatus !== 'error'
+  const confirming = enteredStatus === 'pending'
 
   // Multiplier quotes for the whole band ladder, off the real Predict ask. Fetched once per asset on
   // select and cached, so every band size shows its true locked multiple the instant the knob lands on
@@ -272,16 +275,16 @@ function RangeScreen() {
   const lower = play?.market.lower != null ? parseFloat(play.market.lower) : null
   const upper = play?.market.upper != null ? parseFloat(play.market.upper) : null
   // While PLAY is resolving (placing) we do NOT paint a guessed band: the chart keeps the live ±halfPct
-  // preview (which simply tracks the line, never claims a fixed level), then snaps to the real bounds
-  // when the play opens. The LOCKING IN readout + the press haptic/sound carry the "it registered"
-  // feedback, so there is no fabricated number to correct later.
+  // preview (tracks the line, never claims a fixed level). The moment the play resolves it snaps to the
+  // REAL bounds and holds them through the confirming window (styled 'confirming' below), so there is
+  // never a fabricated number to correct later.
   // Inside the cash-out safety / settling window, seal the live band lighting. The result is still
   // pending until the oracle settlement transaction lands.
   const bandSealed =
     phase === 'open' && remainingMs != null && remainingMs <= SETTLE_LOCK_MS
   const band: BandOverlay | undefined =
-    entered && lower != null && upper != null
-      ? { lower, upper, locked: true, sealed: bandSealed }
+    positioned && lower != null && upper != null
+      ? { lower, upper, locked: true, sealed: bandSealed, confirming }
       : spot != null
         ? { pct: halfPct }
         : undefined
@@ -292,7 +295,7 @@ function RangeScreen() {
   const bandCenter = lower != null && upper != null ? (lower + upper) / 2 : null
   const entryLevel =
     Number.isFinite(entrySpotNum) && entrySpotNum > 0 ? entrySpotNum : bandCenter
-  const showEntryLine = entryLevel != null && entered
+  const showEntryLine = entryLevel != null && positioned
 
   // Phase machine, derived from the live status + the countdown. The settlement price freezes
   // SETTLE_LOCK_MS before the buzzer, so the round has a clear lock-in window:
@@ -700,7 +703,7 @@ function RangeScreen() {
               }
             : opening
               ? {
-                  label: 'OPENING',
+                  label: 'CONFIRMING',
                   color: 'up',
                   onPress: () => {},
                   loading: true,
@@ -837,7 +840,7 @@ function RangeScreen() {
           {/* FOOTER — full-width readout band, one top hairline, tall enough to span the device's
               occluded bottom-right (the knob + PLAY body). Content hugs the left, clear of that body:
               the prize multiple + stake at rest, the live PnL (with an IN ZONE / OUT tag) once a play
-              runs, OPENING while the mint lands, SETTLING at the buzzer. */}
+              runs, CONFIRMING while the mint lands, SETTLING at the buzzer. */}
           <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5 min-h-[var(--screen-notch,21%)]">
             <div className="max-w-[60%]">
               {confirm.armed ? (
@@ -851,8 +854,8 @@ function RangeScreen() {
                 />
               ) : opening ? (
                 <FooterStatusPanel
-                  kicker="Opening"
-                  head="OPENING"
+                  kicker="Confirming"
+                  head="CONFIRMING"
                   recap={recap}
                   sweep
                 />

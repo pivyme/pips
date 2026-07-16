@@ -25,8 +25,10 @@ export interface ChartBox {
 export type BandOverlay =
   | { pct: number; locked?: false }
   // `sealed` freezes the band's live in/out lighting during the cash-out safety / settling window.
-  // It is a neutral pending state, not a settlement verdict.
-  | { lower: number; upper: number; locked: true; sealed?: boolean }
+  // It is a neutral pending state, not a settlement verdict. `confirming` is the ~1s while the mint
+  // lands on chain: the bounds are the real resolved band, shown with a soft pulse and no win/lose
+  // verdict yet (the position isn't chain-final), which seals into the live band once it opens.
+  | { lower: number; upper: number; locked: true; sealed?: boolean; confirming?: boolean }
 
 export interface ChartOverlays {
   // Entry: a clean reference line at the price you got in, faded in when a round opens.
@@ -673,24 +675,28 @@ function drawOverlays(
     const left = 0 // full width in both states: the band reads the same idle and locked.
     // Once locked, the band reads its own win/lose: the live price inside lifts the amber fill and
     // brightens the edges (you're in the zone); outside dims the fill and tints the crossed edge red.
-    // The idle preview stays a neutral amber zone. While SEALED (cash-out safety / settling), suppress
-    // the live verdict and show one neutral pending zone.
+    // The idle preview stays a neutral amber zone. While SEALED (cash-out safety / settling) or
+    // CONFIRMING (the mint landing on chain), suppress the live verdict and show one neutral pending
+    // zone; confirming adds a soft breathing pulse so it reads as "finalizing" rather than frozen.
     const sealed = ov?.band?.locked === true && ov.band.sealed === true
-    const inside = !sealed && price > band.lower && price <= band.upper
+    const confirming = ov?.band?.locked === true && ov.band.confirming === true
+    const pulse = confirming ? 0.5 + 0.5 * Math.abs(Math.sin(performance.now() / 260)) : 1
+    const neutral = sealed || confirming
+    const inside = !neutral && price > band.lower && price <= band.upper
     const lit = locked && inside
-    ctx.fillStyle = withAlpha(C.brand, lit ? 0.16 : locked ? 0.06 : 0.1)
+    ctx.fillStyle = withAlpha(C.brand, (lit ? 0.16 : confirming ? 0.05 : locked ? 0.06 : 0.1) * pulse)
     ctx.fillRect(left, top, w - left, bot - top)
     ctx.lineWidth = 1
     ctx.setLineDash([4, 4])
     const edge = (yy: number, hot: boolean) => {
-      ctx.strokeStyle = withAlpha(hot ? C.down : C.brand, hot ? 0.85 : lit ? 0.7 : 0.5)
+      ctx.strokeStyle = withAlpha(hot ? C.down : C.brand, (hot ? 0.85 : lit ? 0.7 : 0.5) * pulse)
       ctx.beginPath()
       ctx.moveTo(left, yy)
       ctx.lineTo(w, yy)
       ctx.stroke()
     }
-    edge(top, !sealed && locked && !inside && price > band.upper)
-    edge(bot, !sealed && locked && !inside && price <= band.lower)
+    edge(top, !neutral && locked && !inside && price > band.upper)
+    edge(bot, !neutral && locked && !inside && price <= band.lower)
     ctx.setLineDash([])
     // Edge price labels, so the exact band is always readable (the etched field-guide detail). Inset
     // off the rim like ENTRY: the band spans full width (left = 0), so a bare left+4 would sit under

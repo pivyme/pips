@@ -35,7 +35,6 @@ export type ResolvedReal = {
   higherTick: bigint;
   leverage1e9: bigint;
   amountRaw: bigint;
-  depositCeilRaw: bigint;
   minQuantityRaw: bigint;
   expiryMs: number;
   duration: number;
@@ -199,10 +198,9 @@ async function resolveRealBinary(game: 'lucky' | 'moonshot', netRaw: bigint, sta
     lowerTick,
     higherTick,
     leverage1e9,
-    // Size the mint off NET (stake - rake); the deposit still tops the wrapper to the full STAKE so the
-    // rake can be peeled out after the mint (see lib/sui/house.ts, predict-real buildMintPlay).
+    // Size the mint off NET (stake - rake); the wrapper is still funded to the full STAKE so the rake can
+    // be peeled out after the mint (see lib/sui/house.ts, predict-real buildMintPlay, plays.ts realDeposit).
     amountRaw: premiumBudget(netRaw),
-    depositCeilRaw: stakeRaw,
     minQuantityRaw: POSITION_LOT_SIZE,
     expiryMs: market.expiryMs,
     duration: Math.max(1, Math.round(seconds)),
@@ -237,9 +235,8 @@ async function resolveRealRange(netRaw: bigint, stakeRaw: bigint, widthPct: numb
     lowerTick,
     higherTick,
     leverage1e9,
-    // Size the mint off NET; the deposit tops the wrapper to the full STAKE so the rake withdraws cleanly.
+    // Size the mint off NET; the wrapper is funded to the full STAKE so the rake withdraws cleanly.
     amountRaw: premiumBudget(netRaw),
-    depositCeilRaw: stakeRaw,
     minQuantityRaw: POSITION_LOT_SIZE,
     expiryMs: market.expiryMs,
     duration: Math.max(1, Math.round(seconds)),

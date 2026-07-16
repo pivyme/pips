@@ -40,6 +40,7 @@ import { startBinance } from './src/lib/binance-ws.ts';
 // Ops-wallet funding (operator-driven): seeds/tops up the sponsor (SUI), settlement (SUI), and
 // treasury (SUI + DUSDC reserve) wallets so plays, redeems, and chip payouts never stall.
 import { ensureOpsFunded } from './src/lib/sui/gas.ts';
+import { warmExecuteCaches } from './src/lib/sui/execute.ts';
 import { SPONSOR_ENABLED, sponsorAddress, ensureSponsorAccumulator } from './src/lib/sui/sponsor.ts';
 import { treasuryAddress, REVENUE_ENABLED } from './src/lib/sui/signer.ts';
 import { startSponsorMonitor } from './src/lib/sui/play-safety.ts';
@@ -333,6 +334,9 @@ const start = async (): Promise<void> => {
       void ensureSponsorAccumulator().catch((e) =>
         console.warn('[sponsor] boot accumulator warm-up failed (self-heals on first play):', e instanceof Error ? e.message : e),
       );
+      // Prime the play-path caches (ref gas price + sponsor epoch/chain) so the first sponsored play
+      // after a restart skips their cold reads. Fire-and-forget; they self-warm on first use regardless.
+      void warmExecuteCaches();
     }
 
     // Fork mode only (localnet/devnet): roll our own oracle ladder, push our own prices, and run the

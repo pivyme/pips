@@ -7,8 +7,9 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { coinWithBalance } from '@mysten/sui/transactions';
 
-import type { Play, User } from '../../prisma/generated/client.js';
+import type { Play, Prisma, User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
+import { publishPlay } from '../lib/play-bus.ts';
 import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS, IS_REAL_PREDICT } from '../config/main-config.ts';
 import { DUSDC_TYPE, fromDusdcRaw, multiplier as multiplierOf, usd1e9 } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
@@ -75,6 +76,17 @@ import type { Game, PlayDTO, PlayStatus, Side } from '../types/api.ts';
 const px1e9 = (v: bigint): string => (Number(v) / 1e9).toFixed(2);
 const hhmmss = (): string => new Date().toTimeString().slice(0, 8);
 const roundLog = (msg: string): void => console.log(`\x1b[33m${msg}\x1b[0m`);
+
+// Commit a play-row update, THEN notify the play bus. The single choke point for every status-changing
+// write, so the event-driven SSE push (TRADE_REALTIME.md) is never missed. Emit strictly AFTER commit,
+// never before: a pre-commit emit makes the SSE re-read a stale row and push the old status. Returns the
+// updated row for callers that need it (e.g. finalizeCashout). Non-status market-field re-route updates
+// stay on the raw client, they never flip status so there is nothing to push.
+async function commitPlay(playId: string, data: Prisma.PlayUpdateInput): Promise<Play> {
+  const updated = await prismaQuery.play.update({ where: { id: playId }, data });
+  publishPlay(playId);
+  return updated;
+}
 
 // === Redeem key descriptor (stored on Play.marketKey) ===
 // Holds the exact 1e9 strikes + quantity so redeem reconstructs the on-chain key precisely,
@@ -299,6 +311,22 @@ function fundingPlan(stakeRaw: bigint, total: bigint): { cappedNeed: bigint; ref
   return { cappedNeed, refillTo: refill < cappedNeed ? cappedNeed : refill };
 }
 
+// Deposit sizing for a real-mode mint (the wrapper's internal-balance analog of the fork's fundManager).
+// A single play draws the mint amount + the rake, always < stake (the fee headroom lives inside amountRaw,
+// which bounds the mint cost), so a wrapper already holding a full stake covers this play with margin:
+// deposit nothing. When it's short, top to BULK_FUND_PLAYS worth of stake (capped at the player's chips)
+// so the next several spins mint deposit-free, a deposit forces a DUSDC coin read in tx.build and a bigger
+// PTB. Never deposits more than the wallet holds: the affordability gate already ensured wallet + wrapper
+// >= stake, and the draw <= stake, so a topped wrapper always covers it.
+function realDeposit(stakeRaw: bigint, wrapperBal: bigint, wallet: bigint): bigint {
+  if (wrapperBal >= stakeRaw) return 0n; // a full stake already sits in the wrapper: deposit-free
+  const total = wrapperBal + wallet;
+  const bulk = stakeRaw * BULK_FUND_PLAYS;
+  const target = bulk < total ? bulk : total; // never target more than the player's chips
+  const deposit = target - wrapperBal; // <= wallet since target <= total
+  return deposit > 0n ? deposit : 0n;
+}
+
 // Background mint for an already-resolved, already-persisted pending play. Runs under the per-user
 // lock so a user's owned deposit coins never equivocate. Retries the SAME dealt params on a transient
 // race (a coin version still settling, a momentary tight price) and NEVER re-deals a result already
@@ -310,7 +338,7 @@ async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, rak
   try {
     const balances = await loadBalances(user);
     if (balances.total < stakeRaw) {
-      await prismaQuery.play.update({ where: { id: playId }, data: { status: 'error' } });
+      await commitPlay(playId, { status: 'error' });
       return;
     }
     // Funding is sized off the FULL stake (net position + rake), unchanged by a re-route, and a failed
@@ -349,17 +377,14 @@ async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, rak
           `  expires in ${Math.max(0, Math.round((cur.market.expiryMs - Date.now()) / 1000))}s` +
           `  @${hhmmss()}  tx=${exec.digest.slice(0, 8)}`,
         );
-        await prismaQuery.play.update({
-          where: { id: playId },
-          data: {
-            status: 'open',
-            txMint: exec.digest,
-            // All-in cost the player actually paid = on-chain mint cost + the rake that left to revenue.
-            // Byte-identical to receipt.cost at rake 0. Keeps the PnL ledger honest (stats.ts).
-            entryCost: receipt.cost + rakeRaw,
-            multiplier: actualMultiplier,
-            openedAt: new Date(),
-          },
+        await commitPlay(playId, {
+          status: 'open',
+          txMint: exec.digest,
+          // All-in cost the player actually paid = on-chain mint cost + the rake that left to revenue.
+          // Byte-identical to receipt.cost at rake 0. Keeps the PnL ledger honest (stats.ts).
+          entryCost: receipt.cost + rakeRaw,
+          multiplier: actualMultiplier,
+          openedAt: new Date(),
         });
         invalidateBal(user.id); // the manager just changed; the next gate re-reads
         return;
@@ -383,7 +408,7 @@ async function mintPending(user: User, resolved: Resolved, stakeRaw: bigint, rak
     throw lastErr;
   } catch (e) {
     console.error(`[plays] mint failed for ${playId}:`, e instanceof Error ? e.message : e);
-    await prismaQuery.play.update({ where: { id: playId }, data: { status: 'error' } }).catch(() => { });
+    await commitPlay(playId, { status: 'error' }).catch(() => { });
     invalidateBal(user.id);
   }
 }
@@ -487,17 +512,21 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const w = await resolveWrapper(acct.address, acct.predictWrapperId);
       // mint draws from the wrapper's internal balance, so total spendable = wallet + internal chips.
-      const wrapperBal = w.exists ? await readWrapperBalanceRaw(w.wrapperId, acct.address).catch(() => 0n) : 0n;
-      const wallet = await getDusdcBalanceRaw(acct.address);
+      // Read the two independent balances in parallel (the wrapper read is a devInspect), like the fork's
+      // loadBalances, instead of one after the other.
+      const [wrapperBal, wallet] = await Promise.all([
+        w.exists ? readWrapperBalanceRaw(w.wrapperId, acct.address).catch(() => 0n) : Promise.resolve(0n),
+        getDusdcBalanceRaw(acct.address),
+      ]);
       const total = wallet + wrapperBal;
       seedBalCache(acct.id, total);
       if (total < stakeRaw) {
-        await prismaQuery.play.update({ where: { id: playId }, data: { status: 'error' } });
+        await commitPlay(playId, { status: 'error' });
         return;
       }
-      // Top the internal balance up to the full stake from the wallet; reuse existing chips (deposit 0
-      // when the wrapper already holds enough). The shortfall is <= wallet whenever total >= stake.
-      const depositRaw = cur.depositCeilRaw > wrapperBal ? cur.depositCeilRaw - wrapperBal : 0n;
+      // Bulk-fund the wrapper so most spins mint with no deposit (smaller PTB, tx.build skips the coin
+      // read): top it in bulk when short, draw from the internal balance when it already holds a stake.
+      const depositRaw = realDeposit(stakeRaw, wrapperBal, wallet);
 
       const tx = new Transaction();
       buildMintPlay(tx, {
@@ -529,18 +558,15 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
           `  x${actualMultiplier.toFixed(2)}  lev=${Number(cur.leverage1e9) / 1e9}  entry=$${fromDusdcRaw(mint.costRaw).toFixed(2)}` +
           `  order=${mint.orderId.toString().slice(0, 10)}…  expires in ${Math.max(0, Math.round((cur.expiryMs - Date.now()) / 1000))}s @${hhmmss()} tx=${exec.digest.slice(0, 8)}`,
         );
-        await prismaQuery.play.update({
-          where: { id: playId },
-          data: {
-            status: 'open',
-            txMint: exec.digest,
-            marketKey: mint.orderId.toString(), // the settle worker's key (decodeOrderId derives the close qty)
-            // All-in cost = on-chain mint cost + the rake withdrawn to revenue (== mint.costRaw at rake 0).
-            entryCost: mint.costRaw + rakeRaw,
-            multiplier: actualMultiplier,
-            leverage: Number(mint.leverage1e9) / 1e9, // the REAL admitted leverage (may be trimmed from the request)
-            openedAt: new Date(),
-          },
+        await commitPlay(playId, {
+          status: 'open',
+          txMint: exec.digest,
+          marketKey: mint.orderId.toString(), // the settle worker's key (decodeOrderId derives the close qty)
+          // All-in cost = on-chain mint cost + the rake withdrawn to revenue (== mint.costRaw at rake 0).
+          entryCost: mint.costRaw + rakeRaw,
+          multiplier: actualMultiplier,
+          leverage: Number(mint.leverage1e9) / 1e9, // the REAL admitted leverage (may be trimmed from the request)
+          openedAt: new Date(),
         });
         invalidateBal(acct.id);
         return;
@@ -583,7 +609,7 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
     throw lastErr;
   } catch (e) {
     console.error(`[plays] real mint failed for ${playId}:`, e instanceof Error ? e.message : e);
-    await prismaQuery.play.update({ where: { id: playId }, data: { status: 'error' } }).catch(() => {});
+    await commitPlay(playId, { status: 'error' }).catch(() => {});
     invalidateBal(acct.id);
   }
 }
@@ -683,17 +709,14 @@ const isAlreadyRedeemedAbort = (e: unknown): boolean => {
 
 async function finalizeCashout(play: Play, payoutRaw: bigint, digest: string): Promise<{ play: PlayDTO; unlocked: string[] }> {
   const pnl = payoutRaw - play.entryCost;
-  const updated = await prismaQuery.play.update({
-    where: { id: play.id },
-    data: {
-      status: 'cashed_out',
-      payout: payoutRaw,
-      markValue: payoutRaw,
-      pnl,
-      txRedeem: digest,
-      settlePrice: null,
-      settledAt: new Date(),
-    },
+  const updated = await commitPlay(play.id, {
+    status: 'cashed_out',
+    payout: payoutRaw,
+    markValue: payoutRaw,
+    pnl,
+    txRedeem: digest,
+    settlePrice: null,
+    settledAt: new Date(),
   });
   invalidateBal(play.userId); // the redeem credited the manager; the next gate must re-read
   await recordSettlement(play.userId);
@@ -719,10 +742,16 @@ const isItm = (key: PlayKey, settlement1e9: bigint): boolean =>
 // submit timeouts), so a still-in-flight mint is never swept out from under itself.
 const STUCK_PENDING_MS = 60_000;
 async function sweepStuckPendings(): Promise<void> {
-  const res = await prismaQuery.play.updateMany({
+  const stuck = await prismaQuery.play.findMany({
     where: { status: 'pending', createdAt: { lt: new Date(Date.now() - STUCK_PENDING_MS) } },
-    data: { status: 'error' },
+    select: { id: true },
   });
+  if (stuck.length === 0) return;
+  const ids = stuck.map((p) => p.id);
+  const res = await prismaQuery.play.updateMany({ where: { id: { in: ids }, status: 'pending' }, data: { status: 'error' } });
+  // Push the error to any SSE still holding one of these pending plays (a client mid-connect on a mint
+  // whose process died) so it resolves at once instead of waiting out the watchdog.
+  for (const id of ids) publishPlay(id);
   if (res.count > 0) console.log(`[Settle] swept ${res.count} stuck pending play(s) to error`);
 }
 
@@ -920,6 +949,7 @@ export async function settleDuePlays(): Promise<void> {
   }
   if (giveUp.length > 0) {
     const res = await prismaQuery.play.updateMany({ where: { id: { in: giveUp }, status: 'open' }, data: { status: 'error' } });
+    for (const id of giveUp) publishPlay(id); // push the terminal error to any SSE still watching
     if (res.count > 0) {
       console.log(`[Settle] gave up on ${res.count} unsettleable play(s)`);
       // Real positions we genuinely cannot settle (dead deployment / wiped chain), flipped to error.
@@ -997,20 +1027,17 @@ async function settleOnePlay(play: Play, settlement1e9: bigint, settleTx?: strin
   // therefore a zero payout.
   if (itm && digest == null) return;
   const pnl = payoutRaw - play.entryCost;
-  await prismaQuery.play.update({
-    where: { id: play.id },
-    data: {
-      status: itm ? 'won' : 'lost',
-      payout: payoutRaw,
-      markValue: payoutRaw,
-      pnl,
-      // The frozen settlement price (display): what the round actually settled at, for debug/audit.
-      settlePrice: String(Number(settlement1e9) / 1e9),
-      txRedeem: digest ?? play.txRedeem,
-      // The post-expiry price push that froze the settlement price, for the history explorer link.
-      txSettle: settleTx ?? play.txSettle,
-      settledAt: new Date(),
-    },
+  await commitPlay(play.id, {
+    status: itm ? 'won' : 'lost',
+    payout: payoutRaw,
+    markValue: payoutRaw,
+    pnl,
+    // The frozen settlement price (display): what the round actually settled at, for debug/audit.
+    settlePrice: String(Number(settlement1e9) / 1e9),
+    txRedeem: digest ?? play.txRedeem,
+    // The post-expiry price push that froze the settlement price, for the history explorer link.
+    txSettle: settleTx ?? play.txSettle,
+    settledAt: new Date(),
   });
   if (itm) invalidateBal(play.userId); // the settle redeem credited the manager; the next gate re-reads
   await recordSettlement(play.userId);
@@ -1030,24 +1057,21 @@ async function reconcileAlreadyRedeemed(play: Play, key: PlayKey, settlement1e9:
   const onChain = user?.predictManagerId ? await findRedeemOnChain(user.predictManagerId, key).catch(() => null) : null;
 
   if (!onChain) {
-    await prismaQuery.play.update({ where: { id: play.id }, data: { status: 'error', settledAt: new Date() } });
+    await commitPlay(play.id, { status: 'error', settledAt: new Date() });
     console.warn(`[Settle] ${play.id} position is gone but no on-chain redeem found; marked error (no double-pay)`);
     return;
   }
 
   const pnl = onChain.payout - play.entryCost;
   const status: PlayStatus = onChain.settled ? 'won' : 'cashed_out';
-  await prismaQuery.play.update({
-    where: { id: play.id },
-    data: {
-      status,
-      payout: onChain.payout,
-      markValue: onChain.payout,
-      pnl,
-      settlePrice: onChain.settled ? String(Number(settlement1e9) / 1e9) : null,
-      txRedeem: onChain.digest,
-      settledAt: new Date(),
-    },
+  await commitPlay(play.id, {
+    status,
+    payout: onChain.payout,
+    markValue: onChain.payout,
+    pnl,
+    settlePrice: onChain.settled ? String(Number(settlement1e9) / 1e9) : null,
+    txRedeem: onChain.digest,
+    settledAt: new Date(),
   });
   invalidateBal(play.userId);
   await recordSettlement(play.userId);
@@ -1089,17 +1113,14 @@ async function finalizeRealSettle(
 ): Promise<void> {
   const won = outcome.status === 'won';
   const pnl = outcome.payoutRaw - play.entryCost;
-  await prismaQuery.play.update({
-    where: { id: play.id },
-    data: {
-      status: outcome.status,
-      payout: outcome.payoutRaw,
-      markValue: outcome.payoutRaw,
-      pnl,
-      settlePrice: outcome.settlePrice1e9 != null ? String(Number(outcome.settlePrice1e9) / 1e9) : play.settlePrice,
-      txRedeem: outcome.digest ?? play.txRedeem,
-      settledAt: new Date(),
-    },
+  await commitPlay(play.id, {
+    status: outcome.status,
+    payout: outcome.payoutRaw,
+    markValue: outcome.payoutRaw,
+    pnl,
+    settlePrice: outcome.settlePrice1e9 != null ? String(Number(outcome.settlePrice1e9) / 1e9) : play.settlePrice,
+    txRedeem: outcome.digest ?? play.txRedeem,
+    settledAt: new Date(),
   });
   if (won || outcome.status === 'cashed_out') invalidateBal(play.userId);
   await recordSettlement(play.userId);
@@ -1123,7 +1144,7 @@ async function reconcileRealSettle(play: Play, wrapperId: string, orderId: bigin
   const unreadable = ms === null;
   const cutoff = BigInt(now - (unreadable ? ORPHAN_GIVEUP_MS : UNSETTLEABLE_MS));
   if (play.expiry < cutoff) {
-    await prismaQuery.play.update({ where: { id: play.id }, data: { status: 'error', settledAt: new Date() } });
+    await commitPlay(play.id, { status: 'error', settledAt: new Date() });
     console.warn(`[Settle] real ${play.id} unsettleable (${unreadable ? 'market gone' : 'not settled'}); marked error`);
     // Real-mode give-up: a real testnet position we can't settle after the orphan window. Recovery
     // unchanged; alert so a human can look, since real chips are involved (L-008/L-011).

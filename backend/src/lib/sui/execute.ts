@@ -219,6 +219,16 @@ async function chainCtx(): Promise<{ epoch: bigint; chain: string }> {
   return chainCtxCache;
 }
 
+// Warm the play-path caches (reference gas price + sponsor epoch/chain context) at boot so the first
+// sponsored play after a restart doesn't pay their cold reads on the hot path. The caches self-warm on
+// first use anyway; this just moves that one-time cost off the first player. Best-effort, never throws.
+export async function warmExecuteCaches(): Promise<void> {
+  await Promise.all([
+    refGasPrice().catch(() => {}),
+    SPONSOR_ENABLED ? chainCtx().catch(() => {}) : Promise.resolve(),
+  ]);
+}
+
 async function applySponsorExpiration(tx: Transaction): Promise<void> {
   const { epoch, chain } = await chainCtx();
   tx.setExpiration({

@@ -64,44 +64,64 @@ export function usePlayResolutionWatch({
   onTerminalRef.current = onTerminal
   refreshOnOpenRef.current = refreshOnOpen
 
+  // When the SSE last delivered a frame. The backend SSE is now event-driven (it pushes the instant the
+  // status commits), so the watchdog below only hits the network when the stream has gone quiet past
+  // watchdogMs (a stalled proxy, a dropped socket mid-reconnect, or a cross-process settle the in-process
+  // play-bus never emitted to this box). On a healthy stream every frame pushes this forward and the
+  // watchdog never fires. Shared between the two effects.
+  const lastFrameAtRef = useRef(0)
+
   useEffect(() => {
     if (!enabled || !playId) return
+    lastFrameAtRef.current = Date.now() // arm the quiet window from open, not from epoch
     return streamPlay(
       playId,
       (tick) => {
         if (finalizedRef.current) return
+        lastFrameAtRef.current = Date.now()
         onSnapshotRef.current(toSnapshot(tick))
         syncOpenBalance(tick.status, playId, syncedOpenPlayIdRef, refreshOnOpenRef.current)
         onTerminalRef.current(tick.status, playId)
       },
       () => {
-        // EventSource retries. The watchdog still guarantees the terminal frame lands.
+        // EventSource auto-reconnects. The watchdog below still guarantees the terminal frame lands.
       },
     )
   }, [enabled, finalizedRef, playId, syncedOpenPlayIdRef])
 
+  // Lazy watchdog: a single safety net that reads the DB ONLY when the event-driven SSE has gone silent
+  // past watchdogMs. It reconciles once, feeds the same callbacks, then re-arms. On a healthy stream it
+  // keeps re-arming without ever hitting the network (this is the redundant-poll removal from
+  // TRADE_REALTIME.md §1e, degraded to a true fallback).
   useEffect(() => {
     if (!enabled || !playId) return
     let stopped = false
     let timer: ReturnType<typeof setTimeout>
 
-    const poll = async (): Promise<void> => {
+    const arm = (delay: number): void => {
+      timer = setTimeout(() => void check(), delay)
+    }
+    const check = async (): Promise<void> => {
       if (stopped || finalizedRef.current) return
+      const quietFor = Date.now() - lastFrameAtRef.current
+      if (quietFor < watchdogMs) {
+        arm(watchdogMs - quietFor) // a frame arrived recently; recheck only when the window would lapse
+        return
+      }
       try {
         const { play } = await api.getPlay(playId)
         if (stopped || finalizedRef.current) return
+        lastFrameAtRef.current = Date.now()
         onSnapshotRef.current(toSnapshot(play))
         syncOpenBalance(play.status, playId, syncedOpenPlayIdRef, refreshOnOpenRef.current)
         onTerminalRef.current(play.status, playId)
       } catch {
-        // transient; the next tick retries
+        // transient; the next arm retries
       }
-      if (!stopped && !finalizedRef.current) {
-        timer = setTimeout(() => void poll(), watchdogMs)
-      }
+      if (!stopped && !finalizedRef.current) arm(watchdogMs)
     }
 
-    timer = setTimeout(() => void poll(), watchdogMs)
+    arm(watchdogMs)
     return () => {
       stopped = true
       clearTimeout(timer)
