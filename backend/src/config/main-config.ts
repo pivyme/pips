@@ -22,6 +22,14 @@ export const IS_PROD: boolean = NODE_ENV === 'production';
 // Database
 export const DATABASE_URL: string = process.env.DATABASE_URL as string;
 
+// Postgres connection-pool ceiling for the Prisma pg adapter (it builds a node-postgres Pool from the
+// adapter config, so this is that Pool's `max`; node-postgres' own default is also 10). Sizing rule: N
+// running instances x DB_POOL_MAX must stay comfortably under the Postgres server's max_connections
+// (commonly 100 on a small managed instance). At the default of 10 that supports ~8 instances with
+// headroom for migrations, psql, and the operator instance's extra dedicated leader-lock connection.
+// Raise only alongside a bigger Postgres. Documented in 09-DEPLOYMENT.md.
+export const DB_POOL_MAX: number = Number(process.env.PIPS_DB_POOL_MAX) || 10;
+
 // Graceful-shutdown drain budget (ms). On SIGTERM/SIGINT (or a fatal crash) the process stops workers,
 // closes the HTTP/WS server, and disconnects Prisma; if that drain doesn't finish within this window it
 // force-exits. Kept comfortably under Docker's default 10s SIGKILL grace so the drain always wins. If
@@ -460,6 +468,7 @@ export default {
   IS_DEV,
   IS_PROD,
   DATABASE_URL,
+  DB_POOL_MAX,
   SHUTDOWN_TIMEOUT_MS,
   ALERT_WEBHOOK_URL,
   ALERT_DEDUPE_MS,
