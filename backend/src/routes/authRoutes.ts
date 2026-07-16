@@ -6,7 +6,7 @@ import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { validateRequiredFields } from '../utils/validationUtils.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { prismaQuery } from '../lib/prisma.ts';
-import { AUTH_MODE, WALLET_AUTH_ENABLED } from '../config/main-config.ts';
+import { AUTH_MODE, WALLET_AUTH_ENABLED, RATE_LIMIT_AUTH_MAX, RATE_LIMIT_WINDOW } from '../config/main-config.ts';
 import { operatorAddress } from '../lib/sui/signer.ts';
 import { isChainUnavailableError } from '../lib/sui/client.ts';
 import { verifyPrivyToken, provisionServerSuiWallet, fetchPrivyIdentity } from '../lib/sui/privy.ts';
@@ -27,8 +27,12 @@ const failSignIn = (reply: FastifyReply, error: unknown, code: string, message: 
     : handleError(reply, 500, message, code, error as Error);
 
 export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
+  // Tight per-IP rate limit on the unauthenticated / identity-sensitive sign-in routes, on top of the
+  // generous global default. Blocks credential-stuffing / floods without touching the gameplay loop.
+  const authLimit = { config: { rateLimit: { max: RATE_LIMIT_AUTH_MAX, timeWindow: RATE_LIMIT_WINDOW } } };
+
   // dev mode: auto-login the operator wallet. The backend is the user and signs its plays.
-  app.post('/dev', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/dev', authLimit, async (request: FastifyRequest, reply: FastifyReply) => {
     if (AUTH_MODE !== 'dev') return handleNotFoundError(reply, 'Route');
     const body = (request.body ?? {}) as { referralCode?: string };
     try {
@@ -43,7 +47,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   // verify it, then provision (or reuse) a server-owned embedded Sui wallet keyed to the Privy user
   // (owned by the app authorization key so the server signs every play with no popup or client round
   // trip), onboard the user keyed by that Sui address, and mint our JWT.
-  app.post('/privy/verify', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/privy/verify', authLimit, async (request: FastifyRequest, reply: FastifyReply) => {
     if (AUTH_MODE !== 'privy') return handleNotFoundError(reply, 'Route');
     const body = (request.body ?? {}) as { token?: string; email?: string; referralCode?: string };
     const valid = await validateRequiredFields(body as Record<string, unknown>, ['token'], reply);
@@ -81,7 +85,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
 
   // wallet-connect mode: issue the login challenge the external Sui wallet must sign. Off unless
   // WALLET_AUTH_ENABLED, independent of AUTH_MODE (it coexists with privy social login).
-  app.post('/wallet/nonce', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/wallet/nonce', authLimit, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!WALLET_AUTH_ENABLED) return handleNotFoundError(reply, 'Route');
     const body = (request.body ?? {}) as { address?: string };
     const address = typeof body.address === 'string' ? body.address.trim() : '';
@@ -92,7 +96,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   // wallet-connect mode: verify the signed challenge, provision (or reuse) the user's custodial play
   // wallet keyed by the connected wallet, onboard, and mint our JWT. The connected wallet is the
   // login identity; all on-chain play work runs through the server-held custodial wallet.
-  app.post('/wallet/verify', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/wallet/verify', authLimit, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!WALLET_AUTH_ENABLED) return handleNotFoundError(reply, 'Route');
     const body = (request.body ?? {}) as { address?: string; signature?: string; referralCode?: string };
     const valid = await validateRequiredFields(body as Record<string, unknown>, ['address', 'signature'], reply);

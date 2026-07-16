@@ -3,7 +3,8 @@ import './dotenv.ts';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import FastifyCors from '@fastify/cors';
 import FastifyWebsocket from '@fastify/websocket';
-import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, OPERATOR_ENABLED, IS_REAL_PREDICT, SHUTDOWN_TIMEOUT_MS } from './src/config/main-config.ts';
+import FastifyRateLimit from '@fastify/rate-limit';
+import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, OPERATOR_ENABLED, IS_REAL_PREDICT, SHUTDOWN_TIMEOUT_MS, RATE_LIMIT_WINDOW, RATE_LIMIT_GLOBAL_MAX } from './src/config/main-config.ts';
 import { NETWORK, PUBLIC_PREDICT_PACKAGE, PUBLIC_PREDICT_OBJECT, DUSDC_TYPE } from './src/lib/sui/config.ts';
 import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
 import { prismaQuery } from './src/lib/prisma.ts';
@@ -46,6 +47,10 @@ console.log(
 
 const fastify = Fastify({
   logger: false,
+  // Dokploy fronts services with one Traefik hop, so trust one proxy hop: rate-limit keys and
+  // errorHandler.ts's logged `ip` then reflect the real client IP (X-Forwarded-For) instead of the
+  // proxy's. Revisit to a specific hop count if a CDN is ever added in front of Traefik.
+  trustProxy: true,
 });
 
 // === Process resilience: crash handlers + graceful shutdown ===
@@ -125,6 +130,29 @@ fastify.register(FastifyCors, {
   allowedHeaders: ['Content-Type', 'Authorization', 'token'],
 });
 
+// Transport-layer rate limiting, keyed by the real client IP (trustProxy above). Generous global default
+// so the fast gameplay loop is never throttled; tighter per-route caps live on the auth/wallet routes via
+// their `config.rateLimit`. Registered before the routes so its onRoute hook covers them. 429s return the
+// app's standard error envelope. Health probes opt out (config.rateLimit:false) so an orchestrator poll
+// is never throttled into a false "unhealthy".
+fastify.register(FastifyRateLimit, {
+  global: true,
+  max: RATE_LIMIT_GLOBAL_MAX,
+  timeWindow: RATE_LIMIT_WINDOW,
+  errorResponseBuilder: (_req, context) => {
+    // The plugin THROWS this value; Fastify reads `statusCode` off the thrown object for the HTTP code
+    // (a plain object without it defaults to 500). Keep it non-enumerable so the JSON body stays exactly
+    // the app's standard { success, error, data } envelope.
+    const body = {
+      success: false,
+      error: { code: 'RATE_LIMITED', message: `Too many requests. Retry in ${Math.ceil(context.ttl / 1000)}s.` },
+      data: null,
+    };
+    Object.defineProperty(body, 'statusCode', { value: context.statusCode, enumerable: false });
+    return body;
+  },
+});
+
 // WebSocket support for the price hub (/ws). Registered before the routes that use `{websocket:true}`.
 // Verified on the Bun runtime; the SSE /stream/prices route stays as a flagged fallback for one release.
 fastify.register(FastifyWebsocket);
@@ -142,7 +170,7 @@ fastify.get('/', async (_request: FastifyRequest, reply: FastifyReply) => {
 // Liveness: always 200 if the process can respond at all. No dependency checks, so it can never itself
 // get stuck. This is what the container orchestrator (Docker HEALTHCHECK) polls every 30s: a hung
 // dependency must NOT bounce an otherwise-alive instance and drop every in-flight connection with it.
-fastify.get('/health', async (_request: FastifyRequest, reply: FastifyReply) => {
+fastify.get('/health', { config: { rateLimit: false } }, async (_request: FastifyRequest, reply: FastifyReply) => {
   return reply.status(200).send({
     success: true,
     error: null,
@@ -168,7 +196,7 @@ async function pingDb(timeoutMs = 2000): Promise<boolean> {
 // orchestrator should stop routing traffic here). A stale non-critical worker sets `degraded` but stays
 // 200: a wedged price-warmer must not bounce a healthy API instance, it should just be visible so a
 // human or the alert path can look. A worker is stale once it hasn't run in ~3x its own cadence.
-fastify.get('/health/ready', async (_request: FastifyRequest, reply: FastifyReply) => {
+fastify.get('/health/ready', { config: { rateLimit: false } }, async (_request: FastifyRequest, reply: FastifyReply) => {
   const now = Date.now();
   const dbOk = await pingDb();
   const workers = allWorkerHealth().map((w) => ({

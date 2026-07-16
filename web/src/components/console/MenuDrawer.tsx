@@ -39,8 +39,14 @@ export function MenuDrawer({
   onLaunchStart?: (to: string) => void
 }) {
   const router = useRouter()
+  // resolvedLocation (not location) on purpose: location flips the instant a nav starts, before the
+  // Outlet has actually swapped to the new match. Keying/reset off that fires while this div still
+  // shows the OUTGOING page, snapping IT to the top for a frame before the real transition even
+  // plays. resolvedLocation only updates once the navigation has fully settled (TanStack Router's own
+  // scroll-restoration module uses the same fallback pattern), so by the time this remounts, the
+  // Outlet is already on the new page.
   const pathname = useRouterState({
-    select: (state) => state.location.pathname,
+    select: (state) => (state.resolvedLocation ?? state.location).pathname,
   })
   const reduced = useReducedMotion()
   const [closing, setClosing] = useState(false)

@@ -13,6 +13,7 @@ export const config = {
     docs: 'https://docs.sui.io/onchain-finance/deepbook-predict/',
     // Direct line for reviewers/judges when something breaks mid-demo.
     support: 'https://t.me/KelvinAdithya',
+    pivy: 'https://pivy.me',
   },
 } as const
 

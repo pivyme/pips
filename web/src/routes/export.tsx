@@ -5,12 +5,12 @@ import { toPng } from 'html-to-image'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { THEMES } from '@/components/console/themes'
 import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '@/components/console/controls'
-import { GamesConsole } from './_app/games/index'
-import { LuckyScreen } from './_app/games/lucky'
-import { RangeScreen } from './_app/games/range'
-import { MoonshotScreen } from './_app/games/moonshot'
-import { LineRiderScreen } from './_app/games/line-rider'
-import { CandleHopScreen } from './_app/games/candle-hop'
+import { Route as GamesRoute } from './_app/games/index'
+import { Route as LuckyRoute } from './_app/games/lucky'
+import { Route as RangeRoute } from './_app/games/range'
+import { Route as MoonshotRoute } from './_app/games/moonshot'
+import { Route as LineRiderRoute } from './_app/games/line-rider'
+import { Route as CandleHopRoute } from './_app/games/candle-hop'
 import { isDemo } from '@/lib/demo'
 
 // Dev-only asset dump (personal tooling, not part of the product). Two modes:
@@ -23,14 +23,17 @@ export const Route = createFileRoute('/export')({ component: ExportPage })
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+const routeComponent = (route: { options: { component?: ComponentType } }): ComponentType =>
+  route.options.component as ComponentType
+
 // The in-device screens, keyed for the picker + filenames.
 const SCREENS: { key: string; name: string; Comp: ComponentType }[] = [
-  { key: 'home', name: 'Home', Comp: GamesConsole },
-  { key: 'lucky', name: 'Lucky', Comp: LuckyScreen },
-  { key: 'range', name: 'Range', Comp: RangeScreen },
-  { key: 'moonshot', name: 'Moonshot', Comp: MoonshotScreen },
-  { key: 'line-rider', name: 'Line Rider', Comp: LineRiderScreen },
-  { key: 'candle-hop', name: 'Candle Hop', Comp: CandleHopScreen },
+  { key: 'home', name: 'Home', Comp: routeComponent(GamesRoute) },
+  { key: 'lucky', name: 'Lucky', Comp: routeComponent(LuckyRoute) },
+  { key: 'range', name: 'Range', Comp: routeComponent(RangeRoute) },
+  { key: 'moonshot', name: 'Moonshot', Comp: routeComponent(MoonshotRoute) },
+  { key: 'line-rider', name: 'Line Rider', Comp: routeComponent(LineRiderRoute) },
+  { key: 'candle-hop', name: 'Candle Hop', Comp: routeComponent(CandleHopRoute) },
 ]
 
 function download(dataUrl: string, name: string) {

@@ -1,6 +1,7 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowDownToLine, ArrowUpFromLine, LogOut, Pencil } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
@@ -11,7 +12,6 @@ import {
 } from '@/components/menu/AchievementDetail'
 import { useMenuDrawer } from '@/components/console/MenuDrawer'
 import { StatsCard, StatsCardSkeleton } from '@/components/menu/StatsCard'
-import { Button } from '@/ui/Button'
 import { Illo } from '@/ui/Illo'
 import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import { api } from '@/lib/api'
@@ -21,159 +21,90 @@ import { HapticOverlay } from '@/components/HapticOverlay'
 import { displayHandle, formatStringToNumericDecimals } from '@/utils/format'
 import { cnm } from '@/utils/style'
 
-// The menu home, rendered inside the bottom drawer. The trader card sits right at the top (the pen
-// on it opens the handle editor), then the achievements rail in the !Camera layout: the closest
-// in-progress badge leads, earned badges follow, all on one scroll, with the full catalog one tap
-// away. Customize and Settings round it out.
+// The menu home, rendered inside the bottom drawer. Built to read in one glance, no long scroll:
+// the trader card and a slim balance strip up top, then every destination as a 3x2 tile grid (the
+// six full-width rows collapsed into two compact rows), then an achievements peek, and a light
+// footer with the proud badge + Log out. All the actionable stuff sits above the fold.
 export const Route = createFileRoute('/_app/menu/')({ component: MenuHome })
 
 function MenuHome() {
-  const { signOut } = useAuth()
-
   return (
     <div className="relative min-h-full bg-black px-4 pb-8">
       <MenuHeader title="Menu" showBack={false} />
-      <div className="relative z-0 -mt-1 flex flex-col gap-6 pt-5">
+      <div className="relative z-0 -mt-1 flex flex-col gap-5 pt-5">
         <StatsSection />
-        <img
-          src="/proud-badge.webp"
-          alt="We think this is something Sui would be proud to have in the ecosystem."
-          className="-my-3 w-full select-none"
-          draggable={false}
-        />
-        <BalanceHero />
-        <div className="flex flex-col gap-3">
-          <MenuRow
-            to="/menu/customize"
-            icon="/assets/icons/icon-customize.webp"
-            title="Customize"
-            sub="Make it yours"
-            launch
-          />
-          <MenuRow
-            to="/menu/leaderboard"
-            icon="/assets/icons/leaderboard-icon.webp"
-            title="Leaderboard"
-            sub="Top gainers, REKT & game ranks"
-          />
-          <MenuRow
-            to="/menu/referrals"
-            illo="gift"
-            title="Referrals"
-            sub="Invite friends, track your crew"
-          />
-          <MenuRow
-            to="/menu/history"
-            icon="/assets/icons/icon-history.webp"
-            title="History"
-            sub="Every play, with tx links"
-          />
-          <MenuRow
-            to="/menu/settings"
-            icon="/assets/icons/icon-settings.webp"
-            title="Settings"
-            sub="Sound, haptics, motion"
-          />
-          <MenuRow
-            to="/menu/account"
-            illo="vault"
-            title="Account Settings"
-            sub="Linked accounts"
-          />
-        </div>
-        <AchievementsSection />
-        <div className="relative mt-16 w-full">
-          <Button
-            variant="danger"
-            onClick={() => {
-              haptic('rigid')
-              signOut()
-            }}
-            className="pointer-events-none h-14 w-full rounded-card text-sm"
-          >
-            <LogOut className="h-5 w-5" strokeWidth={2.4} />
-            Log out
-          </Button>
-          <HapticOverlay className="absolute inset-0 rounded-card" preset="rigid" silent onTap={signOut} />
-        </div>
+        <BalanceStrip />
+        <NavGrid />
+        <AchievementsPeek />
+        <Footer />
       </div>
     </div>
   )
 }
 
-// The money card: balance front and center with the two things you do with it. Deposit and Withdraw
-// push to their own screens with the native menu transition.
-function BalanceHero() {
+// The money strip: balance on the left, the two things you do with it on the right. Compact by
+// design, one clean row instead of a tall card. Deposit + Withdraw push to their own screens with
+// the native menu transition.
+function BalanceStrip() {
   const { user } = useAuth()
-  const navigate = useNavigate()
   const balance = formatStringToNumericDecimals(user?.balance ?? '0', 2)
-  const goTo = (to: string) => {
+
+  return (
+    <div className="card-neo flex items-center justify-between gap-3 rounded-card p-4">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-3">Balance</span>
+          <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-text-2">
+            DUSDC
+          </span>
+        </div>
+        <div className="mt-1 flex items-baseline gap-0.5">
+          <span className="text-base font-black text-text-3">$</span>
+          <span className="tnum truncate text-[28px] font-black leading-none text-text">{balance}</span>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <MoneyButton to="/menu/deposit" icon={ArrowDownToLine} label="Deposit" primary />
+        <MoneyButton to="/menu/withdraw" icon={ArrowUpFromLine} label="Withdraw" />
+      </div>
+    </div>
+  )
+}
+
+function MoneyButton({
+  to,
+  icon: Icon,
+  label,
+  primary = false,
+}: {
+  to: string
+  icon: LucideIcon
+  label: string
+  primary?: boolean
+}) {
+  const navigate = useNavigate()
+  const go = () => {
     prepareMenuTransition('forward')
     void navigate({ to, viewTransition: true })
   }
-
   return (
-    <div className="card-neo rounded-card p-5">
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">Available balance</span>
-        <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-text-2">
-          DUSDC
-        </span>
-      </div>
-      <div className="mt-2 flex items-center gap-2.5">
-        <img
-          src="/assets/icons/dusdc-logo.webp"
-          alt=""
-          className="h-9 w-9 shrink-0 rounded-full"
-          draggable={false}
-        />
-        <div className="flex items-baseline gap-1">
-          <span className="text-2xl font-black text-text-3">$</span>
-          <span className="tnum text-[42px] font-black leading-none text-text">{balance}</span>
-        </div>
-      </div>
-      <div className="mt-5 grid grid-cols-2 gap-3">
-        <div className="relative h-12">
-          <Link
-            to="/menu/deposit"
-            viewTransition
-            onClick={() => {
-              prepareMenuTransition('forward')
-              haptic('selection')
-            }}
-            className="btn-primary pointer-events-none flex h-12 w-full items-center justify-center gap-2 rounded-md text-sm font-extrabold uppercase tracking-wide"
-          >
-            <ArrowDownToLine className="h-4 w-4" strokeWidth={2.6} />
-            Deposit
-          </Link>
-          <HapticOverlay
-            className="absolute inset-0 rounded-md"
-            preset="selection"
-            silent
-            onTap={() => goTo('/menu/deposit')}
-          />
-        </div>
-        <div className="relative h-12">
-          <Link
-            to="/menu/withdraw"
-            viewTransition
-            onClick={() => {
-              prepareMenuTransition('forward')
-              haptic('selection')
-            }}
-            className="pointer-events-none flex h-12 w-full items-center justify-center gap-2 rounded-md border border-white/10 bg-white/[0.05] text-sm font-extrabold uppercase tracking-wide text-text transition-transform active:scale-[0.98]"
-          >
-            <ArrowUpFromLine className="h-4 w-4" strokeWidth={2.6} />
-            Withdraw
-          </Link>
-          <HapticOverlay
-            className="absolute inset-0 rounded-md"
-            preset="selection"
-            silent
-            onTap={() => goTo('/menu/withdraw')}
-          />
-        </div>
-      </div>
+    <div className="relative h-11">
+      <Link
+        to={to}
+        viewTransition
+        onClick={() => {
+          prepareMenuTransition('forward')
+          haptic('selection')
+        }}
+        className={cnm(
+          'pointer-events-none flex h-11 items-center gap-1.5 rounded-full px-3.5 text-[12px] font-extrabold uppercase tracking-wide',
+          primary ? 'btn-primary' : 'border border-white/10 bg-white/[0.05] text-text',
+        )}
+      >
+        <Icon className="h-4 w-4" strokeWidth={2.6} />
+        {label}
+      </Link>
+      <HapticOverlay className="absolute inset-0 rounded-full" preset="selection" silent onTap={go} />
     </div>
   )
 }
@@ -239,183 +170,34 @@ function StatsSection() {
   )
 }
 
-function AchievementsSection() {
-  const q = useQuery({
-    queryKey: ['achievements'],
-    queryFn: () => api.achievements(),
-  })
-
-  if (q.isLoading) {
-    return (
-      <section className="flex flex-col gap-3">
-        <SectionLabel />
-        <div className="-mx-4 flex gap-3 overflow-hidden px-4">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="shimmer h-[208px] w-[160px] shrink-0 rounded-card"
-            />
-          ))}
-        </div>
-      </section>
-    )
-  }
-
-  const all = mergeCatalog(q.data?.achievements ?? [])
-  // The closest in-progress badge leads (most motivating), earned badges follow.
-  const inProgress = all
-    .filter((a) => !a.unlocked && a.progress && a.progress.target > 0)
-    .sort((a, b) => pct(b) - pct(a))
-  const unlocked = all.filter((a) => a.unlocked)
-  const rail = [...inProgress, ...unlocked]
-
+// Every destination as a compact 3x2 tile grid: the six stacked rows folded into two rows so the
+// whole menu reads without scrolling. Icon over a one-line label, no subtitle needed at this size.
+function NavGrid() {
   return (
-    <section className="flex flex-col gap-3">
-      <SectionLabel />
-      <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {rail.map((a) => (
-          <AchievementCard key={a.slug} a={a} />
-        ))}
-      </div>
-      <AllAchievementsRow />
-    </section>
-  )
-}
-
-function AllAchievementsRow() {
-  const navigate = useNavigate()
-  return (
-    <div className="relative">
-      <Link
-        to="/menu/achievements"
-        viewTransition
-        onClick={() => {
-          prepareMenuTransition('forward')
-          haptic('selection')
-        }}
-        className="pointer-events-none block"
-      >
-        <div className="surface-skeuo flex items-center justify-between rounded-card p-4 transition-transform active:scale-[0.99]">
-          <span className="text-[15px] font-bold">All Achievements</span>
-          <span className="text-lg text-text-3">›</span>
-        </div>
-      </Link>
-      <HapticOverlay
-        className="absolute inset-0 rounded-card"
-        preset="selection"
-        silent
-        onTap={() => {
-          prepareMenuTransition('forward')
-          void navigate({ to: '/menu/achievements', viewTransition: true })
-        }}
-      />
+    <div className="grid grid-cols-3 gap-3">
+      <NavTile to="/menu/customize" icon="/assets/icons/icon-customize.webp" label="Customize" launch />
+      <NavTile to="/menu/leaderboard" icon="/assets/icons/leaderboard-icon.webp" label="Leaderboard" />
+      <NavTile to="/menu/referrals" icon="/assets/icons/icon-referrals.webp" label="Referrals" />
+      <NavTile to="/menu/history" icon="/assets/icons/icon-history.webp" label="History" />
+      <NavTile to="/menu/settings" icon="/assets/icons/icon-settings.webp" label="Settings" />
+      <NavTile to="/menu/account" illo="vault" label="Account" />
     </div>
   )
 }
 
-function SectionLabel() {
-  return (
-    <div className="px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">
-      Achievements
-    </div>
-  )
-}
-
-const pct = (a: DisplayAchievement): number =>
-  a.progress && a.progress.target > 0
-    ? Math.min(1, a.progress.current / a.progress.target)
-    : 0
-
-function AchievementCard({ a }: { a: DisplayAchievement }): ReactNode {
-  const p = pct(a)
-  const { open } = useAchievementDetail()
-  return (
-    <button
-      type="button"
-      aria-label={`${a.name}, ${a.unlocked ? 'unlocked' : `${Math.round(p * 100)}% complete`}`}
-      onClick={(e) => openFromCard(open, a, e)}
-      className={cnm(
-        'surface-skeuo flex w-[160px] shrink-0 flex-col gap-3 rounded-card p-4 text-left',
-        cardPressClass,
-      )}
-    >
-      <div className="relative mx-auto flex h-[116px] w-[116px] items-center justify-center">
-        {a.unlocked ? (
-          <img
-            src={achievementImage(a.slug)}
-            alt=""
-            className="h-[104px] w-[104px] object-contain drop-shadow-[0_12px_20px_rgba(0,0,0,0.34)]"
-            draggable={false}
-          />
-        ) : (
-          <>
-            {/* Locked badge as a black silhouette, with the progress ring + percent on top. */}
-            <img
-              src={achievementImage(a.slug)}
-              alt=""
-              className="absolute h-[80px] w-[80px] object-contain brightness-0 contrast-200 drop-shadow-[0_1px_0_rgba(255,255,255,0.04)]"
-              draggable={false}
-            />
-            <ProgressRing value={p} />
-            <span className="tnum absolute text-[26px] font-extrabold leading-none">
-              {Math.round(p * 100)}%
-            </span>
-          </>
-        )}
-      </div>
-      <div>
-        <div className="text-[15px] font-bold leading-tight">{a.name}</div>
-        <div className="mt-1 line-clamp-2 text-[13px] leading-snug text-text-2">
-          {a.description}
-        </div>
-      </div>
-    </button>
-  )
-}
-
-function ProgressRing({ value }: { value: number }) {
-  const r = 50
-  const c = 2 * Math.PI * r
-  return (
-    <svg viewBox="0 0 120 120" className="h-full w-full -rotate-90">
-      <circle
-        cx={60}
-        cy={60}
-        r={r}
-        fill="none"
-        stroke="rgba(255,255,255,0.10)"
-        strokeWidth={10}
-      />
-      <circle
-        cx={60}
-        cy={60}
-        r={r}
-        fill="none"
-        style={{ stroke: 'var(--color-brand-500)' }}
-        strokeWidth={10}
-        strokeLinecap="round"
-        strokeDasharray={c}
-        strokeDashoffset={c * (1 - value)}
-      />
-    </svg>
-  )
-}
-
-function MenuRow({
+function NavTile({
   to,
   icon,
   illo,
-  title,
-  sub,
+  label,
   launch = false,
 }: {
   to: string
-  icon?: string // png icon slot (the existing rows)
-  illo?: string // or an Illo name (e.g. Leaderboard's trophy), for rows without a dedicated png
-  title: string
-  sub: string
-  // `launch` rows hand off to a full takeover (the Customize studio): the drawer slides itself away
-  // first, then routes, so it never just pops out from under the studio.
+  icon?: string // png icon slot (the existing art)
+  illo?: string // or an Illo name (e.g. Account's vault), for tiles without a dedicated png
+  label: string
+  // `launch` tiles hand off to a full takeover (the Customize studio): the drawer slides itself
+  // away first, then routes, so it never just pops out from under the studio.
   launch?: boolean
 }): ReactNode {
   const drawer = useMenuDrawer()
@@ -443,27 +225,186 @@ function MenuRow({
           prepareMenuTransition('forward')
           haptic('selection')
         }}
-        className="pointer-events-none surface-skeuo flex min-h-24 items-center gap-3 rounded-card px-3 py-1 transition-transform active:scale-[0.99]"
+        className="pointer-events-none surface-skeuo flex aspect-square flex-col items-center justify-center gap-2 rounded-card p-2 transition-transform active:scale-[0.97]"
       >
         {illo ? (
-          <div className="flex h-20 w-20 shrink-0 items-center justify-center">
-            <Illo name={illo} size={64} />
-          </div>
+          <Illo name={illo} size={52} />
         ) : (
-          <img
-            src={icon}
-            alt=""
-            className="h-20 w-20 shrink-0 object-contain"
-            draggable={false}
-          />
+          <img src={icon} alt="" className="h-14 w-14 object-contain" draggable={false} />
         )}
-        <div className="ml-1 min-w-0 flex-1">
-          <span className="text-xl font-bold">{title}</span>
-          <div className="text-[15px] text-text-2">{sub}</div>
-        </div>
-        <span className="pr-2 text-3xl text-text-3">›</span>
+        <span className="text-[13px] font-bold leading-none">{label}</span>
       </Link>
       <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={activate} />
     </div>
+  )
+}
+
+// A compact peek at the badges: a tappable header carrying the unlocked/total count that opens the
+// full grid, over a slim rail of badge chips. The full-size cards live on /menu/achievements.
+function AchievementsPeek() {
+  const navigate = useNavigate()
+  const q = useQuery({
+    queryKey: ['achievements'],
+    queryFn: () => api.achievements(),
+  })
+
+  const goToAll = () => {
+    prepareMenuTransition('forward')
+    void navigate({ to: '/menu/achievements', viewTransition: true })
+  }
+
+  if (q.isLoading) {
+    return (
+      <section className="flex flex-col gap-3">
+        <PeekHeader onTap={goToAll} />
+        <div className="-mx-4 flex gap-2.5 overflow-hidden px-4">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="shimmer h-16 w-16 shrink-0 rounded-2xl" />
+          ))}
+        </div>
+      </section>
+    )
+  }
+
+  const all = mergeCatalog(q.data?.achievements ?? [])
+  const total = all.length
+  const unlockedCount = all.filter((a) => a.unlocked).length
+  // Lead with earned badges (the reward), then the closest in-progress ones (the motivation).
+  const unlocked = all.filter((a) => a.unlocked)
+  const inProgress = all
+    .filter((a) => !a.unlocked && a.progress && a.progress.target > 0)
+    .sort((a, b) => pct(b) - pct(a))
+  const rail = [...unlocked, ...inProgress]
+
+  return (
+    <section className="flex flex-col gap-3">
+      <PeekHeader onTap={goToAll} count={`${unlockedCount}/${total}`} />
+      <div className="-mx-4 flex gap-2.5 overflow-x-auto px-4 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {rail.map((a) => (
+          <BadgeThumb key={a.slug} a={a} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function PeekHeader({ onTap, count }: { onTap: () => void; count?: string }) {
+  return (
+    <div className="relative">
+      <Link
+        to="/menu/achievements"
+        viewTransition
+        onClick={() => {
+          prepareMenuTransition('forward')
+          haptic('selection')
+        }}
+        className="pointer-events-none flex items-center justify-between px-1"
+      >
+        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">Achievements</span>
+        <span className="flex items-center gap-1 text-[13px] font-bold text-text-2">
+          {count && <span className="tnum">{count}</span>}
+          <span className="text-lg text-text-3">›</span>
+        </span>
+      </Link>
+      <HapticOverlay className="absolute inset-0" preset="selection" silent onTap={onTap} />
+    </div>
+  )
+}
+
+// One badge as a small chip: full art when earned, a silhouette under a progress ring when not.
+function BadgeThumb({ a }: { a: DisplayAchievement }): ReactNode {
+  const p = pct(a)
+  const { open } = useAchievementDetail()
+  return (
+    <button
+      type="button"
+      aria-label={`${a.name}, ${a.unlocked ? 'unlocked' : `${Math.round(p * 100)}% complete`}`}
+      onClick={(e) => openFromCard(open, a, e)}
+      className={cnm(
+        'surface-skeuo relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl',
+        cardPressClass,
+      )}
+    >
+      {a.unlocked ? (
+        <img
+          src={achievementImage(a.slug)}
+          alt=""
+          className="h-11 w-11 object-contain drop-shadow-[0_6px_10px_rgba(0,0,0,0.4)]"
+          draggable={false}
+        />
+      ) : (
+        <>
+          <img
+            src={achievementImage(a.slug)}
+            alt=""
+            className="absolute h-8 w-8 object-contain brightness-0 contrast-200"
+            draggable={false}
+          />
+          <ProgressRing value={p} />
+        </>
+      )}
+    </button>
+  )
+}
+
+// The sign-off: the proud badge as a slim footer signature, then a light Log out.
+function Footer() {
+  const { signOut } = useAuth()
+  const doSignOut = () => {
+    haptic('rigid')
+    signOut()
+  }
+  return (
+    <div className="mt-2 flex flex-col items-center gap-5 pt-2">
+      <img
+        src="/proud-badge.webp"
+        alt="We think this is something Sui would be proud to have in the ecosystem."
+        className="w-full select-none"
+        draggable={false}
+      />
+      <div className="relative">
+        <button
+          type="button"
+          className="pointer-events-none flex items-center gap-2 rounded-full border border-down/25 bg-down/[0.06] px-6 py-2.5 text-[13px] font-bold uppercase tracking-wide text-down/90 transition-transform active:scale-[0.97]"
+        >
+          <LogOut className="h-4 w-4" strokeWidth={2.4} />
+          Log out
+        </button>
+        <HapticOverlay className="absolute inset-0 rounded-full" preset="rigid" silent onTap={doSignOut} />
+      </div>
+    </div>
+  )
+}
+
+const pct = (a: DisplayAchievement): number =>
+  a.progress && a.progress.target > 0
+    ? Math.min(1, a.progress.current / a.progress.target)
+    : 0
+
+function ProgressRing({ value }: { value: number }) {
+  const r = 50
+  const c = 2 * Math.PI * r
+  return (
+    <svg viewBox="0 0 120 120" className="h-full w-full -rotate-90">
+      <circle
+        cx={60}
+        cy={60}
+        r={r}
+        fill="none"
+        stroke="rgba(255,255,255,0.10)"
+        strokeWidth={10}
+      />
+      <circle
+        cx={60}
+        cy={60}
+        r={r}
+        fill="none"
+        style={{ stroke: 'var(--color-brand-500)' }}
+        strokeWidth={10}
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={c * (1 - value)}
+      />
+    </svg>
   )
 }

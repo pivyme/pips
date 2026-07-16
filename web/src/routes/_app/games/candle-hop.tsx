@@ -22,7 +22,7 @@ type Phase = 'title' | 'playing' | 'over'
 const EMPTY_HUD: FlapHud = { score: 0, elapsed: 0, alive: false }
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US')
 
-export function CandleHopScreen() {
+function CandleHopScreen() {
   const reduced = useReducedMotion()
 
   // Hold the screen black until the device has finished dropping in, then a short beat, then fade

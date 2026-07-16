@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
@@ -27,6 +27,7 @@ import { placePlay, cashOut } from '@/lib/sui/predict'
 import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
+import { useActivePlay } from '@/lib/activePlay'
 import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
 // LUCKY, the hero. Hit SPIN: three reels (asset, direction, multiplier) snap to a server-dealt slot
@@ -93,9 +94,11 @@ const fmtMult = (n: number): string =>
   `${n.toFixed(2).replace(/\.?0+$/, '')}x`
 const sideLabel = (s: Side): string => (s === 'up' ? 'UP' : 'DOWN')
 
-export function LuckyScreen() {
+function LuckyScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
+  const navigate = useNavigate()
+  const { track } = useActivePlay()
 
   // One persistent stake shared with the home wheel (same ladder), so it stays put across navigation.
   const [betIdx, setBetIdx] = useLocalStorage(STAKE_KEY, 2)
@@ -147,6 +150,9 @@ export function LuckyScreen() {
   const maxBetIdx = Math.max(0, BET_LADDER.reduce((acc, v, i) => (v <= balance ? i : acc), 0))
   const safeBetIdx = Math.min(betIdx, maxBetIdx)
   const bet = BET_LADDER[safeBetIdx]
+  // Below the cheapest rung entirely: SPIN would just round-trip an INSUFFICIENT_DUSDC rejection, so
+  // the idle button becomes the actual next step instead of a dead-end error toast.
+  const cantAfford = balance < BET_LADDER[0]
 
   const lp = play ? (play.params as LuckyParams) : null
   // The asset panel: up to three live markets stacked as live charts (BTC/SUI/ETH first). The dealt
@@ -407,6 +413,7 @@ export function LuckyScreen() {
     try {
       const { play: p } = await placePlay('lucky', { stake: bet })
       setPlay(p)
+      track({ id: p.id, game: 'lucky' })
       // Price debug: line up what the chart is showing for the dealt asset against the prices the
       // backend actually solved the round on. entrySpot/target come from the oracle's pushed spot
       // (a beat behind the live feed), so a small gap to chartLive at this instant is expected.
@@ -437,7 +444,7 @@ export function LuckyScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, bet, playsPaused])
+  }, [phase, canPlay, bet, playsPaused, track])
 
   const doCashOut = useCallback(async () => {
     if (phase !== 'open' || !play || closeLocked) return
@@ -474,6 +481,11 @@ export function LuckyScreen() {
     haptic('selection')
     setPhase('idle')
   }, [])
+
+  const goDeposit = useCallback(() => {
+    haptic('rigid')
+    void navigate({ to: '/menu/deposit' })
+  }, [navigate])
 
   const toggleHowto = useCallback(() => {
     haptic('selection')
@@ -526,12 +538,14 @@ export function LuckyScreen() {
             ? { label: 'OPENING', color: 'up', onPress: () => { }, loading: true }
             : phase === 'cashing'
               ? { label: 'CASH OUT', color: 'up', onPress: () => { }, loading: true }
-              : {
-                label: 'SPIN',
-                color: 'amber',
-                onPress: () => void doPlay(),
-                loading: phase === 'placing' || phase === 'spinning',
-              },
+              : cantAfford
+                ? { label: 'TOP UP', color: 'amber', onPress: goDeposit }
+                : {
+                  label: 'SPIN',
+                  color: 'amber',
+                  onPress: () => void doPlay(),
+                  loading: phase === 'placing' || phase === 'spinning',
+                },
   })
 
   // Layout: a solid header (price/balance over the reel cluster) divides off the chart with a foot

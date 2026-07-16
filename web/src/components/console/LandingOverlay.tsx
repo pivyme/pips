@@ -408,8 +408,8 @@ function SignInErrorSheet({
               </>
             ) : (
               <>
-                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-down/15 text-down">
-                  <AlertGlyph className="h-6 w-6" />
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-down/15">
+                  <img src="/assets/icons/icon-warning.webp" alt="" className="h-7 w-7" draggable={false} />
                 </div>
 
                 <h2 className="text-center text-lg font-extrabold tracking-tight text-text">Sign-in hit a snag</h2>
@@ -589,20 +589,6 @@ function AccessCodeSheet({
         </motion.div>
       )}
     </AnimatePresence>
-  )
-}
-
-function AlertGlyph({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-      <path
-        d="M12 9v4m0 4h.01M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.42 0Z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   )
 }
 

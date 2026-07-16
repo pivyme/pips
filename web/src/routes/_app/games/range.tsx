@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
@@ -38,6 +38,7 @@ import { NETWORK, betLadder } from '@/lib/sui/config'
 import { rangeDebug, type RangeEntryIntent } from '@/lib/rangeDebug'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
+import { useActivePlay } from '@/lib/activePlay'
 import { cnm } from '@/utils/style'
 import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
@@ -136,9 +137,11 @@ function predictedInZone(play: PlayDTO, lockPrice: string | null): boolean | nul
   return ln > lo && ln <= hi
 }
 
-export function RangeScreen() {
+function RangeScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
+  const navigate = useNavigate()
+  const { track } = useActivePlay()
 
   const [widthIdx, setWidthIdx] = useState(DEFAULT_WIDTH_IDX) // knob index into BAND_LADDER
   // One persistent stake shared with Lucky + the home wheel (same ladder), so it stays put across nav.
@@ -207,6 +210,9 @@ export function RangeScreen() {
   )
   const safeBetIdx = Math.min(stakeIdx, maxBetIdx)
   const stake = STAKE_LADDER[safeBetIdx]
+  // Below the cheapest rung entirely: PLAY would just round-trip an INSUFFICIENT_DUSDC rejection, so
+  // the idle button becomes the actual next step instead of a dead-end error toast.
+  const cantAfford = balance < STAKE_LADDER[0]
 
   const halfPct = BAND_LADDER[Math.min(widthIdx, BAND_LADDER.length - 1)]
   const canPlay = liveAssets.length > 0
@@ -455,6 +461,7 @@ export function RangeScreen() {
         widthPct: halfPct * 2,
       })
       setPlay(p)
+      track({ id: p.id, game: 'range' })
       setLive({
         markValue: p.markValue,
         pnl: p.pnl,
@@ -469,7 +476,7 @@ export function RangeScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, stake, asset, halfPct, spot, idleMult, quotedMult, playsPaused])
+  }, [phase, canPlay, stake, asset, halfPct, spot, idleMult, quotedMult, playsPaused, track])
 
   const doCashOut = useCallback(async () => {
     // Armed only during the live hold (the button is hidden once the round is sealing/settling).
@@ -573,6 +580,11 @@ export function RangeScreen() {
       lastLockPrice: lockPrice,
     })
   }, [phase, play])
+
+  const goDeposit = useCallback(() => {
+    haptic('rigid')
+    void navigate({ to: '/menu/deposit' })
+  }, [navigate])
 
   const cycleAsset = useCallback(() => {
     haptic('selection')
@@ -678,11 +690,13 @@ export function RangeScreen() {
                       onPress: () => {},
                       loading: true,
                     }
-                  : {
-                      label: 'PLAY',
-                      color: 'amber',
-                      onPress: () => void doPlay(),
-                    },
+                  : cantAfford
+                    ? { label: 'TOP UP', color: 'amber', onPress: goDeposit }
+                    : {
+                        label: 'PLAY',
+                        color: 'amber',
+                        onPress: () => void doPlay(),
+                      },
   })
 
   // The live P/L footer shows only while a round is in flight, NOT on the result (the RangeResult overlay

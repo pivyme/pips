@@ -2,13 +2,14 @@ import { Outlet, createFileRoute, useMatchRoute, useNavigate } from '@tanstack/r
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import type { ConsoleTheme } from '@/components/console/themes'
-import { GamesConsole } from './_app/games/index'
-import { LuckyScreen } from './_app/games/lucky'
-import { RangeScreen } from './_app/games/range'
-import { MoonshotScreen } from './_app/games/moonshot'
-import { LineRiderScreen } from './_app/games/line-rider'
-import { CandleHopScreen } from './_app/games/candle-hop'
+import { Route as GamesRoute } from './_app/games/index'
+import { Route as LuckyRoute } from './_app/games/lucky'
+import { Route as RangeRoute } from './_app/games/range'
+import { Route as MoonshotRoute } from './_app/games/moonshot'
+import { Route as LineRiderRoute } from './_app/games/line-rider'
+import { Route as CandleHopRoute } from './_app/games/candle-hop'
 import { AppFrame } from '@/components/console/AppFrame'
+import { ActivePlayChip } from '@/components/console/ActivePlayChip'
 import { AchievementCelebration } from '@/components/AchievementCelebration'
 import { AchievementDetailProvider } from '@/components/menu/AchievementDetail'
 import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '@/components/console/controls'
@@ -23,6 +24,7 @@ import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
 import { api } from '@/lib/api'
 import { LivePresenceProvider } from '@/lib/presence'
+import { ActivePlayProvider } from '@/lib/activePlay'
 import { useAuth, loadToken } from '@/lib/auth'
 import { useInstallGate } from '@/lib/platform'
 import { isDemo } from '@/lib/demo'
@@ -41,18 +43,21 @@ const DEVICE_SETTLE_MS = 900
 // door or the hero -> app zoom.
 const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
+const routeComponent = (route: { options: { component?: ComponentType } }): ComponentType =>
+  route.options.component as ComponentType
+
 // The aperture games keyed by their route path. The 3D device mounts the active game's screen
 // directly from here, not through the router Outlet. That is what lets the screen survive the menu:
 // the menu is its own /menu route, so going through the Outlet would unmount the game the moment the
 // drawer opens and flash the device black behind the blur. Mounting by path keeps the same instance
 // alive across game <-> menu, so the live chart never blinks.
 const DEVICE_SCREENS: Record<string, ComponentType> = {
-  '/games': GamesConsole,
-  '/games/lucky': LuckyScreen,
-  '/games/range': RangeScreen,
-  '/games/moonshot': MoonshotScreen,
-  '/games/line-rider': LineRiderScreen,
-  '/games/candle-hop': CandleHopScreen,
+  '/games': routeComponent(GamesRoute),
+  '/games/lucky': routeComponent(LuckyRoute),
+  '/games/range': routeComponent(RangeRoute),
+  '/games/moonshot': routeComponent(MoonshotRoute),
+  '/games/line-rider': routeComponent(LineRiderRoute),
+  '/games/candle-hop': routeComponent(CandleHopRoute),
 }
 
 type OnboardingStep = 'username' | 'customize' | 'welcome'
@@ -417,6 +422,7 @@ function AppLayout() {
   return (
     <AchievementDetailProvider>
       <LivePresenceProvider userId={status === 'authed' ? user?.id ?? null : null}>
+      <ActivePlayProvider>
       <AppFrame bg={backdrop} dimmed={phase === 'landing' && !restoring}>
         {mountConsole && (
         <ConsoleControlsProvider>
@@ -483,6 +489,7 @@ function AppLayout() {
           )}
         </ConsoleControlsProvider>
         )}
+        <ActivePlayChip />
         {gate.active && <InstallGate {...gate} />}
       </AppFrame>
       {loadingScreen}
@@ -490,6 +497,7 @@ function AppLayout() {
           healthy login, so onboarding and the normal first run are untouched. */}
       {recovering && !showLoadingScreen && <RecoveryOverlay />}
       <AchievementCelebration />
+      </ActivePlayProvider>
       </LivePresenceProvider>
     </AchievementDetailProvider>
   )

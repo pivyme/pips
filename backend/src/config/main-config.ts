@@ -33,6 +33,17 @@ export const JWT_SECRET: string = process.env.JWT_SECRET as string;
 export const JWT_EXPIRES_IN: string = process.env.JWT_EXPIRES_IN || '7d';
 export const ALLOWED_ORIGIN: string = process.env.ALLOWED_ORIGIN || '';
 
+// HTTP rate limiting (@fastify/rate-limit, keyed by the real client IP via trustProxy). A generous global
+// default because this is a fast-paced trading game whose play loop needs headroom (the real-mode play
+// rate is gated separately at the business layer, L-008), with tighter caps on unauthenticated or
+// fund/identity-sensitive routes. All windows share RATE_LIMIT_WINDOW. Raise a MAX very high to soften a
+// limit, or set RATE_LIMIT_GLOBAL_MAX huge to effectively disable the global gate.
+export const RATE_LIMIT_WINDOW: string = process.env.PIPS_RATE_LIMIT_WINDOW || '1 minute';
+export const RATE_LIMIT_GLOBAL_MAX: number = Number(process.env.PIPS_RATE_LIMIT_GLOBAL_MAX) || 300;
+export const RATE_LIMIT_AUTH_MAX: number = Number(process.env.PIPS_RATE_LIMIT_AUTH_MAX) || 10;
+export const RATE_LIMIT_FAUCET_MAX: number = Number(process.env.PIPS_RATE_LIMIT_FAUCET_MAX) || 5;
+export const RATE_LIMIT_WITHDRAW_MAX: number = Number(process.env.PIPS_RATE_LIMIT_WITHDRAW_MAX) || 20;
+
 // Auth + signing mode. 'dev' auto-logs-in the testing wallet and the backend signs txs.
 // 'privy' is Google/email login with a non-custodial embedded Sui wallet; the server signs the
 // user's plays via Privy rawSign under a session signer (no per-spin popup).
@@ -442,6 +453,11 @@ export default {
   IS_PROD,
   DATABASE_URL,
   SHUTDOWN_TIMEOUT_MS,
+  RATE_LIMIT_WINDOW,
+  RATE_LIMIT_GLOBAL_MAX,
+  RATE_LIMIT_AUTH_MAX,
+  RATE_LIMIT_FAUCET_MAX,
+  RATE_LIMIT_WITHDRAW_MAX,
   JWT_SECRET,
   JWT_EXPIRES_IN,
   ALLOWED_ORIGIN,

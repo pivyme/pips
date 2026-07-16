@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import { Button } from '@heroui/react'
-import { AlertTriangle, RefreshCw, Home, Copy, Check, ChevronDown } from 'lucide-react'
+import { RefreshCw, Home, Copy, Check, ChevronDown } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { cnm } from '@/utils/style'
 
@@ -58,7 +58,7 @@ export default function ErrorPage({ error, reset }: ErrorPageProps) {
                 'bg-amber-50 dark:bg-amber-950/30'
               )}
             >
-              <AlertTriangle className="w-6 h-6 text-amber-500" />
+              <img src="/assets/icons/icon-warning.webp" alt="" className="w-8 h-8" draggable={false} />
             </div>
           </div>
 

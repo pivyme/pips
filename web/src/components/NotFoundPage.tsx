@@ -32,9 +32,7 @@ export default function NotFoundPage() {
               'bg-neutral-100 dark:bg-neutral-800'
             )}
           >
-            <span className="text-2xl font-mono font-light text-amber-500">
-              ?
-            </span>
+            <img src="/assets/icons/icon-warning.webp" alt="" className="w-9 h-9" draggable={false} />
           </div>
         </div>
 

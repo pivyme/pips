@@ -62,7 +62,7 @@ const ALL: ReadonlyArray<GameDef> = [...GAMES, ...MINIGAMES]
 
 const pad2 = (n: number): string => String(n).padStart(2, '0')
 
-export function GamesConsole() {
+function GamesConsole() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const reduced = useReducedMotion()
@@ -73,6 +73,9 @@ export function GamesConsole() {
 
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const streak = statsQ.data?.stats.currentStreak ?? 0
+  // First-run only: same signal Lucky's own idle hint uses, so it needs no extra storage and
+  // disappears for good the instant a first play lands.
+  const firstRun = !statsQ.isLoading && (statsQ.data?.stats.gamesPlayed ?? 0) === 0
 
   // Live presence ticker. The connection lives at the app shell (LivePresenceProvider) so it stays up
   // across every game/menu screen, not just here; we only read the count to paint the readout.
@@ -141,12 +144,15 @@ export function GamesConsole() {
       <Rule />
 
       {/* select game — real plays, each settles a Predict position. Full-bleed rows split by hairlines */}
-      <div className={cnm('pb-1 pt-3 font-mono text-[12px] font-semibold uppercase tracking-[0.18em] text-text-2', RIM)}>Select Game</div>
+      <div className={cnm('flex items-baseline justify-between pb-1 pt-3 font-mono text-[12px] font-semibold uppercase tracking-[0.18em] text-text-2', RIM)}>
+        <span>Select Game</span>
+        {firstRun && <span className="tracking-[0.1em] text-text-3">Tap or turn the knob</span>}
+      </div>
       <div className="flex flex-col">
         {GAMES.map((g, i) => (
           <div key={g.to}>
             {i > 0 && <Rule />}
-            <GameRow index={i + 1} game={g} selected={i === sel} />
+            <GameRow index={i + 1} game={g} selected={i === sel} onLaunch={() => launch(i)} />
           </div>
         ))}
       </div>
@@ -163,7 +169,7 @@ export function GamesConsole() {
           return (
             <div key={g.to}>
               {j > 0 && <Rule />}
-              <MiniRow game={g} selected={i === sel} />
+              <MiniRow game={g} selected={i === sel} onLaunch={() => launch(i)} />
             </div>
           )
         })}
@@ -202,16 +208,22 @@ function GameRow({
   index,
   game,
   selected,
+  onLaunch,
 }: {
   index: number
   game: { icon: LucideIcon; name: string; tag: string }
   selected: boolean
+  onLaunch: () => void
 }) {
   const Icon = game.icon
-  // Pure readout: the device screen is not clickable, so the row only paints selection state. The
-  // knob scrubs it and the PLAY button launches it.
+  // The screen renders behind the 3D device and taps land on the WebGL canvas, not this DOM. A tap
+  // still reaches this button: data-console-tap opts it into ConsoleCanvas's screen-tap-forward hit
+  // test, which clicks it directly. The knob still scrubs selection and PLAY still launches the lit row.
   return (
-    <div
+    <button
+      type="button"
+      data-console-tap
+      onClick={onLaunch}
       className={cnm(
         'relative flex w-full items-center gap-3 py-2.5 text-left',
         RIM,
@@ -227,22 +239,27 @@ function GameRow({
         <div className="truncate font-mono text-[11px] uppercase tracking-[0.08em] text-text-3">{game.tag}</div>
       </div>
       {selected && <span className="font-mono text-lg text-brand-500">▶</span>}
-    </div>
+    </button>
   )
 }
 
 // The minigame row: deliberately smaller than GameRow so the just-for-fun lane reads as secondary.
-// Compact icon, single line, no big slot number. Knob-selectable, launched with PLAY (not clickable).
+// Compact icon, single line, no big slot number. Knob-selectable or tappable, same as GameRow.
 function MiniRow({
   game,
   selected,
+  onLaunch,
 }: {
   game: GameDef
   selected: boolean
+  onLaunch: () => void
 }) {
   const Icon = game.icon
   return (
-    <div
+    <button
+      type="button"
+      data-console-tap
+      onClick={onLaunch}
       className={cnm(
         'relative flex w-full items-center gap-3 py-2.5 text-left',
         RIM,
@@ -254,7 +271,7 @@ function MiniRow({
       <span className={cnm('text-[15px] font-bold uppercase tracking-[0.04em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</span>
       <span className="min-w-0 flex-1 truncate font-mono text-[11px] uppercase tracking-[0.06em] text-text-3">{game.tag}</span>
       {selected && <span className="font-mono text-sm text-brand-500">▶</span>}
-    </div>
+    </button>
   )
 }
 

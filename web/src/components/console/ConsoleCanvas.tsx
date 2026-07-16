@@ -186,7 +186,7 @@ export default function ConsoleCanvas({
     renderer.setClearColor(0x000000, 0)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.shadowMap.type = THREE.PCFShadowMap
     // The device is static unless touched, so we render on demand (see the loop). Shadows only need
     // recomputing when geometry actually moves, so drive them by hand instead of every frame.
     renderer.shadowMap.autoUpdate = false
@@ -2370,6 +2370,19 @@ export default function ConsoleCanvas({
               // would immediately blur the field we just focused.
               e.preventDefault()
               field.focus()
+              return
+            }
+            // Screen content that opts into a real tap (e.g. the Home game rows) via data-console-tap.
+            // elementFromPoint would just return this canvas (it's on top), so hit-test each candidate's
+            // own rect instead, same idea as the field lookup above.
+            const tappables = layer.querySelectorAll<HTMLElement>('[data-visible="true"] [data-console-tap]')
+            for (const t of tappables) {
+              const tr = t.getBoundingClientRect()
+              if (e.clientX >= tr.left && e.clientX <= tr.right && e.clientY >= tr.top && e.clientY <= tr.bottom) {
+                e.preventDefault()
+                t.click()
+                return
+              }
             }
           }
         }
@@ -2773,7 +2786,8 @@ export default function ConsoleCanvas({
     }
 
     /* render loop */
-    const clock = new THREE.Clock()
+    const timer = new THREE.Timer()
+    timer.connect(document)
     let rafId: number
     let coinAccum = 0
     let decorAccum = 0
@@ -2785,9 +2799,10 @@ export default function ConsoleCanvas({
     // game's frames (this is what made flappy stutter, the device repainting at 30fps under it).
     const LIGHTSHOW_FRAME = 1 / 15
 
-    function loop() {
+    function loop(time?: number) {
       rafId = requestAnimationFrame(loop)
-      const dt = Math.min(clock.getDelta(), 0.05)
+      timer.update(time)
+      const dt = Math.min(timer.getDelta(), 0.05)
       let animating = false
 
       if (customize) {
@@ -3074,6 +3089,7 @@ export default function ConsoleCanvas({
 
     return () => {
       cancelAnimationFrame(rafId)
+      timer.dispose()
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('touchstart', onScreenTouchStart)
       canvas.removeEventListener('contextmenu', onContextMenu)

@@ -25,7 +25,7 @@ type Phase = 'title' | 'playing' | 'over'
 const EMPTY_HUD: RideHud = { score: 0, multiplier: 1, grip: 1, elapsed: 0, onLine: false, intensity: 0 }
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US')
 
-export function LineRiderScreen() {
+function LineRiderScreen() {
   const reduced = useReducedMotion()
 
   const [phase, setPhase] = useState<Phase>('title')

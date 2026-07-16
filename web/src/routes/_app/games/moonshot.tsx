@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
@@ -36,6 +36,7 @@ import { cashOut, placePlay } from '@/lib/sui/predict'
 import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
+import { useActivePlay } from '@/lib/activePlay'
 import { cnm } from '@/utils/style'
 import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
@@ -102,9 +103,11 @@ const money = (n: number): string =>
 const fmtMult = (n: number): string => `${n.toFixed(2).replace(/\.?0+$/, '')}x`
 const sideLabel = (s: Side): string => (s === 'up' ? 'LONG' : 'SHORT')
 
-export function MoonshotScreen() {
+function MoonshotScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
+  const navigate = useNavigate()
+  const { track } = useActivePlay()
 
   const [stakeIdx, setStakeIdx] = useLocalStorage(STAKE_KEY, 2)
   const [aimIdx, setAimIdx] = useLocalStorage(AIM_KEY, DEFAULT_AIM_IDX)
@@ -150,6 +153,9 @@ export function MoonshotScreen() {
   const maxBetIdx = Math.max(0, STAKE_LADDER.reduce((acc, v, i) => (v <= balance ? i : acc), 0))
   const safeBetIdx = Math.min(stakeIdx, maxBetIdx)
   const stake = STAKE_LADDER[safeBetIdx]
+  // Below the cheapest rung entirely: PLAY would just round-trip an INSUFFICIENT_DUSDC rejection, so
+  // the idle button becomes the actual next step instead of a dead-end error toast.
+  const cantAfford = balance < STAKE_LADDER[0]
 
   const lp = play ? (play.params as LuckyParams) : null
   const roundLive = phase === 'open' || phase === 'cashing'
@@ -295,6 +301,7 @@ export function MoonshotScreen() {
     try {
       const { play: p } = await placePlay('moonshot', { stake, asset, side, reach })
       setPlay(p)
+      track({ id: p.id, game: 'moonshot' })
       setLive({
         markValue: p.markValue,
         pnl: p.pnl,
@@ -309,7 +316,7 @@ export function MoonshotScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, stake, asset, side, reach, playsPaused])
+  }, [phase, canPlay, stake, asset, side, reach, playsPaused, track])
 
   const doCashOut = useCallback(async () => {
     if (!liveHold || !play) return
@@ -342,6 +349,11 @@ export function MoonshotScreen() {
     haptic('selection')
     setPhase('idle')
   }, [])
+
+  const goDeposit = useCallback(() => {
+    haptic('rigid')
+    void navigate({ to: '/menu/deposit' })
+  }, [navigate])
 
   // The knob sets the whole call. Fire the flip sting only when the side actually crosses the middle
   // (LONG <-> SHORT); a plain reach step within a side just clicks the knob's own detent.
@@ -434,7 +446,9 @@ export function MoonshotScreen() {
                 ? { label: 'CASHING OUT', color: 'up', onPress: () => {}, loading: true }
                 : phase === 'placing'
                   ? { label: 'FIRING', color: 'amber', onPress: () => {}, loading: true }
-                  : { label: 'PLAY', color: 'amber', onPress: () => void doPlay() },
+                  : cantAfford
+                    ? { label: 'TOP UP', color: 'amber', onPress: goDeposit }
+                    : { label: 'PLAY', color: 'amber', onPress: () => void doPlay() },
   })
 
   const firstRun = !statsQ.isLoading && (statsQ.data?.stats.gamesPlayed ?? 0) === 0
