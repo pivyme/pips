@@ -47,7 +47,13 @@ console.log(
 );
 
 const fastify = Fastify({
-  logger: false,
+  // Structured per-request access log (method, url, status, response time, a request id) with no per-route
+  // churn. Redact the auth-bearing headers so a token never lands in a log line. Existing console.* call
+  // sites stay as-is; this adds the HTTP access log + request-id, not a logging rewrite.
+  logger: {
+    level: IS_PROD ? 'info' : 'debug',
+    redact: { paths: ['req.headers.authorization', 'req.headers.token', 'req.headers.cookie'], remove: true },
+  },
   // Dokploy fronts services with one Traefik hop, so trust one proxy hop: rate-limit keys and
   // errorHandler.ts's logged `ip` then reflect the real client IP (X-Forwarded-For) instead of the
   // proxy's. Revisit to a specific hop count if a CDN is ever added in front of Traefik.
