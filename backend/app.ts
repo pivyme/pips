@@ -3,9 +3,11 @@ import './dotenv.ts';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import FastifyCors from '@fastify/cors';
 import FastifyWebsocket from '@fastify/websocket';
-import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, OPERATOR_ENABLED, IS_REAL_PREDICT } from './src/config/main-config.ts';
+import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, OPERATOR_ENABLED, IS_REAL_PREDICT, SHUTDOWN_TIMEOUT_MS } from './src/config/main-config.ts';
 import { NETWORK, PUBLIC_PREDICT_PACKAGE, PUBLIC_PREDICT_OBJECT, DUSDC_TYPE } from './src/lib/sui/config.ts';
 import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
+import { prismaQuery } from './src/lib/prisma.ts';
+import { stopAllWorkers } from './src/lib/worker-registry.ts';
 
 // Routes
 import { exampletRoute } from './src/routes/exampleRoutes.ts';
@@ -45,6 +47,66 @@ console.log(
 const fastify = Fastify({
   logger: false,
 });
+
+// === Process resilience: crash handlers + graceful shutdown ===
+// A redeploy sends SIGTERM; without a handler every in-flight HTTP/WS connection was hard-dropped. An
+// uncaughtException / unhandledRejection leaves the process in an unknown state, so the only safe move is
+// a clean, bounded exit and let the container restart policy bring up a fresh, known-good process. Both
+// paths funnel through one drain routine bounded by SHUTDOWN_TIMEOUT_MS.
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received, draining...`);
+  const hardExit = setTimeout(() => {
+    console.error(`[shutdown] drain exceeded ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit`);
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  hardExit.unref();
+  try {
+    stopAllWorkers(); // stop cron/interval/socket workers; in-flight runs finish under their own guard
+    await fastify.close(); // drain HTTP + WS connections, run registered onClose hooks
+    await prismaQuery.$disconnect();
+    console.log('[shutdown] drained cleanly');
+  } catch (e) {
+    console.error('[shutdown] error while draining:', e instanceof Error ? e.message : e);
+  } finally {
+    clearTimeout(hardExit);
+    process.exit(signal === 'FATAL' ? 1 : 0);
+  }
+}
+
+function handleFatal(kind: string, err: unknown): void {
+  console.error(`\n[FATAL] ${kind}:`, err instanceof Error ? (err.stack ?? err.message) : err);
+  void shutdown('FATAL');
+}
+
+process.on('uncaughtException', (err) => handleFatal('uncaughtException', err));
+process.on('unhandledRejection', (reason) => handleFatal('unhandledRejection', reason));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
+
+// Boot-time DB readiness: don't start workers (they hit the DB) or serve traffic until Postgres answers.
+// Covers a cold stack where the app container starts before the DB. Retry with backoff; on exhaustion
+// exit non-zero and let the restart policy retry the whole boot rather than serving a broken instance.
+async function waitForDb(): Promise<void> {
+  const backoffs = [1000, 2000, 4000, 8000, 16000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await prismaQuery.$queryRaw`SELECT 1`;
+      if (attempt > 0) console.log(`[boot] database ready after ${attempt} retr${attempt === 1 ? 'y' : 'ies'}`);
+      return;
+    } catch (e) {
+      if (attempt >= backoffs.length) {
+        console.error('[boot] database unreachable after retries, exiting:', e instanceof Error ? e.message : e);
+        process.exit(1);
+      }
+      const wait = backoffs[attempt];
+      console.warn(`[boot] database not ready (attempt ${attempt + 1}), retrying in ${wait}ms:`, e instanceof Error ? e.message : e);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
 
 // Production CORS locks to an explicit allow-list. ALLOWED_ORIGIN is comma-separated so the apex and
 // www (and any preview/staging origin) all pass. Dev stays open. Auth is a Bearer token, and SSE uses
@@ -113,6 +175,10 @@ fastify.register(wsRoutes);
 
 const start = async (): Promise<void> => {
   try {
+    // Confirm Postgres is reachable before starting DB-touching workers or serving. Exits + lets the
+    // container restart if the DB never comes up, instead of booting into a broken state.
+    await waitForDb();
+
     // Start workers
     startErrorLogCleanupWorker();
 

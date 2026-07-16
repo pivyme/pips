@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { prismaQuery } from '../lib/prisma.ts';
 import { ERROR_LOG_MAX_RECORDS, ERROR_LOG_CLEANUP_INTERVAL } from '../config/main-config.ts';
+import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
 
 let isRunning = false;
 
@@ -11,6 +12,8 @@ const cleanupErrorLogs = async (): Promise<void> => {
   }
 
   isRunning = true;
+  const startedAt = Date.now();
+  let runErr: unknown = null;
   console.log('[ErrorLogCleanup] Starting cleanup...');
 
   try {
@@ -50,16 +53,19 @@ const cleanupErrorLogs = async (): Promise<void> => {
       console.log(`[ErrorLogCleanup] No cleanup needed (${count}/${ERROR_LOG_MAX_RECORDS} records)`);
     }
   } catch (error) {
+    runErr = error;
     console.error('[ErrorLogCleanup] Error during cleanup:', error);
   } finally {
     isRunning = false;
+    recordRun('error-log-cleanup', !runErr, Date.now() - startedAt, runErr);
   }
 };
 
 export const startErrorLogCleanupWorker = (): void => {
   console.log(`[ErrorLogCleanup] Worker scheduled: ${ERROR_LOG_CLEANUP_INTERVAL}`);
 
-  cron.schedule(ERROR_LOG_CLEANUP_INTERVAL, cleanupErrorLogs);
+  const task = cron.schedule(ERROR_LOG_CLEANUP_INTERVAL, cleanupErrorLogs);
+  registerWorker('error-log-cleanup', task, cronIntervalMs(ERROR_LOG_CLEANUP_INTERVAL));
 
   // Run initial cleanup on startup
   cleanupErrorLogs();

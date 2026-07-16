@@ -22,6 +22,12 @@ export const IS_PROD: boolean = NODE_ENV === 'production';
 // Database
 export const DATABASE_URL: string = process.env.DATABASE_URL as string;
 
+// Graceful-shutdown drain budget (ms). On SIGTERM/SIGINT (or a fatal crash) the process stops workers,
+// closes the HTTP/WS server, and disconnects Prisma; if that drain doesn't finish within this window it
+// force-exits. Kept comfortably under Docker's default 10s SIGKILL grace so the drain always wins. If
+// the container stop grace is ever lowered below ~10s, lower this to match with headroom (09-DEPLOYMENT).
+export const SHUTDOWN_TIMEOUT_MS: number = Number(process.env.PIPS_SHUTDOWN_TIMEOUT_MS) || 8000;
+
 // Authentication
 export const JWT_SECRET: string = process.env.JWT_SECRET as string;
 export const JWT_EXPIRES_IN: string = process.env.JWT_EXPIRES_IN || '7d';
@@ -435,6 +441,7 @@ export default {
   IS_DEV,
   IS_PROD,
   DATABASE_URL,
+  SHUTDOWN_TIMEOUT_MS,
   JWT_SECRET,
   JWT_EXPIRES_IN,
   ALLOWED_ORIGIN,

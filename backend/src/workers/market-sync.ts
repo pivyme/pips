@@ -22,6 +22,7 @@ import {
   readMarketEconomics,
 } from '../lib/sui/predict-real.ts';
 import { allMarkets, getMarket, removeMarket, upsertMarket } from '../lib/sui/markets.ts';
+import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
 
 // Game asset symbol for the only underlying live on Mysten's testnet Predict (propbook id 1). The
 // games route every selected asset to this BTC market in real mode; discovery tags it with the symbol
@@ -97,6 +98,8 @@ let isRunning = false;
 const sync = async (): Promise<void> => {
   if (isRunning) return;
   isRunning = true;
+  const startedAt = Date.now();
+  let runErr: unknown = null;
   try {
     const t = Date.now();
     const ids = await liveCandidateIds(t);
@@ -134,9 +137,11 @@ const sync = async (): Promise<void> => {
       if (m.settled || m.expiryMs <= t) removeMarket(m.oracleId);
     }
   } catch (err) {
+    runErr = err;
     console.error('[MarketSync] tick error:', err instanceof Error ? err.message : err);
   } finally {
     isRunning = false;
+    recordRun('market-sync', !runErr, Date.now() - startedAt, runErr);
   }
 };
 
@@ -149,6 +154,8 @@ let realRunning = false;
 const realSync = async (): Promise<void> => {
   if (realRunning) return;
   realRunning = true;
+  const startedAt = Date.now();
+  let runErr: unknown = null;
   try {
     const t = Date.now();
     const underlyingId = REAL_BTC_ASSET?.propbookUnderlyingId ?? 1;
@@ -191,9 +198,11 @@ const realSync = async (): Promise<void> => {
       if (m.settled || m.expiryMs <= t) removeMarket(m.oracleId);
     }
   } catch (err) {
+    runErr = err;
     console.error('[MarketSync] real tick error:', err instanceof Error ? err.message : err);
   } finally {
     realRunning = false;
+    recordRun('market-sync', !runErr, Date.now() - startedAt, runErr);
   }
 };
 
@@ -201,7 +210,8 @@ export const startMarketSync = (): void => {
   if (IS_REAL_PREDICT) {
     // No operator role in real mode: discovery always runs, regardless of OPERATOR_ENABLED.
     console.log(`[MarketSync] Real-Predict discovery: scheduled ${MARKET_SYNC_CRON}`);
-    cron.schedule(MARKET_SYNC_CRON, realSync);
+    const task = cron.schedule(MARKET_SYNC_CRON, realSync);
+    registerWorker('market-sync', task, cronIntervalMs(MARKET_SYNC_CRON));
     realSync();
     return;
   }
@@ -210,6 +220,7 @@ export const startMarketSync = (): void => {
     return;
   }
   console.log(`[MarketSync] Follower mode: scheduled ${MARKET_SYNC_CRON}`);
-  cron.schedule(MARKET_SYNC_CRON, sync);
+  const task = cron.schedule(MARKET_SYNC_CRON, sync);
+  registerWorker('market-sync', task, cronIntervalMs(MARKET_SYNC_CRON));
   sync();
 };

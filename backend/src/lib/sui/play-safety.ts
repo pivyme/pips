@@ -18,6 +18,7 @@ import {
 } from '../../config/main-config.ts';
 import { suiClient } from './client.ts';
 import { SPONSOR_ENABLED, sponsorAddress } from './sponsor.ts';
+import { cronIntervalMs, recordRun, registerWorker } from '../worker-registry.ts';
 
 const SUI_TYPE = '0x2::sui::SUI';
 const MIST_PER_SUI = 1_000_000_000;
@@ -123,8 +124,12 @@ export async function refreshSponsorPauseState(): Promise<void> {
 export function startSponsorMonitor(): void {
   if (!IS_REAL_PREDICT || !SPONSOR_ENABLED) return;
   console.log(`[play-safety] sponsor reserve monitor scheduled (${SPONSOR_MONITOR_CRON}, floor ${SPONSOR_FLOOR_SUI} SUI)`);
-  cron.schedule(SPONSOR_MONITOR_CRON, () => {
-    void refreshSponsorPauseState();
+  const task = cron.schedule(SPONSOR_MONITOR_CRON, async () => {
+    const startedAt = Date.now();
+    // refreshSponsorPauseState swallows its own errors, so a run here is always a healthy heartbeat.
+    await refreshSponsorPauseState();
+    recordRun('sponsor-monitor', true, Date.now() - startedAt);
   });
+  registerWorker('sponsor-monitor', task, cronIntervalMs(SPONSOR_MONITOR_CRON));
   void refreshSponsorPauseState();
 }

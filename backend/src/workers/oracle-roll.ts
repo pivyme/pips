@@ -32,6 +32,7 @@ import { buildActivateOracle, buildCreateOracle, buildCreateOracleCap } from '..
 import { liveByAsset, upsertMarket } from '../lib/sui/markets.ts';
 import { engineSpot } from '../lib/game-price.ts';
 import { fetchSpot } from '../lib/pyth.ts';
+import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
 import { Transaction } from '@mysten/sui/transactions';
 
 // Spacing between ladder rungs, measured in remaining life: an oracle should exist at each life from
@@ -145,6 +146,8 @@ const createOracle = async (asset: string, capId: string, spot: number, lifeMs: 
 const rollLadder = async (): Promise<void> => {
   if (isRunning) return;
   isRunning = true;
+  const startedAt = Date.now();
+  let runErr: unknown = null;
   try {
     const caps = operatorCaps.oracleCapIds;
     if (caps.length === 0) {
@@ -221,9 +224,11 @@ const rollLadder = async (): Promise<void> => {
       }
     }
   } catch (err) {
+    runErr = err;
     console.error('[OracleRoll] tick error:', err instanceof Error ? err.message : err);
   } finally {
     isRunning = false;
+    recordRun('oracle-roll', !runErr, Date.now() - startedAt, runErr);
   }
 };
 
@@ -239,6 +244,7 @@ export const startOracleRoll = (): void => {
     return;
   }
   console.log(`[OracleRoll] Scheduled: ${ORACLE_ROLL_CRON}`);
-  cron.schedule(ORACLE_ROLL_CRON, rollLadder);
+  const task = cron.schedule(ORACLE_ROLL_CRON, rollLadder);
+  registerWorker('oracle-roll', task, cronIntervalMs(ORACLE_ROLL_CRON));
   rollLadder();
 };

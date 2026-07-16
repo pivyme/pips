@@ -16,6 +16,7 @@
 
 import { BINANCE_ENABLED, BINANCE_STALE_MS, BINANCE_SYMBOLS, BINANCE_WS_URL, IS_REAL_PREDICT } from '../config/main-config.ts';
 import { assetSpot } from './sui/markets.ts';
+import { recordRun, registerWorker } from './worker-registry.ts';
 
 type Spot = { price: number; ts: number };
 
@@ -36,6 +37,7 @@ let backoffMs = 1000; // exponential, reset on a healthy first message
 let consecutiveFailures = 0; // drives the loud geo-block warning after repeated connect failures
 let lastMsgAt = 0; // local time of the last aggTrade of any asset; 0 = never
 let geoWarned = false; // log the geo-block hint at most once per dry spell
+let lastHealthAt = 0; // throttle registry heartbeats: aggTrades arrive many times/sec, record ~every 2s
 
 const BACKOFF_MAX_MS = 30_000;
 const GEO_WARN_AFTER = 5; // consecutive failed connects before the loud "likely geo-blocked" hint
@@ -100,6 +102,10 @@ function connect(): void {
     const now = Date.now();
     lastMsgAt = now;
     backoffMs = 1000; // healthy data flowing, reset the backoff
+    if (now - lastHealthAt > 2000) {
+      lastHealthAt = now;
+      recordRun('binance-ws', true, 0); // liveness heartbeat for /health/ready
+    }
     try {
       const frame = JSON.parse(String(ev.data)) as { data?: { s?: string; p?: string } };
       const d = frame.data;
@@ -117,6 +123,7 @@ function connect(): void {
   sock.onerror = () => {
     // A handshake/transport error. onclose fires right after and drives the reconnect, so just count it.
     consecutiveFailures++;
+    recordRun('binance-ws', false, 0, new Error(`connect/transport error (${consecutiveFailures} in a row)`));
     if (consecutiveFailures >= GEO_WARN_AFTER && !geoWarned) {
       geoWarned = true;
       console.warn(
@@ -171,6 +178,9 @@ export function startBinance(): void {
     return;
   }
   started = true;
+  // Non-periodic worker (a socket, not a cron): interval null so it is never flagged stale; the stop
+  // handle lets graceful shutdown close the socket and clear its timers.
+  registerWorker('binance-ws', { stop: stopBinance }, null);
   connect();
   watchdogTimer = setInterval(watchdog, BINANCE_STALE_MS);
   (watchdogTimer as { unref?: () => void }).unref?.();

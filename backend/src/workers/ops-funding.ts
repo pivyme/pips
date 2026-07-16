@@ -8,23 +8,31 @@ import cron from 'node-cron';
 
 import { OPERATOR_ENABLED } from '../config/main-config.ts';
 import { ensureOpsFunded } from '../lib/sui/gas.ts';
+import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
+
+const OPS_FUNDING_CRON = '*/2 * * * *';
 
 let isRunning = false;
 
 const tick = async (): Promise<void> => {
   if (isRunning) return;
   isRunning = true;
+  const startedAt = Date.now();
+  let runErr: unknown = null;
   try {
     await ensureOpsFunded();
   } catch (e) {
+    runErr = e;
     console.warn('[ops-funding] tick error:', e instanceof Error ? e.message : e);
   } finally {
     isRunning = false;
+    recordRun('ops-funding', !runErr, Date.now() - startedAt, runErr);
   }
 };
 
 export const startOpsFunding = (): void => {
   if (!OPERATOR_ENABLED) return; // only the leader funds the ops wallets
   console.log('[ops-funding] Scheduled: every 2 min (sponsor + settlement + treasury)');
-  cron.schedule('*/2 * * * *', tick);
+  const task = cron.schedule(OPS_FUNDING_CRON, tick);
+  registerWorker('ops-funding', task, cronIntervalMs(OPS_FUNDING_CRON));
 };

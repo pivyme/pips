@@ -25,6 +25,7 @@ import {
 import { PACKAGE_ID } from '../lib/sui/config.ts';
 import { readDeploymentRecord } from '../lib/deployment-store.ts';
 import { suiClient } from '../lib/sui/client.ts';
+import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
 
 // The package id config loaded at boot. A DB record carrying a different one means a fresh deploy.
 const bootPackageId = PACKAGE_ID;
@@ -66,6 +67,8 @@ async function selfPublish(): Promise<void> {
 const tick = async (): Promise<void> => {
   if (isRunning) return;
   isRunning = true;
+  const startedAt = Date.now();
+  let runErr: unknown = null;
   try {
     const raw = await readDeploymentRecord();
     if (raw) {
@@ -113,9 +116,11 @@ const tick = async (): Promise<void> => {
       }
     }
   } catch (e) {
+    runErr = e;
     console.warn('[deploy-watch] tick error:', e instanceof Error ? e.message : e);
   } finally {
     isRunning = false;
+    recordRun('deploy-watch', !runErr, Date.now() - startedAt, runErr);
   }
 };
 
@@ -124,6 +129,7 @@ export const startDeployWatch = (): void => {
   console.log(
     `[deploy-watch] Scheduled: ${DEPLOY_WATCH_CRON} (boot pkg ${bootPackageId.slice(0, 10)}…, restarts on a fresh DB deploy record${SELF_PUBLISH ? ', self-publishes on a wipe' : ''})`,
   );
-  cron.schedule(DEPLOY_WATCH_CRON, tick);
+  const task = cron.schedule(DEPLOY_WATCH_CRON, tick);
+  registerWorker('deploy-watch', task, cronIntervalMs(DEPLOY_WATCH_CRON));
   tick(); // check immediately on boot
 };

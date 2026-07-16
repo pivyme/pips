@@ -30,6 +30,7 @@ import {
 import { suiClient } from '../lib/sui/client.ts';
 import { operatorAddress, settlementAddress, treasuryAddress } from '../lib/sui/signer.ts';
 import { sponsorAddress } from '../lib/sui/sponsor.ts';
+import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
 
 const MIN_MIST = BigInt(Math.round(DEVNET_FAUCET_MIN_SUI * 1e9));
 // Never let the target sit below the floor (a misconfig would otherwise loop forever).
@@ -120,6 +121,8 @@ let isRunning = false;
 const tick = async (): Promise<void> => {
   if (isRunning) return;
   isRunning = true;
+  const startedAt = Date.now();
+  let runErr: unknown = null;
   try {
     for (const t of targets()) {
       const bal = await balanceMist(t.address);
@@ -127,9 +130,11 @@ const tick = async (): Promise<void> => {
       await fundToTarget(t, bal);
     }
   } catch (e) {
+    runErr = e;
     console.warn('[devnet-faucet] tick error:', e instanceof Error ? e.message : e);
   } finally {
     isRunning = false;
+    recordRun('devnet-faucet', !runErr, Date.now() - startedAt, runErr);
   }
 };
 
@@ -138,6 +143,7 @@ export const startDevnetFaucet = (): void => {
   console.log(
     `[devnet-faucet] Scheduled: ${DEVNET_FAUCET_CRON} via ${FAUCET_HOST} (keeps ${targets().map((t) => t.label).join(', ')} >= ${DEVNET_FAUCET_MIN_SUI} SUI, tops to ${DEVNET_FAUCET_TARGET_SUI})`,
   );
-  cron.schedule(DEVNET_FAUCET_CRON, tick);
+  const task = cron.schedule(DEVNET_FAUCET_CRON, tick);
+  registerWorker('devnet-faucet', task, cronIntervalMs(DEVNET_FAUCET_CRON));
   tick(); // run once on boot so dry wallets recover immediately
 };

@@ -11,6 +11,7 @@ import cron from 'node-cron';
 import { IS_REAL_PREDICT, OPERATOR_ENABLED, SETTLE_CRON } from '../config/main-config.ts';
 import { allMarkets, removeMarket } from '../lib/sui/markets.ts';
 import { settleDuePlays, settleDuePlaysReal } from '../services/plays.ts';
+import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
 
 let isRunning = false;
 
@@ -22,6 +23,8 @@ const ORACLE_PRUNE_GRACE_MS = 5 * 60_000;
 const settleTick = async (): Promise<void> => {
   if (isRunning) return;
   isRunning = true;
+  const startedAt = Date.now();
+  let runErr: unknown = null;
   try {
     // Real mode: redeem_settled per expired play (no operator nudge; Mysten/Pyth settle the market).
     // Fork mode: the self-healing operator/follower settle. Both prune the retired market cache.
@@ -29,9 +32,11 @@ const settleTick = async (): Promise<void> => {
     else await settleDuePlays();
     pruneRetiredOracles();
   } catch (err) {
+    runErr = err;
     console.error('[Settle] tick error:', err instanceof Error ? err.message : err);
   } finally {
     isRunning = false;
+    recordRun('settle', !runErr, Date.now() - startedAt, runErr);
   }
 };
 
@@ -56,6 +61,7 @@ export const startSettleWorker = (): void => {
       ? 'operator'
       : 'follower: settle-only, no oracle nudge';
   console.log(`[Settle] Scheduled: ${SETTLE_CRON} (${role})`);
-  cron.schedule(SETTLE_CRON, settleTick);
+  const task = cron.schedule(SETTLE_CRON, settleTick);
+  registerWorker('settle', task, cronIntervalMs(SETTLE_CRON));
   settleTick();
 };

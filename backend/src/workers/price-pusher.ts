@@ -12,6 +12,7 @@ import { executeAsOperator } from '../lib/sui/execute.ts';
 import { appendPriceUpdate } from '../lib/sui/predict.ts';
 import { getMarket, tradeableMarkets } from '../lib/sui/markets.ts';
 import { engineSpot } from '../lib/game-price.ts';
+import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
 import { Transaction } from '@mysten/sui/transactions';
 
 let isRunning = false;
@@ -19,6 +20,8 @@ let isRunning = false;
 const pushPrices = async (): Promise<void> => {
   if (isRunning) return; // a slow RPC round should never stack pushes
   isRunning = true;
+  const startedAt = Date.now();
+  let runErr: unknown = null;
   try {
     const now = Date.now();
     const due = tradeableMarkets(now, EXPIRY_SAFETY_MS);
@@ -64,9 +67,11 @@ const pushPrices = async (): Promise<void> => {
       }
     }
   } catch (err) {
+    runErr = err;
     console.error('[PricePusher] tick error:', err instanceof Error ? err.message : err);
   } finally {
     isRunning = false;
+    recordRun('price-pusher', !runErr, Date.now() - startedAt, runErr);
   }
 };
 
@@ -81,6 +86,7 @@ export const startPricePusher = (): void => {
     return;
   }
   console.log(`[PricePusher] Scheduled: ${PRICE_PUSH_CRON}`);
-  cron.schedule(PRICE_PUSH_CRON, pushPrices);
+  const task = cron.schedule(PRICE_PUSH_CRON, pushPrices);
+  registerWorker('price-pusher', task, cronIntervalMs(PRICE_PUSH_CRON));
   pushPrices();
 };
