@@ -20,6 +20,8 @@ import { isChainUnavailableError } from '../lib/sui/client.ts';
 import { buildCreateManager, getManagerBalanceRaw, managerExists } from '../lib/sui/predict.ts';
 import { readUserChipsRaw } from '../lib/sui/predict-real.ts';
 import { fromDusdcRaw } from '../lib/sui/config.ts';
+import { ensureDefaultAvatar } from '../lib/avatar-default.ts';
+import { effectiveAvatar } from '../utils/miscUtils.ts';
 import type { UserDTO } from '../types/api.ts';
 
 // Friendly two-word handle, e.g. "Lucky Otter". displayName is not unique, collisions are fine.
@@ -174,6 +176,15 @@ export async function provisionUser(user: User): Promise<User> {
     }
   }
 
+  // Default avatar (DiceBear bottts), generated + stored exactly once. Runs before the real-mode early
+  // return below so every user gets one regardless of chain mode, and lazily backfills pre-existing
+  // users on their next login. Best-effort: a failure leaves it null (the client shows a letter chip)
+  // and the next provision retries. Patch the in-memory user so this login's DTO already reflects it.
+  if (!user.avatarDefaultUrl) {
+    const url = await ensureDefaultAvatar(user);
+    if (url) user.avatarDefaultUrl = url;
+  }
+
   // Free starting chips, exactly once. Paid from the treasury reserve (transferDusdc) so chips never
   // come off the operator key; falls back to an operator mint when no treasury is configured.
   if (!user.dusdcFunded) {
@@ -286,6 +297,8 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
     twitter: user.twitterUsername ? { username: user.twitterUsername, name: user.twitterName ?? null } : null,
     provider: user.provider === 'privy' || user.provider === 'wallet' ? user.provider : 'dev',
     walletAuthAddress: user.walletAuthAddress ?? undefined,
+    avatarUrl: effectiveAvatar(user),
+    customAvatar: user.avatarUrl != null,
     balance: fromDusdcRaw(wallet + manager).toFixed(2),
     // Real mode: the wrapper is created lazily + self-heals on the first play, so the account is always
     // ready to play (no manager to provision first). Fork mode: ready once the PredictManager exists.
@@ -294,6 +307,7 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
       sound: user.soundEnabled,
       haptics: user.hapticsEnabled,
       reducedMotion: user.reducedMotion,
+      confirmTrades: user.confirmTrades,
       theme: user.theme,
     },
   };

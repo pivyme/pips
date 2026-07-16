@@ -23,6 +23,7 @@ import { menuRoutes } from './src/routes/menuRoutes.ts';
 import { leaderboardRoutes } from './src/routes/leaderboardRoutes.ts';
 import { walletRoutes } from './src/routes/walletRoutes.ts';
 import { referralRoutes } from './src/routes/referralRoutes.ts';
+import { avatarRoutes } from './src/routes/avatarRoutes.ts';
 
 // Workers
 import { startErrorLogCleanupWorker } from './src/workers/errorLogCleanup.ts';
@@ -271,6 +272,7 @@ fastify.register(menuRoutes);
 fastify.register(leaderboardRoutes, { prefix: '/leaderboard' });
 fastify.register(walletRoutes, { prefix: '/wallet' });
 fastify.register(referralRoutes, { prefix: '/referral' });
+fastify.register(avatarRoutes); // POST + DELETE /avatar
 fastify.register(streamRoutes, { prefix: '/stream' });
 // Price hub at /ws (no prefix): one shared 10Hz broadcast loop per asset, all users in lock-step.
 fastify.register(wsRoutes);

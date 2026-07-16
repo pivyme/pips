@@ -44,6 +44,24 @@ export const RATE_LIMIT_GLOBAL_MAX: number = Number(process.env.PIPS_RATE_LIMIT_
 export const RATE_LIMIT_AUTH_MAX: number = Number(process.env.PIPS_RATE_LIMIT_AUTH_MAX) || 10;
 export const RATE_LIMIT_FAUCET_MAX: number = Number(process.env.PIPS_RATE_LIMIT_FAUCET_MAX) || 5;
 export const RATE_LIMIT_WITHDRAW_MAX: number = Number(process.env.PIPS_RATE_LIMIT_WITHDRAW_MAX) || 20;
+export const RATE_LIMIT_AVATAR_MAX: number = Number(process.env.PIPS_RATE_LIMIT_AVATAR_MAX) || 10;
+
+// Avatar storage (S3 / DigitalOcean Spaces). Custom uploads and the stored DiceBear default live in a
+// shared Spaces bucket, everything under S3_FOLDER_PREFIX. Creds come from .env; bucket/region/endpoint
+// are derived from the virtual-hosted bucket URL so there's a single source of truth. Missing any piece
+// disables uploads AND default-SVG storage cleanly (route 503s, the client shows a letter chip). This is
+// fail-soft, not a boot fail: no avatar feature never blocks the app from starting.
+export const S3_ACCESS_KEY: string = (process.env.S3_ACCESS_KEY || '').trim();
+export const S3_SECRET_KEY: string = (process.env.S3_SECRET_KEY || '').trim();
+export const S3_BUCKET_URL: string = (process.env.S3_BUCKET_URL || '').trim().replace(/\/+$/, '');
+export const S3_FOLDER_PREFIX: string = (process.env.S3_FOLDER_PREFIX || 'pips').trim().replace(/^\/+|\/+$/g, '');
+// Parse https://<bucket>.<region>.<host> -> bucket=pivy, region=sgp1, endpoint=https://sgp1.digitaloceanspaces.com
+const s3Host: string = S3_BUCKET_URL.replace(/^https?:\/\//, '');
+const s3Labels: string[] = s3Host ? s3Host.split('.') : [];
+export const S3_BUCKET: string = s3Labels[0] ?? '';
+export const S3_REGION: string = s3Labels[1] ?? '';
+export const S3_ENDPOINT: string = s3Labels.length > 1 ? `https://${s3Labels.slice(1).join('.')}` : '';
+export const AVATAR_UPLOADS_ENABLED: boolean = Boolean(S3_ACCESS_KEY && S3_SECRET_KEY && S3_BUCKET && S3_ENDPOINT);
 
 // Auth + signing mode. 'dev' auto-logs-in the testing wallet and the backend signs. 'privy' is Google/email
 // login with an embedded Sui wallet; the server signs plays via Privy rawSign under a session signer.
@@ -207,6 +225,28 @@ export const DEMO_LUCKY_DURATION: number = Number(process.env.PIPS_DEMO_LUCKY_DU
 // wide band. MIN 1.5 is sized so net premium after the ~12% fee headroom still clears $1 (1.5 * 0.88 = 1.32).
 export const MIN_STAKE: number = Number(process.env.PIPS_MIN_STAKE) || (IS_REAL_PREDICT ? 1.5 : 1);
 export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || (IS_REAL_PREDICT ? 3 : 100);
+
+// House rake (revenue). A small config-driven cut of every real (non-demo) play's stake, folded into
+// the position sizing so the player just sees a slightly smaller position, no fee line item. It's
+// collected on-chain in the SAME atomic mint PTB as a DUSDC transfer to the revenue wallet (lib/sui/
+// house.ts), so it's a pure function of gross stake volume with zero directional risk, identical on the
+// fork and on real Predict. BPS default 150 = 1.5%: deliberately below casino levels (roulette is 2.7%/
+// bet) because PIPS is replay-heavy, so a per-play edge compounds against a bankroll fast; treat ~2.5%
+// as a ceiling to earn into. Empty REVENUE_WALLET_PK OR a 0 edge disables it cleanly (rake = 0, which is
+// byte-identical to today). MIN_NET_USD is the floor guard: the rake is skipped whenever `stake - rake`
+// would fall below it, so it never breaches real Predict's ~$1 net-premium floor (L-011).
+const rawHouseEdgeBps: string | undefined = process.env.PIPS_HOUSE_EDGE_BPS;
+export const HOUSE_EDGE_BPS: bigint = BigInt(
+  rawHouseEdgeBps != null && rawHouseEdgeBps !== '' && Number.isFinite(Number(rawHouseEdgeBps))
+    ? Math.max(0, Math.round(Number(rawHouseEdgeBps)))
+    : 150,
+);
+export const REVENUE_WALLET_PK: string = process.env.REVENUE_WALLET_PK || '';
+// Below this net (display USD) the rake is skipped so it can never break a mint. Real Predict floors a
+// mint at ~$1 net premium (L-011) and there's a ~12% fee headroom on top, so keep net above ~$1/0.88;
+// 1.2 leaves margin. Fork has no such floor, so 0 (rake applies down to the fork's $1 MIN_STAKE).
+export const HOUSE_EDGE_MIN_NET_USD: number =
+  Number(process.env.PIPS_HOUSE_EDGE_MIN_NET_USD) || (IS_REAL_PREDICT ? 1.2 : 0);
 
 // Real-mode (testnet) strike sizing. A mint aborts (code 1) if the strike's entry probability leaves
 // [min, max]_entry_probability. On a 20-60s BTC market a fixed-% strike sits several sigma OTM (p~0, always
@@ -392,6 +432,9 @@ export default {
   DEMO_LUCKY_DURATION,
   MIN_STAKE,
   MAX_STAKE,
+  HOUSE_EDGE_BPS,
+  REVENUE_WALLET_PK,
+  HOUSE_EDGE_MIN_NET_USD,
   GAME_DURATIONS,
   MINIGAME_RUN_TTL_S,
   MINIGAME_MIN_RUN_MS,

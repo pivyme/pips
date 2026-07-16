@@ -41,7 +41,11 @@ model User {
   soundEnabled     Boolean   @default(true)
   hapticsEnabled   Boolean   @default(true)
   reducedMotion    Boolean   @default(false)
+  confirmTrades    Boolean   @default(false)   // double-tap to place a staked play (opt-in fat-finger guard)
   theme            String    @default("classic")   // selected device skin id, synced cross-device
+
+  avatarUrl        String?                     // custom uploaded avatar (Spaces webp); null = use the DiceBear default
+  avatarDefaultUrl String?                     // stored DiceBear bottts-neutral SVG url, generated once per user
 
   referralCode     String?   @unique          // anon link token, generated in provisionUser
   referralAnon     Boolean   @default(false)  // link format: false = /@username, true = /r/CODE

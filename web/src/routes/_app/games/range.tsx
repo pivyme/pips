@@ -15,6 +15,7 @@ import {
   GameScreen,
   ScreenMessage,
 } from '@/components/game/screen'
+import { TradeConfirmSheet, useTradeConfirm } from '@/components/game/tradeConfirm'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
 import {
@@ -478,6 +479,24 @@ function RangeScreen() {
     }
   }, [phase, canPlay, stake, asset, halfPct, spot, idleMult, quotedMult, playsPaused, track])
 
+  // Trade confirmation (opt-in, off by default). When on, PLAY arms first and CONFIRM places; the sheet
+  // shows the band + the quoted multiple the second press will lock. Off, press() places immediately.
+  const confirm = useTradeConfirm(
+    () => void doPlay(),
+    () => ({
+      stake,
+      headline: `${asset} · ±${halfPct.toFixed(1)}%`,
+      multiplier: idleMult,
+      maxPayout: stake * idleMult,
+      note: 'Hold to the buzzer',
+    }),
+  )
+  // Disarm the moment placement would be blocked or the round leaves idle, so CONFIRM never fires a
+  // play the ready-state would have rejected.
+  useEffect(() => {
+    if (phase !== 'idle' || cantAfford || !canPlay || playsPaused) confirm.disarm()
+  }, [phase, cantAfford, canPlay, playsPaused, confirm.disarm])
+
   const doCashOut = useCallback(async () => {
     // Armed only during the live hold (the button is hidden once the round is sealing/settling).
     if (!liveHold || !play) return
@@ -634,7 +653,9 @@ function RangeScreen() {
     },
     action1: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
-      : { label: infoLabel, color: 'neutral', onPress: rotateInfo },
+      : confirm.armed
+        ? { label: 'CANCEL', color: 'neutral', onPress: confirm.cancel } // escape hatch while armed
+        : { label: infoLabel, color: 'neutral', onPress: rotateInfo },
     action2: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
       : {
@@ -692,11 +713,13 @@ function RangeScreen() {
                     }
                   : cantAfford
                     ? { label: 'TOP UP', color: 'amber', onPress: goDeposit }
-                    : {
-                        label: 'PLAY',
-                        color: 'amber',
-                        onPress: () => void doPlay(),
-                      },
+                    : confirm.armed
+                      ? { label: 'CONFIRM', color: 'amber', onPress: confirm.press } // 2nd press places
+                      : {
+                          label: 'PLAY',
+                          color: 'amber',
+                          onPress: confirm.press, // 1st press arms (or places immediately if the gate is off)
+                        },
   })
 
   // The live P/L footer shows only while a round is in flight, NOT on the result (the RangeResult overlay
@@ -809,7 +832,9 @@ function RangeScreen() {
               runs, OPENING while the mint lands, SETTLING at the buzzer. */}
           <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5 min-h-[var(--screen-notch,21%)]">
             <div className="max-w-[60%]">
-              {phase === 'placing' ? (
+              {confirm.armed ? (
+                <TradeConfirmSheet details={confirm.armed} remainingMs={confirm.remainingMs} />
+              ) : phase === 'placing' ? (
                 <FooterStatusPanel
                   kicker="Locking band"
                   head="LOCKING IN"

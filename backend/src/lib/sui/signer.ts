@@ -7,7 +7,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { fromBase64 } from '@mysten/sui/utils';
 
-import { TESTING_WALLET_PK, SETTLEMENT_WALLET_PK, TREASURY_WALLET_PK } from '../../config/main-config.ts';
+import { TESTING_WALLET_PK, SETTLEMENT_WALLET_PK, TREASURY_WALLET_PK, REVENUE_WALLET_PK } from '../../config/main-config.ts';
 import { ADMIN_CAP_ID, ORACLE_CAP_IDS } from './config.ts';
 
 // suiprivkey envelope, or base64 (32-byte secret or a 33-byte flagged keystore entry).
@@ -41,6 +41,14 @@ export const settlementAddress: string = settlementKeypair ? settlementKeypair.g
 export const treasuryKeypair = loadOptional(TREASURY_WALLET_PK);
 export const TREASURY_ENABLED: boolean = treasuryKeypair != null;
 export const treasuryAddress: string = treasuryKeypair ? treasuryKeypair.getPublicKey().toSuiAddress() : '';
+
+// Revenue: the dedicated house-rake sink (the entry rake lands here). It only ever RECEIVES DUSDC in the
+// mint PTB, never signs a tx, so it needs no SUI and no auto-funding. Kept separate from the treasury
+// (chip float) so gross revenue is cleanly measurable and never commingled. Empty key = rake disabled
+// (lib/sui/house.ts no-ops, byte-identical to today). Sweep to a multisig/cold wallet on a schedule.
+export const revenueKeypair = loadOptional(REVENUE_WALLET_PK);
+export const REVENUE_ENABLED: boolean = revenueKeypair != null;
+export const revenueAddress: string = revenueKeypair ? revenueKeypair.getPublicKey().toSuiAddress() : '';
 
 // The admin surface the operator holds. Oracle pushes need DISTINCT caps per lane,
 // so workers round-robin over oracleCapIds.

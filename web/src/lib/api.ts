@@ -24,9 +24,11 @@ export interface UserDTO {
   provider: 'privy' | 'dev' | 'wallet'
   // wallet-connect: the connected external wallet (login + default withdraw target).
   walletAuthAddress?: string
+  avatarUrl: string | null // effective avatar (custom or DiceBear default); null falls back to a letter chip
+  customAvatar: boolean // a custom upload is set (drives the remove-X in the profile editor)
   balance: string
   managerReady: boolean
-  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; theme: string }
+  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string }
 }
 
 export interface MarketDTO {
@@ -162,6 +164,7 @@ export interface LeaderboardPnlEntry {
   rank: number
   username: string | null
   displayName: string
+  avatarUrl: string | null
   netPnl: string // signed DUSDC
   gamesPlayed: number
   isYou: boolean
@@ -171,6 +174,7 @@ export interface LeaderboardGameEntry {
   rank: number
   username: string | null
   displayName: string
+  avatarUrl: string | null
   pnl: string // signed summed DUSDC for the game (gainers positive, rekt negative)
   plays: number
   isYou: boolean
@@ -180,6 +184,7 @@ export interface LeaderboardScoreEntry {
   rank: number
   username: string | null
   displayName: string
+  avatarUrl: string | null
   score: number
   isYou: boolean
   twitterVerified: boolean
@@ -300,6 +305,9 @@ const realApi = {
   // Re-read linked Google/email/X state from Privy and persist it. Call after every successful
   // link/unlink so the DB (and the leaderboard badge) never trusts a client-reported handle.
   linkRefresh: () => request<{ user: UserDTO }>('POST', '/auth/link/refresh'),
+  // Avatar: upload a client-shrunk 500x500 webp data URL, or remove the custom one (revert to default).
+  uploadAvatar: (dataUrl: string) => request<{ user: UserDTO }>('POST', '/avatar', { image: dataUrl }),
+  removeAvatar: () => request<{ user: UserDTO }>('DELETE', '/avatar'),
 
   // markets + plays. `playsPaused` is the real-mode sponsor-floor pause (always false in fork/demo):
   // when true, new plays are blocked while the gas sponsor tops up, and the games show a paused state.

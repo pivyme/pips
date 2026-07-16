@@ -392,6 +392,12 @@ export type MintPlayParams = {
   leverage1e9: bigint;
   lowerTick: bigint;
   higherTick: bigint;
+  // House rake (the seam lives in lib/sui/house.ts). When rakeRaw > 0, peel it out of the wrapper's
+  // internal balance AFTER the mint and send it to revenueAddress, all in this one atomic PTB. The
+  // deposit tops the wrapper to the full stake and the mint consumes ~net, so >= rake is always left to
+  // withdraw. rakeRaw = 0 (or no revenueAddress) is a clean no-op, byte-identical to no-rake.
+  rakeRaw?: bigint;
+  revenueAddress?: string;
 };
 
 // Assemble the whole mint play into ONE PTB: [create wrapper] -> [deposit shortfall] -> load Pricer ->
@@ -426,6 +432,15 @@ export function buildMintPlay(tx: Transaction, p: MintPlayParams): void {
     minQuantityRaw: p.minQuantityRaw,
     leverage1e9: p.leverage1e9,
   });
+
+  // House rake: withdraw the rake from the wrapper's internal balance (owner-authed, fresh Auth) and send
+  // it to the revenue wallet, before the wrapper is shared (a fresh wrapper is used by-ref then shared
+  // last). The deposit topped the wrapper to the full stake and the mint drew ~net, so the rake is
+  // always available to peel out. rakeRaw = 0 / no revenueAddress = no-op. See lib/sui/house.ts.
+  if (p.rakeRaw && p.rakeRaw > 0n && p.revenueAddress) {
+    const coin = buildWithdrawFunds(tx, wrapper, buildAuth(tx), p.rakeRaw);
+    tx.transferObjects([coin], tx.pure.address(p.revenueAddress));
+  }
 
   if (!p.wrapperExists) {
     tx.moveCall({ target: realTarget(REAL_ACCOUNT_PACKAGE, 'account', 'share'), arguments: [wrapper] });

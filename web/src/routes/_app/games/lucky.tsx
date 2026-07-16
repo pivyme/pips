@@ -13,6 +13,7 @@ import {
   ResultOverlay,
 } from '@/components/game/gamePanels'
 import { GameScreen, ScreenMessage } from '@/components/game/screen'
+import { TradeConfirmSheet, useTradeConfirm } from '@/components/game/tradeConfirm'
 import { LivePrice } from '@/components/game/LivePrice'
 import { LuckyCharts, Reel } from '@/components/game/lucky/LuckyReels'
 import {
@@ -446,6 +447,19 @@ function LuckyScreen() {
     }
   }, [phase, canPlay, bet, playsPaused, track])
 
+  // Trade confirmation (opt-in, off by default). When on, SPIN arms first and CONFIRM places; the reel
+  // deals the asset/side/multiplier, so the sheet honestly guards only the stake commitment. With the
+  // setting off, press() short-circuits straight to doPlay(), so behavior is unchanged for everyone else.
+  const confirm = useTradeConfirm(
+    () => void doPlay(),
+    () => ({ stake: bet, headline: 'I Feel Lucky', note: 'Reel deals the play' }),
+  )
+  // Keep an armed trade honest: disarm the moment placement would be blocked or the round leaves idle,
+  // so CONFIRM can never fire a play the ready-state would have rejected.
+  useEffect(() => {
+    if (phase !== 'idle' || cantAfford || !canPlay || playsPaused) confirm.disarm()
+  }, [phase, cantAfford, canPlay, playsPaused, confirm.disarm])
+
   const doCashOut = useCallback(async () => {
     if (phase !== 'open' || !play || closeLocked) return
     setPhase('cashing')
@@ -524,7 +538,9 @@ function LuckyScreen() {
     },
     action1: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
-      : { label: 'HOW TO', color: 'neutral', onPress: toggleHowto },
+      : confirm.armed
+        ? { label: 'CANCEL', color: 'neutral', onPress: confirm.cancel } // escape hatch while armed
+        : { label: 'HOW TO', color: 'neutral', onPress: toggleHowto },
     action2: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
       : { label: 'RANKS', color: 'neutral', onPress: toggleBoard },
@@ -540,12 +556,14 @@ function LuckyScreen() {
               ? { label: 'CASH OUT', color: 'up', onPress: () => { }, loading: true }
               : cantAfford
                 ? { label: 'TOP UP', color: 'amber', onPress: goDeposit }
-                : {
-                  label: 'SPIN',
-                  color: 'amber',
-                  onPress: () => void doPlay(),
-                  loading: phase === 'placing' || phase === 'spinning',
-                },
+                : confirm.armed
+                  ? { label: 'CONFIRM', color: 'amber', onPress: confirm.press } // 2nd press places
+                  : {
+                    label: 'SPIN',
+                    color: 'amber',
+                    onPress: confirm.press, // 1st press arms (or places immediately if the gate is off)
+                    loading: phase === 'placing' || phase === 'spinning',
+                  },
   })
 
   // Layout: a solid header (price/balance over the reel cluster) divides off the chart with a foot
@@ -660,7 +678,9 @@ function LuckyScreen() {
                 browser zoom (a fixed px would drift). 21% ~ the notch's share of the natural screen,
                 the fallback before the canvas has projected. */}
             <div className="max-w-[60%]">
-              {opening ? (
+              {confirm.armed ? (
+                <TradeConfirmSheet details={confirm.armed} remainingMs={confirm.remainingMs} />
+              ) : opening ? (
                 <FooterStatusPanel
                   kicker="Opening"
                   head="OPENING"

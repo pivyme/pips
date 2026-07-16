@@ -165,7 +165,7 @@ export function restrikeBinary(r: ResolvedReal, leverage1e9: bigint): ResolvedRe
   return { ...r, leverage1e9, lowerTick, higherTick, strikeDisplay: realFmt(strike1e9) };
 }
 
-function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: Side, tier: number, seed?: string): ResolvedReal {
+function resolveRealBinary(game: 'lucky' | 'moonshot', netRaw: bigint, stakeRaw: bigint, side: Side, tier: number, seed?: string): ResolvedReal {
   const market = realMarket(LUCKY_ROUND_MS);
   const { spot1e9, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
   const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
@@ -182,7 +182,9 @@ function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: S
     lowerTick,
     higherTick,
     leverage1e9,
-    amountRaw: premiumBudget(stakeRaw),
+    // Size the mint off NET (stake - rake); the deposit still tops the wrapper to the full STAKE so the
+    // rake can be peeled out after the mint (see lib/sui/house.ts, predict-real buildMintPlay).
+    amountRaw: premiumBudget(netRaw),
     depositCeilRaw: stakeRaw,
     minQuantityRaw: POSITION_LOT_SIZE,
     expiryMs: market.expiryMs,
@@ -195,7 +197,7 @@ function resolveRealBinary(game: 'lucky' | 'moonshot', stakeRaw: bigint, side: S
   };
 }
 
-function resolveRealRange(stakeRaw: bigint, widthPct: number): ResolvedReal {
+function resolveRealRange(netRaw: bigint, stakeRaw: bigint, widthPct: number): ResolvedReal {
   if (!(widthPct > 0) || widthPct > 10) throw new PlayError('INVALID_PARAMS', 'Band width out of range');
   const market = realMarket(Math.round((RANGE_MIN_ORACLE_LIFE_MS + RANGE_MAX_ORACLE_LIFE_MS) / 2));
   const { spot1e9, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
@@ -217,7 +219,8 @@ function resolveRealRange(stakeRaw: bigint, widthPct: number): ResolvedReal {
     lowerTick,
     higherTick,
     leverage1e9,
-    amountRaw: premiumBudget(stakeRaw),
+    // Size the mint off NET; the deposit tops the wrapper to the full STAKE so the rake withdraws cleanly.
+    amountRaw: premiumBudget(netRaw),
     depositCeilRaw: stakeRaw,
     minQuantityRaw: POSITION_LOT_SIZE,
     expiryMs: market.expiryMs,
@@ -254,17 +257,19 @@ export function quoteRangeBatchReal(widthPcts: number[]): RangeQuote[] {
   }
 }
 
-export function resolveReal(input: CreatePlayInputShape, stakeRaw: bigint, seed?: string): ResolvedReal {
+// netRaw sizes the position (stake - house rake); stakeRaw is the full commit that funds the wrapper so
+// the rake can be withdrawn after the mint. At rake = 0, netRaw === stakeRaw (byte-identical to no-rake).
+export function resolveReal(input: CreatePlayInputShape, netRaw: bigint, stakeRaw: bigint, seed?: string): ResolvedReal {
   if (input.game === 'lucky') {
     const actualSeed = seed ?? newSeed();
     const side: Side = seedFloat(actualSeed, 1) < 0.5 ? 'up' : 'down';
     const tier = pickTier(seedFloat(actualSeed, 2));
-    return resolveRealBinary('lucky', stakeRaw, side, tier, actualSeed);
+    return resolveRealBinary('lucky', netRaw, stakeRaw, side, tier, actualSeed);
   }
   if (input.game === 'moonshot') {
     if (input.side !== 'up' && input.side !== 'down') throw new PlayError('INVALID_PARAMS', 'Pick a direction');
     if (!Number.isFinite(input.reach)) throw new PlayError('INVALID_PARAMS', 'Pick a reach');
-    return resolveRealBinary('moonshot', stakeRaw, input.side, Math.max(2, Math.min(25, input.reach)));
+    return resolveRealBinary('moonshot', netRaw, stakeRaw, input.side, Math.max(2, Math.min(25, input.reach)));
   }
-  return resolveRealRange(stakeRaw, input.widthPct);
+  return resolveRealRange(netRaw, stakeRaw, input.widthPct);
 }

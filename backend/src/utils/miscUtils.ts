@@ -13,3 +13,8 @@ export const getAlphanumericId = (length: number = 16): string => {
 export const shortenAddress = (address: string, startLength: number = 6, endLength: number = 4): string => {
   return address.slice(0, startLength) + '...' + address.slice(-endLength);
 };
+
+// The avatar a user actually shows: a custom upload wins, else the stored DiceBear default, else null
+// (the client renders a letter chip). Pure + dependency-free so any read path can use it.
+export const effectiveAvatar = (u: { avatarUrl: string | null; avatarDefaultUrl: string | null }): string | null =>
+  u.avatarUrl ?? u.avatarDefaultUrl ?? null;

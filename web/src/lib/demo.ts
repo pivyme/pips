@@ -68,6 +68,10 @@ export function setDemoOverride(on: boolean | null): void {
 // A realistic-looking Sui address so demo reads as the real thing on screen recordings.
 const DEMO_ADDRESS = '0xa3f08c7e5b1d49260e8a3f7c6d20b9e41f5c8a037e94d2b60a3c5f81e9b27d4c'
 const DEMO_HANDLE = '@pips'
+// Demo default avatar: a DiceBear bottts robot from the public API, seeded by the demo address (mirrors
+// the real "seed = wallet address" rule). Demo-only + display-only; offline it just falls back to the
+// letter chip via <Avatar>. A custom upload (state.avatarUrl) wins over this when set.
+const DEMO_DEFAULT_AVATAR = `https://api.dicebear.com/9.x/bottts-neutral/svg?seed=${encodeURIComponent(DEMO_ADDRESS)}`
 // A linked-but-not-adopted X account by default (username starts as 'pips', not 'pips_demo'), so the
 // Account Settings screen, the "Use your X username" button, and the verified pill are all demoable
 // with no backend: tap the button, save, and the badge flips on, mirroring the real verifiedX rule.
@@ -261,7 +265,8 @@ interface DemoState {
   v: number
   balance: number
   username: string | null // null = first run, show onboarding (mirrors the live user.username signal)
-  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; theme: string }
+  avatarUrl: string | null // custom uploaded avatar (data URL); null = use the demo default
+  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string }
   counters: Counters
   unlocked: Record<string, string> // slug -> unlockedAt ISO
   history: PlayDTO[] // settled plays only, newest first
@@ -324,7 +329,8 @@ function freshState(): DemoState {
     v: STATE_VERSION,
     balance: 2847.5,
     username: 'pips',
-    settings: { sound: true, haptics: true, reducedMotion: false, theme: 'classic' },
+    avatarUrl: null,
+    settings: { sound: true, haptics: true, reducedMotion: false, confirmTrades: false, theme: 'classic' },
     counters,
     unlocked,
     history,
@@ -339,7 +345,12 @@ function load(): DemoState {
     const raw = window.localStorage.getItem(STATE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as DemoState
-      if (parsed.v === STATE_VERSION) return parsed
+      if (parsed.v === STATE_VERSION) {
+        // Additive settings backfill: a state saved before a new toggle existed lacks the key, so
+        // default it in place rather than bumping the version and wiping the demo record.
+        if (parsed.settings.confirmTrades == null) parsed.settings.confirmTrades = false
+        return parsed
+      }
     }
   } catch {
     // corrupt or absent: start fresh
@@ -702,6 +713,9 @@ function createMoonshot(body: Record<string, unknown>): PlayDTO {
 
 // === The mock api surface (mirrors lib/api.ts `api`) ===
 
+// The demo user's effective avatar: a custom upload wins, else the seeded DiceBear default.
+const demoAvatar = (): string => state.avatarUrl ?? DEMO_DEFAULT_AVATAR
+
 function userDTO(): UserDTO {
   return {
     id: 'demo',
@@ -711,6 +725,8 @@ function userDTO(): UserDTO {
     email: 'demo@playpips.fun',
     twitter: DEMO_TWITTER,
     provider: 'dev',
+    avatarUrl: demoAvatar(),
+    customAvatar: state.avatarUrl != null,
     balance: str(state.balance),
     managerReady: true,
     settings: state.settings,
@@ -794,7 +810,7 @@ function globalLeaderboardDTO(): GlobalLeaderboard {
   const all = allTraders()
   const gainers = all.filter((t) => t.netPnl > 0).sort((a, b) => b.netPnl - a.netPnl)
   const rekt = all.filter((t) => t.netPnl < 0).sort((a, b) => a.netPnl - b.netPnl)
-  const entry = (t: Trader, i: number) => ({ rank: i + 1, username: t.username, displayName: t.displayName, netPnl: str(t.netPnl), gamesPlayed: t.games, isYou: t.isYou, twitterVerified: isTwitterVerified(t.username) })
+  const entry = (t: Trader, i: number) => ({ rank: i + 1, username: t.username, displayName: t.displayName, avatarUrl: t.isYou ? demoAvatar() : null, netPnl: str(t.netPnl), gamesPlayed: t.games, isYou: t.isYou, twitterVerified: isTwitterVerified(t.username) })
   const youNet = state.counters.netPnl
   const gi = gainers.findIndex((t) => t.isYou)
   const ri = rekt.findIndex((t) => t.isYou)
@@ -816,7 +832,7 @@ function gameLeaderboardDTO(game: Game): GameLeaderboard {
   const split = game === 'lucky' ? 0.45 : game === 'range' ? 0.3 : 0.25 // a believable per-game share of each rival's net
   const rows = LB_TRADERS.map((b) => ({ username: b.username as string | null, displayName: b.username, pnl: Math.round(b.netPnl * split), plays: Math.max(1, Math.round(b.games * split)), isYou: false }))
   rows.push({ username: state.username, displayName: DEMO_HANDLE, pnl: Math.round(youPnl), plays: mine.length, isYou: true })
-  const row = (r: (typeof rows)[number], i: number) => ({ rank: i + 1, username: r.username, displayName: r.displayName, pnl: str(r.pnl), plays: r.plays, isYou: r.isYou, twitterVerified: isTwitterVerified(r.username) })
+  const row = (r: (typeof rows)[number], i: number) => ({ rank: i + 1, username: r.username, displayName: r.displayName, avatarUrl: r.isYou ? demoAvatar() : null, pnl: str(r.pnl), plays: r.plays, isYou: r.isYou, twitterVerified: isTwitterVerified(r.username) })
   const gainers = rows.filter((r) => r.pnl > 0).sort((a, b) => b.pnl - a.pnl).slice(0, 10)
   const rekt = rows.filter((r) => r.pnl < 0).sort((a, b) => a.pnl - b.pnl).slice(0, 10)
   return { entries: gainers.map(row), rekt: rekt.map(row) }
@@ -832,7 +848,7 @@ function minigameRows(game: string): ScoreRow[] {
 
 function minigameLeaderboardDTO(game: Minigame): MinigameLeaderboard {
   const best = state.minigameScores[game] ?? 0
-  const entries = minigameRows(game).slice(0, 10).map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, score: r.score, isYou: r.isYou, twitterVerified: isTwitterVerified(r.username) }))
+  const entries = minigameRows(game).slice(0, 10).map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, avatarUrl: r.isYou ? demoAvatar() : null, score: r.score, isYou: r.isYou, twitterVerified: isTwitterVerified(r.username) }))
   return { entries, best }
 }
 
@@ -881,6 +897,24 @@ export const demoApi = {
   // Account Settings is read-only in demo (no Privy provider to drive real link/unlink), so this is
   // never actually called from a link action; kept for api-client completeness.
   linkRefresh: async () => ({ user: userDTO() }),
+
+  // Avatar upload/remove, in-memory. The client already shrank the file to a webp data URL, so just
+  // stash it (custom wins over the default) or clear it. No network, no chain.
+  uploadAvatar: async (dataUrl: string) => {
+    await delay(140)
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+      throw new ApiError('INVALID_IMAGE', 'That image could not be read. Try another.', 400)
+    }
+    state.avatarUrl = dataUrl
+    save()
+    return { user: userDTO() }
+  },
+  removeAvatar: async () => {
+    await delay(100)
+    state.avatarUrl = null
+    save()
+    return { user: userDTO() }
+  },
 
   markets: async (): Promise<{ markets: MarketDTO[]; playsPaused: boolean }> => {
     await delay(120)
@@ -1024,7 +1058,7 @@ export const demoApi = {
     const all = minigameRows(game) // now includes your row at `best`
     const youIdx = all.findIndex((r) => r.isYou)
     const rank = youIdx >= 0 ? youIdx + 1 : all.length + 1
-    const entries = all.slice(0, 10).map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, score: r.score, isYou: r.isYou, twitterVerified: isTwitterVerified(r.username) }))
+    const entries = all.slice(0, 10).map((r, i) => ({ rank: i + 1, username: r.username, displayName: r.displayName, avatarUrl: r.isYou ? demoAvatar() : null, score: r.score, isYou: r.isYou, twitterVerified: isTwitterVerified(r.username) }))
     return { result: { entries, rank, best, isBest: score > prevBest && rank === 1, prevBest } }
   },
 }

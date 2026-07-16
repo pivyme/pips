@@ -13,6 +13,7 @@ import jwt from 'jsonwebtoken';
 import { prismaQuery } from '../lib/prisma.ts';
 import { JWT_SECRET, MINIGAME_MIN_RUN_MS, MINIGAME_RUN_TTL_S } from '../config/main-config.ts';
 import { fromDusdcRaw } from '../lib/sui/math.ts';
+import { effectiveAvatar } from '../utils/miscUtils.ts';
 import type {
   FullLeaderboardDTO,
   GameLeaderboardDTO,
@@ -26,7 +27,8 @@ import type {
 const TOP = 10;
 const SETTLED = ['won', 'lost', 'cashed_out'];
 const money = (raw: bigint): string => fromDusdcRaw(raw).toFixed(2);
-const nameFields = { id: true, username: true, displayName: true, twitterUsername: true } as const;
+const nameFields = { id: true, username: true, displayName: true, twitterUsername: true, avatarUrl: true, avatarDefaultUrl: true } as const;
+const noAvatar = { avatarUrl: null, avatarDefaultUrl: null }; // fallback when a user row is missing
 
 // The verified-badge semantic: the displayed handle really is their OAuth-verified X account, not
 // just "some X is linked". Computed at query time (never denormalized), so a handle change or a
@@ -59,6 +61,7 @@ export async function globalLeaderboard(userId: string): Promise<GlobalLeaderboa
     rank: i + 1,
     username: byId.get(p.userId)?.username ?? null,
     displayName: byId.get(p.userId)?.displayName ?? 'Player',
+    avatarUrl: effectiveAvatar(byId.get(p.userId) ?? noAvatar),
     netPnl: money(p.pnl),
     gamesPlayed: p.games,
     isYou: p.userId === userId,
@@ -109,6 +112,7 @@ export async function gameLeaderboard(game: string, userId: string): Promise<Gam
       rank: i + 1,
       username: u?.username ?? null,
       displayName: u?.displayName ?? 'Player',
+      avatarUrl: effectiveAvatar(u ?? noAvatar),
       pnl: money(r.pnl), // signed: gainers positive, rekt negative
       plays: r.plays,
       isYou: r.userId === userId,
@@ -136,6 +140,7 @@ export async function minigameLeaderboard(game: Minigame, userId: string): Promi
       rank: i + 1,
       username: r.user.username,
       displayName: r.user.displayName,
+      avatarUrl: effectiveAvatar(r.user),
       score: r.score,
       isYou: r.userId === userId,
       twitterVerified: isTwitterVerified(r.user),

@@ -12,6 +12,7 @@ import {
   ResultOverlay,
 } from '@/components/game/gamePanels'
 import { GameScreen, ScreenMessage, Cell } from '@/components/game/screen'
+import { TradeConfirmSheet, useTradeConfirm } from '@/components/game/tradeConfirm'
 import { LivePrice } from '@/components/game/LivePrice'
 import { useConsoleControls } from '@/components/console/controls'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
@@ -318,6 +319,24 @@ function MoonshotScreen() {
     }
   }, [phase, canPlay, stake, asset, side, reach, playsPaused, track])
 
+  // Trade confirmation (opt-in, off by default). When on, PLAY arms first and CONFIRM places; the sheet
+  // shows the aimed side/reach the second press will fire. Off, press() places immediately.
+  const confirm = useTradeConfirm(
+    () => void doPlay(),
+    () => ({
+      stake,
+      headline: `${asset} · ${sideLabel(side)} · ${reach}x`,
+      multiplier: reach,
+      maxPayout: stake * reach,
+      note: 'Hold to the buzzer',
+    }),
+  )
+  // Disarm the moment placement would be blocked or the round leaves idle, so CONFIRM never fires a
+  // play the ready-state would have rejected.
+  useEffect(() => {
+    if (phase !== 'idle' || cantAfford || !canPlay || playsPaused) confirm.disarm()
+  }, [phase, cantAfford, canPlay, playsPaused, confirm.disarm])
+
   const doCashOut = useCallback(async () => {
     if (!liveHold || !play) return
     setPhase('cashing')
@@ -421,7 +440,9 @@ function MoonshotScreen() {
     },
     action1: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
-      : { label: infoLabel, color: 'neutral', onPress: rotateInfo },
+      : confirm.armed
+        ? { label: 'CANCEL', color: 'neutral', onPress: confirm.cancel } // escape hatch while armed
+        : { label: infoLabel, color: 'neutral', onPress: rotateInfo },
     // The right cap switches the market (token display). A no-op once a round is live, since an open
     // position's asset can't change, so it just reads the locked market.
     action2: isResult
@@ -448,7 +469,9 @@ function MoonshotScreen() {
                   ? { label: 'FIRING', color: 'amber', onPress: () => {}, loading: true }
                   : cantAfford
                     ? { label: 'TOP UP', color: 'amber', onPress: goDeposit }
-                    : { label: 'PLAY', color: 'amber', onPress: () => void doPlay() },
+                    : confirm.armed
+                      ? { label: 'CONFIRM', color: 'amber', onPress: confirm.press } // 2nd press places
+                      : { label: 'PLAY', color: 'amber', onPress: confirm.press }, // 1st press arms (or places if off)
   })
 
   const firstRun = !statsQ.isLoading && (statsQ.data?.stats.gamesPlayed ?? 0) === 0
@@ -513,7 +536,9 @@ function MoonshotScreen() {
           {/* FOOTER — full-width readout band, left-only (clear of the knob + PLAY body). */}
           <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5 min-h-[var(--screen-notch,21%)]">
             <div className="max-w-[60%]">
-              {phase === 'placing' ? (
+              {confirm.armed ? (
+                <TradeConfirmSheet details={confirm.armed} remainingMs={confirm.remainingMs} />
+              ) : phase === 'placing' ? (
                 <FooterStatusPanel kicker="Launching" head="FIRING" recap={recap} sweep />
               ) : opening ? (
                 <FooterStatusPanel kicker="Opening" head="OPENING" recap={recap} sweep />

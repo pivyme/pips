@@ -47,6 +47,7 @@ import {
   resolveWrapper,
 } from '../lib/sui/predict-real.ts';
 import { operatorCaps } from '../lib/sui/signer.ts';
+import { rakeOf, appendForkRake, revenueAddress, REVENUE_ENABLED } from '../lib/sui/house.ts';
 import { isOperatorLeader } from '../lib/leader-lock.ts';
 import { alert } from '../lib/alert.ts';
 import { checkPlayAllowed, recordPlay, clearPlay } from '../lib/sui/play-safety.ts';
@@ -170,10 +171,12 @@ export type CreateResult = { play: PlayDTO };
 // the server-held custodial wallet). One shared builder so every signing path stays consistent.
 const userCtx = userContext;
 
-async function resolveByGame(input: CreatePlayInput, stakeRaw: bigint): Promise<Resolved> {
-  if (input.game === 'lucky') return resolveLucky(stakeRaw);
-  if (input.game === 'moonshot') return resolveMoonshot(stakeRaw, input.asset, input.side, input.reach);
-  return resolveRange(stakeRaw, input.asset, input.widthPct);
+// netRaw is the stake minus the house rake: the position is sized off net, while the full stake still
+// funds the manager (so the rake can be peeled out after the mint). At rake = 0, netRaw === stakeRaw.
+async function resolveByGame(input: CreatePlayInput, netRaw: bigint): Promise<Resolved> {
+  if (input.game === 'lucky') return resolveLucky(netRaw);
+  if (input.game === 'moonshot') return resolveMoonshot(netRaw, input.asset, input.side, input.reach);
+  return resolveRange(netRaw, input.asset, input.widthPct);
 }
 
 // How far above the bet we fund the manager so the post-trade mint price (the position's own

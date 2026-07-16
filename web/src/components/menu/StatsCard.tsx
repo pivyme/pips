@@ -1,6 +1,7 @@
 import { Pencil } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { UserStatsDTO } from '@/lib/api'
+import { Avatar } from '@/components/Avatar'
 import { cnm } from '@/utils/style'
 import { formatCompactCount, formatCompactMoney } from '@/utils/format'
 
@@ -12,10 +13,13 @@ import { formatCompactCount, formatCompactMoney } from '@/utils/format'
 export function StatsCard({
   stats,
   displayName,
+  avatarUrl,
   onEdit,
 }: {
   stats: UserStatsDTO
   displayName: string
+  // The effective avatar (custom or DiceBear default); a letter chip renders when absent.
+  avatarUrl?: string | null
   // When set, a pen sits next to the handle so it can be changed. Omitted on the shareable card.
   onEdit?: () => void
 }) {
@@ -30,8 +34,14 @@ export function StatsCard({
       <CardHeader />
       <div className="trader-screen relative overflow-hidden rounded-[18px] p-[clamp(13px,5cqi,20px)]">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="truncate text-[clamp(17px,6cqi,24px)] font-extrabold leading-tight text-white">{displayName}</div>
+          <div className="flex min-w-0 items-center gap-[clamp(8px,3cqi,12px)]">
+            <Avatar
+              name={displayName}
+              src={avatarUrl}
+              size={44}
+              className="shrink-0 ring-1 ring-white/15"
+            />
+            <div className="min-w-0 truncate text-[clamp(17px,6cqi,24px)] font-extrabold leading-tight text-white">{displayName}</div>
           </div>
           {onEdit && (
             <button

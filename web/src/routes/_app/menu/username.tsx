@@ -1,14 +1,20 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, type ChangeEvent } from 'react'
+import { Camera, X } from 'lucide-react'
 import { MenuScreen, prepareMenuTransition } from '@/components/menu/shared'
 import { XBadgeGlyph } from '@/components/menu/BrandGlyphs'
+import { Avatar } from '@/components/Avatar'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
+import { toSquareWebp } from '@/lib/avatar'
 import { HapticOverlay } from '@/components/HapticOverlay'
+import { displayHandle } from '@/utils/format'
+import { cnm } from '@/utils/style'
 
-// Change your handle. A plain App-Surface input page in the drawer (reached from the pen on the
-// Player Card), not the device screen: type a new handle, Save, and pop back to the menu.
+// The Profile editor: avatar + handle. A plain App-Surface page in the drawer (reached from the pen on
+// the Player Card), not the device screen. Change the photo (client-shrunk to a 500x500 webp) or clear
+// it back to the DiceBear default, and edit the @handle. No display name.
 export const Route = createFileRoute('/_app/menu/username')({ component: UsernameScreen })
 
 const HANDLE_RE = /^[a-zA-Z0-9_]{3,20}$/
@@ -20,6 +26,8 @@ function UsernameScreen() {
   const [name, setName] = useState(current)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [avatarBusy, setAvatarBusy] = useState(false)
+  const [avatarErr, setAvatarErr] = useState<string | null>(null)
 
   const trimmed = name.trim()
   const valid = HANDLE_RE.test(trimmed)
@@ -29,6 +37,54 @@ function UsernameScreen() {
   // directly: this screen also has to work in dev/demo, where no Privy provider is mounted.
   const twitterHandle = user?.twitter?.username ?? null
   const verified = Boolean(twitterHandle && current === twitterHandle.toLowerCase())
+
+  // Pick a photo -> shrink to a 500x500 webp client-side -> upload -> refresh the session user. The
+  // file input is reset so re-picking the same file still fires. Errors surface inline, never a crash.
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || avatarBusy) return
+    setAvatarBusy(true)
+    setAvatarErr(null)
+    haptic('medium')
+    try {
+      const dataUrl = await toSquareWebp(file)
+      await api.uploadAvatar(dataUrl)
+      await refresh()
+      haptic('success')
+    } catch (err) {
+      haptic('error')
+      setAvatarErr(
+        err instanceof ApiError && err.code === 'UPLOADS_DISABLED'
+          ? 'Photo uploads are unavailable right now.'
+          : err instanceof ApiError && (err.code === 'INVALID_IMAGE' || err.code === 'IMAGE_TOO_LARGE')
+            ? 'That image did not work. Try another.'
+            : err instanceof Error
+              ? err.message
+              : 'Could not update your photo.',
+      )
+    } finally {
+      setAvatarBusy(false)
+    }
+  }
+
+  // Clear the custom photo, reverting to the DiceBear default.
+  const removeAvatar = async () => {
+    if (avatarBusy) return
+    setAvatarBusy(true)
+    setAvatarErr(null)
+    haptic('rigid')
+    try {
+      await api.removeAvatar()
+      await refresh()
+      haptic('success')
+    } catch {
+      haptic('error')
+      setAvatarErr('Could not remove your photo.')
+    } finally {
+      setAvatarBusy(false)
+    }
+  }
 
   const save = async () => {
     if (saving || !valid || !dirty) return
@@ -53,8 +109,42 @@ function UsernameScreen() {
   }
 
   return (
-    <MenuScreen title="Username">
+    <MenuScreen title="Profile">
       <div className="flex flex-col gap-5">
+        <div className="flex flex-col items-center gap-3 pt-1">
+          <div className="relative">
+            <Avatar
+              name={displayHandle(user)}
+              src={user?.avatarUrl}
+              size={104}
+              className={cnm('ring-2 ring-white/10 transition-opacity', avatarBusy && 'opacity-50')}
+            />
+            {user?.customAvatar && (
+              <button
+                type="button"
+                onClick={removeAvatar}
+                disabled={avatarBusy}
+                aria-label="Remove photo"
+                className="absolute -right-1 -top-1 flex h-7 w-7 items-center justify-center rounded-full bg-down text-white shadow-[0_2px_8px_rgba(0,0,0,0.45)] ring-2 ring-black transition active:scale-90 disabled:opacity-50"
+              >
+                <X className="h-4 w-4" strokeWidth={3} />
+              </button>
+            )}
+          </div>
+          <label
+            onClick={() => haptic('selection')}
+            className={cnm(
+              'inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-white/[0.06] px-3.5 py-2 text-[13px] font-bold text-text-2 transition active:scale-95',
+              avatarBusy && 'pointer-events-none opacity-50',
+            )}
+          >
+            <Camera className="h-4 w-4" strokeWidth={2.4} />
+            {avatarBusy ? 'Working…' : user?.customAvatar ? 'Change photo' : 'Add photo'}
+            <input type="file" accept="image/*" className="hidden" onChange={onFile} disabled={avatarBusy} />
+          </label>
+          {avatarErr && <p className="text-[13px] font-semibold text-down">{avatarErr}</p>}
+        </div>
+
         <p className="px-1 text-[15px] leading-snug text-text-2">
           This is how you show up across PIPS. 3 to 20 letters, numbers, or underscores.
         </p>

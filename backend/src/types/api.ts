@@ -14,9 +14,11 @@ export interface UserDTO {
   twitter: { username: string; name: string | null } | null; // linked X account, server-verified via Privy
   provider: 'privy' | 'dev' | 'wallet';
   walletAuthAddress?: string; // wallet-connect: the connected external wallet (login + default withdraw target)
+  avatarUrl: string | null; // effective avatar (custom upload or the stored DiceBear default); null falls back to a letter chip
+  customAvatar: boolean; // a custom upload is set (drives the remove-X in the profile editor)
   balance: string; // available DUSDC (wallet + manager cash), 2dp display, e.g. "983.50"
   managerReady: boolean; // PredictManager exists
-  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; theme: string };
+  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string };
 }
 
 export interface MarketDTO {
@@ -115,6 +117,7 @@ export interface LeaderboardPnlEntryDTO {
   rank: number;
   username: string | null; // user-chosen handle; null until onboarded
   displayName: string; // generated handle fallback, never the wallet address
+  avatarUrl: string | null; // effective avatar (custom or DiceBear default); null falls back to a letter chip
   netPnl: string; // signed DUSDC, e.g. "342.00" or "-128.50"
   gamesPlayed: number;
   isYou: boolean;
@@ -127,6 +130,7 @@ export interface LeaderboardGameEntryDTO {
   rank: number;
   username: string | null;
   displayName: string;
+  avatarUrl: string | null;
   pnl: string; // signed summed DUSDC for this game (gainers positive, rekt negative)
   plays: number; // settled plays of this game
   isYou: boolean;
@@ -138,6 +142,7 @@ export interface LeaderboardScoreEntryDTO {
   rank: number;
   username: string | null;
   displayName: string;
+  avatarUrl: string | null;
   score: number;
   isYou: boolean;
   twitterVerified: boolean;

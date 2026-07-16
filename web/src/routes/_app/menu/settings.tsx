@@ -19,19 +19,20 @@ export const Route = createFileRoute('/_app/menu/settings')({
 
 type Settings = UserDTO['settings']
 // Only the boolean toggles live here; the skin (settings.theme) is set in the Customize studio.
-type Key = 'sound' | 'haptics' | 'reducedMotion'
+type Key = 'sound' | 'haptics' | 'reducedMotion' | 'confirmTrades'
 
 const ROWS: Array<{ key: Key; label: string; desc: string }> = [
   { key: 'sound', label: 'Sound', desc: 'Beeps and wins' },
   { key: 'haptics', label: 'Haptics', desc: 'Buzz on taps and wins' },
   { key: 'reducedMotion', label: 'Reduced motion', desc: 'Calmer animations' },
+  { key: 'confirmTrades', label: 'Confirm trades', desc: 'Double-tap to place a play' },
 ]
 
 function SettingsScreen() {
   const { user, refresh } = useAuth()
   const navigate = useNavigate()
   const [local, setLocal] = useState<Settings>(
-    user?.settings ?? { sound: true, haptics: true, reducedMotion: false, theme: 'classic' },
+    user?.settings ?? { sound: true, haptics: true, reducedMotion: false, confirmTrades: false, theme: 'classic' },
   )
   const [busy, setBusy] = useState<Key | null>(null)
 

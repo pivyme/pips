@@ -12,6 +12,7 @@ import {
 } from '@/components/menu/AchievementDetail'
 import { useMenuDrawer } from '@/components/console/MenuDrawer'
 import { StatsCard, StatsCardSkeleton } from '@/components/menu/StatsCard'
+import { Avatar } from '@/components/Avatar'
 import { Button } from '@/ui/Button'
 import { Illo } from '@/ui/Illo'
 import { achievementImage, mergeCatalog } from '@/lib/achievements'
@@ -157,7 +158,7 @@ function StatsSection() {
     // No card yet (no plays). Keep the first-play nudge; the handle sits next to a pen to change it.
     return (
       <div className="surface-skeuo flex items-center gap-3 rounded-card p-4">
-        <Illo name="vault" size={48} />
+        <Avatar name={displayHandle(user)} src={user?.avatarUrl} size={48} className="ring-1 ring-white/10" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[15px] font-bold">{displayHandle(user)}</span>
@@ -195,7 +196,7 @@ function StatsSection() {
   }
 
   return (
-    <StatsCard stats={stats} displayName={displayHandle(user)} onEdit={editHandle} />
+    <StatsCard stats={stats} displayName={displayHandle(user)} avatarUrl={user?.avatarUrl} onEdit={editHandle} />
   )
 }
 
