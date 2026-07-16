@@ -228,11 +228,15 @@ export const capitalizeFirstLetter = (str: string): string => {
   return str.charAt(0).toUpperCase() + str.slice(1)
 }
 
-// The player's @handle for display, always lowercase and @-prefixed; falls back to the display name then a generic label before a handle is set.
+// The player's @handle for display, always lowercase and @-prefixed. Username first, then the generated
+// display name (also a handle), both @-prefixed; only the generic label (no handle at all) stays bare.
 export const displayHandle = (
   user?: { username?: string | null; displayName?: string | null } | null,
   fallback = 'Player',
-): string => (user?.username ? `@${user.username.toLowerCase()}` : (user?.displayName ?? fallback))
+): string => {
+  const handle = user?.username ?? user?.displayName
+  return handle ? `@${handle.toLowerCase()}` : fallback
+}
 
 export function unsluggify(slug: string, separator: string = '-'): string {
   return slug

@@ -771,6 +771,7 @@ function RangeScreen() {
                 }
                 livePriceRef={livePriceRef}
                 onPrice={(p) => setSpot(p)}
+                frozen={settling}
                 className="absolute inset-0"
               />
             ) : null}

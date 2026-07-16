@@ -33,6 +33,7 @@ import { Route as AppMenuCustomizeRouteImport } from './routes/_app/menu/customi
 import { Route as AppMenuAchievementsRouteImport } from './routes/_app/menu/achievements'
 import { Route as AppMenuAccountRouteImport } from './routes/_app/menu/account'
 import { Route as AppMenuAboutRouteImport } from './routes/_app/menu/about'
+import { Route as AppGamesRangeV2RouteImport } from './routes/_app/games/range-v2'
 import { Route as AppGamesRangeRouteImport } from './routes/_app/games/range'
 import { Route as AppGamesMoonshotRouteImport } from './routes/_app/games/moonshot'
 import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
@@ -158,6 +159,11 @@ const AppMenuAboutRoute = AppMenuAboutRouteImport.update({
   path: '/menu/about',
   getParentRoute: () => AppRoute,
 } as any)
+const AppGamesRangeV2Route = AppGamesRangeV2RouteImport.update({
+  id: '/games/range-v2',
+  path: '/games/range-v2',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppGamesRangeRoute = AppGamesRangeRouteImport.update({
   id: '/games/range',
   path: '/games/range',
@@ -199,6 +205,7 @@ export interface FileRoutesByFullPath {
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/moonshot': typeof AppGamesMoonshotRoute
   '/games/range': typeof AppGamesRangeRoute
+  '/games/range-v2': typeof AppGamesRangeV2Route
   '/menu/about': typeof AppMenuAboutRoute
   '/menu/account': typeof AppMenuAccountRoute
   '/menu/achievements': typeof AppMenuAchievementsRoute
@@ -229,6 +236,7 @@ export interface FileRoutesByTo {
   '/games/lucky': typeof AppGamesLuckyRoute
   '/games/moonshot': typeof AppGamesMoonshotRoute
   '/games/range': typeof AppGamesRangeRoute
+  '/games/range-v2': typeof AppGamesRangeV2Route
   '/menu/about': typeof AppMenuAboutRoute
   '/menu/account': typeof AppMenuAccountRoute
   '/menu/achievements': typeof AppMenuAchievementsRoute
@@ -261,6 +269,7 @@ export interface FileRoutesById {
   '/_app/games/lucky': typeof AppGamesLuckyRoute
   '/_app/games/moonshot': typeof AppGamesMoonshotRoute
   '/_app/games/range': typeof AppGamesRangeRoute
+  '/_app/games/range-v2': typeof AppGamesRangeV2Route
   '/_app/menu/about': typeof AppMenuAboutRoute
   '/_app/menu/account': typeof AppMenuAccountRoute
   '/_app/menu/achievements': typeof AppMenuAchievementsRoute
@@ -293,6 +302,7 @@ export interface FileRouteTypes {
     | '/games/lucky'
     | '/games/moonshot'
     | '/games/range'
+    | '/games/range-v2'
     | '/menu/about'
     | '/menu/account'
     | '/menu/achievements'
@@ -323,6 +333,7 @@ export interface FileRouteTypes {
     | '/games/lucky'
     | '/games/moonshot'
     | '/games/range'
+    | '/games/range-v2'
     | '/menu/about'
     | '/menu/account'
     | '/menu/achievements'
@@ -354,6 +365,7 @@ export interface FileRouteTypes {
     | '/_app/games/lucky'
     | '/_app/games/moonshot'
     | '/_app/games/range'
+    | '/_app/games/range-v2'
     | '/_app/menu/about'
     | '/_app/menu/account'
     | '/_app/menu/achievements'
@@ -552,6 +564,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMenuAboutRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/games/range-v2': {
+      id: '/_app/games/range-v2'
+      path: '/games/range-v2'
+      fullPath: '/games/range-v2'
+      preLoaderRoute: typeof AppGamesRangeV2RouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/games/range': {
       id: '/_app/games/range'
       path: '/games/range'
@@ -597,6 +616,7 @@ interface AppRouteChildren {
   AppGamesLuckyRoute: typeof AppGamesLuckyRoute
   AppGamesMoonshotRoute: typeof AppGamesMoonshotRoute
   AppGamesRangeRoute: typeof AppGamesRangeRoute
+  AppGamesRangeV2Route: typeof AppGamesRangeV2Route
   AppMenuAboutRoute: typeof AppMenuAboutRoute
   AppMenuAccountRoute: typeof AppMenuAccountRoute
   AppMenuAchievementsRoute: typeof AppMenuAchievementsRoute
@@ -620,6 +640,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppGamesLuckyRoute: AppGamesLuckyRoute,
   AppGamesMoonshotRoute: AppGamesMoonshotRoute,
   AppGamesRangeRoute: AppGamesRangeRoute,
+  AppGamesRangeV2Route: AppGamesRangeV2Route,
   AppMenuAboutRoute: AppMenuAboutRoute,
   AppMenuAccountRoute: AppMenuAccountRoute,
   AppMenuAchievementsRoute: AppMenuAchievementsRoute,

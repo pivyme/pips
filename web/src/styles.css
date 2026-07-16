@@ -257,6 +257,18 @@
     transform: scale(0.97);
   }
 
+  /* Inert grey twin of the commit button: still a physical key, just switched off. */
+  .btn-muted {
+    background: linear-gradient(180deg, #33322f 0%, #201f1d 100%);
+    color: rgba(255, 255, 255, 0.42);
+    font-weight: 700;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.07),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.42),
+      0 2px 0 rgba(0, 0, 0, 0.55),
+      0 10px 20px -18px rgba(0, 0, 0, 1);
+  }
+
   /* Toggle: a small physical slider, beveled with inset light instead of glow. */
   .pips-switch-control {
     position: relative;

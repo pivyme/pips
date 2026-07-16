@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Activity, CandlestickChart, Dices, Rocket, Target } from 'lucide-react'
+import { Activity, CandlestickChart, Dices, Layers, Rocket, Target } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useCallback } from 'react'
 import { useConsoleControls } from '@/components/console/controls'
@@ -34,6 +34,7 @@ type GameDef = { to: string; icon: LucideIcon; name: string; tag: string }
 const GAMES: ReadonlyArray<GameDef> = [
   { to: '/games/lucky', icon: Dices, name: 'I Feel Lucky', tag: 'Spin. Win. Cash out.' },
   { to: '/games/range', icon: Target, name: 'Range', tag: 'Call the zone. Tighter pays more.' },
+  { to: '/games/range-v2', icon: Layers, name: 'Range V2', tag: 'Stack bands. Never wait a round.' },
   { to: '/games/moonshot', icon: Rocket, name: 'Moonshot', tag: 'Long or short. Reach further, win bigger.' },
 ]
 

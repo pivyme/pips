@@ -26,6 +26,20 @@ export type BandOverlay =
   // `confirming` is the ~1s mint-landing window: shows the resolved band with a soft pulse, no win/lose verdict yet.
   | { lower: number; upper: number; locked: true; sealed?: boolean; confirming?: boolean }
 
+// Live chart geometry, published each paint so a DOM overlay (the crowd layer) can pin nodes to the
+// price line in the canvas's coordinate space. One object, mutated in place, never reallocated.
+// Consumer maps a price to y with: topPad + (top - price) / span * plotH.
+export interface ChartGeometry {
+  w: number // css px width
+  h: number // css px height
+  nowX: number // x of the leading edge (the "now" dot)
+  top: number // price at the top of the visible window
+  span: number // price span across plotH
+  plotH: number // plotted height in px (h minus top/bottom pad)
+  topPad: number // px inset above the plot
+  price: number // live eased leading price (matches the now dot)
+}
+
 export interface ChartOverlays {
   // Entry: a clean reference line at the price you got in, faded in when a round opens.
   entry?: number
@@ -33,6 +47,11 @@ export interface ChartOverlays {
   // winning half shaded green (brighter when the live price is inside).
   target?: { price: number; side: 'up' | 'down' }
   band?: BandOverlay
+  // Range-v2 multiplay: concurrent locked bands rendered as one aggregate "win zone" in the forward zone,
+  // shaded by how many cover each price (the chips own the per-position numbers). Settled ones flash their verdict.
+  bands?: Array<{ lower: number; upper: number; state?: 'live' | 'won' | 'lost' }>
+  // Range-v2 aim: where the NEXT play's band would land, a live ±pct bracket tracking the price (amber, dashed).
+  aim?: { pct: number; tag?: string }
   // Exact settled RESULT price after oracle.settlement_price exists.
   settle?: number
   boxes?: ChartBox[]
@@ -51,6 +70,8 @@ interface ChartProps {
   // The chart's eased leading price, mirrored here every frame, so a readout can track the line at
   // 60fps instead of the ~1s raw onPrice ticks.
   livePriceRef?: { current: number }
+  // Published geometry snapshot each paint, so a DOM overlay can pin to the price line (crowd layer).
+  geometryRef?: { current: ChartGeometry | null }
   // A known current price to paint from immediately on mount, instead of a blank shimmer while the
   // stream warms up. Only seeds the first frame; the stream then drives the real leading edge.
   initialPrice?: number
@@ -63,6 +84,10 @@ interface ChartProps {
   // The leading-edge price + momentum readout by the dot; off hides the number (masked,
   // not-yet-selected charts in Lucky's stack), leaving just the line + dot.
   showPriceTag?: boolean
+  // Settlement freeze: at the buzzer the round's price is fixed on-chain, so the line must stop chasing
+  // live ticks. Holds the tip at the buzzer value, then eases it onto overlays.settle (the exact on-chain
+  // RESULT) so the dot lands on the result line instead of drifting past it.
+  frozen?: boolean
 }
 
 type Particle = { x: number; y: number; vx: number; vy: number; born: number; color: string }
@@ -144,7 +169,7 @@ function seedHistory(price: number, tNow: number, stepVol: number, maxDev: numbe
   return out
 }
 
-export function Chart({ asset, overlays, height, className, onPrice, livePriceRef, initialPrice, onError, onTap, degen = true, showPriceTag = true }: ChartProps) {
+export function Chart({ asset, overlays, height, className, onPrice, livePriceRef, geometryRef, initialPrice, onError, onTap, degen = true, showPriceTag = true, frozen = false }: ChartProps) {
   const reduced = useReducedMotion()
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -170,19 +195,24 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
   const reducedRef = useRef(reduced)
   const degenRef = useRef(degen)
   const showPriceTagRef = useRef(showPriceTag)
+  const frozenRef = useRef(frozen)
   const sizeRef = useRef<{ w: number; h: number }>({ w: 0, h: height ?? 0 })
   const rimRef = useRef(12) // rim-safe inset (px) for edge text, read from --screen-rim per resize
   const onPriceRef = useRef(onPrice)
   const onTapRef = useRef(onTap)
   const liveOutRef = useRef(livePriceRef)
+  const geomOutRef = useRef(geometryRef)
+  const geomSnap = useRef<ChartGeometry>({ w: 0, h: 0, nowX: 0, top: 0, span: 1, plotH: 0, topPad: TOP_PAD, price: 0 })
 
   overlaysRef.current = overlays
   reducedRef.current = reduced
   degenRef.current = degen
   showPriceTagRef.current = showPriceTag
+  frozenRef.current = frozen
   onPriceRef.current = onPrice
   onTapRef.current = onTap
   liveOutRef.current = livePriceRef
+  geomOutRef.current = geometryRef
 
   // Pointer-down -> price at that height, using the live eased range; only y matters, time (x) is irrelevant to which box is hit.
   const handleTap = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -294,8 +324,10 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       const ov = overlaysRef.current
       const hasBoxes = Boolean(ov?.boxes?.length)
       const hasBand = Boolean(ov?.band)
-      // Leave room on the right for a forward zone (band or boxes); else ride near the edge.
-      const nowX = hasBoxes || hasBand ? w * 0.58 : w * 0.92
+      const hasBands = Boolean(ov?.bands?.length)
+      const hasAim = Boolean(ov?.aim)
+      // Leave room on the right for a forward zone (band, boxes, multiplay lanes, or the aim bracket); else ride near the edge.
+      const nowX = hasBoxes || hasBand || hasBands || hasAim ? w * 0.58 : w * 0.92
       const band = resolveBand()
 
       // Vertical content extent: visible points + the live edge + every overlay bound.
@@ -323,6 +355,20 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
         for (const b of ov.boxes) {
           consider(b.lower)
           consider(b.upper)
+        }
+      }
+      if (ov?.bands) {
+        for (const b of ov.bands) {
+          consider(b.lower)
+          consider(b.upper)
+        }
+      }
+      if (ov?.aim) {
+        const c = display.current
+        if (Number.isFinite(c) && c > 0) {
+          const half = (c * ov.aim.pct) / 100
+          consider(c - half)
+          consider(c + half)
         }
       }
       if (ov?.markers) for (const m of ov.markers) consider(m.p)
@@ -370,6 +416,20 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       const plotH = h - TOP_PAD - BOT_PAD
       const top = center + half
       const y = (p: number) => TOP_PAD + (top - p) / span * plotH
+
+      // Publish geometry for the DOM crowd overlay (pins avatars to the price line). Mutate one object, no alloc.
+      if (geomOutRef.current) {
+        const g = geomSnap.current
+        g.w = w
+        g.h = h
+        g.nowX = nowX
+        g.top = top
+        g.span = span
+        g.plotH = plotH
+        g.topPad = TOP_PAD
+        g.price = display.current
+        geomOutRef.current.current = g
+      }
 
       const entryTarget = ov?.entry != null ? 1 : 0
       if (continuous) entryReveal.current += (entryTarget - entryReveal.current) * FILL_SMOOTH
@@ -550,6 +610,13 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     ro.observe(wrap)
     resize()
 
+    // The exact on-chain settlement price once the RESULT is known (finite, positive), else null. The frozen
+    // leading edge eases onto this so the dot lands on the RESULT line instead of the display feed's drift.
+    const settlePin = (): number | null => {
+      const s = overlaysRef.current?.settle
+      return s != null && Number.isFinite(s) && s > 0 ? s : null
+    }
+
     let raf = 0
     let lastNow = 0
     const loop = (now: number) => {
@@ -557,6 +624,9 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       const dt = lastNow ? Math.min(now - lastNow, 100) : 16
       lastNow = now
       const k = 1 - Math.exp(-dt / EASE_TAU_MS)
+      // Settled: pull the tip onto the on-chain RESULT. onTick holds target while frozen, so this wins.
+      const pin = settlePin()
+      if (pin != null) target.current = pin
       const d = display.current
       display.current = d + (target.current - d) * k
       paint(now)
@@ -570,6 +640,19 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       // First tick seeds the warm-up history + fits the frame (unless already seeded from initialPrice).
       // The leading edge is the real price; real ticks scroll in over the seed and clear it within WINDOW_MS.
       if (!seeded.current) seedAt(p, tNow)
+      // Frozen at the buzzer (or settled): the round's price is fixed on-chain, so stop chasing live ticks.
+      // The tip holds its buzzer value, then the loop eases it onto the settle pin (RESULT), never past it.
+      if (frozenRef.current || settlePin() != null) {
+        if (reducedRef.current) {
+          const pin = settlePin()
+          if (pin != null) {
+            target.current = pin
+            display.current = pin
+            paint(performance.now())
+          }
+        }
+        return
+      }
       // Momentum swing -> degen shake + spark burst (color follows the move's direction).
       const move = lastTickP.current ? (p - lastTickP.current) / lastTickP.current : 0
       lastTickP.current = p
@@ -662,6 +745,93 @@ function drawOverlays(
     ctx.fillStyle = withAlpha(C.text, 0.7)
     ctx.fillText(formatPrice(band.upper), labelLX, top - 7)
     ctx.fillText(formatPrice(band.lower), labelLX, bot + 7)
+    ctx.restore()
+  }
+
+  // Range-v2 multiplay: no per-band lanes or tags (the chips own the numbers). The forward zone is one
+  // aggregate "win zone" shaded by how many live bands cover each price level, so overlapping bands read as a
+  // single cloud that deepens where more bands agree, never a stack of muddy rectangles. Settled bands flash on top.
+  if (ov?.bands?.length) {
+    const fx = nowX
+    const live = ov.bands.filter((b) => b.state !== 'won' && b.state !== 'lost')
+    const settled = ov.bands.filter((b) => b.state === 'won' || b.state === 'lost')
+    ctx.save()
+    if (live.length) {
+      // Sweep the unique band edges into segments; each segment's green alpha scales with its coverage count.
+      const edges = Array.from(new Set(live.flatMap((b) => [b.lower, b.upper]))).sort((a, z) => a - z)
+      for (let i = 0; i < edges.length - 1; i++) {
+        const mid = (edges[i] + edges[i + 1]) / 2
+        let cov = 0
+        for (const b of live) if (mid > b.lower && mid < b.upper) cov++
+        if (cov === 0) continue
+        ctx.fillStyle = withAlpha(C.up, Math.min(0.34, 0.07 + cov * 0.055))
+        ctx.fillRect(fx, y(edges[i + 1]), w - fx, y(edges[i]) - y(edges[i + 1]))
+      }
+      // Soft dashed boundary on the union's outer edges so the zone has a defined top and bottom.
+      const lo = edges[0]
+      const hi = edges[edges.length - 1]
+      ctx.lineWidth = 1
+      ctx.setLineDash([4, 4])
+      ctx.strokeStyle = withAlpha(C.up, 0.5)
+      for (const p of [lo, hi]) {
+        ctx.beginPath()
+        ctx.moveTo(fx, y(p))
+        ctx.lineTo(w, y(p))
+        ctx.stroke()
+      }
+      ctx.setLineDash([])
+    }
+    // Settled bands: a brief verdict flash (green won / red lost) on top of the live cloud, then they sweep out.
+    for (const b of settled) {
+      const top = y(b.upper)
+      const bot = y(b.lower)
+      const col = b.state === 'won' ? C.up : C.down
+      ctx.fillStyle = withAlpha(col, b.state === 'won' ? 0.24 : 0.14)
+      ctx.fillRect(fx, top, w - fx, bot - top)
+      ctx.lineWidth = 1.6
+      ctx.strokeStyle = withAlpha(col, 0.9)
+      for (const yy of [top, bot]) {
+        ctx.beginPath()
+        ctx.moveTo(fx, yy)
+        ctx.lineTo(w, yy)
+        ctx.stroke()
+      }
+    }
+    ctx.restore()
+  }
+
+  // Aim preview: where your NEXT band lands, a live ±pct bracket around the price (amber, dashed, with a
+  // left spine at the now-dot so it reads as a gate about to drop). Distinct from the open lanes; hidden at MAX.
+  if (ov?.aim && price > 0) {
+    const half = (price * ov.aim.pct) / 100
+    const top = y(price + half)
+    const bot = y(price - half)
+    const fx = nowX
+    ctx.save()
+    ctx.fillStyle = withAlpha(C.brand, 0.05)
+    ctx.fillRect(fx, top, w - fx, bot - top)
+    ctx.lineWidth = 1.2
+    ctx.setLineDash([3, 4])
+    ctx.strokeStyle = withAlpha(C.brand, 0.72)
+    ctx.beginPath()
+    ctx.moveTo(fx, top)
+    ctx.lineTo(w, top)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(fx, bot)
+    ctx.lineTo(w, bot)
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.lineWidth = 1.4
+    ctx.beginPath()
+    ctx.moveTo(fx, top)
+    ctx.lineTo(fx, bot)
+    ctx.stroke()
+    ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'right'
+    ctx.fillStyle = withAlpha(C.brand, 0.95)
+    ctx.fillText(ov.aim.tag ?? 'NEXT', w - rim - 2, clampLabelY(top - 8))
     ctx.restore()
   }
 

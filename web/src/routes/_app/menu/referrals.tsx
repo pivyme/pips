@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Check, Coins, Copy, ExternalLink, MoreHorizontal, X } from 'lucide-react'
+import { Check, Copy, ExternalLink, MoreHorizontal, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { MenuScreen, ScreenError } from '@/components/menu/shared'
 import { Modal, useOverlayState } from '@/ui/Modal'
@@ -11,7 +11,7 @@ import { buildReferralLink } from '@/lib/referral'
 import { explorerTxUrl } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
-import { formatStringToNumericDecimals } from '@/utils/format'
+import { displayHandle, formatStringToNumericDecimals } from '@/utils/format'
 import { cnm } from '@/utils/style'
 
 // Referrals + revenue share: your link, who joined, and 25% of their trading fees, earned forever and
@@ -103,7 +103,7 @@ function ReferralsScreen() {
 
         {q.isLoading ? (
           <div className="flex flex-col gap-6">
-            <div className="shimmer h-[228px] rounded-card" />
+            <div className="shimmer h-[156px] rounded-card" />
             <div className="shimmer h-[132px] rounded-card" />
           </div>
         ) : q.isError || !info ? (
@@ -113,52 +113,43 @@ function ReferralsScreen() {
             {/* Earnings hero: the money moment. Amber inner glow, the claimable balance big and bright,
                 a Claim button, then a summary strip of friends / earned / claimed. */}
             <div
-              className="rounded-card border border-brand-500/25 p-5"
+              className="rounded-card border border-brand-500/25 p-4"
               style={{
                 background: 'linear-gradient(180deg,#1c1810 0%,#141109 56%,#0c0a05 100%)',
                 boxShadow:
                   'inset 0 0 64px rgba(255,192,22,0.20), inset 0 1px 0 rgba(255,224,138,0.22), inset 0 0 0 1px rgba(255,192,22,0.10), 0 22px 44px -30px rgba(0,0,0,0.95)',
               }}
             >
-              <div className="flex items-center gap-2">
+              <div className="flex items-baseline justify-between gap-3">
                 <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-brand-300/80">
                   Claimable rewards
                 </span>
+                <span className="text-[12px] font-semibold text-brand-300/60">25% of trading fees</span>
               </div>
-              <div className="mt-2 flex items-end justify-between gap-3">
-                <div className="tnum text-[46px] font-black leading-none text-white">{usd(info.claimable)}</div>
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-500/15 text-brand-400 ring-1 ring-brand-500/25">
-                  <Coins className="h-6 w-6" strokeWidth={2.4} />
+              {/* Amount + Claim share one row: the number leads, the button sits right. Compact. */}
+              <div className="mt-2 flex items-center justify-between gap-4">
+                <div className="tnum text-[38px] font-black leading-none text-white">{usd(info.claimable)}</div>
+                <div className="relative shrink-0">
+                  <button
+                    type="button"
+                    disabled={!canClaim || claiming}
+                    className={cnm(
+                      'pointer-events-none flex h-[46px] items-center justify-center rounded-xl px-6 text-[15px] font-extrabold',
+                      canClaim ? 'btn-primary' : 'btn-muted',
+                    )}
+                  >
+                    {claiming ? 'Claiming…' : 'Claim'}
+                  </button>
+                  <HapticOverlay
+                    className="absolute inset-0 rounded-xl"
+                    preset="success"
+                    disabled={!canClaim || claiming}
+                    onTap={claim}
+                  />
                 </div>
               </div>
-              <p className="mt-2 text-[13px] leading-snug text-brand-300/70">
-                25% of your referrals&apos; trading fees.
-              </p>
-
-              {/* Claim button, faucet-claim pattern: HapticOverlay drives the tap so it feels physical. */}
-              <div className="relative mt-4">
-                <button
-                  type="button"
-                  disabled={!canClaim || claiming}
-                  className={cnm(
-                    'pointer-events-none flex h-[52px] w-full items-center justify-center gap-2 rounded-2xl text-[16px] font-bold transition-transform active:scale-[0.99]',
-                    canClaim
-                      ? 'bg-brand-500 text-black shadow-[0_10px_28px_-12px_rgba(255,192,22,0.7)]'
-                      : 'bg-white/[0.06] text-white/40',
-                  )}
-                >
-                  <Coins className="h-[18px] w-[18px]" strokeWidth={2.6} />
-                  {claiming ? 'Claiming…' : canClaim ? `Claim ${usd(info.claimable)}` : 'Claim'}
-                </button>
-                <HapticOverlay
-                  className="absolute inset-0 rounded-2xl"
-                  preset="success"
-                  disabled={!canClaim || claiming}
-                  onTap={claim}
-                />
-              </div>
               {!canClaim && (
-                <p className="mt-2.5 text-center text-[13px] leading-snug text-brand-300/60">
+                <p className="mt-2.5 text-[12px] leading-snug text-brand-300/60">
                   {claimable > 0
                     ? `${usd(info.claimable)} so far. Reach ${usd(info.minClaim)} to claim.`
                     : `Earn ${usd(info.minClaim)} to make your first claim.`}
@@ -166,21 +157,21 @@ function ReferralsScreen() {
               )}
 
               {/* Summary strip: friends brought in, lifetime earned, lifetime claimed. */}
-              <div className="mt-5 grid grid-cols-3 divide-x divide-white/[0.08] overflow-hidden rounded-xl border border-white/[0.06] bg-black/30">
+              <div className="mt-4 grid grid-cols-3 divide-x divide-white/[0.08] overflow-hidden rounded-xl border border-white/[0.06] bg-black/30">
                 <SummaryCell label="Friends" value={String(info.count)} />
                 <SummaryCell label="Earned" value={usd(info.totalEarned)} gold />
                 <SummaryCell label="Claimed" value={usd(info.totalClaimed)} />
               </div>
             </div>
 
-            {/* The invite link: a highlighted amber-bezeled slot (thick yellow border + skeuo bevel), so
-                the share action reads as a physical control, not a flat card. */}
+            {/* The invite link: clean dark skeuo material (matches the list rows), highlighted only by a
+                crisp amber edge, same language as the app's selected/active surface. No amber flood. */}
             <div
-              className="rounded-card border-2 border-brand-500/55 p-5"
+              className="rounded-card p-5"
               style={{
-                background: 'linear-gradient(180deg,#17140d 0%,#100d08 60%,#0b0906 100%)',
-                boxShadow:
-                  'inset 0 1px 0 rgba(255,224,138,0.20), inset 0 0 0 1px rgba(255,192,22,0.08), inset 0 -12px 40px -24px rgba(255,192,22,0.22), 0 14px 34px -22px rgba(0,0,0,0.95)',
+                background: 'linear-gradient(180deg, #111110 0%, #0d0d0d 56%, #090909 100%)',
+                border: '1.5px solid rgba(255,192,22,0.45)',
+                boxShadow: 'inset 0 0 0 1px rgba(255,192,22,0.10), inset 0 1px 0 #242422, inset 0 -1px 4px rgba(0,0,0,0.46), 0 1px 0 #050505',
               }}
             >
               <div className="flex items-center justify-between gap-3">
@@ -192,23 +183,19 @@ function ReferralsScreen() {
                     fmt.open()
                   }}
                   aria-label="Link format"
-                  className="-mr-1.5 -mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/12 text-brand-300 ring-1 ring-brand-500/25 transition-transform active:scale-90"
+                  className="-mr-1.5 -mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-white/70 transition-transform active:scale-90"
                 >
                   <MoreHorizontal className="h-5 w-5" strokeWidth={2.6} />
                 </button>
               </div>
 
-              {/* Tap the whole pill to copy. Amber bezel + inner bevel so it pops off the dark slot. */}
+              {/* Tap the whole pill to copy. Neutral dark, so the card's amber edge is the only highlight. */}
               <button
                 onClick={copy}
-                className="mt-4 flex w-full items-center gap-2 rounded-full border-2 border-brand-500/45 py-3 pl-5 pr-2.5 text-left transition-transform active:scale-[0.99]"
-                style={{
-                  background: 'linear-gradient(180deg,rgba(255,192,22,0.10) 0%,rgba(255,192,22,0.03) 100%)',
-                  boxShadow: 'inset 0 1px 0 rgba(255,224,138,0.22), 0 6px 18px -14px rgba(0,0,0,0.9)',
-                }}
+                className="mt-4 flex w-full items-center gap-2 rounded-full border border-white/[0.12] bg-white/[0.05] py-3 pl-5 pr-2.5 text-left transition-transform active:scale-[0.99]"
               >
-                <span className="tnum min-w-0 flex-1 truncate text-[15px] font-bold text-white">{link}</span>
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/15 text-brand-300 ring-1 ring-brand-500/25">
+                <span className="tnum min-w-0 flex-1 truncate text-[15px] font-semibold text-white/90">{link}</span>
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white/70">
                   {copied ? (
                     <Check className="h-[18px] w-[18px] text-up" strokeWidth={2.8} />
                   ) : (
@@ -233,7 +220,7 @@ function ReferralsScreen() {
                   {info.referrals.map((r, i) => (
                     <div key={`${r.handle}-${i}`} className="surface-skeuo flex items-center justify-between gap-3 rounded-card p-4">
                       <div className="min-w-0">
-                        <div className="truncate text-[15px] font-bold">{r.handle}</div>
+                        <div className="truncate text-[15px] font-bold">{displayHandle({ username: r.handle })}</div>
                         <div className="text-sm text-text-3">
                           Joined {new Date(r.joinedAt).toLocaleDateString()} · {r.plays} plays
                         </div>
