@@ -1082,7 +1082,7 @@ const LAB: Array<LabItem> = [
   { id: 'cluster', name: 'Gauge cluster', hint: 'Four readouts at once: lev, odds, size, risk.', cat: 'gauge', render: (f) => <GaugeCluster frozen={f} /> },
   { id: 'radial-margin', name: 'Margin meter', hint: 'Ring + big number. Margin used.', cat: 'gauge', render: (f) => <RadialMeter hue="violet" value={0.74} display="74%" sub="MARGIN" frozen={f} /> },
   { id: 'radial-streak', name: 'Streak meter', hint: 'Win streak / progress.', cat: 'gauge', render: (f) => <RadialMeter hue="amber" value={0.6} display="x4" sub="STREAK" frozen={f} /> },
-  { id: 'betfader', name: 'Bet amount', hint: 'On-screen twin of the knob. Stake slider.', cat: 'gauge', render: (f) => <BetFader hue="amber" value={0.62} frozen={f} /> },
+  { id: 'betfader', name: 'Play amount', hint: 'On-screen twin of the knob. Amount slider.', cat: 'gauge', render: (f) => <BetFader hue="amber" value={0.62} frozen={f} /> },
   { id: 'exposure', name: 'Long / short', hint: 'Net exposure, segmented.', cat: 'gauge', render: (f) => <ExposureBars frozen={f} /> },
 
   // Timers

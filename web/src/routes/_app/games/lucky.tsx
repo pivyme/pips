@@ -415,7 +415,7 @@ function LuckyScreen() {
   const resultColor: 'up' | 'down' = resultPositive ? 'up' : 'down'
   useConsoleControls({
     numberWheel: {
-      label: 'BET',
+      label: 'AMOUNT',
       min: 0,
       max: maxBetIdx,
       step: 1,
@@ -606,7 +606,7 @@ function LuckyScreen() {
                   <div className="text-[22px] font-extrabold uppercase leading-none tracking-[0.02em] text-text">I Feel Lucky</div>
                   <div className="mt-3 flex items-baseline gap-2">
                     <span className="tnum text-[30px] font-extrabold leading-none text-brand-500">${bet}</span>
-                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-text-3">Bet</span>
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-text-3">Amount</span>
                   </div>
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
                     Press the button on the right to spin
@@ -632,7 +632,7 @@ function LuckyScreen() {
           lines={[
             ['SPIN', 'Deals a direction (up or down) and a multiplier.'],
             ['TARGET', 'The price to reach, in your direction. A 2x sits just past your entry, so a small move your way wins. Bigger multipliers sit further out.'],
-            ['WIN', 'Land past the target at the buzzer to win bet x multiplier. A touch on the way does not count, only where it ends.'],
+            ['WIN', 'Land past the target at the buzzer to win your play amount x the multiplier. A touch on the way does not count, only where it ends.'],
             ['CASH OUT', 'Take the live value any time before the buzzer. Ahead? Cash out to lock it in before it can turn.'],
           ]}
         />

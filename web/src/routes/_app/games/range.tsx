@@ -877,7 +877,7 @@ function RangeScreen() {
                     {idleMult.toFixed(2)}x
                   </div>
                   <div className="mt-2.5 grid grid-cols-2 gap-x-3">
-                    <Cell label="Stake" value={`$${stake}`} />
+                    <Cell label="Amount" value={`$${stake}`} />
                     <Cell label="Band" value={`±${halfPct.toFixed(1)}%`} />
                   </div>
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
@@ -896,7 +896,7 @@ function RangeScreen() {
           lines={[
             ['BAND', 'Turn the knob to size your price band. Tighter pays more.'],
             ['PLAY', 'Locks the band around the live price.'],
-            ['WIN', 'Land inside the band at the buzzer to win stake × multiple.'],
+            ['WIN', 'Land inside the band at the buzzer to win your play amount × the multiple.'],
             ['CASH OUT', 'Take the live value any time before the buzzer.'],
           ]}
         />

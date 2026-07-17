@@ -7,6 +7,7 @@
 //
 // Verified live against li.quest on 2026-07-17. Re-probe before changing the catalog, LI.FI moves.
 
+import { normalizeStructTag } from '@mysten/sui/utils';
 import {
   LIFI_API_URL,
   LIFI_API_KEY,
@@ -14,6 +15,7 @@ import {
   LIFI_TIMEOUT_MS,
   DEPOSIT_SLIPPAGE,
 } from '../config/main-config.ts';
+import { DUSDC_TYPE } from './sui/config.ts';
 import type { DepositQuoteDTO } from '../types/api.ts';
 
 // Sui is a real LI.FI chain (chainType MVM), but GET /v1/chains hides it unless you pass chainTypes=MVM.
@@ -49,7 +51,7 @@ const PLACEHOLDER_FROM: Record<'EVM' | 'SVM', string> = {
   SVM: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
 };
 
-export type LifiErrorCode = 'NO_ROUTE' | 'BAD_PAIR' | 'BAD_AMOUNT' | 'LIFI_UNAVAILABLE';
+export type LifiErrorCode = 'NO_ROUTE' | 'BAD_PAIR' | 'BAD_AMOUNT' | 'LIFI_UNAVAILABLE' | 'CHIP_TYPE_MISMATCH';
 
 export class LifiError extends Error {
   constructor(
@@ -62,7 +64,30 @@ export class LifiError extends Error {
 }
 
 export const httpStatusForLifiError = (code: LifiErrorCode): number =>
-  code === 'LIFI_UNAVAILABLE' ? 502 : code === 'NO_ROUTE' ? 404 : 400;
+  code === 'LIFI_UNAVAILABLE' ? 502 : code === 'CHIP_TYPE_MISMATCH' ? 503 : code === 'NO_ROUTE' ? 404 : 400;
+
+// Fail-safe for the whole integration: the bridge lands whatever Sui coin LI.FI calls USDC, but chips are
+// spendable only as DUSDC_TYPE (the mint PTB + balance filter on exactly that type). If mainnet's chip type
+// is not byte-for-byte LI.FI's Sui USDC, a real deposit would arrive as an invisible, unusable coin. So
+// before handing back a SIGNABLE route we assert the two types match and refuse loudly if they don't,
+// rather than let money bridge into a black hole. Only runs on the execute path, which is mainnet-only, so
+// it never touches the testnet preview where the chip is DUSDC and a mismatch is expected by design.
+function assertBridgeLandsChipType(deliveredType: string): void {
+  let delivered: string | null = null;
+  let chip: string | null = null;
+  try {
+    delivered = normalizeStructTag(deliveredType);
+    chip = DUSDC_TYPE ? normalizeStructTag(DUSDC_TYPE) : null;
+  } catch {
+    // A non-parseable type on either side is itself a mismatch, treat it as one.
+  }
+  if (!chip || delivered !== chip) {
+    throw new LifiError(
+      'CHIP_TYPE_MISMATCH',
+      'Cross-chain deposits are temporarily unavailable. Please try the faucet or a native transfer.',
+    );
+  }
+}
 
 export const networkLabel = (network: string): string => CHAINS[network]?.label ?? network;
 export const isKnownNetwork = (network: string): boolean => network in CHAINS;
@@ -333,7 +358,11 @@ export interface ExecutableStep {
 // sign transactionRequest directly without a re-fetch. Never call this off the read-only preview path.
 export async function getExecutableStep(input: QuoteInput): Promise<ExecutableStep> {
   if (!input.fromAddress) throw new LifiError('BAD_PAIR', 'A connected source wallet is required.');
-  const { params } = await buildQuoteParams(input);
+  const { toToken, params } = await buildQuoteParams(input);
+
+  // Never sign a route that would deliver a coin the balance/mint cannot see. Mainnet-only path.
+  assertBridgeLandsChipType(toToken.address);
+
   const step = await lifiGet<Record<string, unknown>>('/quote', params);
 
   // Guard the field the SDK needs to sign without re-fetching: if LI.FI ever omits transactionRequest,

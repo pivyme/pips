@@ -50,9 +50,9 @@ export const httpStatusForPlayError = (code: PlayErrorCode): number => {
 
 export function parseStake(stake: string | number): bigint {
   const n = typeof stake === 'number' ? stake : Number(stake);
-  if (!Number.isFinite(n) || n <= 0) throw new PlayError('INVALID_PARAMS', 'Enter a valid bet amount');
-  if (n < MIN_STAKE) throw new PlayError('INVALID_PARAMS', `Minimum bet is $${MIN_STAKE}`);
-  if (n > MAX_STAKE) throw new PlayError('INVALID_PARAMS', `Maximum bet is $${MAX_STAKE}`);
+  if (!Number.isFinite(n) || n <= 0) throw new PlayError('INVALID_PARAMS', 'Enter a valid play amount');
+  if (n < MIN_STAKE) throw new PlayError('INVALID_PARAMS', `Minimum play amount is $${MIN_STAKE}`);
+  if (n > MAX_STAKE) throw new PlayError('INVALID_PARAMS', `Maximum play amount is $${MAX_STAKE}`);
   return toDusdcRaw(n);
 }
 

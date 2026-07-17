@@ -29,6 +29,8 @@ import { betLadder } from '@/lib/sui/config'
 
 // Main / Action1 / Action2 / MenuTab / HomeTab, matching ConsoleShell's DOM equivalents.
 const BTN_HAPTIC: HapticPreset[] = ['rigid', 'medium', 'medium', 'selection', 'selection']
+// data-tour-anchor role per physical button, so the onboarding tour can find PLAY / MENU by the projected DOM overlay.
+const BTN_ROLE = ['play', 'action1', 'action2', 'menu', 'home'] as const
 
 // The 3D handheld, driven by the console controls registry. A game binds via useConsoleControls(), which paints live labels on the buttons/knob and dispatches physical input to it.
 // The game's screen content (the chart) renders in an HTML layer masked to the screen cutout by the device body.
@@ -120,6 +122,8 @@ export default function ConsoleCanvas({
   // Real DOM overlays for the 5 physical buttons, positioned over their projected canvas rects. iOS Safari only grants its native Taptic tick to a genuine tap on a real switch element
   // (never script-triggered, closed in 26.5), and these buttons are raycast-picked canvas pixels with no DOM element under the finger otherwise. See overlayPressRef below + the JSX at the bottom.
   const btnOverlayRefs = useRef<Array<HTMLInputElement | null>>([null, null, null, null, null])
+  // Invisible anchor the tour spotlights the play-amount dial through (the knob is raycast-only, no DOM overlay). Positioned by projectButtonOverlay.
+  const knobAnchorRef = useRef<HTMLDivElement>(null)
   const overlayPressRef = useRef<((bi: number) => void) | null>(null)
 
   // Fresh per render so the scene's input handlers never read a stale binding.
@@ -2052,6 +2056,38 @@ export default function ConsoleCanvas({
         el.style.width = `${maxX - minX}px`
         el.style.height = `${maxY - minY}px`
       }
+
+      // Play-amount dial tour anchor: project the knob pocket the same way, so the tour can spotlight it.
+      const kEl = knobAnchorRef.current
+      if (kEl) {
+        const kcx = wx(knobPocket.px)
+        const kcy = wy(knobPocket.py)
+        const khw = knobPocket.w / 2
+        const khh = knobPocket.h / 2
+        const kCorners: Array<[number, number]> = [
+          [kcx - khw, kcy - khh],
+          [kcx + khw, kcy - khh],
+          [kcx + khw, kcy + khh],
+          [kcx - khw, kcy + khh],
+        ]
+        let kMinX = Infinity,
+          kMinY = Infinity,
+          kMaxX = -Infinity,
+          kMaxY = -Infinity
+        for (const [cxw, cyw] of kCorners) {
+          const n = screenScratch.set(cxw, cyw, 0.2).applyMatrix4(device.matrixWorld).project(camera)
+          const x = (n.x * 0.5 + 0.5) * viewW
+          const y = (-n.y * 0.5 + 0.5) * viewH
+          if (x < kMinX) kMinX = x
+          if (x > kMaxX) kMaxX = x
+          if (y < kMinY) kMinY = y
+          if (y > kMaxY) kMaxY = y
+        }
+        kEl.style.left = `${kMinX}px`
+        kEl.style.top = `${kMinY}px`
+        kEl.style.width = `${kMaxX - kMinX}px`
+        kEl.style.height = `${kMaxY - kMinY}px`
+      }
     }
 
     // Measure the live content's vertical overflow and fold it into screenFitScale so a too-tall screen (the hub stack on a short aperture) shrinks to fit instead of clipping its lower rows. Measured at the width-only scale, then re-applied; cheap and rare, resize + structural changes only.
@@ -3065,6 +3101,7 @@ export default function ConsoleCanvas({
           beveled rim frames it. Total black so any rim seam reads as screen, not a gap. */}
       <div
         ref={screenLayerRef}
+        data-tour-anchor="screen"
         className={debug || customize ? undefined : 'console-screen-surface'}
         style={{
           position: 'absolute',
@@ -3140,6 +3177,7 @@ export default function ConsoleCanvas({
               type="checkbox"
               {...{ switch: '' }}
               aria-hidden="true"
+              data-tour-anchor={BTN_ROLE[i]}
               tabIndex={-1}
               // Press must fire on pointer-DOWN so the cap sinks, sounds, and dispatches the instant the finger lands (and holds while held), same as the keyboard + raycast paths; release() pops it on pointerup.
               // onChange stays only for the switch-toggle haptic: iOS grants its native Taptic tick solely on a genuine toggle of a real <input switch>, which lands on click.
@@ -3158,6 +3196,12 @@ export default function ConsoleCanvas({
               }}
             />
           ))}
+          <div
+            ref={knobAnchorRef}
+            data-tour-anchor="knob"
+            aria-hidden="true"
+            style={{ position: 'absolute', left: 0, top: 0, width: 0, height: 0, pointerEvents: 'none' }}
+          />
         </div>
       )}
     </div>

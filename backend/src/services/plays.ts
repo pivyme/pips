@@ -224,7 +224,7 @@ export async function createPlay(user: User, input: CreatePlayInput): Promise<Cr
     // Anything else proceeds, the background mint reads the real balance and is the source of truth.
     const cached = balCache.get(user.id);
     if (cached && Date.now() - cached.at < BAL_TTL_MS && cached.total < stakeRaw) {
-      throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that bet');
+      throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that play');
     }
     return IS_REAL_PREDICT ? await createPlayReal(user, input, stakeRaw) : await createPlayFork(user, input, stakeRaw);
   } catch (e) {

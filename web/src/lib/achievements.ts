@@ -21,7 +21,7 @@ export const ACHIEVEMENTS: Array<CatalogAchievement> = [
   { slug: 'getting_warm', name: 'Getting Warm', description: 'Play 3 times.' },
   { slug: 'high_five', name: 'High Five', description: 'Play 5 times.' },
   { slug: 'ten_club', name: 'Ten Club', description: 'Make one play above $10.' },
-  { slug: 'tiny_bet', name: 'Tiny Bet', description: 'Make one play under $5.' },
+  { slug: 'tiny_bet', name: 'Tiny Play', description: 'Make one play under $5.' },
   { slug: 'back_again', name: 'Back Again', description: 'Open the app 2 days in a row.' },
   { slug: 'daily_play', name: 'Daily Play', description: 'Complete one play in a day.' },
   { slug: 'night_shift', name: 'Night Shift', description: 'Play after 10 PM.' },

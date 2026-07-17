@@ -20,6 +20,7 @@ import { CustomizeStudio } from '@/components/console/CustomizeStudio'
 import { LandingOverlay, AttractScreen } from '@/components/console/LandingOverlay'
 import { InstallGate } from '@/components/InstallGate'
 import { UsernameScreen, ThemePicker, WelcomeScreen } from '@/components/console/Onboarding'
+import { TourProvider } from '@/components/console/tour'
 import { DEFAULT_THEME_ID, THEME_BY_ID, themeBackdrop, useConsoleTheme } from '@/components/console/themes'
 import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
@@ -195,6 +196,8 @@ function AppLayout() {
   const [onboarding, setOnboarding] = useState(false)
   const [step, setStep] = useState<OnboardingStep>('username')
   const [chosenName, setChosenName] = useState('')
+  // Latched true when a fresh account finishes onboarding, so the console tour auto-runs once on the home screen.
+  const [justOnboarded, setJustOnboarded] = useState(false)
   // Welcome (final onboarding beat) sub-state: the skin step's Done snap already lands the device at the app pose with a black screen, so welcome is pure screen content.
   // `revealed` flips after a short black hold, gating the splash content + jingle fade-in.
   const [welcomeRevealed, setWelcomeRevealed] = useState(false)
@@ -209,6 +212,7 @@ function AppLayout() {
       setStep('username')
       setChosenName('')
       setWelcomeRevealed(false)
+      setJustOnboarded(false)
     }
   }, [status])
   useEffect(() => {
@@ -239,6 +243,7 @@ function AppLayout() {
     onboardedRef.current = true
     setOnboarding(false)
     setWelcomeRevealed(false)
+    setJustOnboarded(true)
     void refresh()
   }, [refresh])
 
@@ -331,6 +336,9 @@ function AppLayout() {
         ? step !== 'customize'
         : true
 
+  // The console tour auto-runs once for a fresh account, the first time the home screen is actually visible.
+  const firstRunReady = phase === 'app' && screenVisible && justOnboarded && !isDemo()
+
   // Content mounted on the device screen per phase. Onboarding's username + welcome render on-screen; the skin step turns the screen off so the body reads cleanly.
   let deviceChild: ReactNode = null
   if (phase === 'app') {
@@ -356,6 +364,7 @@ function AppLayout() {
 
   return (
     <AchievementDetailProvider>
+      <TourProvider firstRunReady={firstRunReady}>
       <LivePresenceProvider userId={status === 'authed' ? user?.id ?? null : null}>
       <ActivePlayProvider>
       <AppFrame bg={backdrop} dimmed={phase === 'landing' && !restoring}>
@@ -431,6 +440,7 @@ function AppLayout() {
       <AchievementCelebration />
       </ActivePlayProvider>
       </LivePresenceProvider>
+      </TourProvider>
     </AchievementDetailProvider>
   )
 }

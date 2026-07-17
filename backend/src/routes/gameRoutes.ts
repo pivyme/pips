@@ -121,7 +121,7 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
 // Validate + shape the per-game body into the service input. Throws PlayError on bad params.
 function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlayInput {
   const stake = body.stake as string | number;
-  if (stake == null) throw new PlayError('INVALID_PARAMS', 'Enter a bet amount');
+  if (stake == null) throw new PlayError('INVALID_PARAMS', 'Enter a play amount');
 
   if (game === 'lucky') {
     // LUCKY takes only the bet. The reel deals asset, direction, and multiplier tier server-side.

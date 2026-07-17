@@ -1,8 +1,9 @@
-// The player card's dynamic model. Short-expiry plays have a naturally low hit rate, so leading with win rate reads
-// weak; instead the card auto-features the player's most impressive stat as the hero with a persona title. One source of truth for both StatsCard and shareCard so they can never drift.
+// The player card's model. Short-expiry plays have a naturally low hit rate, so leading with win rate reads
+// weak; instead the card auto-features the player's most impressive stat as the hero. One source of truth for
+// both StatsCard and shareCard so they can never drift.
 //
-// The card is configurable at share time (buildCardModel takes a CardConfig): net P&L is private for some, and
-// the hero + the small stat cells can each be swapped or hidden. Defaults still auto-pick the most flattering read.
+// The card auto-builds, no picker. The only knob is showNetPnl (dollar P&L is private for some). The one
+// bit of flavor is the rank chip: your standing on the global board, "#4 TOP REKT" or "#2 TOP GAINER".
 
 import type { UserStatsDTO } from '@/lib/api'
 import { formatCompactCount, formatCompactMoney } from '@/utils/format'
@@ -20,36 +21,30 @@ export interface CardStat {
   tone: CardTone
   icon?: string // the small grid cells carry a skeuo icon; the hero and Net P&L don't
 }
-export interface CardConfig {
-  hero: Kind // the big featured number
-  showNetPnl: boolean // Net P&L is private for some players
-  grid: Kind[] // the small cells, in order, 0 to 3, never including the hero
+
+// The player's global-board standing (mirror of GlobalLeaderboard.you). At most one rank is set: net-positive
+// players get gainerRank, net-negative get rektRank, flat/new get neither.
+export interface RankStanding {
+  gainerRank: number | null
+  rektRank: number | null
 }
+export interface RankBadge {
+  rank: number
+  kind: 'gainer' | 'rekt' // TOP GAINER (green) or TOP REKT (red)
+}
+
 export interface CardModel {
-  title: string | null // persona chip, e.g. "SNIPER"; null before the first play
+  rank: RankBadge | null // the leaderboard chip by the handle; null when unranked
   hero: CardStat // the big featured number
   netPnl: CardStat | null // the secondary big number, null when hidden
   grid: CardStat[] // up to three lower cells, never duplicating the hero
 }
 
-// The three stats with dedicated icons. Others render icon-less, which is fine in the grid and the sheet.
+// The three stats with dedicated icons. Others render icon-less, which is fine in the grid.
 export const KIND_ICON: Partial<Record<Kind, string>> = {
   plays: '/assets/icons/icon-plays.webp',
   roi: '/assets/icons/icon-return.webp',
   bestStreak: '/assets/icons/icon-streak.webp',
-}
-
-// Order used both for the hero fallback pick and the sheet's stat pool.
-export const ALL_KINDS: Kind[] = ['bestHit', 'roi', 'bestStreak', 'plays', 'volume', 'winRate']
-
-// Short friendly labels for the share sheet's toggle rows.
-export const KIND_LABEL: Record<Kind, string> = {
-  bestHit: 'Biggest win',
-  roi: 'Return',
-  bestStreak: 'Best streak',
-  plays: 'Plays',
-  volume: 'Volume',
-  winRate: 'Win rate',
 }
 
 // Return on lifetime wagered (netPnl / total volume). 0 when nothing has been staked.
@@ -120,48 +115,28 @@ function heroCell(kind: Kind, s: UserStatsDTO): CardStat {
   return { ...base, label, icon: undefined }
 }
 
-// A persona chip, chosen most-flattering-first. Independent of the hero.
-function pickTitle(s: UserStatsDTO): string | null {
-  if (s.gamesPlayed <= 0) return null
-  if (s.currentStreak >= 4) return 'ON FIRE'
-  if (s.bestMultiplier >= 10) return 'SNIPER'
-  if (roiOf(s) >= 0.3) return 'SHARP'
-  if (s.gamesPlayed >= 200) return 'GRINDER'
-  if (parseFloat(s.totalVolume) >= 1000) return 'HIGH ROLLER'
-  if (s.gamesPlayed < 10) return 'ROOKIE'
-  return 'TRADER'
+// The lower grid, in flattering order. Auto-filled from whatever the hero didn't take.
+const GRID_ORDER: Kind[] = ['plays', 'roi', 'bestStreak', 'bestHit', 'volume', 'winRate']
+const MAX_GRID = 3
+
+// Gainer takes priority (a player is only ever on one side); null when off both boards.
+export function rankBadge(r?: RankStanding | null): RankBadge | null {
+  if (!r) return null
+  if (r.gainerRank != null) return { rank: r.gainerRank, kind: 'gainer' }
+  if (r.rektRank != null) return { rank: r.rektRank, kind: 'rekt' }
+  return null
 }
 
-const GRID_ORDER: Kind[] = ['plays', 'roi', 'bestStreak', 'bestHit', 'volume', 'winRate']
-
-// Max small cells in the grid (matches the 3-column layout).
-export const MAX_GRID = 3
-
-// The auto card: the most flattering hero, Net P&L shown, the next three stats in the grid.
-export function defaultCardConfig(s: UserStatsDTO): CardConfig {
+export function buildCardModel(
+  s: UserStatsDTO,
+  opts?: { showNetPnl?: boolean; rank?: RankStanding | null },
+): CardModel {
   const hero = pickHeroKind(s)
   const grid = GRID_ORDER.filter((k) => k !== hero).slice(0, MAX_GRID)
-  return { hero, showNetPnl: true, grid }
-}
-
-// Clamp a (possibly persisted / stale) config back into something drawable: valid hero, unique grid kinds,
-// never the hero in the grid, capped at MAX_GRID.
-export function sanitizeConfig(c: Partial<CardConfig> | null | undefined, s: UserStatsDTO): CardConfig {
-  const base = defaultCardConfig(s)
-  const hero = c?.hero && ALL_KINDS.includes(c.hero) ? c.hero : base.hero
-  const seen = new Set<Kind>()
-  const grid = (c?.grid ?? base.grid)
-    .filter((k) => ALL_KINDS.includes(k) && k !== hero && !seen.has(k) && (seen.add(k), true))
-    .slice(0, MAX_GRID)
-  return { hero, showNetPnl: c?.showNetPnl ?? base.showNetPnl, grid }
-}
-
-export function buildCardModel(s: UserStatsDTO, config?: CardConfig): CardModel {
-  const cfg = config ?? defaultCardConfig(s)
   return {
-    title: pickTitle(s),
-    hero: heroCell(cfg.hero, s),
-    netPnl: cfg.showNetPnl ? netPnlStat(s) : null,
-    grid: cfg.grid.map((k) => statOf(k, s)),
+    rank: rankBadge(opts?.rank),
+    hero: heroCell(hero, s),
+    netPnl: (opts?.showNetPnl ?? true) ? netPnlStat(s) : null,
+    grid: grid.map((k) => statOf(k, s)),
   }
 }

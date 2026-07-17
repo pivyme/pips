@@ -91,7 +91,7 @@ export function TradeConfirmSheet({
   const reduced = useReducedMotion()
   const pct = Math.max(0, Math.min(100, (remainingMs / CONFIRM_WINDOW_MS) * 100))
   const rows: Array<[string, string]> = [
-    ['Stake', `$${money(details.stake)}`],
+    ['Play amount', `$${money(details.stake)}`],
     ['Play', details.headline],
   ]
   if (details.multiplier != null) rows.push(['Mult', fmtMult(details.multiplier)])

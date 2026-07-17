@@ -439,7 +439,7 @@ export function RadialMeter({
 }
 
 export function BetFader({ hue = 'amber', frozen, className, value = 0.62 }: VizProps & { value?: number }) {
-  // Bet amount slider, the knob's on-screen twin.
+  // Play amount slider, the knob's on-screen twin.
   const c = HUE[hue]
   const x0 = 18
   const x1 = 222
@@ -447,7 +447,7 @@ export function BetFader({ hue = 'amber', frozen, className, value = 0.62 }: Viz
   return (
     <Svg className={className}>
       <Tag x={x0} y={34}>
-        BET AMOUNT
+        PLAY AMOUNT
       </Tag>
       {Array.from({ length: 21 }, (_, i) => {
         const x = x0 + (i / 20) * (x1 - x0)

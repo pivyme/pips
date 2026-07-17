@@ -563,7 +563,7 @@ function MoonshotScreen() {
                     </span>
                   </div>
                   <div className="mt-2.5 grid grid-cols-2 gap-x-3">
-                    <Cell label="Bet" value={`$${stake}`} />
+                    <Cell label="Amount" value={`$${stake}`} />
                     {/* Net of the house rake, so this never over-promises the aimed win (config.ts). */}
                     <Cell label="Win up to" value={`$${money(netStakeUsd(stake) * reach)}`} />
                   </div>
@@ -592,7 +592,7 @@ function MoonshotScreen() {
           lines={[
             ['AIM', 'Knob up to go LONG, down to go SHORT. Further out, bigger target and multiple.'],
             ['MARKET', 'Right button switches the market you call.'],
-            ['WIN', 'End past your target at the buzzer to win bet × multiple.'],
+            ['WIN', 'End past your target at the buzzer to win your play amount × the multiple.'],
             ['CASH OUT', 'Take the live value any time before the buzzer.'],
           ]}
         />

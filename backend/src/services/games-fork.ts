@@ -156,7 +156,7 @@ async function solveQuantity(
     guard++;
   }
 
-  if (amounts.cost > stakeRaw) throw new PlayError('MINT_FAILED', 'Could not size this play within your stake');
+  if (amounts.cost > stakeRaw) throw new PlayError('MINT_FAILED', 'Could not size this play within your amount');
   return { quantity, amounts };
 }
 

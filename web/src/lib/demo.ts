@@ -567,8 +567,8 @@ function closePlay(id: string, mode: 'cashout' | 'settle'): { play: PlayDTO; unl
 // === Play creation ===
 
 function ensureBalance(stake: number): void {
-  if (stake <= 0) throw new ApiError('PLAY_FAILED', 'That play did not go through. Your bet is safe.', 400)
-  if (stake > state.balance) throw new ApiError('INSUFFICIENT_DUSDC', 'Not enough chips for that bet.', 400)
+  if (stake <= 0) throw new ApiError('PLAY_FAILED', 'That play did not go through. Your play is safe.', 400)
+  if (stake > state.balance) throw new ApiError('INSUFFICIENT_DUSDC', 'Not enough chips for that play.', 400)
 }
 
 function registerOpen(p: PlayDTO, c: MarkCtx): void {
@@ -1107,7 +1107,7 @@ export const demoApi = {
 
   getPlay: async (playId: string) => {
     const play = byId.get(playId)
-    if (!play) throw new ApiError('PLAY_FAILED', 'That play did not go through. Your bet is safe.', 404)
+    if (!play) throw new ApiError('PLAY_FAILED', 'That play did not go through. Your play is safe.', 404)
     return { play }
   },
 

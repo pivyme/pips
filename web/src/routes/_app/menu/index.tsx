@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowDownToLine, ArrowUpFromLine, LogOut, Pencil } from 'lucide-react'
+import { ArrowDownToLine, ArrowUpFromLine, Compass, LogOut, Pencil } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
@@ -11,6 +11,7 @@ import {
   useAchievementDetail,
 } from '@/components/menu/AchievementDetail'
 import { useMenuDrawer } from '@/components/console/MenuDrawer'
+import { useTour } from '@/components/console/tour'
 import { StatsCard, StatsCardSkeleton } from '@/components/menu/StatsCard'
 import { Avatar } from '@/components/Avatar'
 import { SocialFooter } from '@/components/SocialFooter'
@@ -45,6 +46,7 @@ function MenuHome() {
         <BalanceHero />
         <NavGrid />
         <AchievementsSection />
+        <HowItWorksRow />
         <div className="relative mt-16 w-full">
           <Button
             variant="danger"
@@ -69,6 +71,33 @@ function MenuHome() {
 // line, the no-token warning beneath).
 function MenuFooter() {
   return <SocialFooter dense large className="mt-2 border-t border-line pt-7" />
+}
+
+// Replays the first-run console tour: close the drawer back to the device, then start the tour a beat
+// later so the spotlight lands on a fully-revealed console, not the sliding drawer.
+function HowItWorksRow() {
+  const { start } = useTour()
+  const drawer = useMenuDrawer()
+  const run = () => {
+    haptic('selection')
+    drawer?.closeTo('/games')
+    start({ force: true, delayMs: 460 })
+  }
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="pointer-events-none surface-skeuo flex w-full items-center gap-3 rounded-card p-4 text-left transition-transform active:scale-[0.99]"
+      >
+        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/15 text-brand-400">
+          <Compass className="h-[18px] w-[18px]" strokeWidth={2.2} />
+        </span>
+        <span className="flex-1 text-[15px] font-bold">How it works</span>
+        <span className="text-lg text-text-3">›</span>
+      </button>
+      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={run} />
+    </div>
+  )
 }
 
 // The money card: balance on the left, Deposit and Withdraw right beside it so the card stays
@@ -149,7 +178,10 @@ function StatsSection() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const q = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
+  // Shares the Leaderboard screen's cache; feeds the card's "#4 TOP REKT" rank chip.
+  const lbq = useQuery({ queryKey: ['leaderboard'], queryFn: () => api.leaderboard() })
   const stats = q.data?.stats
+  const rank = lbq.data?.leaderboard.global.you ?? null
 
   // The pen opens the handle editor: a plain menu sub-page with an input, pushed in with the drawer
   // transition (same as History / Settings).
@@ -213,6 +245,7 @@ function StatsSection() {
       stats={stats}
       displayName={displayHandle(user)}
       avatarUrl={user?.avatarUrl}
+      rank={rank}
       onEdit={editHandle}
       onShare={openShare}
     />

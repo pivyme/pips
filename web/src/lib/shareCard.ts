@@ -1,9 +1,12 @@
 // Renders the trader stats card to a PNG offscreen and hands it to the native share sheet, falling back to a
 // download when the Web Share API can't take files. One canvas renderer, no DOM-to-image dependency.
 import type { UserStatsDTO } from '@/lib/api'
-import type { CardConfig, CardTone } from '@/lib/playerCard'
+import type { CardTone, RankStanding } from '@/lib/playerCard'
 import { buildCardModel } from '@/lib/playerCard'
 import { avatarColor, avatarInitial } from '@/lib/avatar'
+
+// Share render options: hide dollar P&L, and the leaderboard standing that drives the rank chip.
+export type CardOpts = { showNetPnl?: boolean; rank?: RankStanding | null }
 
 // 16:9 full-bleed share card: the amber body fills the whole PNG (no outer margin, no rounding), a dark
 // screen window holds the content, name + avatar up top, hero centered, the three stats on the bottom.
@@ -90,7 +93,7 @@ function loadImageCors(src: string): Promise<HTMLImageElement | null> {
 async function renderCard(
   stats: UserStatsDTO,
   user: { displayName: string; avatarUrl?: string | null },
-  config?: CardConfig,
+  opts?: CardOpts,
 ): Promise<Blob | null> {
   const canvas = document.createElement('canvas')
   canvas.width = W
@@ -188,7 +191,7 @@ async function renderCard(
   const sp = 72
   const cx = sx + sp
   const cr = sx + sw - sp
-  const card = buildCardModel(stats, config)
+  const card = buildCardModel(stats, opts)
   const gridIcons = await Promise.all(card.grid.map((c) => (c.icon ? loadImage(c.icon) : Promise.resolve(null))))
 
   // Top: avatar (real photo if set, else the PIPS identicon) + handle (left), persona chip (right).
@@ -234,23 +237,41 @@ async function renderCard(
   ctx.fillText(user.displayName, nameX, avCY + 2)
   ctx.textBaseline = 'alphabetic'
 
-  if (card.title) {
-    ctx.font = `800 26px ${FONT}`
-    const tw = ctx.measureText(card.title).width
-    const chipH = 52
-    const chipW = tw + 40
+  if (card.rank) {
+    const rekt = card.rank.kind === 'rekt'
+    const rgb = rekt ? '255,90,77' : '52,211,153'
+    const label = `#${card.rank.rank} TOP ${rekt ? 'REKT' : 'GAINER'}`
+    ctx.font = `900 30px ${FONT}`
+    const tw = ctx.measureText(label).width
+    const chipH = 62
+    const chipW = tw + 56
     const chipX = cr - chipW
     const chipY = avCY - chipH / 2
-    roundRect(ctx, chipX, chipY, chipW, chipH, 14)
-    ctx.fillStyle = 'rgba(255,210,74,0.16)'
-    ctx.fill()
-    ctx.lineWidth = 1.5
-    ctx.strokeStyle = 'rgba(255,210,74,0.42)'
-    ctx.stroke()
-    ctx.fillStyle = C.brand400
+    const rad = chipH / 2
+    // Filled enamel pill (no outline): tone gradient, recessed top, tone glow rising from the bottom.
+    ctx.save()
+    roundRect(ctx, chipX, chipY, chipW, chipH, rad)
+    ctx.clip()
+    const base = ctx.createLinearGradient(0, chipY, 0, chipY + chipH)
+    base.addColorStop(0, `rgba(${rgb},0.32)`)
+    base.addColorStop(1, `rgba(${rgb},0.13)`)
+    ctx.fillStyle = base
+    ctx.fillRect(chipX, chipY, chipW, chipH)
+    const recess = ctx.createLinearGradient(0, chipY, 0, chipY + 15)
+    recess.addColorStop(0, 'rgba(0,0,0,0.55)')
+    recess.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = recess
+    ctx.fillRect(chipX, chipY, chipW, 15)
+    const glow = ctx.createLinearGradient(0, chipY + chipH - 24, 0, chipY + chipH)
+    glow.addColorStop(0, `rgba(${rgb},0)`)
+    glow.addColorStop(1, `rgba(${rgb},0.55)`)
+    ctx.fillStyle = glow
+    ctx.fillRect(chipX, chipY + chipH - 24, chipW, 24)
+    ctx.restore()
+    ctx.fillStyle = rekt ? C.down : C.up
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(card.title, chipX + chipW / 2, chipY + chipH / 2 + 1)
+    ctx.fillText(label, chipX + chipW / 2, chipY + chipH / 2 + 1)
     ctx.textAlign = 'left'
     ctx.textBaseline = 'alphabetic'
   }
@@ -279,21 +300,24 @@ async function renderCard(
         ctx.lineTo(ex, rowY + rowH - 28)
         ctx.stroke()
       }
-      // Icon + label on one line, value below. Mirrors the DOM Cell.
+      // Two columns: the 3D icon on the left, label over a bigger value on the right. Mirrors the DOM Cell.
       const icon = gridIcons[i]
-      const iconSize = 40
-      let labelX = ex + 36
+      const iconSize = 62
+      const midY = rowY + rowH / 2
+      const padL = 34
+      let textX = ex + padL
       if (icon) {
-        ctx.drawImage(icon, ex + 36, rowY + 30, iconSize, iconSize)
-        labelX = ex + 36 + iconSize + 12
+        ctx.drawImage(icon, ex + padL, midY - iconSize / 2, iconSize, iconSize)
+        textX = ex + padL + iconSize + 18
       }
       ctx.textAlign = 'left'
+      ctx.textBaseline = 'alphabetic'
       ctx.fillStyle = 'rgba(255,255,255,0.55)'
       ctx.font = `700 24px ${FONT}`
-      ctx.fillText(c.label.toUpperCase(), labelX, rowY + 56)
+      ctx.fillText(c.label.toUpperCase(), textX, midY - 8)
       ctx.fillStyle = toneColor(c.tone)
-      ctx.font = `800 58px ${FONT}`
-      ctx.fillText(c.value, ex + 36, rowY + 112)
+      ctx.font = `800 54px ${FONT}`
+      ctx.fillText(c.value, textX, midY + 42)
     })
   }
 
@@ -335,9 +359,9 @@ async function renderCard(
 export async function shareStatsCard(
   stats: UserStatsDTO,
   user: { displayName: string; avatarUrl?: string | null },
-  config?: CardConfig,
+  opts?: CardOpts,
 ): Promise<void> {
-  const blob = await renderCard(stats, user, config)
+  const blob = await renderCard(stats, user, opts)
   if (!blob) throw new Error('Could not render the card')
   const file = new File([blob], 'pips-card.png', { type: 'image/png' })
 
