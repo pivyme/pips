@@ -1,5 +1,7 @@
 # PIPS Contracts (Sui Move)
 
+> **Status: reference only.** PIPS trades Mysten's official DeepBook Predict on testnet/mainnet and no longer publishes or runs this vendored stack. These packages are kept for history and as the source-cited spec the app's Predict wrappers were built against. They are not part of the run or deploy path.
+
 On-chain logic for PIPS. This is the third pillar of the monorepo alongside `web/` and `backend/`.
 
 ## What lives here

@@ -14,15 +14,15 @@ export const PREDICT_ID = env.VITE_PREDICT_OBJECT_ID ?? ''
 // /config at boot instead of trusting the compile-time value; `let` means consumers pick up the new value with no extra plumbing.
 export let DUSDC_TYPE = env.VITE_DUSDC_TYPE ?? ''
 
-// Stake band the backend enforces per play, defaulted synchronously from the network so the bet wheel is right on
-// first render (testnet real Predict floors at ~$1 min-net-premium -> 1.5..3, else the fork's 1..100); /config overrides it.
-let STAKE_MIN = NETWORK === 'testnet' ? 1.5 : 1
-let STAKE_MAX = NETWORK === 'testnet' ? 3 : 100
+// Stake band the backend enforces per play, defaulted synchronously so the bet wheel is right on
+// first render (real Predict floors at ~$1 min-net-premium -> 1.5..3); /config overrides it.
+let STAKE_MIN = 1.5
+let STAKE_MAX = 3
 
 // House rake (backend house.ts): a real play sizes off `net = stake - rake`, kept here so previews show the true
 // NET max payout instead of over-promising. 0 until /config says otherwise (always 0 in demo); MIN_NET is the skip-rake floor.
 let HOUSE_EDGE_BPS = 0
-let HOUSE_EDGE_MIN_NET = NETWORK === 'testnet' ? 1.2 : 0
+let HOUSE_EDGE_MIN_NET = 1.2
 
 // Pulls live deploy ids from the backend at boot (fire-and-forget); on any failure keeps the defaults above.
 export async function refreshDeployedConfig(): Promise<void> {
@@ -55,7 +55,7 @@ export function netStakeUsd(stakeUsd: number): number {
   return net >= HOUSE_EDGE_MIN_NET ? net : stakeUsd
 }
 
-// The curated tiers we prefer when the band is wide enough (the free fork). A tight real band gets even rungs.
+// The curated tiers we prefer when the band is wide enough. A tight real band gets even rungs.
 const CURATED_TIERS = [1, 5, 10, 25, 50, 100]
 
 function buildBetLadder(min: number, max: number): number[] {

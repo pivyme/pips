@@ -1,10 +1,9 @@
-// Real-mode (testnet) play safety: testnet SUI is finite (L-008), so every play clears a per-user rate limit
-// and a sponsor-reserve floor that pauses new plays (clear user-facing state) before the gas accumulator empties, auto-resuming once it recovers. Both gates no-op off testnet; a cron monitor logs burn rate.
+// Play safety: testnet SUI is finite (L-008), so every play clears a per-user rate limit and a
+// sponsor-reserve floor that pauses new plays (clear user-facing state) before the gas accumulator empties, auto-resuming once it recovers. A cron monitor logs burn rate.
 
 import cron from 'node-cron';
 
 import {
-  IS_REAL_PREDICT,
   PLAY_RATE_LIMIT_MS,
   SPONSOR_FLOOR_SUI,
   SPONSOR_BURN_WARN_SUI,
@@ -24,10 +23,9 @@ const lastPlayAt = new Map<string, number>();
 // A block reason the play path turns into a PlayError. null = allowed.
 export type PlayBlock = { code: 'PLAYS_PAUSED' | 'RATE_LIMITED'; message: string; retryAfterMs?: number };
 
-// Gates a play; real mode only, fork mode always allows. Checks the sponsor pause first (blocks everyone),
-// then the caller's own cooldown. Does NOT stamp the cooldown, so call recordPlay once the play is accepted.
+// Gates a play. Checks the sponsor pause first (blocks everyone), then the caller's own cooldown.
+// Does NOT stamp the cooldown, so call recordPlay once the play is accepted.
 export function checkPlayAllowed(userId: string): PlayBlock | null {
-  if (!IS_REAL_PREDICT) return null;
   if (pauseState.paused) {
     return { code: 'PLAYS_PAUSED', message: 'Plays are paused while we top up gas. Back in a moment.' };
   }
@@ -41,9 +39,9 @@ export function checkPlayAllowed(userId: string): PlayBlock | null {
   return null;
 }
 
-// Reserves the user's cooldown slot the moment a play passes the gate, so a rapid double-tap can't slip two plays past the check before either lands (no-op in fork mode or when the limit is off).
+// Reserves the user's cooldown slot the moment a play passes the gate, so a rapid double-tap can't slip two plays past the check before either lands (no-op when the limit is off).
 export function recordPlay(userId: string): void {
-  if (!IS_REAL_PREDICT || PLAY_RATE_LIMIT_MS <= 0) return;
+  if (PLAY_RATE_LIMIT_MS <= 0) return;
   lastPlayAt.set(userId, Date.now());
 }
 
@@ -74,7 +72,7 @@ async function readSponsorReserveSui(): Promise<number> {
 // Re-reads the sponsor's readable SUI reserve, flips the pause state on the floor, and logs burn since the
 // last successful read. Errors leave the prior state untouched, so a transient RPC blip never pauses plays.
 export async function refreshSponsorPauseState(): Promise<void> {
-  if (!IS_REAL_PREDICT || !SPONSOR_ENABLED || !sponsorAddress) return;
+  if (!SPONSOR_ENABLED || !sponsorAddress) return;
   let reserveSui: number;
   try {
     reserveSui = await readSponsorReserveSui();
@@ -106,9 +104,9 @@ export async function refreshSponsorPauseState(): Promise<void> {
   }
 }
 
-// Schedules the reserve monitor (real mode + sponsorship only); a first read runs immediately so the pause state is correct before the first play.
+// Schedules the reserve monitor (sponsorship only); a first read runs immediately so the pause state is correct before the first play.
 export function startSponsorMonitor(): void {
-  if (!IS_REAL_PREDICT || !SPONSOR_ENABLED) return;
+  if (!SPONSOR_ENABLED) return;
   console.log(`[play-safety] sponsor reserve monitor scheduled (${SPONSOR_MONITOR_CRON}, floor ${SPONSOR_FLOOR_SUI} SUI)`);
   const task = cron.schedule(SPONSOR_MONITOR_CRON, async () => {
     const startedAt = Date.now();

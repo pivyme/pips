@@ -1,7 +1,7 @@
 // Shared upstream Binance aggTrade feed per asset (not per-user, not per-chart); price-bus.ts reads it,
-// pins the level to the on-chain oracle, and streams to charts. Display-only, never records or settles (L-015). Real mode + mainnet only, fork mode never opens the socket, and BINANCE_ENABLED can kill it.
+// pins the level to the on-chain market spot, and streams to charts. Display-only, never records or settles (L-015). BINANCE_ENABLED can kill it.
 
-import { BINANCE_ENABLED, BINANCE_STALE_MS, BINANCE_SYMBOLS, BINANCE_WS_URL, IS_REAL_PREDICT } from '../config/main-config.ts';
+import { BINANCE_ENABLED, BINANCE_STALE_MS, BINANCE_SYMBOLS, BINANCE_WS_URL } from '../config/main-config.ts';
 import { assetSpot } from './sui/markets.ts';
 import { recordRun, registerWorker } from './worker-registry.ts';
 
@@ -152,12 +152,11 @@ function logCompare(): void {
   }
 }
 
-// Open the shared upstream. Idempotent. No-op unless real mode + enabled (fork keeps its walk engine, and
-// the feed can be killed via PIPS_BINANCE_ENABLED=false). Safe to call at boot regardless of mode.
+// Open the shared upstream. Idempotent. No-op when disabled via PIPS_BINANCE_ENABLED=false.
 export function startBinance(): void {
   if (started) return;
-  if (!IS_REAL_PREDICT || !BINANCE_ENABLED) {
-    console.log(`[Binance] display feed off (${!IS_REAL_PREDICT ? 'fork mode' : 'BINANCE_ENABLED=false'}); chart uses the on-chain oracle`);
+  if (!BINANCE_ENABLED) {
+    console.log('[Binance] display feed off (BINANCE_ENABLED=false); chart uses the on-chain market spot');
     return;
   }
   if (symbolToAsset.size === 0) {

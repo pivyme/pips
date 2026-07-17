@@ -4,7 +4,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { IS_REAL_PREDICT, SUI_NETWORK } from '../../config/main-config.ts';
+import { SUI_NETWORK } from '../../config/main-config.ts';
 
 export type RealAsset = {
   symbol: string;
@@ -58,12 +58,12 @@ function loadDeployedReal(): DeployedReal {
   return d;
 }
 
-// Loaded ONLY in real mode; null on localnet/devnet so the fork path never touches this file.
-const real: DeployedReal | null = IS_REAL_PREDICT ? loadDeployedReal() : null;
+// The real Predict deployment record, loaded at boot.
+const real: DeployedReal | null = loadDeployedReal();
 
-// Accessor that asserts real mode; real-protocol code calls this so a stray fork-mode access fails loud instead of silently using ''.
+// Accessor that asserts the record loaded; real-protocol code calls this so a missing deploy fails loud instead of silently using ''.
 export function realDeployment(): DeployedReal {
-  if (!real) throw new Error('config-real accessed in fork mode (SUI_NETWORK is not testnet/mainnet).');
+  if (!real) throw new Error('config-real: real Predict deployment not loaded.');
   return real;
 }
 

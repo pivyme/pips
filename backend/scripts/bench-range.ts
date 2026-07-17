@@ -37,7 +37,7 @@
 
 import '../dotenv.ts';
 
-import { MIN_STAKE, MAX_STAKE, PLAY_RATE_LIMIT_MS, PLAY_STREAM_INTERVAL_MS, IS_REAL_PREDICT } from '../src/config/main-config.ts';
+import { MIN_STAKE, MAX_STAKE, PLAY_RATE_LIMIT_MS, PLAY_STREAM_INTERVAL_MS } from '../src/config/main-config.ts';
 import { fromDusdcRaw } from '../src/lib/sui/config.ts';
 import { explorerTxUrl } from '../src/lib/sui/client.ts';
 import { getDusdcBalanceRaw } from '../src/lib/sui/dusdc.ts';
@@ -167,10 +167,6 @@ console.log(`\nPIPS RANGE entry benchmark  (real testnet Predict, END TO END ove
 console.log(`target  ${API_BASE}`);
 console.log(`config  ${COUNT} play(s), $${STAKE} stake, band +/-${(WIDTH_PCT / 2).toFixed(3)}% (widthPct ${WIDTH_PCT})  SSE cadence ${PLAY_STREAM_INTERVAL_MS}ms\n`);
 
-if (!IS_REAL_PREDICT) {
-  console.error('bench-range targets real testnet Predict (SUI_NETWORK=testnet). Current mode is the fork; nothing to benchmark here.');
-  process.exit(1);
-}
 if (STAKE < MIN_STAKE || STAKE > MAX_STAKE) {
   console.error(`Stake $${STAKE} is outside the allowed range [$${MIN_STAKE}, $${MAX_STAKE}]. Pick another.`);
   process.exit(1);

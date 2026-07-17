@@ -1,7 +1,5 @@
 import { MAX_STAKE, MIN_STAKE } from '../config/main-config.ts';
 import { toDusdcRaw } from '../lib/sui/config.ts';
-import type { Market } from '../lib/sui/markets.ts';
-import type { BinaryParams, RangeParams, Side } from '../lib/sui/predict.ts';
 
 export type PlayErrorCode =
   | 'MARKET_UNAVAILABLE'
@@ -56,37 +54,3 @@ export function parseStake(stake: string | number): bigint {
   return toDusdcRaw(n);
 }
 
-export type ResolvedBinary = {
-  kind: 'binary';
-  game: 'lucky' | 'moonshot';
-  market: Market;
-  params: BinaryParams;
-  asset: string;
-  side: Side;
-  tier: number;
-  duration: number;
-  strikeDisplay: string;
-  entrySpot: string;
-  entryCost: bigint;
-  maxPayout: bigint;
-  multiplier: number;
-  seed: string;
-};
-
-export type ResolvedRange = {
-  kind: 'range';
-  game: 'range';
-  market: Market;
-  params: RangeParams;
-  asset: string;
-  lowerDisplay: string;
-  upperDisplay: string;
-  widthPct?: number;
-  duration: number;
-  entrySpot: string;
-  entryCost: bigint;
-  maxPayout: bigint;
-  multiplier: number;
-};
-
-export type Resolved = ResolvedBinary | ResolvedRange;

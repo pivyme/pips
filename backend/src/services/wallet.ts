@@ -7,7 +7,6 @@ import { isValidSuiAddress, normalizeSuiAddress } from '@mysten/sui/utils';
 import type { User } from '../../prisma/generated/client.js';
 import { DUSDC_TYPE, toDusdcRaw } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw, transferDusdc } from '../lib/sui/dusdc.ts';
-import { buildManagerWithdraw, getManagerBalanceRaw } from '../lib/sui/predict.ts';
 import {
   buildAuth,
   buildWithdrawFunds,
@@ -15,7 +14,7 @@ import {
   resolveWrapper,
 } from '../lib/sui/predict-real.ts';
 import { executeForUser, userContext } from '../lib/sui/execute.ts';
-import { FAUCET_AMOUNT, FAUCET_COOLDOWN_MS, IS_REAL_PREDICT } from '../config/main-config.ts';
+import { FAUCET_AMOUNT, FAUCET_COOLDOWN_MS } from '../config/main-config.ts';
 import { withUserLock, invalidateBal } from './plays.ts';
 import { toUserDTO } from './auth.ts';
 import type { UserDTO } from '../types/api.ts';
@@ -92,37 +91,11 @@ export async function withdrawDusdc(
   const amountRaw = toDusdcRaw(amount);
   if (amountRaw <= 0n) throw new WalletError('INVALID_AMOUNT', 'Enter an amount to withdraw');
 
-  return withUserLock(user.id, () =>
-    IS_REAL_PREDICT ? withdrawRealLocked(user, recipient, amountRaw) : withdrawForkLocked(user, recipient, amountRaw),
-  );
+  return withUserLock(user.id, () => withdrawRealLocked(user, recipient, amountRaw));
 }
 
-// Fork path (localnet/devnet): chips live in the per-user PredictManager. Pull the shortfall out of the
-// manager (owner-gated) and pay the rest from wallet coins, all in one PTB.
-async function withdrawForkLocked(user: User, recipient: string, wantRaw: bigint): Promise<WithdrawResult> {
-  const managerId = user.predictManagerId;
-  if (!managerId) throw new WalletError('MANAGER_NOT_READY', 'Your account is still getting ready');
-
-  // Read both sides fresh; this is off the hot path so the manager devInspect cost is fine.
-  const [walletRaw, managerRaw] = await Promise.all([getDusdcBalanceRaw(user.address), getManagerBalanceRaw(managerId)]);
-  const amountRaw = clampWithdraw(wantRaw, walletRaw + managerRaw);
-
-  const tx = new Transaction();
-  if (amountRaw <= walletRaw) {
-    // Wallet coins alone cover it: split exactly `amountRaw` and send. Manager untouched.
-    const coin = coinWithBalance({ type: DUSDC_TYPE, balance: amountRaw })(tx);
-    tx.transferObjects([coin], tx.pure.address(recipient));
-  } else {
-    // Need manager chips too: pull the shortfall out of the manager, merge in all wallet DUSDC,
-    // and send the exact total as one coin.
-    const mgrCoin = buildManagerWithdraw(tx, managerId, amountRaw - walletRaw);
-    payShortfall(tx, mgrCoin, walletRaw, recipient);
-  }
-  return execWithdraw(user, tx);
-}
-
-// Real path (testnet, Mysten Predict): chips live in the wallet + the per-owner AccountWrapper's internal
-// balance (a cash-out credits it there). Pulls the shortfall via withdraw_funds (owner-authed) and pays the rest from wallet coins in one PTB; off the hot path, so resolves the wrapper straight from chain (no cache).
+// Chips live in the wallet + the per-owner AccountWrapper's internal balance (a cash-out credits it there).
+// Pulls the shortfall via withdraw_funds (owner-authed) and pays the rest from wallet coins in one PTB; off the hot path, so resolves the wrapper straight from chain (no cache).
 async function withdrawRealLocked(user: User, recipient: string, wantRaw: bigint): Promise<WithdrawResult> {
   const w = await resolveWrapper(user.address);
   const [walletRaw, wrapperRaw] = await Promise.all([

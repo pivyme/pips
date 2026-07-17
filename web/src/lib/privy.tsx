@@ -126,9 +126,9 @@ export function AppPrivyProvider({ children }: { children: React.ReactNode }) {
       appId={env.VITE_PRIVY_APP_ID as string}
       config={{
         loginMethods: ['google', 'email', 'twitter'],
-        // Match the app: dark modal with the PIPS amber accent, not Privy's default light theme.
+        // Match the app: PIPS near-black base (Privy derives the grey stack from its luminance) + amber accent, not Privy's default bluish dark.
         appearance: {
-          theme: 'dark',
+          theme: '#0d0d0d',
           accentColor: '#ffc016',
           ...(BRIDGE_CONNECTORS_ENABLED && { walletChainType: 'ethereum-and-solana' as const }),
         },

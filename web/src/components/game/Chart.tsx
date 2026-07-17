@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { type PriceTick } from '@/lib/api'
 import { priceBus } from '@/lib/priceBus'
 import { isDemo } from '@/lib/demo'
-import { env } from '@/env'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 import { formatPrice } from '@/utils/format'
@@ -124,8 +123,8 @@ const SEED_N = 32 // pre-roll points, matched to the ~1s tick cadence over the w
 const SEED_STEP_VOL = 0.0024 // per-step move size of the warm-up walk (fraction of price)
 const SEED_MOMENTUM = 0.62 // walk persistence, so it forms natural runs instead of pure jitter
 const SEED_MAX_DEV = 0.012 // clamp the warm-up's drift from the live price (never wanders far)
-// Real testnet BTC (~0.05%/round) is far calmer than the fork-tuned seed above, which would leave the
-// frame over-wide for the seed's first WINDOW_MS. Real mode gets its own tamer envelope, fork/demo keep the original numbers.
+// Real BTC (~0.05%/round) is far calmer than the wide seed above, which would leave the frame over-wide
+// for the seed's first WINDOW_MS. The real product feed gets its own tamer envelope; demo keeps the original numbers.
 const REAL_SEED_STEP_VOL = 0.0003
 const REAL_SEED_MAX_DEV = 0.0015
 // Cosmetic micro-life so the line isn't flat between oracle ticks: a clamped wiggle on the drawn
@@ -134,9 +133,8 @@ const SHIM_MOMENTUM = 0.9 // velocity persistence: a smooth drifting wiggle, not
 const SHIM_VOL = 0.0000016 // per-frame velocity impulse
 const SHIM_REVERT = 0.05 // pull the offset back toward 0 each frame, so it never accumulates into drift
 const SHIM_MAX = 0.005 // hard clamp: ±0.035% of price (about a quarter of the 2x target distance)
-// Real mode (testnet/mainnet) already has genuine micro-motion via the Binance bus, so the shim is
-// off there; fork keeps it. Demo is resolved per-mount below (isDemo reads localStorage), always on.
-const REAL_NETWORK = env.VITE_SUI_NETWORK === 'testnet' || env.VITE_SUI_NETWORK === 'mainnet'
+// The real product feed already has genuine micro-motion via the Binance bus, so the shim is off there.
+// Demo is resolved per-mount below (isDemo reads localStorage) and always keeps the shim on.
 
 type Point = { t: number; p: number }
 
@@ -234,8 +232,8 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // Real mode feeds genuine micro-motion via Binance, so the shim is off; fork and demo keep it (resolved once per mount, isDemo reads localStorage at load).
-    const liveMicroFeed = REAL_NETWORK && !isDemo()
+    // The real product feed carries genuine micro-motion via Binance, so the shim is off; demo keeps it (resolved once per mount, isDemo reads localStorage at load).
+    const liveMicroFeed = !isDemo()
 
     // Fresh series for this subscription; must run before streamPrices so demo's synchronous first tick seeds the baseline instead of landing as a lone dot.
     points.current = []

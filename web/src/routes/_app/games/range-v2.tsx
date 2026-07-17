@@ -18,7 +18,7 @@ import { haptic } from '@/lib/haptics'
 import { rangeBuzzer, rangeLose, rangeWin, startRangeBgm, stopRangeBgm } from '@/lib/sound'
 import { api } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
-import { NETWORK, betLadder } from '@/lib/sui/config'
+import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
@@ -33,15 +33,14 @@ export const Route = createFileRoute('/_app/games/range-v2')({
 })
 
 const STAKE_KEY = 'pips_stake_idx' // shared with Lucky + Range so the chip stays put across screens
-const BAND_LADDER: Array<number> = NETWORK === 'testnet' ? [0.02, 0.035, 0.05, 0.08, 0.15] : [0.1, 0.2, 0.5, 1, 1.5]
-const DEFAULT_WIDTH_IDX = NETWORK === 'testnet' ? 2 : 3
+const BAND_LADDER: Array<number> = [0.02, 0.035, 0.05, 0.08, 0.15]
+const DEFAULT_WIDTH_IDX = 2
 const FALLBACK_ASSETS = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
 const TOKEN_LOGOS: Record<string, string> = {
   BTC: '/assets/images/coins/btc-logo.png',
   ETH: '/assets/images/coins/eth-logo.png',
   SUI: '/assets/images/coins/sui-logo.png',
 }
-const IS_REAL = NETWORK === 'testnet'
 const NOMINAL_ROUND_SEC = 30
 // How many positions can ride at once. Caps the chart clutter + keeps the per-user mint queue sane.
 const MAX_POSITIONS = 5
@@ -90,7 +89,7 @@ const setsEqual = (a: Set<string>, b: Set<string>): boolean => {
 
 // Cold-start multiple estimate, only until the real per-band quote loads (same shape as Range).
 function estimateMultiplier(halfPct: number, durationSec: number): number {
-  const sigma = (IS_REAL ? 0.05 : 0.6) * Math.sqrt(durationSec / 30)
+  const sigma = 0.05 * Math.sqrt(durationSec / 30)
   const prob = 1 - Math.exp(-halfPct / sigma)
   return Math.max(1.05, Math.min(0.97 / Math.max(prob, 0.03), 99))
 }

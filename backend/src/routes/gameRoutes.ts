@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyReque
 import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { buildMarketsPayload } from '../lib/markets-feed.ts';
-import { PlayError, httpStatusForPlayError, quoteRangeBatch } from '../services/games.ts';
+import { PlayError, httpStatusForPlayError, quoteRangeBatchReal } from '../services/games.ts';
 import {
   createPlay,
   cashoutPlay,
@@ -59,7 +59,7 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
       return fail(reply, new PlayError('INVALID_PARAMS', 'asset and widths are required'), 'QUOTE_FAILED', 'Could not price those bands');
     }
     try {
-      const quotes = await quoteRangeBatch(asset, widthPcts);
+      const quotes = quoteRangeBatchReal(widthPcts);
       return reply.code(200).send({ success: true, error: null, data: { quotes } });
     } catch (error) {
       return fail(reply, error, 'QUOTE_FAILED', 'Could not price those bands');

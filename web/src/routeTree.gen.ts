@@ -17,7 +17,6 @@ import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AtChar123handleChar125RouteImport } from './routes/@{$handle}'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
-import { Route as ToolsWalletRouteImport } from './routes/tools/wallet'
 import { Route as RCodeRouteImport } from './routes/r.$code'
 import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
 import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
@@ -78,11 +77,6 @@ const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AppRoute,
-} as any)
-const ToolsWalletRoute = ToolsWalletRouteImport.update({
-  id: '/tools/wallet',
-  path: '/tools/wallet',
-  getParentRoute: () => rootRouteImport,
 } as any)
 const RCodeRoute = RCodeRouteImport.update({
   id: '/r/$code',
@@ -199,7 +193,6 @@ export interface FileRoutesByFullPath {
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
   '/r/$code': typeof RCodeRoute
-  '/tools/wallet': typeof ToolsWalletRoute
   '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
@@ -229,7 +222,6 @@ export interface FileRoutesByTo {
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
   '/r/$code': typeof RCodeRoute
-  '/tools/wallet': typeof ToolsWalletRoute
   '/': typeof AppIndexRoute
   '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
@@ -262,7 +254,6 @@ export interface FileRoutesById {
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
   '/r/$code': typeof RCodeRoute
-  '/tools/wallet': typeof ToolsWalletRoute
   '/_app/': typeof AppIndexRoute
   '/_app/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/_app/games/line-rider': typeof AppGamesLineRiderRoute
@@ -296,7 +287,6 @@ export interface FileRouteTypes {
     | '/export'
     | '/pitch'
     | '/r/$code'
-    | '/tools/wallet'
     | '/games/flappy-piper'
     | '/games/line-rider'
     | '/games/lucky'
@@ -326,7 +316,6 @@ export interface FileRouteTypes {
     | '/export'
     | '/pitch'
     | '/r/$code'
-    | '/tools/wallet'
     | '/'
     | '/games/flappy-piper'
     | '/games/line-rider'
@@ -358,7 +347,6 @@ export interface FileRouteTypes {
     | '/export'
     | '/pitch'
     | '/r/$code'
-    | '/tools/wallet'
     | '/_app/'
     | '/_app/games/flappy-piper'
     | '/_app/games/line-rider'
@@ -391,7 +379,6 @@ export interface RootRouteChildren {
   ExportRoute: typeof ExportRoute
   PitchRoute: typeof PitchRoute
   RCodeRoute: typeof RCodeRoute
-  ToolsWalletRoute: typeof ToolsWalletRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -451,13 +438,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
-    }
-    '/tools/wallet': {
-      id: '/tools/wallet'
-      path: '/tools/wallet'
-      fullPath: '/tools/wallet'
-      preLoaderRoute: typeof ToolsWalletRouteImport
-      parentRoute: typeof rootRouteImport
     }
     '/r/$code': {
       id: '/r/$code'
@@ -668,7 +648,6 @@ const rootRouteChildren: RootRouteChildren = {
   ExportRoute: ExportRoute,
   PitchRoute: PitchRoute,
   RCodeRoute: RCodeRoute,
-  ToolsWalletRoute: ToolsWalletRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

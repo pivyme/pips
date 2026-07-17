@@ -13,8 +13,7 @@ import {
 import { FLOAT_SCALING } from '../lib/sui/config.ts';
 import { liveByAsset, type Market } from '../lib/sui/markets.ts';
 import { LEVERAGE_ONE, POSITION_LOT_SIZE, readBtcSpot, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
-import type { Side } from '../lib/sui/predict.ts';
-import type { Game, RangeQuoteDTO as RangeQuote } from '../types/api.ts';
+import type { Game, RangeQuoteDTO as RangeQuote, Side } from '../types/api.ts';
 import { PlayError } from './games-base.ts';
 import { newSeed, pickTier, seedFloat } from './rng.ts';
 

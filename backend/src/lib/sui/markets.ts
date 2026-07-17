@@ -1,38 +1,23 @@
-// In-memory cache of the live oracle set: oracle-roll keeps it true (adds/drops oracles), price-pusher,
-// settle, and /markets read it each tick. Seeded from deployed.json so it's non-empty at boot; oracle-roll reconciles against chain.
-
-import { ORACLES, ORACLE_CAP_IDS } from './config.ts';
+// In-memory cache of the live market set: market-sync keeps it true (adds/drops the live 1m BTC markets it
+// discovers from chain), settle and /markets read it each tick. Starts empty; market-sync populates it.
 
 export type Market = {
-  oracleId: string; // fork: oracle object id. real (IS_REAL_PREDICT): the ExpiryMarket object id.
-  capId: string; // fork: the authorized cap a worker pushes/settles with. real: '' (permissionless, no cap).
+  oracleId: string; // the ExpiryMarket object id.
+  capId: string; // '' (permissionless real Predict, no cap).
   underlying: string;
   expiryMs: number;
-  minStrike: string; // fork: 1e9-scaled grid floor. real: unused ('0'), the tick codec drives strikes.
-  tickSize: string; // fork: 1e9-scaled grid step. real: raw-price tick_size (BTC 1e7 = $0.01).
+  minStrike: string; // unused ('0'); the tick codec drives strikes.
+  tickSize: string; // raw-price tick_size (BTC 1e7 = $0.01).
   settled: boolean;
   spot1e9?: string; // last observed spot, for /markets display
-  lastPushAt?: number; // ms epoch of the last successful price push
-  // Real-mode-only economics (from readMarketEconomics), absent in fork mode; the two runtime modes never coexist in one process, so reusing this record is safe.
+  lastPushAt?: number; // ms epoch of the last successful spot read
+  // Market economics from readMarketEconomics.
   admissionTickSizeRaw?: string; // coarser mint-boundary step (BTC 1e9 = $1)
   maxLeverage1e9?: string; // max_admission_leverage (BTC 3e9 = 3.0x)
   liquidationLtv1e9?: string; // liquidation_ltv (BTC 0.85e9)
 };
 
 const markets = new Map<string, Market>();
-
-// Seeds from the bootstrap deployment (may already be expired, oracle-roll retires and rolls fresh ones); cap defaults to the first bootstrapped oracle cap.
-for (const o of ORACLES) {
-  markets.set(o.oracleId, {
-    oracleId: o.oracleId,
-    capId: ORACLE_CAP_IDS[0] ?? '',
-    underlying: o.underlying,
-    expiryMs: o.expiryMs,
-    minStrike: o.minStrike,
-    tickSize: o.tickSize,
-    settled: false,
-  });
-}
 
 export const allMarkets = (): Market[] => [...markets.values()];
 

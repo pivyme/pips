@@ -8,11 +8,11 @@
 
 ## PIPS context
 
-This is the **PIPS** backend (gamified trading on Sui via DeepBook Predict). Read the root [`../CLAUDE.md`](../CLAUDE.md) for product and Sui stack context. Its job: auth (Privy + a dev auto-login), game engine, the Predict operator (price-pusher, oracle ladder, settle), indexing, and server-signing the user's plays (`@privy-io/node` `rawSign` under a session signer; dev = the operator key).
+This is the **PIPS** backend (gamified trading on Sui via DeepBook Predict). Read the root [`../CLAUDE.md`](../CLAUDE.md) for product and Sui stack context. Its job: auth (Privy + a dev auto-login), game engine, settlement, market discovery, and server-signing the user's plays (`@privy-io/node` `rawSign` under a session signer; dev = the testing wallet).
 
-**The chain is mode-selected by `SUI_NETWORK`, behind one seam `IS_REAL_PREDICT = SUI_NETWORK === 'testnet'`.** On `localnet`/`devnet` we run our **own** vendored Predict fork; on `testnet` we trade against **Mysten's official** real Predict (structurally different, `src/lib/sui/predict-real.ts` + `config-real.ts`, discovery via direct chain reads, no fork publish). The full real-path spec is `../bigdev/plans/cont/01-PREDICT-TESTNET.md`; binding rules are **L-005..L-012** in the root `CLAUDE.md ## Learnings`, read them before touching testnet Predict. Fork mode: `scripts/bootstrap.ts` is network-aware via `SUI_NETWORK` and driven by the repo-root `scripts/localnet.sh` (`setup` once, `redeploy` after any `contracts/` change); it writes ids into `src/lib/sui/deployed.<network>.json` (gitignored, read via `src/lib/sui/config.ts`) and the headline ids into `.env`. The real record is the committed `src/lib/sui/deployed-real.testnet.json` (read via `config-real.ts`, ids re-fetched from chain, never hand-copied). Never hardcode ids.
+**The chain is Mysten's official DeepBook Predict**, on `testnet` (default) or `mainnet` via `SUI_NETWORK`. All Predict code lives in `src/lib/sui/predict-real.ts` + `config-real.ts`: per-owner `AccountWrapper`, internal-balance mint/redeem, discovery via direct chain reads, `redeem_settled` at expiry. The record is the committed `src/lib/sui/deployed-real.testnet.json` (read via `config-real.ts`, ids re-fetched from chain, never hand-copied). Binding rules are **L-005..L-012** in the root `CLAUDE.md ## Learnings`, read them before touching Predict. Never hardcode ids. (The vendored fork under `../contracts/` and the `../scripts/localnet.sh` deploy front door remain on disk for reference only, not the run path.)
 
-**v1 build:** planned in [`../bigdev/plans/`](../bigdev/plans/). Read `05-SUI-PREDICT.md` (we publish + operate our own Predict instance: the verified bootstrap recipe, the wrappers, and the price-pusher / oracle-roll / settle workers), `02-API.md` (routes + SSE streams), `03-DATABASE.md` (schema + seed), `LUCKY.md` §6 (dev + Privy auth, the current source of truth; `04-AUTH.md` keeps the JWT plumbing + onboarding). All Sui ids come from config, never hardcode.
+**v1 build:** planned in [`../bigdev/plans/`](../bigdev/plans/). Read `05-SUI-PREDICT.md` (the Predict capability box + wrappers) and `cont/01-PREDICT-TESTNET.md` (the real-path spec), `02-API.md` (routes + SSE streams), `03-DATABASE.md` (schema + seed), `LUCKY.md` §6 (dev + Privy auth, the current source of truth; `04-AUTH.md` keeps the JWT plumbing + onboarding). All Sui ids come from config, never hardcode.
 
 **Sui (verified mid 2026, reconfirm before coding):**
 - Use `@mysten/sui` (v2.x, ESM only). Fullnode reads/writes go through `SuiGrpcClient` (`@mysten/sui/grpc`); historical queries (events, tx-history) through `SuiGraphQLClient` (`@mysten/sui/graphql`). JSON-RPC is removed, never re-add `@mysten/sui/jsonRpc`. Both clients live in `src/lib/sui/client.ts` (built with an explicit `baseUrl` from config).
@@ -32,7 +32,6 @@ bun dev              # Start with file watcher on :3780
 bun start            # Production start (no watch)
 bun run typecheck    # tsc --noEmit (the build loop's gate)
 bun test             # Run tests (*.test.ts: math, rng, achievements)
-bun run bootstrap    # Fork mode (localnet/devnet): publish + seed our Predict, writes deployed.<network>.json
 bun run lint         # ESLint
 bun run db:push      # Push schema + regenerate client
 bun run db:pull      # Pull schema from existing DB
@@ -51,15 +50,13 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 
 ```
 /
-├── index.ts                 # Thin bootstrapper: load env, hydrate deploy ids from DB, then dynamic-import app.ts
+├── index.ts                 # Thin bootstrapper: load env, then dynamic-import app.ts
 ├── app.ts                   # The app: builds Fastify, registers routes + workers, GET /health + /health/ready, graceful shutdown, crash handlers
 ├── dotenv.ts                # Environment loader (imported first, before any module)
 ├── prisma/
 │   ├── schema.prisma        # Database schema
 │   └── seed.ts              # Seed data (bun run db:seed)
-├── scripts/
-│   ├── bootstrap.ts         # Publishes + seeds our Predict deployment (bun run bootstrap)
-│   └── (diagnostics)        # bench-lucky, bench-settle, preflight, probe-settle, verify-privy, verify-sponsor
+├── scripts/                 # Diagnostics + benches: bench-lucky, bench-settle, bench-range, diag-pnl, diag-funding, verify-sponsor, gen-ops-wallets, wipe-history
 ├── src/
 │   ├── config/main-config.ts    # Centralized env config (import from here, not process.env)
 │   ├── routes/              # Fastify plugins, grouped by prefix
@@ -67,31 +64,29 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   │   ├── gameRoutes.ts    # /games/* play, /plays/* confirm + cashout
 │   │   ├── menuRoutes.ts    # /stats, /achievements, /settings
 │   │   ├── streamRoutes.ts  # SSE: /stream/prices (fallback), /stream/plays/:id, /stream/live
-│   │   ├── wsRoutes.ts      # WS /ws: shared 10Hz displaySpot broadcast hub (real-mode chart)
-│   │   ├── walletRoutes.ts  # /wallet: balances + send for the standalone node wallet
+│   │   ├── wsRoutes.ts      # WS /ws: shared 10Hz displaySpot broadcast hub (the chart feed)
+│   │   ├── walletRoutes.ts  # /wallet: balances, withdraw, request-dusdc faucet
 │   │   └── exampleRoutes.ts # starter sample
 │   ├── services/            # Business logic, called by routes
 │   │   └── auth, games, plays, stats, achievements, rng, wallet (+ *.test.ts)
 │   ├── workers/             # node-cron jobs (isRunning guard)
-│   │   ├── price-pusher.ts  # pushes oracle prices for short-expiry markets
-│   │   ├── oracle-roll.ts   # rolls the oracle ladder forward
-│   │   ├── market-sync.ts   # discovers live oracle markets from chain (follower mode)
-│   │   ├── settle.ts        # settles expired plays
-│   │   └── errorLogCleanup.ts (+ exampleWorkers.ts)
+│   │   ├── market-sync.ts   # discovers the live 1m BTC markets from chain
+│   │   ├── settle.ts        # settles expired plays (redeem_settled)
+│   │   ├── price-warmer.ts  # keeps display-asset Pyth spot pre-warmed
+│   │   └── errorLogCleanup.ts, depositCleanup.ts (mainnet)
 │   ├── middlewares/authMiddleware.ts
 │   ├── types/api.ts         # DTO contract (mirrors web/src/lib/api.ts)
 │   ├── utils/               # errorHandler, validationUtils, miscUtils, timeUtils
 │   └── lib/
 │       ├── prisma.ts        # Database client (pg adapter, PIPS_DB_POOL_MAX pool ceiling)
 │       ├── worker-registry.ts # Tracks every cron/interval worker for /health/ready + coordinated shutdown
-│       ├── leader-lock.ts   # Postgres advisory lock so only one OPERATOR_ENABLED instance moves funds
 │       ├── alert.ts         # Opt-in Discord/Slack webhook for unrecoverable events (no-op if PIPS_ALERT_WEBHOOK_URL unset)
 │       ├── pyth.ts          # Pyth price reads
 │       ├── price-cache.ts   # In-memory price cache
-│       ├── game-price.ts    # Unified follower price feed for games (gameSpot: eased on-chain oracle)
-│       ├── binance-ws.ts    # Shared Binance aggTrade WS (real-mode chart MOTION, display-only, L-015)
-│       ├── price-bus.ts     # displaySpot: Binance motion EMA-pinned to the on-chain oracle level
-│       └── sui/             # client, predict (fork) / predict-real (testnet), solver, markets, math, signer, privy, dusdc, gas, sponsor, execute, config (+ config-real), deployed.<network>.json / deployed-real.testnet.json
+│       ├── game-price.ts    # gameSpot: eased on-chain market spot (the chart feed)
+│       ├── binance-ws.ts    # Shared Binance aggTrade WS (chart MOTION, display-only, L-015)
+│       ├── price-bus.ts     # displaySpot: Binance motion EMA-pinned to the on-chain market spot
+│       └── sui/             # client, predict-real + config-real + deployed-real.testnet.json (Mysten's Predict), markets, math, signer, privy, dusdc, gas, sponsor, execute, config
 ```
 
 ---
@@ -101,10 +96,10 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 **The single source of truth for env.** Every tunable is a named export here, read from `process.env` with a default. Import from config, never touch `process.env` directly:
 
 ```ts
-import { JWT_SECRET, APP_PORT, AUTH_MODE, OPERATOR_ENABLED } from '../config/main-config.ts';
+import { JWT_SECRET, APP_PORT, AUTH_MODE, SUI_NETWORK } from '../config/main-config.ts';
 ```
 
-It covers, grouped: **core** (`APP_PORT`, `NODE_ENV`, `IS_DEV`/`IS_PROD`, `DATABASE_URL`, `JWT_SECRET`, `ALLOWED_ORIGIN`), **auth** (`AUTH_MODE` dev|privy, the `PRIVY_*` keys, `TESTING_WALLET_PK`), **Sui** (`SUI_NETWORK`, `SUI_FULLNODE_URL`, the `PREDICT_*` ids, `PYTH_HERMES_URL`), **economy** (`STARTING_BALANCE`, `MIN_STAKE`/`MAX_STAKE`, `GAME_DURATIONS`), **gas** (`GAS_FUND_SUI`, `PLAY_GAS_BUDGET`, `GAS_SPONSORSHIP_WALLET_PK` + the `SPONSOR_*` topup knobs), the **operator** (`OPERATOR_ENABLED`, the `*_CRON` schedules for price-push / oracle-roll / settle / market-sync, plus the oracle ladder + `LUCKY_*` tuning), and **hardening** (`PIPS_SHUTDOWN_TIMEOUT_MS` graceful-drain budget default 8000ms, `PIPS_DB_POOL_MAX` pg pool ceiling default 10, `PIPS_ALERT_WEBHOOK_URL` opt-in Discord/Slack alerts empty default, the `PIPS_RATE_LIMIT_*` HTTP caps). Add a new tunable here, not inline.
+It covers, grouped: **core** (`APP_PORT`, `NODE_ENV`, `IS_DEV`/`IS_PROD`, `DATABASE_URL`, `JWT_SECRET`, `ALLOWED_ORIGIN`), **auth** (`AUTH_MODE` dev|privy, the `PRIVY_*` keys, `TESTING_WALLET_PK`), **Sui** (`SUI_NETWORK`, `SUI_FULLNODE_URL`, `PYTH_HERMES_URL`), **economy** (`STARTING_BALANCE`, `MIN_STAKE`/`MAX_STAKE`, `GAME_DURATIONS`), **gas** (`PLAY_GAS_BUDGET`, `GAS_SPONSORSHIP_WALLET_PK` + the `SPONSOR_*` knobs), **workers** (`SETTLE_CRON` / `MARKET_SYNC_CRON`, the `LUCKY_ROUND_MS` / `RANGE_*_ORACLE_LIFE_MS` round durations), **real-mode sizing** (the `REAL_*` strike knobs + the sponsor safety layer), and **hardening** (`PIPS_SHUTDOWN_TIMEOUT_MS` graceful-drain budget default 8000ms, `PIPS_DB_POOL_MAX` pg pool ceiling default 10, `PIPS_ALERT_WEBHOOK_URL` opt-in Discord/Slack alerts empty default, the `PIPS_RATE_LIMIT_*` HTTP caps). Add a new tunable here, not inline.
 
 ---
 

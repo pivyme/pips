@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Check, Copy, ExternalLink, Info } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { explorerAddressUrl, NETWORK, NETWORK_LABEL } from '@/lib/sui/config'
+import { explorerAddressUrl, NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { Alert } from '@/ui/Alert'
@@ -10,12 +10,8 @@ import { Alert } from '@/ui/Alert'
 // Receive mode: the chip asset on Sui needs no bridge at all, the address just receives it. This is the
 // one deposit path that fully works today, so it stays the plain, boring, correct address screen.
 
-// What the chip actually is depends on the chain: testnet uses DeepBook Predict's own test token, the
-// fork (localnet/devnet) uses the copy the PIPS team runs. Never claim a network we're not on.
-const CHIP_ORIGIN =
-  NETWORK === 'testnet'
-    ? `DeepBook Predict's test token on ${NETWORK_LABEL}`
-    : `a test token the PIPS team runs on ${NETWORK_LABEL}`
+// The chip is DeepBook Predict's own test token. Never claim a network we're not on.
+const CHIP_ORIGIN = `DeepBook Predict's test token on ${NETWORK_LABEL}`
 
 export function ReceivePanel({ address, chipSymbol, minUsd }: { address: string; chipSymbol: string; minUsd: number }) {
   const [copied, setCopied] = useState(false)

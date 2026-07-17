@@ -1,12 +1,11 @@
-// Server-side signing keypairs. The operator (= testing wallet) owns the AdminCap + oracle caps and runs
-// the price/settle workers (dev-mode plays too); optional settlement/treasury wallets peel contention-prone duties off it, falling back to the operator when unset.
+// Server-side signing keypairs. The operator (= testing wallet) signs dev-mode plays + the settle sweep;
+// optional settlement/treasury/revenue wallets peel contention-prone duties off it, falling back to the operator when unset.
 
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { fromBase64 } from '@mysten/sui/utils';
 
 import { TESTING_WALLET_PK, SETTLEMENT_WALLET_PK, TREASURY_WALLET_PK, REVENUE_WALLET_PK } from '../../config/main-config.ts';
-import { ADMIN_CAP_ID, ORACLE_CAP_IDS } from './config.ts';
 
 // suiprivkey envelope, or base64 (32-byte secret or a 33-byte flagged keystore entry).
 function parseKeypair(pk: string): Ed25519Keypair {
@@ -46,9 +45,3 @@ export const treasuryAddress: string = treasuryKeypair ? treasuryKeypair.getPubl
 export const revenueKeypair = loadOptional(REVENUE_WALLET_PK);
 export const REVENUE_ENABLED: boolean = revenueKeypair != null;
 export const revenueAddress: string = revenueKeypair ? revenueKeypair.getPublicKey().toSuiAddress() : '';
-
-// The admin surface the operator holds; oracle pushes need distinct caps per lane, so workers round-robin over oracleCapIds.
-export const operatorCaps = {
-  adminCapId: ADMIN_CAP_ID,
-  oracleCapIds: ORACLE_CAP_IDS,
-};

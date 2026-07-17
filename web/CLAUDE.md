@@ -34,7 +34,7 @@ The `/menu/*` routes use a native-style push/pop transition inside the persisten
 - Core SDK `@mysten/sui` (v2.x, ESM only). PTBs use `Transaction` from `@mysten/sui/transactions` (renamed from `TransactionBlock`). Fullnode reads go through `SuiGrpcClient` (`@mysten/sui/grpc`, built with an explicit `baseUrl`); JSON-RPC is removed, never re-add `@mysten/sui/jsonRpc`. grpc-web runs over fetch (no extra WASM).
 - Wallet connect phase 1: `@suiet/wallet-kit` (`<WalletProvider>`, `<ConnectButton/>`, `useWallet`). The official standard is now the split `@mysten/dapp-kit-react` + `@mysten/dapp-kit-core`, both ride the same Wallet Standard.
 - Auth: **Privy** `@privy-io/react-auth` (+ `/extended-chains`). Google/email login + a non-custodial embedded ed25519 (Sui) wallet, driven by `src/lib/privy.tsx` (the provider + login -> wallet -> session-signer -> `/auth/privy/verify` bridge). Enoki/zkLogin is removed. Confirm the Privy API live, it moves fast.
-- Predict is hand-built PTBs via `@mysten/sui` against our own published predict package (the `@mysten/deepbook-v3` SDK has no Predict support). **Runs on our own Sui localnet (`https://rpc.playpips.fun`), not testnet; ids are per-deployment, never hardcode.** All Predict calls go through `src/lib/sui/predict.ts`; ids come from `src/lib/sui/config.ts` (fed by `env.ts`), never inline. `VITE_SUI_NETWORK=localnet` + `VITE_SUI_FULLNODE_URL` point the browser at the live node; the localnet itself is set up via `scripts/localnet.sh` at the repo root.
+- Plays are **server-signed**: the client never builds a Predict PTB, it calls the backend (`src/lib/sui/predict.ts` is a thin wrapper over the play/cashout API). Ids come from `src/lib/sui/config.ts` (fed by `env.ts` + a boot `/config` fetch), never inline. **Runs against Mysten's real Predict on `testnet` (default) / `mainnet`; `VITE_SUI_NETWORK` selects the network.**
 - Env is typed/validated in `src/env.ts`. Add `VITE_SUI_NETWORK`, `VITE_PRIVY_APP_ID` etc there, import from `env.ts`, not `import.meta.env`.
 - **Bun + WASM gotcha:** the Sui crypto stack pulls WASM and `vite-plugin-wasm` can fail when the Vite dev server runs through Bun. If you hit a WASM load error, run the dev server on Node (bun stays the package manager).
 
@@ -122,7 +122,6 @@ src/
 │   ├── design-system.tsx     # Living UI-kit reference (/design-system)
 │   ├── pitch.tsx             # Standalone pitch deck (/pitch), outside the shell
 │   ├── export.tsx            # Dev-only PNG dump of the device per skin (personal tooling)
-│   ├── tools/wallet.tsx      # Standalone node wallet (/tools/wallet)
 │   └── _app/                 # Pathless layout: everything "inside the device"
 │       ├── games/            # index, lucky, range, line-rider, candle-hop
 │       └── menu/             # index, stats, achievements, customize, settings
@@ -151,7 +150,7 @@ src/
 │   ├── privy.tsx             # Privy provider + login->wallet->verify bridge (privy mode)
 │   ├── demo.ts               # The ONE sanctioned in-memory sim (demo mode)
 │   ├── achievements.ts, haptics.ts, sound.ts, shareCard.ts, errors.ts, polyfills.ts
-│   └── sui/                  # predict.ts (the one Predict wrapper), config.ts (ids from env), devwallet.ts (/tools/wallet helper)
+│   └── sui/                  # predict.ts (thin wrapper over the backend play API), config.ts (ids from env + /config)
 ├── hooks/                    # useLocalStorage, useReducedMotion
 ├── utils/                    # style.ts (cnm), format.ts, motion.ts
 ├── integrations/             # tanstack-query root provider

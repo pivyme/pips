@@ -1,8 +1,7 @@
-// displaySpot(asset): Binance motion EMA-pinned to the on-chain oracle, degrading to gameSpot if either stalls.
-// Display-only (L-015), entry/cash-out/settle always read the chain; fork mode short-circuits to gameSpot verbatim.
+// displaySpot(asset): Binance motion EMA-pinned to the on-chain market spot, degrading to gameSpot if either stalls.
+// Display-only (L-015), entry/cash-out/settle always read the chain.
 
 import {
-  IS_REAL_PREDICT,
   PRICE_PIN_BUZZER_MS,
   PRICE_PIN_REENTRY_MS,
   PRICE_PIN_SLEW_FRAC_PER_SEC,
@@ -78,10 +77,6 @@ export function nextPinDriver(prev: Driver, canBinance: boolean, healthySince: n
 // The chart display price for an asset. Async to match gameSpot (the fallback awaits a Pyth read on a
 // cold boot). Returns null only when even gameSpot has nothing yet; the SSE/WS layer guards null.
 export async function displaySpot(asset: string): Promise<Spot | null> {
-  // Fork mode / real mode with the feed off both funnel here: binanceSpot is null, so the ladder falls
-  // straight to gameSpot. Short-circuit fork mode outright so its output is byte-identical (no state).
-  if (!IS_REAL_PREDICT) return gameSpot(asset);
-
   const now = Date.now();
   const oracleSpot = assetSpot(asset); // on-chain BS level (display units) | null
   const b = binanceSpot(asset); // fresh Binance last-trade | null

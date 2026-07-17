@@ -1,42 +1,18 @@
-// DUSDC handout: minting via our own treasury cap (operator-signed, seeds the vault + treasury reserve).
-// User-facing payout (transferDusdc) prefers a plain transfer from the treasury reserve so chips never come off the operator key.
+// DUSDC handout. Against Mysten's official Predict, DUSDC is NOT mintable (we don't own the TreasuryCap),
+// so chips come only from a manually-funded treasury wallet: user-facing payouts are a plain transfer from that reserve.
 
 import { Transaction, coinWithBalance } from '@mysten/sui/transactions';
 
 import { suiClient } from './client.ts';
-import { executeAsOperator, executeAsTreasury, executeAsRevenue } from './execute.ts';
+import { executeAsTreasury, executeAsRevenue } from './execute.ts';
 import { TREASURY_ENABLED, REVENUE_ENABLED } from './signer.ts';
-import { DUSDC_TYPE, DUSDC_TREASURY_CAP_ID, toDusdcRaw } from './config.ts';
+import { DUSDC_TYPE, toDusdcRaw } from './config.ts';
 
-// True only when we own the DUSDC TreasuryCap for this deployment (our vendored Predict instance).
-// False against a deployment we don't operate (Mysten's official testnet Predict), where DUSDC only comes from a manually-funded treasury wallet, never a mint.
-export const DUSDC_MINTABLE = Boolean(DUSDC_TREASURY_CAP_ID);
-
-// Mint `amount` DUSDC (display units) to `to`, returns the tx digest.
-// Routes through the operator executor (not a direct sign) so it shares gas coin + queue with the workers and never desyncs their object cache.
-export async function mintDusdc(to: string, amount: number): Promise<string> {
-  if (amount <= 0) throw new Error('mintDusdc: amount must be positive');
-  if (!DUSDC_MINTABLE) throw new Error('mintDusdc: this deployment\'s DUSDC TreasuryCap is not ours, cannot mint');
-
-  const tx = new Transaction();
-  const coin = tx.moveCall({
-    target: '0x2::coin::mint',
-    typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(DUSDC_TREASURY_CAP_ID), tx.pure.u64(toDusdcRaw(amount))],
-  });
-  tx.transferObjects([coin], tx.pure.address(to));
-
-  return (await executeAsOperator(tx, 'mintDusdc')).digest;
-}
-
-// Pay `amount` DUSDC (display units) to `to`, preferring a plain transfer from the treasury's reserve so chips stay off the operator key (a follower never signs an operator tx).
-// Falls back to an operator mint only when we own the TreasuryCap (DUSDC_MINTABLE); otherwise an empty treasury fails loudly instead of attempting an impossible mint.
+// Pay `amount` DUSDC (display units) to `to` via a plain transfer from the treasury's reserve, returns the
+// tx digest. DUSDC is not mintable on this deployment, so an unconfigured or empty treasury fails loudly (needs a manual top-up), never an impossible mint.
 export async function transferDusdc(to: string, amount: number): Promise<string> {
   if (amount <= 0) throw new Error('transferDusdc: amount must be positive');
-  if (!TREASURY_ENABLED) {
-    if (!DUSDC_MINTABLE) throw new Error('transferDusdc: no treasury configured and DUSDC is not mintable on this deployment');
-    return mintDusdc(to, amount);
-  }
+  if (!TREASURY_ENABLED) throw new Error('transferDusdc: no treasury configured and DUSDC is not mintable on this deployment (set TREASURY_WALLET_PK)');
 
   const tx = new Transaction();
   const coin = coinWithBalance({ type: DUSDC_TYPE, balance: toDusdcRaw(amount) })(tx);
@@ -44,15 +20,9 @@ export async function transferDusdc(to: string, amount: number): Promise<string>
   try {
     return (await executeAsTreasury(tx, 'transferDusdc')).digest;
   } catch (e) {
-    if (!DUSDC_MINTABLE) {
-      throw new Error(
-        `transferDusdc: treasury payout failed and DUSDC is not mintable on this deployment (needs a manual top-up): ${e instanceof Error ? e.message : e}`,
-      );
-    }
-    // Treasury unfunded or briefly unreachable: fall back to a direct mint so onboarding/faucet never hard-fail (the operator owns the TreasuryCap, so this always works).
-    // Rare and self-healing, once the operator funds the treasury the transfer path takes over.
-    console.warn('[treasury] payout failed, falling back to mint:', e instanceof Error ? e.message : e);
-    return mintDusdc(to, amount);
+    throw new Error(
+      `transferDusdc: treasury payout failed and DUSDC is not mintable on this deployment (needs a manual top-up): ${e instanceof Error ? e.message : e}`,
+    );
   }
 }
 

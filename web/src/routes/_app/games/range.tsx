@@ -35,7 +35,7 @@ import {
 } from '@/lib/sound'
 import { api } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
-import { NETWORK, betLadder, netStakeUsd } from '@/lib/sui/config'
+import { betLadder, netStakeUsd } from '@/lib/sui/config'
 import { rangeDebug, type RangeEntryIntent } from '@/lib/rangeDebug'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
@@ -52,11 +52,11 @@ export const Route = createFileRoute('/_app/games/range')({
 // Persisted stake index shared with Lucky + the home idle wheel (same key), so the chosen chip
 // survives navigation and reloads instead of resetting each mount.
 const STAKE_KEY = 'pips_stake_idx'
-// Band ladder: the ± half-band the knob steps through. A tight testnet BTC move would clear the fork's wide
-// ±0.1-1.5% bands near-certainly, so real mode uses much tighter bands (calibrated to REAL_BTC_ANNUAL_VOL) so the knob actually varies the multiplier.
-const BAND_LADDER: Array<number> = NETWORK === 'testnet' ? [0.02, 0.035, 0.05, 0.08, 0.15] : [0.1, 0.2, 0.5, 1, 1.5]
-// Default band the knob lands on at mount: a middle rung in each ladder (fork ±1.0%, real ±0.05%).
-const DEFAULT_WIDTH_IDX = NETWORK === 'testnet' ? 2 : 3
+// Band ladder: the ± half-band the knob steps through. Tight bands calibrated to REAL_BTC_ANNUAL_VOL so a
+// short BTC round doesn't clear them near-certainly and the knob actually varies the multiplier.
+const BAND_LADDER: Array<number> = [0.02, 0.035, 0.05, 0.08, 0.15]
+// Default band the knob lands on at mount: the middle rung (±0.05%).
+const DEFAULT_WIDTH_IDX = 2
 const FALLBACK_ASSETS = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
 const TOKEN_LOGOS: Record<string, string> = {
   BTC: '/assets/images/coins/btc-logo.png',
@@ -100,11 +100,10 @@ const compact = (n: number): string =>
     ? `${(n / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k`
     : n.toLocaleString('en-US', { maximumFractionDigits: n >= 1 ? 2 : 4 })
 
-// Rough monotonic estimate, only a cold-start fallback until the backend's real per-band quote loads
-// (fork = live ask, real = win-prob model). Sigma is mode-specific (fork ~0.6%/30s, real ~0.05%/30s) so a fork-scale sigma never flashes a fake multiplier in real mode.
-const IS_REAL = NETWORK === 'testnet'
+// Rough monotonic estimate, only a cold-start fallback until the backend's real per-band win-prob quote loads.
+// Sigma is ~0.05%/30s so the cold-start multiplier is in the right ballpark before the real quote lands.
 function estimateMultiplier(halfPct: number, durationSec: number): number {
-  const sigma = (IS_REAL ? 0.05 : 0.6) * Math.sqrt(durationSec / 30) // ~1-sigma % move, scales with sqrt(T)
+  const sigma = 0.05 * Math.sqrt(durationSec / 30) // ~1-sigma % move, scales with sqrt(T)
   const ratio = halfPct / sigma
   const prob = 1 - Math.exp(-ratio)
   return Math.max(1.05, Math.min(0.97 / Math.max(prob, 0.03), 99))

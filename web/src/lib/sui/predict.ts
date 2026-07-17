@@ -18,15 +18,13 @@ const SUI_DECIMALS = 9
 const DEFAULT_FULLNODE: Record<string, string> = {
   mainnet: 'https://fullnode.mainnet.sui.io:443',
   testnet: 'https://fullnode.testnet.sui.io:443',
-  devnet: 'https://fullnode.devnet.sui.io:443',
-  localnet: 'http://127.0.0.1:9000',
 }
 
 // Lazy read-only gRPC client for the balance reads below only, never for a Predict moveCall. baseUrl is required, the shorthand ctor throws without it.
 let client: SuiGrpcClient | null = null
 function suiClient(): SuiGrpcClient {
   if (!client) {
-    const baseUrl = env.VITE_SUI_FULLNODE_URL || DEFAULT_FULLNODE[NETWORK] || DEFAULT_FULLNODE.devnet
+    const baseUrl = env.VITE_SUI_FULLNODE_URL || DEFAULT_FULLNODE[NETWORK] || DEFAULT_FULLNODE.testnet
     client = new SuiGrpcClient({ network: NETWORK, baseUrl })
   }
   return client

@@ -3,7 +3,7 @@
 //   cd backend && bun scripts/diag-funding.ts
 import '../dotenv.ts';
 
-import { IS_REAL_PREDICT, TREASURY_MIN_DUSDC, SPONSOR_FLOOR_SUI } from '../src/config/main-config.ts';
+import { TREASURY_MIN_DUSDC, SPONSOR_FLOOR_SUI } from '../src/config/main-config.ts';
 import { DUSDC_TYPE } from '../src/lib/sui/config.ts';
 import { treasuryAddress, settlementAddress, operatorAddress } from '../src/lib/sui/signer.ts';
 import { sponsorAddress, SPONSOR_ENABLED } from '../src/lib/sui/sponsor.ts';
@@ -13,7 +13,7 @@ import { getDusdcBalanceRaw } from '../src/lib/sui/dusdc.ts';
 const SUI = (mist: bigint) => (Number(mist) / 1e9).toFixed(4);
 const USDC = (raw: bigint) => (Number(raw) / 1e6).toFixed(6);
 
-console.log(`mode: ${IS_REAL_PREDICT ? 'REAL (testnet Mysten Predict)' : 'FORK (localnet/devnet)'}`);
+console.log('mode: REAL (testnet Mysten Predict)');
 console.log(`DUSDC type: ${DUSDC_TYPE}`);
 console.log(`floors: treasury >= ${TREASURY_MIN_DUSDC} DUSDC, sponsor >= ${SPONSOR_FLOOR_SUI} SUI\n`);
 

@@ -13,7 +13,7 @@ The twist that makes PIPS PIPS: the whole interface looks and behaves like a **p
 ## What an agent needs to know first
 
 1. This is a **monorepo** with three pillars: `web/` (frontend), `backend/` (API), `contracts/` (Sui Move). Working in a pillar? Read its own `CLAUDE.md` too.
-2. The chain is **mode-selected by `SUI_NETWORK`**, behind one seam `IS_REAL_PREDICT = SUI_NETWORK === 'testnet'`. On `localnet`/`devnet` we publish and run our **own** copy of **DeepBook Predict** (the vendored fork), setup/redeploy in one command: `scripts/localnet.sh`. On `testnet` we trade against **Mysten's official DeepBook Predict** (the real protocol, structurally different, `backend/src/lib/sui/predict-real.ts`, discovery via direct chain reads, no fork publish). Ids always come from config, never hardcoded. Read "The chain" and "DeepBook Predict" below, plus `bigdev/plans/cont/01-PREDICT-TESTNET.md` for the real path, before touching anything Sui.
+2. The chain is **Mysten's official DeepBook Predict**, on `testnet` (default) or `mainnet`, selected by `SUI_NETWORK`. There is no fork mode: PIPS never publishes or operates its own Predict. The one real path lives in `backend/src/lib/sui/predict-real.ts` + `config-real.ts`, discovery via direct chain reads, ids from config never hardcoded. The vendored Predict copy under `contracts/` and the `scripts/localnet.sh` deploy front door remain on disk for reference only, not part of the run or deploy path. Read "The chain" and "DeepBook Predict" below, plus `bigdev/plans/cont/01-PREDICT-TESTNET.md`, before touching anything Sui.
 3. The frontend is **not a normal dashboard**. It is a persistent console shell with a swappable screen. Read [`docs/DESIGN.md`](./docs/DESIGN.md) (how it looks) and [`docs/FLOW.md`](./docs/FLOW.md) (how it moves: the surfaces, the Home screen, the navigation map) before touching UI. The UI has **two distinct visual languages**: the App Surface (the menu drawer, settings, landing, modals) is iOS clean with rounded cards, per DESIGN.md; **everything inside the device screen (Home + all games) is the Teenage Engineering instrument language in [`docs/SCREEN.md`](./docs/SCREEN.md), flat black with electric high-contrast ink, no rounded cards.** Read SCREEN.md before touching any `/games/*` screen.
 4. Auth is **Privy (Google/email sign-in + a non-custodial embedded Sui wallet)** plus a **dev auto-login** for local and the build loop. `AUTH_MODE = dev | privy` (Enoki/zkLogin removed). Suiet wallet connect is not in v1. See the "Auth" section below and [`bigdev/plans/LUCKY.md`](./bigdev/plans/LUCKY.md) §6.
 5. The Sui SDK surface moves fast. The package names and APIs in this file were verified mid 2026. When you write integration code, confirm the current API before coding, never guess from memory.
@@ -32,8 +32,7 @@ pips/
 │   ├── SCREEN.md       In-device screen language (Home + games): Teenage Engineering instrument style
 │   ├── FLOW.md         App flow + navigation map (door, device, drawer)
 │   └── references/     Visual references (Not Boring Camera, console layout)
-├── scripts/
-│   └── localnet.sh     Localnet + Predict deploy front door (setup/redeploy/doctor)
+├── scripts/            Vendored-fork deploy scripts (localnet.sh etc), reference-only, not the run path
 ├── .claude/
 │   └── progress.md     Living roadmap + build progress + quick reference
 ├── CLAUDE.md           This file (master context)
@@ -85,44 +84,31 @@ DeepBook Predict is a real, official Sui primitive: an **expiry based on-chain p
 This is what every PIPS game settles against. The fun, game-like front layer translates into Predict positions underneath.
 
 **Critical constraints:**
-- **Two modes behind one seam (`IS_REAL_PREDICT = SUI_NETWORK === 'testnet'`).** On `localnet`/`devnet` we run our **own** deployment: publish our copy of `packages/predict` (plus DUSDC, token, deepbook), seed the vault with free DUSDC, run the oracles ourselves (gas effectively infinite, DUSDC mintable). On `testnet` we trade against **Mysten's official** DeepBook Predict, a structurally different protocol we do not operate: no fork publish, discovery via direct chain reads, DUSDC not mintable (manual treasury funding), finite testnet SUI behind a sponsor safety layer, and real continuous leverage. The real path lives in `predict-real.ts` + `config-real.ts`; full spec in `bigdev/plans/cont/01-PREDICT-TESTNET.md`. Mainnet is a clean re-point later.
-- **Package IDs and object layouts are per-deployment and change every redeploy.** **Never hardcode them.** Read them from config (the bootstrap writes them to `deployed.localnet.json` + the `.env`s), behind one abstraction layer.
-- The published `@mysten/deepbook-v3` SDK has **no Predict support** (verified against source). We hand-build raw PTBs against the predict modules with `@mysten/sui`, and for fast short-expiry games we **publish our own copy of `packages/predict`** to our localnet and operate our own markets, vault, and oracles (seeded with free DUSDC). Full verified recipe in [`bigdev/plans/05-SUI-PREDICT.md`](./bigdev/plans/05-SUI-PREDICT.md). Everything stays behind the one wrapper.
+- **One real path (Mysten's official DeepBook Predict).** PIPS trades `testnet` (default) or `mainnet`, a protocol we do not operate: no fork publish, discovery via direct chain reads, DUSDC not mintable (manual treasury funding), finite testnet SUI behind a sponsor safety layer, and real continuous leverage. The path lives in `predict-real.ts` + `config-real.ts`; full spec in `bigdev/plans/cont/01-PREDICT-TESTNET.md`. Mainnet is a clean re-point of the same code.
+- **Package IDs and object layouts come from the live deployment.** **Never hardcode them.** Read them from config (`config-real.ts` + the committed `deployed-real.testnet.json`, ids re-fetched from chain), behind one abstraction layer.
+- The published `@mysten/deepbook-v3` SDK has **no Predict support** (verified against source). We hand-build raw PTBs against the predict modules with `@mysten/sui`, against Mysten's markets, vault, and oracles. Full verified recipe in [`bigdev/plans/05-SUI-PREDICT.md`](./bigdev/plans/05-SUI-PREDICT.md). Everything stays behind the one wrapper.
 
 **Capability box (design games INSIDE this, never outside it).** Verified against `contracts/predict/sources/predict.move`. The entire on-chain vocabulary is two **European, expiry-settled** instruments:
 1. **Binary up/down** at a grid-aligned strike. Pays `$1·qty` if the settlement price at expiry is on the chosen side, else 0.
 2. **Vertical range** `(lower, higher]`. Pays `$1·qty` if the settlement price at expiry lands in the band, else 0.
 
-Both support **hold + early cash-out**: pre-expiry `redeem` pays the live bid (mark-to-market), post-expiry `redeem` pays `$1·qty` or 0. You mint at `ask = fair + spread` and cash out at `bid = fair − spread` (round-trip costs the spread); a settled win is spread-free. Multipliers are market-priced (`1/ask`) and clamped by on-chain ask bounds, not fixed buckets. In the fork "leverage" just means how far OTM the strike sits; **testnet-real Predict adds a true `leverage: u64` param** on top of the strike distance (multiplier `M ≈ L / entry_probability`), so a real play's multiple = strike distance × leverage.
+Both support **hold + early cash-out**: pre-expiry `redeem` pays the live bid (mark-to-market), post-expiry `redeem` pays `$1·qty` or 0. You mint at `ask = fair + spread` and cash out at `bid = fair − spread` (round-trip costs the spread); a settled win is spread-free. Multipliers are market-priced (`1/ask`) and clamped by on-chain ask bounds, not fixed buckets. Real Predict has a true `leverage: u64` param on top of the strike distance (multiplier `M ≈ L / entry_probability`), so a play's multiple = strike distance × leverage.
 
-**Predict CANNOT do (do not design a game around these):** no touch/no-touch/barrier (settlement reads only the price AT expiry, never the path), no path-dependent or time-climbing payoff (no native crash/Aviator curve), no fixed-odds book (it is a vault-priced AMM with a spread). **Leverage is mode-split:** the fork (localnet/devnet) has **none** (positions fully prepaid, max loss = premium; real margin is the separate loop in `bigdev/plans/10-LEVERAGE.md`), but **testnet-real Predict has real continuous `leverage: u64`** bounded by `max_admission_leverage` (3.0× on BTC) and probability-gated per strike, so it is knocked out for 0 if liquidated mid-round (L-009/L-011/L-012). If a mechanic needs any of the first three it cannot ship on Predict at all. The ONLY sanctioned sim is demo mode. Full source-cited box in [`bigdev/plans/05-SUI-PREDICT.md`](./bigdev/plans/05-SUI-PREDICT.md).
+**Predict CANNOT do (do not design a game around these):** no touch/no-touch/barrier (settlement reads only the price AT expiry, never the path), no path-dependent or time-climbing payoff (no native crash/Aviator curve), no fixed-odds book (it is a vault-priced AMM with a spread). **Leverage:** real continuous `leverage: u64` bounded by `max_admission_leverage` (3.0× on BTC) and probability-gated per strike, so a position is knocked out for 0 if liquidated mid-round (L-009/L-011/L-012); the margin-loop details are in `bigdev/plans/10-LEVERAGE.md`. If a mechanic needs any of the first three it cannot ship on Predict at all. The ONLY sanctioned sim is demo mode. Full source-cited box in [`bigdev/plans/05-SUI-PREDICT.md`](./bigdev/plans/05-SUI-PREDICT.md).
 
 **Architecture rule:** all Predict interaction goes through one wrapper module (`web/src/lib/sui/predict.*` on the client, `backend/src/lib/sui/*` on the server). Games call that wrapper. When mainnet lands or IDs change, we touch one place.
 
 ---
 
-## The chain: fork mode (localnet/devnet)
+## The chain: Mysten's real Predict (testnet/mainnet)
 
-This section is the **fork** path (`SUI_NETWORK=localnet` or `devnet`), where we publish and operate our own Predict stack. On `testnet` none of this applies: that path trades **Mysten's real Predict** (see "DeepBook Predict" above and `bigdev/plans/cont/01-PREDICT-TESTNET.md`), with no fork publish, no oracles of ours, and no `localnet.sh`.
+Every play settles against **Mysten's official DeepBook Predict**, selected by `SUI_NETWORK` (`testnet` default, `mainnet` a clean re-point). PIPS never publishes or operates its own Predict: no vault to seed, no oracles to run, no deploy step in the run path. Discovery is direct on-chain reads (`predict-real.ts` + `config-real.ts`); ids come from the committed `deployed-real.testnet.json` (re-fetched from chain), never hardcoded.
 
-In fork mode we publish the whole Predict stack (our copy of `predict` + DUSDC + token + deepbook), seed the vault with free DUSDC, and run the oracles ourselves. It was first hosted on our own localnet at `https://rpc.playpips.fun` (Cloudflare in front, valid cert, chain `325c13db`); the shared deploy has since moved to public **Sui devnet**, which wipes ~weekly (re-run the deploy script on a wipe). Either way, this is the chain a fork-mode play settles against.
+**What the backend does per play:** derive/create the user's `AccountWrapper`, deposit the shortfall, mint through the real protocol, and read the minted order id + multiplier off the `OrderMinted` event. Settlement is permissionless `redeem_settled` (Mysten/Pyth settle the market at expiry). There is **no operator, price-pusher, or oracle ladder**. The market set is discovered by `market-sync` (the live 1m BTC markets from chain), gas is paid by a sponsor wallet (finite testnet SUI, behind the `play-safety` reserve floor), and chips come from a hand-funded treasury (DUSDC is not mintable on a deployment we don't own, so top it up manually; the boot log prints the addresses).
 
-**One command drives it: `scripts/localnet.sh`.**
-- `setup` — one shot: import the operator key into the sui CLI, publish the Predict stack, wire both `.env`s. Run once.
-- `redeploy` — **after any `contracts/` (Move) change**: republish all packages, reseed, rewire the ids. This is the loop for Move work.
-- `doctor` / `status` — diagnose what is live (node, cert, gRPC deploy path, Predict package, operator funding).
-- `apply-ids <file>` — wire ids from a deploy done on another machine.
-- `up` — start a throwaway local node + faucet (the fully-local flow, instead of the deployed box).
+**Editing a game, the UI, or the backend needs no deploy step.** The games just compose the two on-chain Predict instruments, so a plain `bun dev` restart is enough.
 
-**Editing a game, the UI, or the backend needs NO redeploy.** The games just compose the two on-chain Predict instruments, so a plain `bun dev` restart is enough. Only `contracts/` (Move) changes need `redeploy`.
-
-**The deploy gotcha (already solved, do not relearn):** the sui CLI 1.71 publishes over **gRPC**, and Cloudflare 403s gRPC while passing JSON-RPC. So the apps (JSON-RPC) run fine through `rpc.playpips.fun`, but the CLI cannot publish there. The fix: publish through the node's **origin** (`http://95.111.237.44:9000`, where gRPC is unblocked), run through the proxied url. The origin is recorded as `PIPS_DEPLOY_RPC` in `backend/.env`; `scripts/localnet.sh` uses it automatically and resets the apps back to the proxied url after each deploy.
-
-**IDs are never hardcoded.** The bootstrap writes them to `backend/src/lib/sui/deployed.localnet.json` (gitignored) and the headline ids into both `.env`s. Read from config, always. Current deployment (chain `325c13db`): Predict package `0xded84f0b…43a3`, vault `0xf31457a2…ad69`.
-
-**`/tools/wallet`** is a standalone browser wallet for this private node (no extension speaks to it): editable RPC, import/generate/watch a key, all coin balances, send any coin, faucet. No auth/backend/Predict wrapper.
-
-Runtime node resolves as `PIPS_LOCALNET_RPC` > `backend/.env` `SUI_FULLNODE_URL` > `127.0.0.1:9000`. Deploy node resolves as `PIPS_DEPLOY_RPC` > auto-origin > runtime.
+**Kept for reference only (not wired):** the vendored Predict fork under `contracts/` (our copy of `predict` + DUSDC + token + deepbook) and the repo-root `scripts/` deploy front door (`localnet.sh`, `devnet-refresh.sh`) stay on disk as history. They are no longer published, run, or part of any deploy path.
 
 ---
 
@@ -131,7 +117,7 @@ Runtime node resolves as `PIPS_LOCALNET_RPC` > `backend/.env` `SUI_FULLNODE_URL`
 Two modes behind one JWT plumbing, selected by `AUTH_MODE` = `dev | privy` (Enoki/zkLogin is removed). Source of truth for the swap is [`bigdev/plans/LUCKY.md`](./bigdev/plans/LUCKY.md) §6; the JWT plumbing, `authMiddleware`, and onboarding in [`bigdev/plans/04-AUTH.md`](./bigdev/plans/04-AUTH.md) still stand.
 
 - **`privy` (product + demo):** Google/email sign-in via **Privy**, which mints a non-custodial embedded **ed25519 (Sui)** wallet, so users get a real Sui address with no seed phrase. The client (`web/src/lib/privy.tsx`) creates the wallet, grants a **session signer** to the app, and posts the Privy access token + Sui address/public key/walletId to `POST /auth/privy/verify`. The backend verifies the token (`@privy-io/node` `verifyAccessToken`), upserts the user keyed by the Sui address, runs onboarding, mints our JWT. Plays are **server-signed**: `executeForUser` signs the tx intent digest with the user's wallet via Privy `rawSign` (`hash_function: 'blake2b256'`) under the session signer, so there is no per-spin popup and no client sponsor envelope.
-- **`dev` (local + build loop):** auto-login the testing wallet (`TESTING_WALLET_PK`); the backend signs txs directly as the operator. No OAuth. Real Predict either way, the fork on localnet/devnet or Mysten's real Predict on testnet (whichever `SUI_NETWORK` selects).
+- **`dev` (local + build loop):** auto-login the testing wallet (`TESTING_WALLET_PK`); the backend signs txs directly with that wallet. No OAuth. Trades Mysten's real Predict, same as privy mode.
 
 Demo mode (`VITE_DEMO_MODE`) stays the one sanctioned no-backend sim. Suiet wallet connect is not in v1 (`@suiet/wallet-kit` stays available but unused).
 
@@ -144,7 +130,7 @@ Demo mode (`VITE_DEMO_MODE`) stays the one sanctioned no-backend sim. Suiet wall
 - Both JS apps run on the **Bun runtime**. Verify Bun compatibility before suggesting Node specific APIs.
 - **Ports:** backend `:3780`, web `:3200`.
 - Frontend talks to backend via `VITE_API_URL` (validated in `web/src/env.ts`). Backend CORS is locked to `ALLOWED_ORIGIN` in production.
-- **Sui IDs and package addresses live in config, never inline.** This applies to DeepBook Predict, our own published Move packages, and any pool/object IDs.
+- **Sui IDs and package addresses live in config, never inline.** This applies to DeepBook Predict and any pool/object IDs.
 - **Sui only:** PIPS is Sui only. The EVM (`ethers`) and Solana (`@solana/web3.js`, `bs58`) starter deps have been removed from the backend. If any `ethers` / `@solana/*` reference survives, it is dead, do not build on it.
 
 ---
@@ -162,7 +148,7 @@ Demo mode (`VITE_DEMO_MODE`) stays the one sanctioned no-backend sim. Suiet wall
 
 The full v1 build (auth, the games, menu, backend, indexer, the Predict integration) is planned under [`bigdev/`](./bigdev/) and built by an autonomous loop (`./bigdev/autobuild`). Durable steering lives in [`bigdev/claude/requirements-log.md`](./bigdev/claude/requirements-log.md) (committed, read every iteration); one-shot corrections go to `bigdev/claude/inject.md` (gitignored). Use `./bigdev/autobuild say "rule"` for durable, `./bigdev/autobuild fix "msg"` for transient.
 
-**The spine (decided):** every play is a real `mint`/`redeem` against DeepBook Predict, the deployment selected by `SUI_NETWORK`. On `localnet`/`devnet` it is our **own** published fork (we seed the vault with free DUSDC and run short-expiry oracles via a backend price-pusher); on `testnet` it is Mysten's **official** real Predict (we do not publish or run oracles, discovery is direct chain reads via `predict-real.ts`). No sim. Plays are server-signed (privy mode = the user's embedded wallet via Privy `rawSign` under a session signer; dev mode = the operator key), gas is free localnet SUI. Fast paced is the priority. The why and how: `bigdev/plans/01-ARCHITECTURE.md` and `05-SUI-PREDICT.md`; the deploy mechanics live in "The chain" above.
+**The spine (decided):** every play is a real `mint`/`redeem` against Mysten's **official** DeepBook Predict on `testnet` (default) / `mainnet`. We do not publish or run oracles; discovery is direct chain reads via `predict-real.ts`. No sim. Plays are server-signed (privy mode = the user's embedded wallet via Privy `rawSign` under a session signer; dev mode = the testing wallet), gas is paid by the sponsor wallet. Fast paced is the priority. The why and how: `bigdev/plans/01-ARCHITECTURE.md` and `05-SUI-PREDICT.md`; the runtime shape lives in "The chain" above.
 
 **Plans (source of truth, read the relevant one before each phase):**
 
@@ -192,9 +178,6 @@ cd backend && bun run typecheck    # backend typecheck gate
 cd backend && bun dev              # API on :3780
 cd web && bun dev                  # console on :3200
 cd backend && bun run db:push      # USER runs this after schema changes (never the loop)
-scripts/localnet.sh setup          # deploy our Predict stack + wire both .envs (run once)
-scripts/localnet.sh redeploy       # re-publish after any contracts/ (Move) change
-scripts/localnet.sh doctor         # diagnose the localnet (node, cert, gRPC, ids, funding)
 ```
 
 ## Working on something big?

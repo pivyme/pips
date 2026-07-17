@@ -1,4 +1,4 @@
-// The one LI.FI wrapper. Routes and services never call li.quest directly, same rule as predict.ts:
+// The one LI.FI wrapper. Routes and services never call li.quest directly, same rule as predict-real.ts:
 // when the catalog moves or mainnet lands, we touch one file.
 //
 // Everything here is read-only. A quote is a MAINNET route lookup that needs no wallet and does not care

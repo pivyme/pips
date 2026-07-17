@@ -5,12 +5,11 @@ import FastifyCors from '@fastify/cors';
 import FastifyWebsocket from '@fastify/websocket';
 import FastifyRateLimit from '@fastify/rate-limit';
 import FastifyHelmet from '@fastify/helmet';
-import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, IS_REAL_PREDICT, SHUTDOWN_TIMEOUT_MS, RATE_LIMIT_WINDOW, RATE_LIMIT_GLOBAL_MAX } from './src/config/main-config.ts';
+import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, SHUTDOWN_TIMEOUT_MS, RATE_LIMIT_WINDOW, RATE_LIMIT_GLOBAL_MAX } from './src/config/main-config.ts';
 import { NETWORK, PUBLIC_PREDICT_PACKAGE, PUBLIC_PREDICT_OBJECT, DUSDC_TYPE } from './src/lib/sui/config.ts';
 import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
 import { prismaQuery } from './src/lib/prisma.ts';
 import { allWorkerHealth, stopAllWorkers } from './src/lib/worker-registry.ts';
-import { acquireLeaderLock, releaseLeaderLock, isOperatorLeader } from './src/lib/leader-lock.ts';
 import { alert } from './src/lib/alert.ts';
 
 // Routes
@@ -29,19 +28,11 @@ import { avatarRoutes } from './src/routes/avatarRoutes.ts';
 // Workers
 import { startErrorLogCleanupWorker } from './src/workers/errorLogCleanup.ts';
 import { startDepositCleanupWorker } from './src/workers/depositCleanup.ts';
-import { startPricePusher } from './src/workers/price-pusher.ts';
-import { startOracleRoll } from './src/workers/oracle-roll.ts';
 import { startSettleWorker } from './src/workers/settle.ts';
 import { startMarketSync } from './src/workers/market-sync.ts';
 import { startPriceWarmer } from './src/workers/price-warmer.ts';
-import { startOpsFunding } from './src/workers/ops-funding.ts';
-import { startDevnetFaucet } from './src/workers/devnet-faucet.ts';
-import { startDeployWatch } from './src/workers/deploy-watch.ts';
 import { startBinance } from './src/lib/binance-ws.ts';
 
-// Ops-wallet funding (operator-driven): seeds/tops up the sponsor (SUI), settlement (SUI), and
-// treasury (SUI + DUSDC reserve) wallets so plays, redeems, and chip payouts never stall.
-import { ensureOpsFunded } from './src/lib/sui/gas.ts';
 import { warmExecuteCaches } from './src/lib/sui/execute.ts';
 import { SPONSOR_ENABLED, sponsorAddress, ensureSponsorAccumulator } from './src/lib/sui/sponsor.ts';
 import { treasuryAddress, REVENUE_ENABLED } from './src/lib/sui/signer.ts';
@@ -87,7 +78,6 @@ async function shutdown(signal: string): Promise<void> {
   hardExit.unref();
   try {
     stopAllWorkers(); // stop cron/interval/socket workers; in-flight runs finish under their own guard
-    await releaseLeaderLock(); // hand operator leadership to the next instance before we finish draining
     await fastify.close(); // drain HTTP + WS connections, run registered onClose hooks
     await prismaQuery.$disconnect();
     console.log('[shutdown] drained cleanly');
@@ -292,51 +282,27 @@ const start = async (): Promise<void> => {
     // container restart if the DB never comes up, instead of booting into a broken state.
     await waitForDb();
 
-    // Operator leader election (advisory lock). Attempted only when OPERATOR_ENABLED; if another
-    // instance already holds it, this one boots as a plain follower (isOperatorLeader() stays false, so
-    // the fund-moving workers below never start). Awaited before any worker starts so every gate reads
-    // the settled leadership state. Follower-only instances skip it entirely.
-    await acquireLeaderLock();
-
     // Start workers
     startErrorLogCleanupWorker();
     // Deposit tracking rows only exist when cross-chain execution is on (mainnet), so the sweeper is dead
-    // weight anywhere else. The delete is idempotent, so like errorLogCleanup it runs on every instance
-    // rather than the leader, which means it never stalls if a box boots as a pure follower.
+    // weight anywhere else. The delete is idempotent, so like errorLogCleanup it runs on every instance.
     if (BRIDGE_EXECUTE_ENABLED) startDepositCleanupWorker();
 
-    // Real mode (testnet): confirm Mysten's configured Predict objects still exist before serving, so
-    // a Mysten redeploy shows a clear STALE ID error in the logs instead of every play failing opaquely.
-    // Non-fatal: the app still boots (demo mode survives) and the log points at the fix.
-    if (IS_REAL_PREDICT) {
-      void verifyRealDeployment().catch((e) =>
-        console.warn('[predict-real] deployment verify errored:', e instanceof Error ? e.message : e),
-      );
-      // Real-mode wallets are hand-funded (no faucet, no DUSDC mint, L-008). Print the exact addresses
-      // to top up so funding is never a guessing game: treasury holds the DUSDC chip reserve, sponsor
-      // holds the SUI that pays every play's gas. Both auto-recover once funded (treasury payout retries,
-      // sponsor monitor resumes plays), so this is the whole manual-funding runbook in one log line.
-      console.log('[predict-real] hand-funded wallets (transfer testnet funds to these to enable plays):');
-      console.log(`  treasury (DUSDC chips, keep >= ${TREASURY_MIN_DUSDC} DUSDC): ${treasuryAddress || '(TREASURY_WALLET_PK unset -> chips fall back to operator)'}`);
-      console.log(`  sponsor  (SUI gas,     keep >= ${SPONSOR_FLOOR_SUI} SUI)  : ${sponsorAddress || '(GAS_SPONSORSHIP_WALLET_PK unset -> plays not sponsored)'}`);
-    }
+    // Confirm Mysten's configured Predict objects still exist before serving, so a Mysten redeploy shows
+    // a clear STALE ID error in the logs instead of every play failing opaquely. Non-fatal: the app still
+    // boots (demo mode survives) and the log points at the fix.
+    void verifyRealDeployment().catch((e) =>
+      console.warn('[predict-real] deployment verify errored:', e instanceof Error ? e.message : e),
+    );
+    // Wallets are hand-funded (no faucet, no DUSDC mint, L-008). Print the exact addresses to top up so
+    // funding is never a guessing game: treasury holds the DUSDC chip reserve, sponsor holds the SUI that
+    // pays every play's gas. Both auto-recover once funded (treasury payout retries, sponsor monitor resumes plays).
+    console.log('[predict-real] hand-funded wallets (transfer testnet funds to these to enable plays):');
+    console.log(`  treasury (DUSDC chips, keep >= ${TREASURY_MIN_DUSDC} DUSDC): ${treasuryAddress || '(TREASURY_WALLET_PK unset -> chips unavailable)'}`);
+    console.log(`  sponsor  (SUI gas,     keep >= ${SPONSOR_FLOOR_SUI} SUI)  : ${sponsorAddress || '(GAS_SPONSORSHIP_WALLET_PK unset -> plays not sponsored)'}`);
 
-    // Ops wallets: the operator seeds/tops up the sponsor (SUI), settlement (SUI), and treasury
-    // (SUI + DUSDC reserve) on boot so the first play, redeem, and chip payout don't stall. Behind the
-    // operator leader lock so only the single leader funds it. Best-effort: warn and continue (each step
-    // is independently guarded inside ensureOpsFunded; already-funded wallets just no-op).
-    if (isOperatorLeader()) {
-      try {
-        await ensureOpsFunded();
-      } catch (e) {
-        console.warn('[ops-funding] boot funding failed (plays/payouts may stall until funded):', e instanceof Error ? e.message : e);
-      }
-    }
-
-    // The gas sponsor's address-balance accumulator funds every privy play, and unlike the operator
-    // ops wallets a FOLLOWER can keep it topped up itself (the deposit is sponsor-signed), so warm it
-    // up here regardless of OPERATOR_ENABLED. Fire-and-forget so it never delays serving; if it can't
-    // land now, the first play that hits an empty accumulator self-heals + retries (execute.ts).
+    // The gas sponsor's address-balance accumulator funds every privy play. Fire-and-forget so it never
+    // delays serving; if it can't land now, the first play that hits an empty accumulator self-heals + retries (execute.ts).
     if (SPONSOR_ENABLED) {
       void ensureSponsorAccumulator().catch((e) =>
         console.warn('[sponsor] boot accumulator warm-up failed (self-heals on first play):', e instanceof Error ? e.message : e),
@@ -346,31 +312,17 @@ const start = async (): Promise<void> => {
       void warmExecuteCaches();
     }
 
-    // Fork mode only (localnet/devnet): roll our own oracle ladder, push our own prices, and run the
-    // devnet self-heal safety nets (faucet top-up + wipe-recovery restart). On testnet Mysten owns the
-    // market roll and price feed and there is no fork deployment to self-publish, so these are pure
-    // dead weight there, skip starting them entirely instead of relying on each one's internal no-op.
-    if (!IS_REAL_PREDICT) {
-      startOracleRoll();
-      startPricePusher();
-      startDevnetFaucet();
-      startDeployWatch();
-    }
     startSettleWorker();
-    // Follower mode (operator disabled): learn the live oracle set from chain so the games are
-    // playable against the deployed operator without running the operator workers here.
+    // Discover the live 1m BTC market set from chain so the games can deal against Mysten's Predict.
     startMarketSync();
-    // Ongoing top-up safety net for the sponsor + settlement + treasury wallets (operator only).
-    startOpsFunding();
-    // Real mode (testnet): watch the sponsor's finite SUI reserve and pause new plays before it runs
-    // dry (clear user state, auto-resume on top-up), and log burn rate. No-op off testnet / no sponsor.
+    // Watch the sponsor's finite SUI reserve and pause new plays before it runs dry (clear user state,
+    // auto-resume on top-up), and log burn rate. No-op when no sponsor is configured.
     startSponsorMonitor();
     // Realtime chart display feed: one shared Binance aggTrade socket the price bus pins to the on-chain
-    // oracle. No-op off testnet / when disabled; any outage degrades to the on-chain fallback (L-015).
+    // market spot; any outage degrades to the on-chain fallback (L-015).
     startBinance();
     // Keeps every display asset's Pyth spot pre-warmed so a cold WS asset loop never blocks its first
-    // broadcast on a live Hermes fetch (the LUCKY non-BTC reel-lag fix). Runs on every instance, no
-    // shared state, so it's always on regardless of OPERATOR_ENABLED/IS_REAL_PREDICT.
+    // broadcast on a live Hermes fetch (the LUCKY non-BTC reel-lag fix). Runs on every instance.
     startPriceWarmer();
 
     await fastify.listen({

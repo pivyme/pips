@@ -124,7 +124,7 @@ function LuckyScreen() {
   const cantAfford = balance < BET_LADDER[0]
 
   const lp = play ? (play.params as LuckyParams) : null
-  // The chart follows the dealt asset (BTC in real mode, whatever the fork/demo lottery dealt otherwise);
+  // The chart follows the dealt asset (BTC in real mode, whatever the demo lottery dealt otherwise);
   // at rest it shows the primary live market. Fallbacks only bite before markets load, which the render already gates.
   const focusAsset = lp?.asset ?? liveAssets[0] ?? allAssets[0] ?? 'BTC'
   // The position is real on-chain only once status leaves 'pending' (a failed mint goes 'error'); gate
