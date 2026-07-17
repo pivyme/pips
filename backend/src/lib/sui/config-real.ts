@@ -4,7 +4,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { IS_REAL_PREDICT } from '../../config/main-config.ts';
+import { IS_REAL_PREDICT, SUI_NETWORK } from '../../config/main-config.ts';
 
 export type RealAsset = {
   symbol: string;
@@ -33,7 +33,9 @@ export type DeployedReal = {
   cadences: RealCadence[];
 };
 
-const REAL_FILE = 'deployed-real.testnet.json';
+// Per-network real deployment record (testnet today, mainnet on the re-point). Mainnet ships its own
+// deployed-real.mainnet.json vendored from Mysten's mainnet Predict, same as testnet's, never hand-copied.
+const REAL_FILE = `deployed-real.${SUI_NETWORK}.json`;
 const REAL_PATH = path.resolve(import.meta.dir, REAL_FILE);
 
 function loadDeployedReal(): DeployedReal {
@@ -52,7 +54,7 @@ function loadDeployedReal(): DeployedReal {
     );
   }
   const d = JSON.parse(raw) as DeployedReal;
-  if (d.network !== 'testnet') throw new Error(`deployed-real record is for "${d.network}", expected testnet.`);
+  if (d.network !== SUI_NETWORK) throw new Error(`deployed-real record is for "${d.network}", expected ${SUI_NETWORK}.`);
   return d;
 }
 
@@ -61,7 +63,7 @@ const real: DeployedReal | null = IS_REAL_PREDICT ? loadDeployedReal() : null;
 
 // Accessor that asserts real mode; real-protocol code calls this so a stray fork-mode access fails loud instead of silently using ''.
 export function realDeployment(): DeployedReal {
-  if (!real) throw new Error('config-real accessed while SUI_NETWORK is not testnet (fork mode).');
+  if (!real) throw new Error('config-real accessed in fork mode (SUI_NETWORK is not testnet/mainnet).');
   return real;
 }
 

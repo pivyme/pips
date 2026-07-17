@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useRef } from 'react'
 import { PrivyProvider, useLogin, usePrivy } from '@privy-io/react-auth'
+import { toSolanaWalletConnectors } from '@privy-io/react-auth/solana'
 
 import { env } from '@/env'
 import { api, setAuthToken } from '@/lib/api'
@@ -12,6 +13,12 @@ import { clearStoredSession, isSessionRejected, loadToken, toAuthError, useAuthC
 
 // Privy is active only in privy mode with an app id configured, and never in demo mode.
 export const PRIVY_ENABLED = env.VITE_AUTH_MODE === 'privy' && Boolean(env.VITE_PRIVY_APP_ID) && !isDemo()
+
+// Cross-chain deposit signing needs MetaMask/Phantom connected alongside the embedded Sui wallet. Sui is a
+// Privy extended-chain (embedded/server) and EVM/Solana are first-class connector chains, disjoint
+// subsystems, so this is purely additive and does not touch the Google + Sui login. Off unless the mainnet
+// deploy flips VITE_BRIDGE_EXECUTE, and still needs the connectors toggled on in the Privy dashboard.
+export const BRIDGE_CONNECTORS_ENABLED = env.VITE_BRIDGE_EXECUTE === 'true'
 
 function PrivyBridge() {
   const { ready, authenticated, user, logout, getAccessToken } = usePrivy()
@@ -120,7 +127,15 @@ export function AppPrivyProvider({ children }: { children: React.ReactNode }) {
       config={{
         loginMethods: ['google', 'email', 'twitter'],
         // Match the app: dark modal with the PIPS amber accent, not Privy's default light theme.
-        appearance: { theme: 'dark', accentColor: '#ffc016' },
+        appearance: {
+          theme: 'dark',
+          accentColor: '#ffc016',
+          ...(BRIDGE_CONNECTORS_ENABLED && { walletChainType: 'ethereum-and-solana' as const }),
+        },
+        // Enable Solana connectors only when bridge signing is on; EVM connectors need no extra config.
+        ...(BRIDGE_CONNECTORS_ENABLED && {
+          externalWallets: { solana: { connectors: toSolanaWalletConnectors() } },
+        }),
       }}
     >
       <PrivyBridge />

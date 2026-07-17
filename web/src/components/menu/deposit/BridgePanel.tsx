@@ -3,6 +3,8 @@ import { Info, Lock, TriangleAlert } from 'lucide-react'
 import { ApiError, api } from '@/lib/api'
 import type { DepositOptionsDTO, DepositQuoteDTO } from '@/lib/api'
 import { formatDuration } from '@/lib/deposit/mode'
+import { PRIVY_ENABLED } from '@/lib/privy'
+import { BridgeExecute } from './BridgeExecute'
 import { haptic } from '@/lib/haptics'
 import { formatStringToNumericDecimals } from '@/utils/format'
 
@@ -111,19 +113,32 @@ export function BridgePanel({
         )}
       </div>
 
-      {/* The gate. Server-owned, and it reads honestly rather than pretending to be busy. */}
-      <button
-        disabled
-        className="flex h-14 w-full cursor-not-allowed items-center justify-center gap-2 rounded-card bg-white/[0.06] text-[15px] font-bold text-text-3"
-      >
-        <Lock className="h-[18px] w-[18px]" strokeWidth={2.6} />
-        {options.executeEnabled ? 'Connect wallet' : 'Mainnet only'}
-      </button>
+      {/* The gate. Server-owned. On a mainnet backend with Privy present, BridgeExecute takes over with the
+          real connect + sign flow; otherwise it reads honestly rather than pretending to be busy. */}
+      {options.executeEnabled && PRIVY_ENABLED ? (
+        <BridgeExecute
+          options={options}
+          currency={currency}
+          network={network}
+          amount={amount}
+          amountValid={amountNum > 0 && !belowMin}
+        />
+      ) : (
+        <>
+          <button
+            disabled
+            className="flex h-14 w-full cursor-not-allowed items-center justify-center gap-2 rounded-card bg-white/[0.06] text-[15px] font-bold text-text-3"
+          >
+            <Lock className="h-[18px] w-[18px]" strokeWidth={2.6} />
+            {options.executeEnabled ? 'Connect wallet' : 'Mainnet only'}
+          </button>
 
-      <p className="px-1 text-[13px] leading-snug text-text-3">
-        Cross-chain deposits arrive as {options.bridgeAsset} on Sui mainnet. Quotes above are live, but you cannot
-        sign one yet.
-      </p>
+          <p className="px-1 text-[13px] leading-snug text-text-3">
+            Cross-chain deposits arrive as {options.bridgeAsset} on Sui mainnet. Quotes above are live, but you cannot
+            sign one yet.
+          </p>
+        </>
+      )}
 
       <PoweredByLifi />
 

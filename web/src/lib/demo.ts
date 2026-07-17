@@ -7,9 +7,11 @@ import { networkLabel } from './deposit/mode'
 import type {
   AchievementDTO,
   CashoutResult,
+  DepositExecuteQuoteDTO,
   DepositOptionsDTO,
   DepositQuoteDTO,
   DepositQuoteInput,
+  DepositStatusDTO,
   Game,
   FullLeaderboard,
   GameLeaderboard,
@@ -1044,6 +1046,22 @@ export const demoApi = {
         toolName: fast ? 'Allbridge' : 'CCTP + Mayan',
       },
     }
+  },
+
+  // Execution is mainnet-only and there is no wallet to sign with in the sim, so demo mirrors the server's
+  // gate rather than faking a bridge. The drawer keeps the locked CTA in demo (executeEnabled: false), so
+  // these are only reachable if forced, and they answer honestly.
+  depositExecuteQuote: async (): Promise<DepositExecuteQuoteDTO> => {
+    await delay(80)
+    throw new ApiError('BRIDGE_EXECUTE_DISABLED', 'Cross-chain deposits are not available in demo mode.', 403)
+  },
+  depositTrack: async (): Promise<DepositStatusDTO> => {
+    await delay(80)
+    throw new ApiError('BRIDGE_EXECUTE_DISABLED', 'Cross-chain deposits are not available in demo mode.', 403)
+  },
+  depositStatus: async (): Promise<DepositStatusDTO> => {
+    await delay(80)
+    return { status: 'PENDING', substatus: null, substatusMessage: null }
   },
 
   referral: async (): Promise<ReferralInfoDTO> => {

@@ -66,11 +66,13 @@ export const AVATAR_UPLOADS_ENABLED: boolean = Boolean(S3_ACCESS_KEY && S3_SECRE
 export type AuthMode = 'dev' | 'privy';
 export const AUTH_MODE: AuthMode = process.env.PIPS_AUTH_MODE === 'privy' ? 'privy' : 'dev';
 
-// Sui network. localnet/devnet run OUR vendored Predict fork; testnet is Mysten's OFFICIAL Predict (L-005).
+// Sui network. localnet/devnet run OUR vendored Predict fork; testnet AND mainnet are Mysten's OFFICIAL
+// Predict (L-005). Mainnet is the clean re-point of the testnet real path: same code, its own deploy record.
 export const SUI_NETWORK: string = process.env.SUI_NETWORK || 'testnet';
 // The one dispatch seam: true = real-protocol path (predict-real + config-real + real market-sync), false =
-// fork path (predict.ts + config.ts). No third mode/flag: testnet always means real.
-export const IS_REAL_PREDICT: boolean = SUI_NETWORK === 'testnet';
+// fork path (predict.ts + config.ts). No third mode/flag: testnet and mainnet both mean real, fork is
+// localnet/devnet only.
+export const IS_REAL_PREDICT: boolean = SUI_NETWORK === 'testnet' || SUI_NETWORK === 'mainnet';
 export const SUI_FULLNODE_URL: string = process.env.SUI_FULLNODE_URL || '';
 // GraphQL endpoint for historical queries (events / tx-history) gRPC v2 can't serve. Override with SUI_GRAPHQL_URL.
 const DEFAULT_GRAPHQL_URL: Record<string, string> = {

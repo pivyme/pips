@@ -135,6 +135,26 @@ export interface DepositOptionsDTO {
 
 export type DepositQuoteInput = { currency: string; network: string; amount: string }
 
+// POST /deposit/execute-quote (mainnet only): the signable LI.FI step, fetched fresh with the connected
+// source address and the server-stamped toAddress. `step` is passed through opaque; the client seam casts
+// it to the SDK's LiFiStep and signs it directly.
+export interface DepositExecuteQuoteDTO {
+  step: Record<string, unknown>
+  depositId: string
+  tool: string | null
+  bridge: string | null
+  fromChainId: number
+  toChainId: number
+}
+export type DepositExecuteQuoteInput = { currency: string; network: string; amount: string; fromAddress: string }
+
+// GET /deposit/status?id= (mainnet only): live bridge progress for a tracked deposit.
+export interface DepositStatusDTO {
+  status: string // PENDING | DONE | FAILED | REFUNDED | NOT_FOUND
+  substatus: string | null
+  substatusMessage: string | null
+}
+
 // A live mainnet route preview. Every field is straight from LI.FI's estimate, nothing computed here.
 export interface DepositQuoteDTO {
   fromAmount: string
@@ -381,6 +401,12 @@ const realApi = {
   depositOptions: () => request<DepositOptionsDTO>('GET', '/deposit/options'),
   depositQuote: (input: DepositQuoteInput, signal?: AbortSignal) =>
     request<{ quote: DepositQuoteDTO }>('POST', '/deposit/quote', input, signal),
+  // Execution (mainnet only). These 403 on any non-mainnet backend, the CTA that calls them is gated too.
+  depositExecuteQuote: (input: DepositExecuteQuoteInput) =>
+    request<DepositExecuteQuoteDTO>('POST', '/deposit/execute-quote', input),
+  depositTrack: (depositId: string, txHash: string) =>
+    request<DepositStatusDTO>('POST', '/deposit/track', { depositId, txHash }),
+  depositStatus: (id: string) => request<DepositStatusDTO>('GET', `/deposit/status?id=${encodeURIComponent(id)}`),
 
   // referrals
   referral: () => request<ReferralInfoDTO>('GET', '/referral'),

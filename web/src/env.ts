@@ -23,6 +23,10 @@ export const env = createEnv({
     // Mirrors backend PIPS_WALLET_AUTH_ENABLED: shows the "Connect Sui Wallet" door option, independent of VITE_AUTH_MODE.
     VITE_WALLET_CONNECT_ENABLED: z.enum(['true', 'false']).default('false'),
     VITE_SUI_NETWORK: z.enum(['testnet', 'mainnet', 'devnet', 'localnet']).default('testnet'),
+    // Wires Privy's external MetaMask/Phantom connectors for cross-chain deposit signing. Off by default so
+    // the working Google + embedded-Sui login is untouched; flip to 'true' on the mainnet deploy. The actual
+    // execute gate is server-owned (/deposit/options.executeEnabled), this only enables the connect UI.
+    VITE_BRIDGE_EXECUTE: z.enum(['true', 'false']).default('false'),
     VITE_SUI_FULLNODE_URL: z.string().url().optional(),
     // Public Predict ids the client needs for reads, written by the bootstrap into web/.env; optional so the app can boot pre-deploy.
     VITE_PREDICT_PACKAGE_ID: z.string().optional(),
@@ -45,6 +49,7 @@ export const env = createEnv({
     VITE_ONBOARDING_DEBUG: import.meta.env.VITE_ONBOARDING_DEBUG,
     VITE_WALLET_CONNECT_ENABLED: import.meta.env.VITE_WALLET_CONNECT_ENABLED,
     VITE_SUI_NETWORK: import.meta.env.VITE_SUI_NETWORK,
+    VITE_BRIDGE_EXECUTE: import.meta.env.VITE_BRIDGE_EXECUTE,
     VITE_SUI_FULLNODE_URL: import.meta.env.VITE_SUI_FULLNODE_URL,
     VITE_PREDICT_PACKAGE_ID: import.meta.env.VITE_PREDICT_PACKAGE_ID,
     VITE_PREDICT_OBJECT_ID: import.meta.env.VITE_PREDICT_OBJECT_ID,

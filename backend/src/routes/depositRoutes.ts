@@ -106,5 +106,122 @@ export const depositRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts
     }
   });
 
+  // ── Execution (mainnet only) ─────────────────────────────────────────────────────────────────────
+  // Every endpoint below is a no-op until BRIDGE_EXECUTE_ENABLED, which is true only on SUI_NETWORK=mainnet
+  // (main-config.ts). Even with the env var set on a testnet box, the gate stays shut, so a demo build is
+  // never one variable away from moving real money.
+  const requireExecute = (reply: FastifyReply): boolean => {
+    if (!BRIDGE_EXECUTE_ENABLED) {
+      handleError(reply, 403, 'Cross-chain deposits are not enabled yet', 'BRIDGE_EXECUTE_DISABLED');
+      return false;
+    }
+    return true;
+  };
+
+  // Fetch a fresh, signable route with the player's connected source address and the server-stamped
+  // toAddress, and open a tracking row. The client signs the returned step directly, no re-quote.
+  app.post('/execute-quote', { preHandler: [authMiddleware], config: quoteLimit }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!requireExecute(reply)) return;
+    const body = (request.body ?? {}) as { currency?: string; network?: string; amount?: string | number; fromAddress?: string; toAddress?: string };
+
+    if (body.toAddress != null) return handleError(reply, 400, 'toAddress is set by the server', 'TO_ADDRESS_NOT_ACCEPTED');
+
+    const address = request.user?.address;
+    if (!address) return handleError(reply, 409, 'Your wallet is not ready yet', 'ADDRESS_NOT_READY');
+
+    const network = String(body.network ?? '');
+    const currency = String(body.currency ?? '');
+    const amount = String(body.amount ?? '').trim();
+    const fromAddress = String(body.fromAddress ?? '').trim();
+    if (!fromAddress) return handleError(reply, 400, 'Connect a wallet first', 'FROM_ADDRESS_REQUIRED');
+    if (!amount) return handleError(reply, 400, 'Enter an amount', 'BAD_AMOUNT');
+    if (Number(amount) > 0 && Number(amount) < DEPOSIT_HARD_MIN_USD) {
+      return handleError(reply, 400, `Deposit at least $${DEPOSIT_HARD_MIN_USD}. Below that, fees eat most of it.`, 'AMOUNT_TOO_LOW');
+    }
+
+    const fromChainId = chainIdFor(network);
+    if (fromChainId == null) return handleError(reply, 400, 'That network is not supported.', 'BAD_PAIR');
+
+    try {
+      const { step, tool, bridge } = await getExecutableStep({ currency, network, amount, toAddress: address, fromAddress });
+      const row = await prismaQuery.deposit.create({
+        data: {
+          userId: request.user!.id,
+          fromChain: network,
+          fromToken: currency,
+          fromAmount: amount,
+          toAmount: String((step as { estimate?: { toAmount?: string } }).estimate?.toAmount ?? ''),
+          toAddress: address,
+          tool: tool ?? 'unknown',
+          bridge,
+        },
+      });
+      return reply.code(200).send({
+        success: true,
+        error: null,
+        data: { step, depositId: row.id, tool, bridge, fromChainId, toChainId: SUI_CHAIN_ID },
+      });
+    } catch (error) {
+      if (error instanceof LifiError) return handleError(reply, httpStatusForLifiError(error.code), error.message, error.code);
+      return handleError(reply, 500, 'Could not prepare that deposit', 'DEPOSIT_EXECUTE_QUOTE_FAILED', error as Error);
+    }
+  });
+
+  // The client reports the source txHash once it broadcasts, correlating the row so status can be polled.
+  app.post('/track', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!requireExecute(reply)) return;
+    const body = (request.body ?? {}) as { depositId?: string; txHash?: string };
+    const depositId = String(body.depositId ?? '');
+    const txHash = String(body.txHash ?? '').trim();
+    if (!depositId || !txHash) return handleError(reply, 400, 'depositId and txHash are required', 'BAD_TRACK');
+
+    const row = await prismaQuery.deposit.findFirst({ where: { id: depositId, userId: request.user!.id } });
+    if (!row) return handleError(reply, 404, 'Deposit not found', 'DEPOSIT_NOT_FOUND');
+
+    await prismaQuery.deposit.update({ where: { id: row.id }, data: { txHash } });
+    return reply.code(200).send({ success: true, error: null, data: { status: 'PENDING', substatus: null, substatusMessage: null } });
+  });
+
+  // Poll a tracked deposit. Before the txHash lands it is PENDING by definition; after, we proxy LI.FI and
+  // fold the result back into the row so the drawer and support share one source of truth.
+  app.get('/status', { preHandler: [authMiddleware], config: quoteLimit }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!requireExecute(reply)) return;
+    const id = String((request.query as { id?: string })?.id ?? '');
+    if (!id) return handleError(reply, 400, 'id is required', 'BAD_STATUS');
+
+    const row = await prismaQuery.deposit.findFirst({ where: { id, userId: request.user!.id } });
+    if (!row) return handleError(reply, 404, 'Deposit not found', 'DEPOSIT_NOT_FOUND');
+
+    // No txHash yet, or already resolved: answer from the row without hitting LI.FI.
+    if (!row.txHash || row.status === 'DONE' || row.status === 'REFUNDED') {
+      return reply.code(200).send({ success: true, error: null, data: { status: row.status, substatus: row.substatus, substatusMessage: null } });
+    }
+
+    try {
+      const live = await getBridgeStatus({
+        txHash: row.txHash,
+        bridge: row.bridge,
+        fromChain: String(chainIdFor(row.fromChain) ?? row.fromChain),
+        toChain: SUI_CHAIN_ID_STR,
+      });
+      // Map LI.FI's vocabulary onto the row: DONE keeps its REFUNDED/PARTIAL nuance via substatus.
+      const status =
+        live.status === 'DONE'
+          ? live.substatus === 'REFUNDED'
+            ? 'REFUNDED'
+            : 'DONE'
+          : live.status === 'FAILED'
+            ? 'FAILED'
+            : 'PENDING';
+      if (status !== row.status || live.substatus !== row.substatus) {
+        await prismaQuery.deposit.update({ where: { id: row.id }, data: { status, substatus: live.substatus } });
+      }
+      return reply.code(200).send({ success: true, error: null, data: { status, substatus: live.substatus, substatusMessage: live.substatusMessage } });
+    } catch (error) {
+      if (error instanceof LifiError) return handleError(reply, httpStatusForLifiError(error.code), error.message, error.code);
+      return handleError(reply, 500, 'Could not check that deposit', 'DEPOSIT_STATUS_FAILED', error as Error);
+    }
+  });
+
   done();
 };

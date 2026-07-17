@@ -92,7 +92,7 @@ function loadDeployed(): Deployed {
 // Every fork-only id stays empty so a stray fork call fails loud instead of hitting a wrong object; localnet/devnet load the fork record as before.
 const deployed: Deployed | null = IS_REAL_PREDICT ? null : loadDeployed();
 
-export const NETWORK = IS_REAL_PREDICT ? 'testnet' : deployed!.network;
+export const NETWORK = IS_REAL_PREDICT ? SUI_NETWORK : deployed!.network;
 export const PACKAGE_ID = deployed?.packageId ?? '';
 export const UPGRADE_CAP_ID = deployed?.upgradeCapId ?? '';
 export const ADMIN_CAP_ID = deployed?.adminCapId ?? '';
