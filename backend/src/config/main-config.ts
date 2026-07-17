@@ -404,6 +404,13 @@ export const PREDICT_ADMIN_CAP_ID: string = process.env.PREDICT_ADMIN_CAP_ID || 
 export const ERROR_LOG_MAX_RECORDS: number = 10000;
 export const ERROR_LOG_CLEANUP_INTERVAL: string = '0 * * * *'; // Every hour
 
+// Deposit tracking cleanup (mainnet only): an execute-quote opens a PENDING row before the user broadcasts,
+// so an abandoned confirm leaves a row with a null txHash. Any real bridge lands in <=20min and the balance
+// live-reads chain, so a null-txHash row older than this is genuinely dead and gets swept. Correctness never
+// depends on the table, this is pure housekeeping.
+export const DEPOSIT_CLEANUP_CRON: string = process.env.PIPS_DEPOSIT_CLEANUP_CRON || '17 * * * *'; // hourly, off the 0 slot
+export const DEPOSIT_STALE_HOURS: number = Number(process.env.PIPS_DEPOSIT_STALE_HOURS) || 24;
+
 // Export all as default object for convenience
 export default {
   APP_PORT,

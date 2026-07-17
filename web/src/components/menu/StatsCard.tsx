@@ -4,6 +4,7 @@ import type { UserStatsDTO } from '@/lib/api'
 import type { CardStat, CardTone, RankBadge, RankStanding } from '@/lib/playerCard'
 import { buildCardModel } from '@/lib/playerCard'
 import { Avatar } from '@/components/Avatar'
+import { XGlyph } from '@/components/menu/BrandGlyphs'
 import { cnm } from '@/utils/style'
 
 // Tone -> ink. Gold is the featured/brag color, up/down for signed facts, white for neutral.
@@ -17,6 +18,7 @@ export function StatsCard({
   stats,
   displayName,
   avatarUrl,
+  twitter,
   showNetPnl,
   rank,
   onEdit,
@@ -27,6 +29,8 @@ export function StatsCard({
   displayName: string
   // The custom uploaded avatar, or null (the PIPS identicon renders when absent).
   avatarUrl?: string | null
+  // The linked (server-verified) X account, or null. When set, an X pill sits under the handle.
+  twitter?: { username: string } | null
   // Whether Net P&L is on the card (dollar P&L is private for some). Defaults on.
   showNetPnl?: boolean
   // The player's global-board standing, drives the rank chip. Omitted/null = no chip.
@@ -53,7 +57,15 @@ export function StatsCard({
             className="shrink-0 ring-1 ring-white/15"
           />
           {/* Name eats the slack (flex-1) so the rank pill lands hard right, just before the actions. */}
-          <div className="min-w-0 flex-1 truncate text-[clamp(17px,6cqi,24px)] font-extrabold leading-tight text-white">{displayName}</div>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="truncate text-[clamp(17px,6cqi,24px)] font-extrabold leading-tight text-white">{displayName}</div>
+            {twitter && (
+              <span className="mt-[3px] inline-flex w-fit max-w-full items-center gap-1 rounded-full bg-white/[0.08] py-[2px] pl-1.5 pr-2 text-[clamp(10px,3.2cqi,12px)] font-semibold text-white/70">
+                <XGlyph className="h-[clamp(9px,2.8cqi,11px)] w-[clamp(9px,2.8cqi,11px)] shrink-0 text-white" />
+                <span className="truncate">@{twitter.username}</span>
+              </span>
+            )}
+          </div>
           {card.rank && <RankChip badge={card.rank} />}
           {(onShare || onEdit) && (
             <div className="flex shrink-0 items-center gap-2">
@@ -102,8 +114,10 @@ export function StatsCard({
         </div>
 
         {card.grid.length > 0 && (
+          // Docked full-bleed to the bottom of the screen: the negative margins cancel the screen padding so
+          // the readout bar sticks to the very bottom edge-to-edge instead of floating as a padded pill.
           <div
-            className="mt-4 grid divide-x divide-white/[0.08] overflow-hidden rounded-xl border border-white/[0.07] bg-black/40"
+            className="mt-[clamp(12px,4.5cqi,18px)] -mx-[clamp(13px,5cqi,20px)] -mb-[clamp(13px,5cqi,20px)] grid divide-x divide-white/[0.07] border-t border-white/[0.08] bg-black/40"
             style={{ gridTemplateColumns: `repeat(${card.grid.length}, minmax(0, 1fr))` }}
           >
             {card.grid.map((c) => (

@@ -28,6 +28,7 @@ import { avatarRoutes } from './src/routes/avatarRoutes.ts';
 
 // Workers
 import { startErrorLogCleanupWorker } from './src/workers/errorLogCleanup.ts';
+import { startDepositCleanupWorker } from './src/workers/depositCleanup.ts';
 import { startPricePusher } from './src/workers/price-pusher.ts';
 import { startOracleRoll } from './src/workers/oracle-roll.ts';
 import { startSettleWorker } from './src/workers/settle.ts';
@@ -45,7 +46,7 @@ import { warmExecuteCaches } from './src/lib/sui/execute.ts';
 import { SPONSOR_ENABLED, sponsorAddress, ensureSponsorAccumulator } from './src/lib/sui/sponsor.ts';
 import { treasuryAddress, REVENUE_ENABLED } from './src/lib/sui/signer.ts';
 import { startSponsorMonitor } from './src/lib/sui/play-safety.ts';
-import { SPONSOR_FLOOR_SUI, TREASURY_MIN_DUSDC, MIN_STAKE, MAX_STAKE, HOUSE_EDGE_BPS, HOUSE_EDGE_MIN_NET_USD } from './src/config/main-config.ts';
+import { SPONSOR_FLOOR_SUI, TREASURY_MIN_DUSDC, MIN_STAKE, MAX_STAKE, HOUSE_EDGE_BPS, HOUSE_EDGE_MIN_NET_USD, BRIDGE_EXECUTE_ENABLED } from './src/config/main-config.ts';
 
 console.log(
   '======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n'
@@ -299,6 +300,10 @@ const start = async (): Promise<void> => {
 
     // Start workers
     startErrorLogCleanupWorker();
+    // Deposit tracking rows only exist when cross-chain execution is on (mainnet), so the sweeper is dead
+    // weight anywhere else. The delete is idempotent, so like errorLogCleanup it runs on every instance
+    // rather than the leader, which means it never stalls if a box boots as a pure follower.
+    if (BRIDGE_EXECUTE_ENABLED) startDepositCleanupWorker();
 
     // Real mode (testnet): confirm Mysten's configured Predict objects still exist before serving, so
     // a Mysten redeploy shows a clear STALE ID error in the logs instead of every play failing opaquely.

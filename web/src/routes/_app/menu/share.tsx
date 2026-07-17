@@ -54,7 +54,13 @@ function ShareScreen() {
           </div>
         </ScreenEmpty>
       ) : (
-        <ShareEditor stats={stats} displayName={displayHandle(user)} avatarUrl={user.avatarUrl} rank={rank} />
+        <ShareEditor
+          stats={stats}
+          displayName={displayHandle(user)}
+          avatarUrl={user.avatarUrl}
+          twitter={user.twitter}
+          rank={rank}
+        />
       )}
     </MenuScreen>
   )
@@ -64,11 +70,13 @@ function ShareEditor({
   stats,
   displayName,
   avatarUrl,
+  twitter,
   rank,
 }: {
   stats: UserStatsDTO
   displayName: string
   avatarUrl?: string | null
+  twitter?: { username: string } | null
   rank: RankStanding | null
 }) {
   const [hidePnl, setHidePnl] = useLocalStorage<boolean>('pips_card_hide_pnl', false)
@@ -80,7 +88,7 @@ function ShareEditor({
     haptic('medium')
     setSharing(true)
     try {
-      await shareStatsCard(stats, { displayName, avatarUrl }, { showNetPnl, rank })
+      await shareStatsCard(stats, { displayName, avatarUrl, twitter }, { showNetPnl, rank })
       haptic('success')
     } catch {
       const { default: toast } = await import('react-hot-toast')
@@ -93,7 +101,7 @@ function ShareEditor({
   return (
     <div className="flex flex-col gap-5">
       {/* Live preview: exactly what the PNG renders. */}
-      <StatsCard stats={stats} displayName={displayName} avatarUrl={avatarUrl} showNetPnl={showNetPnl} rank={rank} />
+      <StatsCard stats={stats} displayName={displayName} avatarUrl={avatarUrl} twitter={twitter} showNetPnl={showNetPnl} rank={rank} />
 
       {/* The one knob: dollar P&L is private for a lot of people. */}
       <div className="surface-skeuo flex items-center gap-3 rounded-card px-4 py-3.5">

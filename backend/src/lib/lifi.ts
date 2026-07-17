@@ -16,6 +16,7 @@ import {
   DEPOSIT_SLIPPAGE,
 } from '../config/main-config.ts';
 import { DUSDC_TYPE } from './sui/config.ts';
+import { alert } from './alert.ts';
 import type { DepositQuoteDTO } from '../types/api.ts';
 
 // Sui is a real LI.FI chain (chainType MVM), but GET /v1/chains hides it unless you pass chainTypes=MVM.
@@ -82,6 +83,12 @@ function assertBridgeLandsChipType(deliveredType: string): void {
     // A non-parseable type on either side is itself a mismatch, treat it as one.
   }
   if (!chip || delivered !== chip) {
+    // Page ops: on mainnet this means every cross-chain deposit is broken until the deploy record or the
+    // bridge asset is fixed. Stable message so the throttle collapses a flood of failed confirms into one.
+    alert('critical', 'Deposit chip-type mismatch: bridge asset does not match the on-chain chip type', {
+      delivered: deliveredType,
+      chip: DUSDC_TYPE || '(unset)',
+    });
     throw new LifiError(
       'CHIP_TYPE_MISMATCH',
       'Cross-chain deposits are temporarily unavailable. Please try the faucet or a native transfer.',

@@ -245,6 +245,7 @@ function StatsSection() {
       stats={stats}
       displayName={displayHandle(user)}
       avatarUrl={user?.avatarUrl}
+      twitter={user?.twitter}
       rank={rank}
       onEdit={editHandle}
       onShare={openShare}

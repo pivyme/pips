@@ -7,6 +7,20 @@ import { avatarColor, avatarInitial } from '@/lib/avatar'
 
 // Share render options: hide dollar P&L, and the leaderboard standing that drives the rank chip.
 export type CardOpts = { showNetPnl?: boolean; rank?: RankStanding | null }
+// Who the card is for: handle, optional custom avatar, and the linked X account (drives the X pill).
+export type CardUser = { displayName: string; avatarUrl?: string | null; twitter?: { username: string } | null }
+
+// The X (Twitter) logo, from the same path as XGlyph, drawn at (x,y) in a size box.
+const X_LOGO_PATH =
+  'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231ZM17.083 19.77h1.833L7.084 4.126H5.117Z'
+function drawXLogo(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, color: string): void {
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.scale(size / 24, size / 24)
+  ctx.fillStyle = color
+  ctx.fill(new Path2D(X_LOGO_PATH))
+  ctx.restore()
+}
 
 // 16:9 full-bleed share card: the amber body fills the whole PNG (no outer margin, no rounding), a dark
 // screen window holds the content, name + avatar up top, hero centered, the three stats on the bottom.
@@ -90,11 +104,7 @@ function loadImageCors(src: string): Promise<HTMLImageElement | null> {
   })
 }
 
-async function renderCard(
-  stats: UserStatsDTO,
-  user: { displayName: string; avatarUrl?: string | null },
-  opts?: CardOpts,
-): Promise<Blob | null> {
+async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: CardOpts): Promise<Blob | null> {
   const canvas = document.createElement('canvas')
   canvas.width = W
   canvas.height = H
@@ -228,14 +238,37 @@ async function renderCard(
   ctx.strokeStyle = 'rgba(255,255,255,0.16)'
   ctx.stroke()
 
-  // Handle, vertically centered on the avatar (no address).
+  // Handle next to the avatar. With a linked X account, the handle sits up top and an X pill drops beneath it.
   const nameX = avCX + avR + 30
   ctx.textAlign = 'left'
-  ctx.textBaseline = 'middle'
   ctx.fillStyle = C.white
   ctx.font = `800 64px ${FONT}`
-  ctx.fillText(user.displayName, nameX, avCY + 2)
-  ctx.textBaseline = 'alphabetic'
+  if (user.twitter) {
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillText(user.displayName, nameX, avCY - 6)
+    // X pill: logo + @handle, a soft rounded chip under the name.
+    const at = `@${user.twitter.username}`
+    ctx.font = `600 26px ${FONT}`
+    const atW = ctx.measureText(at).width
+    const logo = 24
+    const padX = 16
+    const gap = 9
+    const pillH = 46
+    const pillW = padX + logo + gap + atW + padX
+    const pillY = avCY + 12
+    roundRect(ctx, nameX, pillY, pillW, pillH, pillH / 2)
+    ctx.fillStyle = 'rgba(255,255,255,0.09)'
+    ctx.fill()
+    drawXLogo(ctx, nameX + padX, pillY + (pillH - logo) / 2, logo, C.white)
+    ctx.fillStyle = 'rgba(255,255,255,0.82)'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(at, nameX + padX + logo + gap, pillY + pillH / 2 + 1)
+    ctx.textBaseline = 'alphabetic'
+  } else {
+    ctx.textBaseline = 'middle'
+    ctx.fillText(user.displayName, nameX, avCY + 2)
+    ctx.textBaseline = 'alphabetic'
+  }
 
   if (card.rank) {
     const rekt = card.rank.kind === 'rekt'
@@ -276,35 +309,41 @@ async function renderCard(
     ctx.textBaseline = 'alphabetic'
   }
 
-  // Bottom: the stats as one merged pill, anchored just above the footer. Hidden when every stat is toggled off.
-  const footerY = sy + sh - 48
-  const rowH = 150
+  // Bottom: the stats as a full-width readout bar docked flush to the bottom of the screen (mirrors the DOM
+  // card), not a floating pill. Bottom corners clip to the screen rounding. Hidden when every stat is off.
+  const rowH = 170
   const hasGrid = card.grid.length > 0
-  const rowY = footerY - 36 - rowH
+  const rowY = sy + sh - rowH
   if (hasGrid) {
-    const rowW = sw - sp * 2
+    const rowW = sw
     const segW = rowW / card.grid.length
-    roundRect(ctx, cx, rowY, rowW, rowH, 22)
-    ctx.fillStyle = 'rgba(0,0,0,0.38)'
-    ctx.fill()
+    ctx.save()
+    roundRect(ctx, sx, sy, sw, sh, sr)
+    ctx.clip()
+    ctx.fillStyle = 'rgba(0,0,0,0.42)'
+    ctx.fillRect(sx, rowY, rowW, rowH)
+    ctx.strokeStyle = 'rgba(255,255,255,0.09)'
     ctx.lineWidth = 1.5
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+    ctx.beginPath()
+    ctx.moveTo(sx, rowY + 0.75)
+    ctx.lineTo(sx + rowW, rowY + 0.75)
     ctx.stroke()
+    ctx.restore()
+    const midY = rowY + rowH / 2 - 6
     card.grid.forEach((c, i) => {
-      const ex = cx + i * segW
+      const ex = sx + i * segW
       if (i > 0) {
         ctx.strokeStyle = 'rgba(255,255,255,0.09)'
         ctx.lineWidth = 1.5
         ctx.beginPath()
-        ctx.moveTo(ex, rowY + 28)
-        ctx.lineTo(ex, rowY + rowH - 28)
+        ctx.moveTo(ex, rowY + 34)
+        ctx.lineTo(ex, rowY + rowH - 44)
         ctx.stroke()
       }
       // Two columns: the 3D icon on the left, label over a bigger value on the right. Mirrors the DOM Cell.
       const icon = gridIcons[i]
-      const iconSize = 62
-      const midY = rowY + rowH / 2
-      const padL = 34
+      const iconSize = 64
+      const padL = 44
       let textX = ex + padL
       if (icon) {
         ctx.drawImage(icon, ex + padL, midY - iconSize / 2, iconSize, iconSize)
@@ -324,7 +363,7 @@ async function renderCard(
   // Middle: the hero (left) + Net P&L (right, when shown), centered in the band between the name block and
   // the stats pill. With no pill, the band runs down to just above the footer.
   const bandTop = avCY + avR
-  const bandBottom = hasGrid ? rowY : footerY - 36
+  const bandBottom = hasGrid ? rowY : sy + sh - 56
   const bandMid = (bandTop + bandBottom) / 2
   const labelY = bandMid - 66
   const valueY = bandMid + 52
@@ -347,20 +386,11 @@ async function renderCard(
     ctx.fillText(card.netPnl.value, cr, valueY)
   }
 
-  // Footer, on the screen.
-  ctx.fillStyle = 'rgba(255,255,255,0.42)'
-  ctx.font = `600 28px ${FONT}`
-  ctx.textAlign = 'center'
-  ctx.fillText('Built on Sui · DeepBook Predict', sx + sw / 2, footerY)
 
   return new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'))
 }
 
-export async function shareStatsCard(
-  stats: UserStatsDTO,
-  user: { displayName: string; avatarUrl?: string | null },
-  opts?: CardOpts,
-): Promise<void> {
+export async function shareStatsCard(stats: UserStatsDTO, user: CardUser, opts?: CardOpts): Promise<void> {
   const blob = await renderCard(stats, user, opts)
   if (!blob) throw new Error('Could not render the card')
   const file = new File([blob], 'pips-card.png', { type: 'image/png' })
