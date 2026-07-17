@@ -1,42 +1,97 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
-import { QRCodeSVG } from 'qrcode.react'
-import { Check, Copy, Coins, ExternalLink } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Coins } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { MenuScreen } from '@/components/menu/shared'
+import { AssetPicker } from '@/components/menu/deposit/AssetPicker'
+import { ReceivePanel } from '@/components/menu/deposit/ReceivePanel'
+import { BridgePanel } from '@/components/menu/deposit/BridgePanel'
+import { Alert } from '@/ui/Alert'
 import { useAuth } from '@/lib/auth'
 import { api, ApiError } from '@/lib/api'
-import { explorerAddressUrl, NETWORK, NETWORK_LABEL } from '@/lib/sui/config'
+import type { DepositOptionsDTO } from '@/lib/api'
+import { networkLabel, resolveMode, unsupportedCopy } from '@/lib/deposit/mode'
+import { NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
-import { HapticOverlay } from '@/components/HapticOverlay'
 
-// Receive DUSDC. Pure address screen, no chain call: anything sent to this address lands in the
-// balance. We poll /auth/me lightly while it's open so an incoming deposit shows up on its own.
+// One drawer, two dropdowns. Pick a currency and a network and the mode falls out: the chip asset on Sui
+// is a plain address + QR (nothing to bridge), anything else previews a live LI.FI route. No mode switch
+// the player has to understand, and no state they can get stuck in.
 export const Route = createFileRoute('/_app/menu/deposit')({
   component: DepositScreen,
 })
 
-// DUSDC origin depends on the chain: testnet uses DeepBook Predict's own test token, the fork
-// (localnet/devnet) uses the copy the PIPS team runs. Never claim a network we're not on.
-const DUSDC_ORIGIN =
-  NETWORK === 'testnet'
-    ? `DeepBook Predict's test token on ${NETWORK_LABEL}`
-    : `a test token the PIPS team runs on ${NETWORK_LABEL}`
+// Receive is the critical path and must survive /options being down, so the drawer falls back to a
+// chip-only catalog rather than blanking the address the player came here for.
+const FALLBACK_OPTIONS: DepositOptionsDTO = {
+  chipSymbol: 'DUSDC',
+  chipNetwork: 'sui',
+  bridgeAsset: 'USDC',
+  executeEnabled: false,
+  executeLockedReason: 'mainnet_only',
+  minUsd: 3,
+  hardMinUsd: 1,
+  faucetAmount: '',
+  currencies: [{ symbol: 'DUSDC', logo: null, networks: ['sui'] }],
+  networks: [{ key: 'sui', label: 'Sui', logo: null }],
+}
 
 function DepositScreen() {
   const { user, refresh } = useAuth()
   const address = user?.address ?? ''
-  const [copied, setCopied] = useState(false)
   const [claiming, setClaiming] = useState(false)
 
+  const { data } = useQuery({
+    queryKey: ['deposit-options'],
+    queryFn: () => api.depositOptions(),
+    staleTime: 5 * 60_000,
+  })
+  const options = data ?? FALLBACK_OPTIONS
+
+  const [currency, setCurrency] = useState(options.chipSymbol)
+  const [network, setNetwork] = useState(options.chipNetwork)
+
+  // Poll lightly while the screen is open so an incoming deposit shows up on its own.
   useEffect(() => {
     void refresh()
     const iv = window.setInterval(() => void refresh(), 8000)
     return () => window.clearInterval(iv)
   }, [refresh])
 
-  // Test faucet: hand the player a batch of free chips so they can play without a real deposit.
-  // The backend enforces the per-tap cooldown; we just surface its message.
+  const networksFor = (sym: string) => options.currencies.find((c) => c.symbol === sym)?.networks ?? []
+
+  // Switching currency can strand the network on a pair that does not exist, so snap it to the first
+  // network the new currency actually supports.
+  const pickCurrency = (next: string) => {
+    setCurrency(next)
+    const nets = networksFor(next)
+    if (!nets.includes(network)) setNetwork(nets[0] ?? 'sui')
+  }
+
+  const currencyOptions = useMemo(
+    () =>
+      options.currencies.map((c) => ({
+        value: c.symbol,
+        label: c.symbol,
+        logo: c.logo,
+        sub: c.symbol === options.chipSymbol ? 'Your chips' : c.networks.map(networkLabel).join(', '),
+      })),
+    [options],
+  )
+  const networkLogos = useMemo(
+    () => new Map(options.networks.map((n) => [n.key, n.logo])),
+    [options],
+  )
+  const networkOptions = useMemo(
+    () => networksFor(currency).map((n) => ({ value: n, label: networkLabel(n), logo: networkLogos.get(n) ?? null })),
+    [currency, options, networkLogos],
+  )
+
+  const mode = resolveMode(currency, network, options.chipSymbol)
+
+  // Test faucet: free play money so anyone can jump in without a real deposit. The backend enforces the
+  // per-tap cooldown; we just surface its message.
   const claim = async () => {
     if (claiming || !user) return
     setClaiming(true)
@@ -44,127 +99,55 @@ function DepositScreen() {
       const res = await api.requestDusdc()
       await refresh()
       haptic('success')
-      toast.success(`Received ${Number(res.amount)} test DUSDC`, { id: 'faucet' })
+      toast.success(`Received ${Number(res.amount)} test ${options.chipSymbol}`, { id: 'faucet' })
     } catch (e) {
       haptic('error')
-      toast.error(e instanceof ApiError ? e.message : 'Could not get test DUSDC', { id: 'faucet' })
+      toast.error(e instanceof ApiError ? e.message : `Could not get test ${options.chipSymbol}`, { id: 'faucet' })
     } finally {
       setClaiming(false)
     }
   }
 
-  const copy = async () => {
-    if (!address) return
-    try {
-      await navigator.clipboard.writeText(address)
-      setCopied(true)
-      haptic('success')
-      toast.success('Address copied', { id: 'copy-address' })
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast.error('Could not copy the address', { id: 'copy-address' })
-    }
-  }
-
   return (
-    <MenuScreen title="Deposit">
+    <MenuScreen title="Add funds">
       <div className="flex flex-col gap-5">
-        <p className="px-1 text-[15px] leading-snug text-text-2">
-          Send DUSDC to your address to top up your balance. Scan the code, or
-          copy the address below.
-        </p>
-
-        {/* What DUSDC is, up front: a test token, not the real thing. Origin is network-aware. */}
-        <div className="surface-skeuo flex items-start gap-3 rounded-card p-4">
-          <img
-            src="/assets/icons/dusdc-logo.webp"
-            alt=""
-            className="h-9 w-9 shrink-0 rounded-full"
-            draggable={false}
-          />
-          <p className="text-[13px] leading-snug text-text-2">
-            <span className="font-bold text-text">DUSDC</span> is {DUSDC_ORIGIN}.
-            It is free play money with no real value, use it to try every game.
-          </p>
+        <div className="flex items-start gap-3">
+          <AssetPicker label="Currency" value={currency} options={currencyOptions} onChange={pickCurrency} />
+          <AssetPicker label="Network" value={network} options={networkOptions} onChange={setNetwork} />
         </div>
 
-        {/* QR on a white panel so any camera reads it cleanly. */}
-        <div className="card-neo flex flex-col items-center gap-4 rounded-card p-6">
-          <div className="rounded-2xl bg-white p-4">
-            {address ? (
-              <QRCodeSVG value={address} size={184} level="M" marginSize={0} />
-            ) : (
-              <div className="h-[184px] w-[184px] animate-pulse rounded bg-black/10" />
-            )}
-          </div>
-          <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">
-            Your address QR code
-          </span>
-        </div>
-
-        {/* Tap the whole row to copy. */}
-        <button
-          onClick={copy}
-          className="surface-skeuo flex items-center gap-3 rounded-card p-4 text-left transition-transform active:scale-[0.99]"
-        >
-          <span className="tnum min-w-0 flex-1 truncate text-[13px] leading-snug text-text-2">
-            {address || '—'}
-          </span>
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-text">
-            {copied ? (
-              <Check className="h-5 w-5 text-up" strokeWidth={2.6} />
-            ) : (
-              <Copy className="h-5 w-5" strokeWidth={2.4} />
-            )}
-          </span>
-        </button>
-
-        {/* Open the address on the Sui explorer for the active chain in a new tab. */}
-        {address && (
-          <div className="relative">
-            <a
-              href={explorerAddressUrl(address)}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => haptic('selection')}
-              className="pointer-events-none surface-skeuo flex items-center justify-center gap-2 rounded-card p-4 text-[14px] font-semibold text-text transition-transform active:scale-[0.99]"
-            >
-              <ExternalLink className="h-[18px] w-[18px] text-text-2" strokeWidth={2.4} />
-              Check on explorer
-            </a>
-            <HapticOverlay
-              className="absolute inset-0 rounded-card"
-              preset="selection"
-              onTap={() => window.open(explorerAddressUrl(address), '_blank', 'noreferrer')}
-            />
-          </div>
+        {mode === 'receive' && (
+          <ReceivePanel address={address} chipSymbol={options.chipSymbol} minUsd={options.minUsd} />
         )}
 
-        <p className="px-1 text-[13px] leading-snug text-text-3">
-          {NETWORK_LABEL} DUSDC only. Funds appear in your balance once the
-          transfer confirms.
-        </p>
+        {mode === 'bridge' && <BridgePanel options={options} currency={currency} network={network} />}
 
-        {/* Test faucet: free play money so anyone can jump in without a real deposit. */}
-        <div className="flex items-center gap-3 px-1 pt-1">
-          <span className="h-px flex-1 bg-white/[0.08]" />
-          <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">
-            or
-          </span>
-          <span className="h-px flex-1 bg-white/[0.08]" />
-        </div>
+        {/* Never a dead end: a labelled state with the reason and the way out. Soft urgency, it is a
+            nudge to pick another pair, not a fund-loss warning. */}
+        {mode === 'unsupported' && <Alert tone="alert">{unsupportedCopy(options.chipSymbol)}</Alert>}
 
-        <button
-          onClick={claim}
-          disabled={claiming || !user}
-          className="btn-primary flex h-12 items-center justify-center gap-2 rounded-card text-[15px] font-semibold disabled:opacity-60"
-        >
-          <Coins className="h-[18px] w-[18px]" strokeWidth={2.4} />
-          {claiming ? 'Sending…' : 'Get 500 test DUSDC'}
-        </button>
-        <p className="px-1 text-[13px] leading-snug text-text-3">
-          Instant test DUSDC on {NETWORK_LABEL}. One batch per minute.
-        </p>
+        {/* The faucet is the fastest way to chips today, so it stays on the screen in every mode. */}
+        {options.faucetAmount && (
+          <>
+            <div className="flex items-center gap-3 px-1 pt-1">
+              <span className="h-px flex-1 bg-white/[0.08]" />
+              <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">or</span>
+              <span className="h-px flex-1 bg-white/[0.08]" />
+            </div>
+
+            <button
+              onClick={claim}
+              disabled={claiming || !user}
+              className="btn-primary flex h-12 items-center justify-center gap-2 rounded-card text-[15px] font-semibold disabled:opacity-60"
+            >
+              <Coins className="h-[18px] w-[18px]" strokeWidth={2.4} />
+              {claiming ? 'Sending…' : `Get ${Number(options.faucetAmount)} test ${options.chipSymbol}`}
+            </button>
+            <p className="px-1 text-[13px] leading-snug text-text-3">
+              Instant test {options.chipSymbol} on {NETWORK_LABEL}. One batch per minute.
+            </p>
+          </>
+        )}
       </div>
     </MenuScreen>
   )

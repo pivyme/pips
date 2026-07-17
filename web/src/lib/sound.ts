@@ -1016,14 +1016,13 @@ export function rangeLose(): void {
   }
 }
 
-// --- Crowd stings (Range V2 social layer): quiet, rate-limited one-shots for OTHER players' activity.
+// --- Crowd sting (Range V2 social layer): one quiet, rate-limited coin plink when ANOTHER player places.
 // Deliberately far below the player's own win/lose/buzzer so "your own stays the loudest." A burst of
-// simultaneous crowd events debounces into one sting. One-shots only, no beds, so setSoundEnabled is untouched.
+// simultaneous crowd events debounces into one sting. One-shot only, no bed, so setSoundEnabled is untouched.
 
 let lastCrowdPlace = 0
-let lastCrowdWin = 0
 
-// A soft, distant coin plink when someone else places: a quick filtered-noise tick under a faint high bell.
+// A soft, distant coin plink: a quick filtered-noise tick under a faint high bell.
 export function crowdPlace(): void {
   if (!enabled) return
   const now = Date.now()
@@ -1047,20 +1046,6 @@ export function crowdPlace(): void {
   src.start(t)
   src.stop(t + 0.06)
   bell(ac, 1244.5 + Math.random() * 120, t, 0.14, 0.02) // a faint Eb6-ish shimmer, well under the game's own voices
-}
-
-// A brief, distant shimmer when someone else wins: two quiet high bells, quieter still than crowdPlace.
-export function crowdWin(): void {
-  if (!enabled) return
-  const now = Date.now()
-  if (now - lastCrowdWin < 400) return
-  lastCrowdWin = now
-  const ac = audio()
-  if (!ac) return
-  ensureRunning(ac)
-  const t = ac.currentTime
-  bell(ac, 1567.98, t, 0.18, 0.015) // G6
-  bell(ac, 2093.0, t + 0.06, 0.16, 0.011) // C7, a whisper of air
 }
 
 // --- Moonshot voices: a driving euphoric engine, G minor at 150bpm, four-on-the-floor kick, pumping

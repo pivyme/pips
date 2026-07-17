@@ -97,6 +97,27 @@
     cursor: pointer;
   }
 
+  /* Most taps land on the HapticOverlay (an invisible switch checkbox over a
+     pointer-events-none button), so the hover cursor is really this input's, not
+     the button's. Give it and the native toggles the same pointer. */
+  input[switch]:not(:disabled),
+  input[type='checkbox']:not(:disabled),
+  input[type='radio']:not(:disabled),
+  label[for],
+  [role='switch'],
+  [role='checkbox'] {
+    cursor: pointer;
+  }
+
+  /* A disabled control must not show a pointer, it reads as tappable when it isn't. */
+  button:disabled,
+  [type='button']:disabled,
+  [type='submit']:disabled,
+  input[switch]:disabled,
+  [aria-disabled='true'] {
+    cursor: default;
+  }
+
   /* Kill the 300ms tap delay and double-tap-zoom on every control, everywhere
      (safe globally, including the standalone tools). */
   button,
@@ -882,32 +903,6 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   .bar-sweep {
     animation: none;
     transform: translateX(60%);
-  }
-}
-
-/* Lucky lock-in: the dealt chart's amber frame charges in and flashes once when the slot lands on it,
-   the "this one" beat before it expands. One-shot; reduced motion just holds the frame solid. */
-.lucky-lock {
-  animation: lucky-lock 520ms var(--ease-out-expo) both;
-}
-@keyframes lucky-lock {
-  0% {
-    opacity: 0;
-  }
-  35% {
-    opacity: 1;
-  }
-  55% {
-    opacity: 0.45;
-  }
-  100% {
-    opacity: 1;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .lucky-lock {
-    animation: none;
-    opacity: 1;
   }
 }
 

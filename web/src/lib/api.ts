@@ -114,6 +114,45 @@ export interface AchievementDTO {
 export type PlayResult = { play: PlayDTO }
 export type CashoutResult = { play: PlayDTO; unlocked: string[] }
 // POST /wallet/withdraw -> the refreshed user (new balance) + the on-chain tx digest.
+// === Deposit (mirrors backend/src/types/api.ts) ===
+
+// Everything the deposit drawer renders itself from. Server-owned so the CTA gate and the catalog can
+// never drift from the backend or be unlocked from the browser.
+export interface DepositOptionsDTO {
+  chipSymbol: string // what tops up the balance today (DUSDC on testnet/fork, USDC on mainnet)
+  chipNetwork: string // always 'sui': the address just receives it, nothing to bridge
+  bridgeAsset: string // what a bridge lands on Sui (mainnet truth), drives the preview label
+  executeEnabled: boolean // gates the Confirm CTA only, quoting always works
+  executeLockedReason: string | null
+  minUsd: number // warn below this
+  hardMinUsd: number // the server rejects below this
+  faucetAmount: string // drives the faucet copy: it is network-scoped, never hardcode it
+  // Logos are LI.FI's own art, resolved live alongside the addresses. null when the lookup fails or the
+  // asset is not in their catalog: decoration, so the client draws a monogram rather than blocking.
+  currencies: Array<{ symbol: string; logo: string | null; networks: string[] }>
+  networks: Array<{ key: string; label: string; logo: string | null }>
+}
+
+export type DepositQuoteInput = { currency: string; network: string; amount: string }
+
+// A live mainnet route preview. Every field is straight from LI.FI's estimate, nothing computed here.
+export interface DepositQuoteDTO {
+  fromAmount: string
+  fromSymbol: string
+  fromNetwork: string
+  fromNetworkLabel: string
+  fromAmountUsd: string | null
+  toAmount: string // the estimate we show
+  toAmountMin: string | null // the guaranteed floor after slippage
+  toAmountUsd: string | null
+  toSymbol: string
+  toAddress: string
+  feeUsd: string
+  durationSec: number | null // render verbatim, the real spread is 60s..1200s
+  tool: string | null
+  toolName: string | null
+}
+
 export type WithdrawResult = { user: UserDTO; digest: string }
 export interface WithdrawInput {
   recipient: string
@@ -261,7 +300,7 @@ interface Envelope<T> {
   data: T
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   let res: Response
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -271,8 +310,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
     })
-  } catch {
+  } catch (e) {
+    // An aborted request is the caller superseding itself (a re-quote as the player types), not a failure.
+    // Keep it distinguishable so callers can drop it silently instead of flashing an error.
+    if (e instanceof DOMException && e.name === 'AbortError') throw new ApiError('ABORTED', 'Request superseded', 0)
     throw new ApiError('NETWORK_ERROR', 'Cannot reach the server', 0)
   }
 
@@ -333,6 +376,11 @@ const realApi = {
   // wallet
   withdraw: (input: WithdrawInput) => request<WithdrawResult>('POST', '/wallet/withdraw', input),
   requestDusdc: () => request<FaucetResult>('POST', '/wallet/request-dusdc', {}),
+
+  // deposit. toAddress is never sent: the server stamps it from the authed user, and supplying one is refused.
+  depositOptions: () => request<DepositOptionsDTO>('GET', '/deposit/options'),
+  depositQuote: (input: DepositQuoteInput, signal?: AbortSignal) =>
+    request<{ quote: DepositQuoteDTO }>('POST', '/deposit/quote', input, signal),
 
   // referrals
   referral: () => request<ReferralInfoDTO>('GET', '/referral'),

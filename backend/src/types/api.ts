@@ -233,3 +233,66 @@ export interface ReferralResolveDTO {
   valid: boolean;
   handle: string | null; // null for an anon link or an unknown token
 }
+
+// === Multichain deposit ===
+
+// GET /deposit/options -> everything the drawer needs to render itself: the catalog, the chip asset, and
+// the execution gate. Server-owned so the client can never unlock the CTA or drift out of sync on a flag.
+export interface DepositOptionsDTO {
+  chipSymbol: string; // what tops up the balance today (DUSDC on testnet/fork, USDC on mainnet)
+  chipNetwork: string; // always 'sui': the address just receives it, nothing to bridge
+  bridgeAsset: string; // what a bridge lands on Sui (mainnet truth), drives the preview label
+  executeEnabled: boolean; // gates the Confirm CTA only, quoting always works
+  executeLockedReason: string | null; // 'mainnet_only' while cross-chain execution is parked
+  minUsd: number; // warn below this: fees eat a small deposit
+  hardMinUsd: number; // reject below this: the deposit would be mostly fees
+  faucetAmount: string; // drives the faucet copy, never hardcode it (it is network-scoped)
+  // Logos are LI.FI's own art, resolved live alongside the addresses. null when the lookup fails or the
+  // asset is not in their catalog: decoration, so the client draws a monogram rather than blocking.
+  currencies: Array<{ symbol: string; logo: string | null; networks: string[] }>;
+  networks: Array<{ key: string; label: string; logo: string | null }>;
+}
+
+// POST /deposit/quote -> a live mainnet route into the user's own Sui address. Every field is straight
+// from LI.FI's estimate; nothing is computed or defaulted here, so the preview is honest.
+export interface DepositQuoteDTO {
+  fromAmount: string;
+  fromSymbol: string;
+  fromNetwork: string;
+  fromNetworkLabel: string;
+  fromAmountUsd: string | null;
+  toAmount: string; // the estimate we show
+  toAmountMin: string | null; // the guaranteed floor after slippage, disclosed in Info
+  toAmountUsd: string | null;
+  toSymbol: string;
+  toAddress: string;
+  feeUsd: string; // bridge + provider fees + source gas, summed
+  durationSec: number | null; // render verbatim, never a hardcoded "~2 minutes"
+  tool: string | null;
+  toolName: string | null;
+}
+
+// POST /deposit/execute-quote (mainnet only) -> the signable LI.FI step, fetched fresh with the player's
+// connected source address and the server-stamped toAddress. `step` is LI.FI's LiFiStep passed through
+// opaque; the client casts it to the SDK type and signs it directly, no re-fetch.
+export interface DepositExecuteQuoteDTO {
+  step: Record<string, unknown>;
+  depositId: string; // our tracking row, correlated to the source txHash once the client broadcasts
+  tool: string | null;
+  bridge: string | null;
+  fromChainId: number;
+  toChainId: number;
+}
+
+// POST /deposit/track (mainnet only) -> the deposit row after the client reports its source txHash.
+export interface DepositTrackInput {
+  depositId: string;
+  txHash: string;
+}
+
+// GET /deposit/status?id= (mainnet only) -> the live bridge progress for a tracked deposit.
+export interface DepositStatusDTO {
+  status: string; // PENDING | DONE | FAILED | REFUNDED | NOT_FOUND
+  substatus: string | null;
+  substatusMessage: string | null;
+}

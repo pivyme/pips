@@ -8,7 +8,7 @@ export const config = {
     'The simplest, most fun way to trade. A gamified trading console on Sui, powered by DeepBook Predict.',
 
   links: {
-    twitter: '',
+    twitter: 'https://x.com/PlayPipsFun',
     github: 'https://github.com/kelvinkn17/pips',
     docs: 'https://blog.sui.io/introducing-deepbook-predict/',
     // Direct line for reviewers/judges when something breaks mid-demo.

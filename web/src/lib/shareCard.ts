@@ -1,7 +1,7 @@
 // Renders the trader stats card to a PNG offscreen and hands it to the native share sheet, falling back to a
 // download when the Web Share API can't take files. One canvas renderer, no DOM-to-image dependency.
 import type { UserStatsDTO } from '@/lib/api'
-import type { CardTone } from '@/lib/playerCard'
+import type { CardConfig, CardTone } from '@/lib/playerCard'
 import { buildCardModel } from '@/lib/playerCard'
 import { avatarColor, avatarInitial } from '@/lib/avatar'
 
@@ -90,6 +90,7 @@ function loadImageCors(src: string): Promise<HTMLImageElement | null> {
 async function renderCard(
   stats: UserStatsDTO,
   user: { displayName: string; avatarUrl?: string | null },
+  config?: CardConfig,
 ): Promise<Blob | null> {
   const canvas = document.createElement('canvas')
   canvas.width = W
@@ -187,7 +188,8 @@ async function renderCard(
   const sp = 72
   const cx = sx + sp
   const cr = sx + sw - sp
-  const card = buildCardModel(stats)
+  const card = buildCardModel(stats, config)
+  const gridIcons = await Promise.all(card.grid.map((c) => (c.icon ? loadImage(c.icon) : Promise.resolve(null))))
 
   // Top: avatar (real photo if set, else the PIPS identicon) + handle (left), persona chip (right).
   const avR = 58
@@ -253,58 +255,73 @@ async function renderCard(
     ctx.textBaseline = 'alphabetic'
   }
 
-  // Bottom: the three stats as one merged pill, anchored just above the footer.
+  // Bottom: the stats as one merged pill, anchored just above the footer. Hidden when every stat is toggled off.
   const footerY = sy + sh - 48
   const rowH = 150
+  const hasGrid = card.grid.length > 0
   const rowY = footerY - 36 - rowH
-  const rowW = sw - sp * 2
-  const segW = rowW / 3
-  roundRect(ctx, cx, rowY, rowW, rowH, 22)
-  ctx.fillStyle = 'rgba(0,0,0,0.38)'
-  ctx.fill()
-  ctx.lineWidth = 1.5
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)'
-  ctx.stroke()
-  card.grid.forEach((c, i) => {
-    const ex = cx + i * segW
-    if (i > 0) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.09)'
-      ctx.lineWidth = 1.5
-      ctx.beginPath()
-      ctx.moveTo(ex, rowY + 28)
-      ctx.lineTo(ex, rowY + rowH - 28)
-      ctx.stroke()
-    }
-    // Center the label + value block in the pill: label cap-top ~rowY+38, value baseline ~rowY+112.
-    ctx.textAlign = 'left'
-    ctx.fillStyle = 'rgba(255,255,255,0.55)'
-    ctx.font = `700 24px ${FONT}`
-    ctx.fillText(c.label.toUpperCase(), ex + 36, rowY + 56)
-    ctx.fillStyle = toneColor(c.tone)
-    ctx.font = `800 58px ${FONT}`
-    ctx.fillText(c.value, ex + 36, rowY + 112)
-  })
+  if (hasGrid) {
+    const rowW = sw - sp * 2
+    const segW = rowW / card.grid.length
+    roundRect(ctx, cx, rowY, rowW, rowH, 22)
+    ctx.fillStyle = 'rgba(0,0,0,0.38)'
+    ctx.fill()
+    ctx.lineWidth = 1.5
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+    ctx.stroke()
+    card.grid.forEach((c, i) => {
+      const ex = cx + i * segW
+      if (i > 0) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.09)'
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.moveTo(ex, rowY + 28)
+        ctx.lineTo(ex, rowY + rowH - 28)
+        ctx.stroke()
+      }
+      // Icon + label on one line, value below. Mirrors the DOM Cell.
+      const icon = gridIcons[i]
+      const iconSize = 40
+      let labelX = ex + 36
+      if (icon) {
+        ctx.drawImage(icon, ex + 36, rowY + 30, iconSize, iconSize)
+        labelX = ex + 36 + iconSize + 12
+      }
+      ctx.textAlign = 'left'
+      ctx.fillStyle = 'rgba(255,255,255,0.55)'
+      ctx.font = `700 24px ${FONT}`
+      ctx.fillText(c.label.toUpperCase(), labelX, rowY + 56)
+      ctx.fillStyle = toneColor(c.tone)
+      ctx.font = `800 58px ${FONT}`
+      ctx.fillText(c.value, ex + 36, rowY + 112)
+    })
+  }
 
-  // Middle: the hero (left) + Net P&L (right), centered in the band between the name block and stats.
+  // Middle: the hero (left) + Net P&L (right, when shown), centered in the band between the name block and
+  // the stats pill. With no pill, the band runs down to just above the footer.
   const bandTop = avCY + avR
-  const bandMid = (bandTop + rowY) / 2
+  const bandBottom = hasGrid ? rowY : footerY - 36
+  const bandMid = (bandTop + bandBottom) / 2
   const labelY = bandMid - 66
   const valueY = bandMid + 52
   ctx.textAlign = 'left'
   ctx.fillStyle = 'rgba(255,255,255,0.55)'
   ctx.font = `700 28px ${FONT}`
   ctx.fillText(card.hero.label.toUpperCase(), cx, labelY)
-  ctx.textAlign = 'right'
-  ctx.fillText(card.netPnl.label.toUpperCase(), cr, labelY)
-
   ctx.textAlign = 'left'
   ctx.fillStyle = toneColor(card.hero.tone)
   ctx.font = `800 140px ${FONT}`
   ctx.fillText(card.hero.value, cx - 2, valueY)
-  ctx.textAlign = 'right'
-  ctx.fillStyle = toneColor(card.netPnl.tone)
-  ctx.font = `800 90px ${FONT}`
-  ctx.fillText(card.netPnl.value, cr, valueY)
+
+  if (card.netPnl) {
+    ctx.textAlign = 'right'
+    ctx.fillStyle = 'rgba(255,255,255,0.55)'
+    ctx.font = `700 28px ${FONT}`
+    ctx.fillText(card.netPnl.label.toUpperCase(), cr, labelY)
+    ctx.fillStyle = toneColor(card.netPnl.tone)
+    ctx.font = `800 90px ${FONT}`
+    ctx.fillText(card.netPnl.value, cr, valueY)
+  }
 
   // Footer, on the screen.
   ctx.fillStyle = 'rgba(255,255,255,0.42)'
@@ -318,8 +335,9 @@ async function renderCard(
 export async function shareStatsCard(
   stats: UserStatsDTO,
   user: { displayName: string; avatarUrl?: string | null },
+  config?: CardConfig,
 ): Promise<void> {
-  const blob = await renderCard(stats, user)
+  const blob = await renderCard(stats, user, config)
   if (!blob) throw new Error('Could not render the card')
   const file = new File([blob], 'pips-card.png', { type: 'image/png' })
 

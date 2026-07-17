@@ -2,7 +2,6 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowDownToLine, ArrowUpFromLine, LogOut, Pencil } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
@@ -14,15 +13,15 @@ import {
 import { useMenuDrawer } from '@/components/console/MenuDrawer'
 import { StatsCard, StatsCardSkeleton } from '@/components/menu/StatsCard'
 import { Avatar } from '@/components/Avatar'
+import { SocialFooter } from '@/components/SocialFooter'
 import { Button } from '@/ui/Button'
 import { Illo } from '@/ui/Illo'
 import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { shareStatsCard } from '@/lib/shareCard'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
-import { displayHandle, formatStringToNumericDecimals } from '@/utils/format'
+import { displayHandle, formatCompactMoney } from '@/utils/format'
 import { cnm } from '@/utils/style'
 
 // The menu home, rendered inside the bottom drawer: the trader card (pen opens the handle editor) up top,
@@ -60,16 +59,23 @@ function MenuHome() {
           </Button>
           <HapticOverlay className="absolute inset-0 rounded-card" preset="rigid" silent onTap={signOut} />
         </div>
+        <MenuFooter />
       </div>
     </div>
   )
+}
+
+// The drawer's foot: same compact one-row cluster as the landing door (X + DeepBook credit on one
+// line, the no-token warning beneath).
+function MenuFooter() {
+  return <SocialFooter dense large className="mt-2 border-t border-line pt-7" />
 }
 
 // The money card: balance on the left, Deposit and Withdraw right beside it so the card stays
 // compact. Both push to their own screens with the native menu transition.
 function BalanceHero() {
   const { user } = useAuth()
-  const balance = formatStringToNumericDecimals(user?.balance ?? '0', 2)
+  const balance = formatCompactMoney(user?.balance ?? '0')
 
   return (
     <div className="card-neo rounded-card p-4">
@@ -94,7 +100,7 @@ function BalanceHero() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <MoneyButton to="/menu/deposit" icon={ArrowDownToLine} label="Deposit" primary />
-          <MoneyButton to="/menu/withdraw" icon={ArrowUpFromLine} label="Withdraw" />
+          <MoneyButton to="/menu/withdraw" icon={ArrowUpFromLine} label="Send" />
         </div>
       </div>
     </div>
@@ -144,7 +150,6 @@ function StatsSection() {
   const navigate = useNavigate()
   const q = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const stats = q.data?.stats
-  const [sharing, setSharing] = useState(false)
 
   // The pen opens the handle editor: a plain menu sub-page with an input, pushed in with the drawer
   // transition (same as History / Settings).
@@ -154,20 +159,11 @@ function StatsSection() {
     void navigate({ to: '/menu/username', viewTransition: true })
   }
 
-  // One-tap share, right from the card, no detour through the stats detail page. Renders the same PNG.
-  const shareCard = async () => {
-    if (!stats || !user || sharing) return
+  // Share opens the share screen (preview + what-to-show controls), pushed like any other menu sub-page.
+  const openShare = () => {
+    prepareMenuTransition('forward')
     haptic('medium')
-    setSharing(true)
-    try {
-      await shareStatsCard(stats, { displayName: displayHandle(user), avatarUrl: user.avatarUrl })
-      haptic('success')
-    } catch {
-      const { default: toast } = await import('react-hot-toast')
-      toast.error('Could not make your card. Try again.', { id: 'share-card' })
-    } finally {
-      setSharing(false)
-    }
+    void navigate({ to: '/menu/share', viewTransition: true })
   }
 
   if (q.isLoading) return <StatsCardSkeleton />
@@ -218,8 +214,7 @@ function StatsSection() {
       displayName={displayHandle(user)}
       avatarUrl={user?.avatarUrl}
       onEdit={editHandle}
-      onShare={() => void shareCard()}
-      sharing={sharing}
+      onShare={openShare}
     />
   )
 }

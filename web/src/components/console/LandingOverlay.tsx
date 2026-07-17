@@ -6,6 +6,7 @@ import { config } from '@/config'
 import { env } from '@/env'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
+import { SocialFooter } from '@/components/SocialFooter'
 import { isDemo, setDemoOverride } from '@/lib/demo'
 import { accessGuardEnabled, isUnlocked, tryUnlock } from '@/lib/accessGuard'
 import { api } from '@/lib/api'
@@ -265,17 +266,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
           <HapticOverlay className="absolute inset-0" preset="selection" silent onTap={() => toggleDemo(!demo)} />
         </div>
 
-        <div className="mt-5 flex flex-col items-center gap-1.5">
-          <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-3">
-            Powered by
-          </span>
-          <img
-            src="/assets/db-predict-horizontal-logo.svg"
-            alt="DeepBook Predict"
-            draggable={false}
-            className="h-[18px] w-auto select-none opacity-90"
-          />
-        </div>
+        <SocialFooter dense className="pointer-events-auto mt-6" />
       </motion.div>
 
       <AccessCodeSheet open={codeOpen} onUnlocked={onUnlocked} onClose={() => setCodeOpen(false)} />

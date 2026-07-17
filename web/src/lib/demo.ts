@@ -3,9 +3,13 @@
 
 import { env } from '@/env'
 import { ApiError } from './api'
+import { networkLabel } from './deposit/mode'
 import type {
   AchievementDTO,
   CashoutResult,
+  DepositOptionsDTO,
+  DepositQuoteDTO,
+  DepositQuoteInput,
   Game,
   FullLeaderboard,
   GameLeaderboard,
@@ -89,15 +93,16 @@ const RANGE_ROUND_SEC = 30 // Range is one real settled round; the client no lon
 // === Lucky: the slot-weighted multiplier reel (LUCKY.md §4-5) ===
 // Reel deals one tier per spin, weighted for fun not win odds; each tier settles at its own honest 1/mult odds.
 // TARGET always sits in the bet direction (z >= 0, floored above entry) so "down" always needs price to fall.
-const LUCKY_ASSETS = ['BTC', 'SUI', 'ETH']
+// One live market, mirroring real mode (BTC-only). The chart follows the dealt asset, no asset lottery.
+const LUCKY_ASSETS = ['BTC']
 const LUCKY_ROUND_SEC = 30 // fixed fast round
 const ROUND_VOL = 0.022 // fractional std of price over a 30s round; sets how far the TARGET sits per tier
+// Tiers + weights mirror the backend reel ({2:50,3:30,5:13,10:7}, rng.ts), so demo never snaps to an off-pool multiplier.
 const LUCKY_TIERS = [
   { mult: 2, weight: 0.5, z: 0 },
   { mult: 3, weight: 0.3, z: 0.4307 },
   { mult: 5, weight: 0.13, z: 0.8416 },
-  { mult: 10, weight: 0.05, z: 1.2816 },
-  { mult: 25, weight: 0.02, z: 1.7507 },
+  { mult: 10, weight: 0.07, z: 1.2816 },
 ] as const
 const TICK_MS = 300 // denser ticks read as continuous motion
 const VOL = 0.0004 // per-tick impulse on velocity (not price), small so trends stay smooth
@@ -366,6 +371,20 @@ function nowMs(): number {
 // Request DUSDC faucet (demo): fixed batch + per-tap cooldown, mirrors the backend defaults.
 const DEMO_FAUCET_AMOUNT = 500
 const DEMO_FAUCET_COOLDOWN_MS = 60_000
+
+// LI.FI's own public logo CDN, the same art the real /options resolves. Stable urls, so demo shows the
+// real coins/chains too instead of bare monograms.
+const LIFI_CHAIN = (k: string) => `https://raw.githubusercontent.com/lifinance/types/main/src/assets/icons/chains/${k}.svg`
+const DEMO_LOGO = {
+  USDC: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png',
+  ETH: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2/logo.png',
+  SOL: 'https://s2.coinmarketcap.com/static/img/coins/64x64/5426.png',
+  sui: LIFI_CHAIN('sui'),
+  ethereum: LIFI_CHAIN('ethereum'),
+  base: LIFI_CHAIN('base'),
+  arbitrum: LIFI_CHAIN('arbitrum'),
+  solana: LIFI_CHAIN('solana'),
+}
 let demoFaucetAt = 0
 function newId(): string {
   idSeq += 1
@@ -963,6 +982,68 @@ export const demoApi = {
     state.balance += DEMO_FAUCET_AMOUNT
     save()
     return { user: userDTO(), amount: DEMO_FAUCET_AMOUNT.toFixed(2), digest: `demo-faucet-${newId()}` }
+  },
+
+  // Deposit twins. The real drawer quotes LI.FI live even on testnet, so these canned numbers exist ONLY
+  // to keep demo mode a complete twin of the client (no backend, no network). They must never leak into
+  // the real path: that is what the api.ts proxy seam is for.
+  depositOptions: async (): Promise<DepositOptionsDTO> => {
+    await delay(80)
+    return {
+      chipSymbol: 'DUSDC',
+      chipNetwork: 'sui',
+      bridgeAsset: 'USDC',
+      executeEnabled: false,
+      executeLockedReason: 'mainnet_only',
+      minUsd: 3,
+      hardMinUsd: 1,
+      faucetAmount: DEMO_FAUCET_AMOUNT.toFixed(0),
+      currencies: [
+        { symbol: 'DUSDC', logo: DEMO_LOGO.USDC, networks: ['sui'] },
+        { symbol: 'USDC', logo: DEMO_LOGO.USDC, networks: ['ethereum', 'base', 'arbitrum', 'solana'] },
+        { symbol: 'ETH', logo: DEMO_LOGO.ETH, networks: ['ethereum', 'base', 'arbitrum'] },
+        { symbol: 'SOL', logo: DEMO_LOGO.SOL, networks: ['solana'] },
+      ],
+      networks: [
+        { key: 'sui', label: 'Sui', logo: DEMO_LOGO.sui },
+        { key: 'ethereum', label: 'Ethereum', logo: DEMO_LOGO.ethereum },
+        { key: 'base', label: 'Base', logo: DEMO_LOGO.base },
+        { key: 'arbitrum', label: 'Arbitrum', logo: DEMO_LOGO.arbitrum },
+        { key: 'solana', label: 'Solana', logo: DEMO_LOGO.solana },
+      ],
+    }
+  },
+
+  // Plausible, not real: ~0.35% total cost, shaped like a live mayanMCTP/allbridge quote.
+  depositQuote: async (input: DepositQuoteInput): Promise<{ quote: DepositQuoteDTO }> => {
+    await delay(320)
+    const amount = Number(input.amount) || 0
+    if (amount <= 0) throw new ApiError('BAD_AMOUNT', 'Enter an amount greater than zero.', 400)
+    if (amount < 1) throw new ApiError('AMOUNT_TOO_LOW', 'Deposit at least $1. Below that, fees eat most of it.', 400)
+    // Rough USD value so a non-stable source still previews a sane number.
+    const unitUsd = input.currency === 'ETH' ? 1850 : input.currency === 'SOL' ? 75 : 1
+    const inUsd = amount * unitUsd
+    const fee = 0.25 + inUsd * 0.001
+    const out = Math.max(0, inUsd - fee)
+    const fast = input.network === 'solana'
+    return {
+      quote: {
+        fromAmount: input.amount,
+        fromSymbol: input.currency,
+        fromNetwork: input.network,
+        fromNetworkLabel: networkLabel(input.network),
+        fromAmountUsd: inUsd.toFixed(2),
+        toAmount: out.toFixed(2),
+        toAmountMin: (out * 0.99).toFixed(2),
+        toAmountUsd: out.toFixed(2),
+        toSymbol: 'USDC',
+        toAddress: DEMO_ADDRESS,
+        feeUsd: fee.toFixed(2),
+        durationSec: fast ? 60 : 1200,
+        tool: fast ? 'allbridge' : 'mayanMCTP',
+        toolName: fast ? 'Allbridge' : 'CCTP + Mayan',
+      },
+    }
   },
 
   referral: async (): Promise<ReferralInfoDTO> => {

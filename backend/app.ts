@@ -22,6 +22,7 @@ import { wsRoutes } from './src/routes/wsRoutes.ts';
 import { menuRoutes } from './src/routes/menuRoutes.ts';
 import { leaderboardRoutes } from './src/routes/leaderboardRoutes.ts';
 import { walletRoutes } from './src/routes/walletRoutes.ts';
+import { depositRoutes } from './src/routes/depositRoutes.ts';
 import { referralRoutes } from './src/routes/referralRoutes.ts';
 import { avatarRoutes } from './src/routes/avatarRoutes.ts';
 
@@ -277,6 +278,7 @@ fastify.register(gameRoutes);
 fastify.register(menuRoutes);
 fastify.register(leaderboardRoutes, { prefix: '/leaderboard' });
 fastify.register(walletRoutes, { prefix: '/wallet' });
+fastify.register(depositRoutes, { prefix: '/deposit' });
 fastify.register(referralRoutes, { prefix: '/referral' });
 fastify.register(avatarRoutes); // POST + DELETE /avatar
 fastify.register(streamRoutes, { prefix: '/stream' });

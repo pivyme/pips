@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useConsoleControls } from '@/components/console/controls'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
@@ -15,7 +15,8 @@ import {
 import { GameScreen, ScreenMessage } from '@/components/game/screen'
 import { TradeConfirmSheet, useTradeConfirm } from '@/components/game/tradeConfirm'
 import { LivePrice } from '@/components/game/LivePrice'
-import { LuckyCharts, Reel } from '@/components/game/lucky/LuckyReels'
+import { Chart } from '@/components/game/Chart'
+import { Reel } from '@/components/game/lucky/LuckyReels'
 import {
   usePhaseElapsed,
   usePlayResolutionWatch,
@@ -30,8 +31,9 @@ import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { useActivePlay } from '@/lib/activePlay'
 import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
+import { cnm } from '@/utils/style'
 
-// LUCKY, the hero: SPIN deals three reels (asset, direction, multiplier) from a server-dealt pull, opens
+// LUCKY, the hero: SPIN deals two reels (direction, multiplier) from a server-dealt pull, opens
 // a real Predict position with a TARGET line, then ride the value to CASH OUT or the buzzer for a spread-free WIN/LOSE. Demo mirrors the flow. Layout/style: header+slot, bounded chart, footer, docs/SCREEN.md.
 export const Route = createFileRoute('/_app/games/lucky')({ component: LuckyScreen })
 
@@ -39,16 +41,12 @@ export const Route = createFileRoute('/_app/games/lucky')({ component: LuckyScre
 // live via betLadder().
 const STAKE_KEY = 'pips_stake_idx'
 // Reel cycle pools (cosmetic blur before the snap). The real targets come from the dealt play.
-// Preferred order for the stacked asset panel (the rest of the live markets follow, capped at 3).
-const PREFERRED = ['BTC', 'SUI', 'ETH', 'SOL']
-const DIR_POOL = ['UP', 'DOWN']
+const DIR_POOL = ['▲ UP', '▼ DOWN']
 const MULT_POOL = ['2x', '3x', '5x', '10x']
-const SPIN_STOPS = [720, 980, 1240] // staggered reel stops (ms)
-const SPIN_TOTAL = 1320
-// Dealt chart holds lit+flashed (the slot "locking in") this long before expanding, so the selection reads as a beat.
-const LOCKIN_MS = 650
-// Chart grow/collapse ease (matches the CSS flex-grow duration); entry/target overlays reveal only once expand finishes.
-const EXPAND_MS = 600
+const SPIN_STOPS = [720, 980] // staggered reel stops (ms): direction, then multiplier
+const SPIN_TOTAL = 1060
+// Beat between the last reel locking and the TARGET landing on the chart, so the deal reads before the stake does.
+const LOCKIN_MS = 450
 // Safety auto-advance for an idle player (result is normally dismissed via CONTINUE); generous so it never cuts a read short.
 const RESULT_MS = 6500
 const ROUND_SEC = 15 // fallback only; the play's real on-chain expiry drives the countdown
@@ -82,6 +80,8 @@ const money = (n: number): string =>
 const fmtMult = (n: number): string =>
   `${n.toFixed(2).replace(/\.?0+$/, '')}x`
 const sideLabel = (s: Side): string => (s === 'up' ? 'UP' : 'DOWN')
+// Reel face carries a directional glyph; the bare label (sideLabel) is still used in recaps.
+const dirFace = (s: Side): string => (s === 'up' ? '▲ UP' : '▼ DOWN')
 
 function LuckyScreen() {
   const { refresh, user } = useAuth()
@@ -96,23 +96,14 @@ function LuckyScreen() {
   const [live, setLive] = useState<Live | null>(null)
   const [spot, setSpot] = useState<number | null>(null)
   const [overlay, setOverlay] = useState<Overlay>('none')
-  // Chart lit while the reels spin (the slot picking an asset); locks to the dealt asset on open, then expands.
-  const [highlightAsset, setHighlightAsset] = useState<string | null>(null)
-  // Decoupled from the lock: the dealt chart holds highlighted for LOCKIN_MS, then this flips it to expand as a beat.
-  const [expandChart, setExpandChart] = useState(false)
-  // Entry/target overlays hold off until the chart finishes expanding, so they draw onto the open chart, not the collapsing stack.
+  // Entry/target overlays hold off for a beat after the reels lock, so they land on the chart as the payoff, not the instant the round opens.
   const [revealOverlays, setRevealOverlays] = useState(false)
 
   const finalized = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const balanceSyncedPlayId = useRef<string | null>(null)
-  // Latest focused-asset spot + its asset (set together in onPrice), for the header price and debug log.
-  // The ENTRY line is never derived from this display feed, only ever the backend's real oracle entrySpot.
+  // Latest chart spot, mirrored for the DEV deal log; the ENTRY line is never derived from this display feed, only the backend's real oracle entrySpot.
   const spotRef = useRef<number | null>(null)
-  const spotAssetRef = useRef<string | null>(null)
-  // Latest live price per asset, written by every chart row with no re-render; header tracks the focused asset, debug log reads the dealt asset.
-  const pricesRef = useRef<Record<string, number>>({})
-  const focusAssetRef = useRef<string>('')
   // Chart's eased leading price, written every frame for visual tracking only; financial values come from the backend's Predict quote.
   const livePriceRef = useRef(0)
 
@@ -133,27 +124,9 @@ function LuckyScreen() {
   const cantAfford = balance < BET_LADDER[0]
 
   const lp = play ? (play.params as LuckyParams) : null
-  // Asset panel: up to three live markets stacked (BTC/SUI/ETH first); the dealt asset is always included
-  // so a spin always has a chart to expand into. focusAsset is the dealt asset mid-round, else the primary at rest.
-  const displayAssets = useMemo(() => {
-    const rank = (a: string) => {
-      const i = PREFERRED.indexOf(a)
-      return i < 0 ? 99 : i
-    }
-    const byPref = (arr: string[]) => [...arr].sort((a, b) => rank(a) - rank(b))
-    const out: string[] = []
-    const add = (a: string | undefined) => {
-      if (a && !out.includes(a) && out.length < 3) out.push(a)
-    }
-    // Dealt asset leads (so it's always in the stack), then a stable preferred order over all known
-    // markets (so the stack never reshuffles as oracles roll), padded to always show three charts. Non-live ones are display-only.
-    if (lp?.asset) add(lp.asset)
-    byPref(allAssets).forEach(add)
-    byPref([...PREFERRED]).forEach(add)
-    return out
-  }, [allAssets.join(','), lp?.asset])
-  const focusAsset = lp?.asset ?? displayAssets[0]
-  focusAssetRef.current = focusAsset
+  // The chart follows the dealt asset (BTC in real mode, whatever the fork/demo lottery dealt otherwise);
+  // at rest it shows the primary live market. Fallbacks only bite before markets load, which the render already gates.
+  const focusAsset = lp?.asset ?? liveAssets[0] ?? allAssets[0] ?? 'BTC'
   // The position is real on-chain only once status leaves 'pending' (a failed mint goes 'error'); gate
   // the entry/target on this, never the optimistic 'pending' window, so the line only shows for a play that actually opened.
   const status = live?.status ?? play?.status
@@ -298,49 +271,21 @@ function LuckyScreen() {
     return () => clearInterval(iv)
   }, [reelsCycling])
 
-  // Every stacked chart reports ticks here, stashed per asset with no re-render; the focused asset alone
-  // drives the header price. Per-row label prices stay local, so a tick never re-renders this component.
-  const handleRowPrice = useCallback((asset: string, p: number) => {
-    pricesRef.current[asset] = p
-    if (asset === focusAssetRef.current) {
-      spotRef.current = p
-      spotAssetRef.current = asset
-      setSpot(p)
-    }
+  // The single chart reports its ticks here: drives the header price and the DEV deal log. No per-asset
+  // stash anymore, the chart is always the dealt/live asset. Financial values still come from the backend quote.
+  const handlePrice = useCallback((p: number) => {
+    spotRef.current = p
+    setSpot(p)
   }, [])
 
-  // While the reels tumble, run the lit chart down the stack on a steady loop (top/middle/bottom repeat),
-  // like a slot scanning, not random flicker. It locks onto the dealt asset the moment the round opens, then expands.
-  useEffect(() => {
-    if (!reelsCycling || displayAssets.length === 0) return
-    let i = 0
-    setHighlightAsset(displayAssets[0])
-    const iv = setInterval(() => {
-      i = (i + 1) % displayAssets.length
-      setHighlightAsset(displayAssets[i])
-    }, 110)
-    return () => clearInterval(iv)
-  }, [reelsCycling, displayAssets.join(',')])
-
-  // Lock the lit chart to the dealt asset once the round opens; clear it back to idle on re-rack.
-  useEffect(() => {
-    if (showReadouts && lp?.asset) setHighlightAsset(lp.asset)
-    else if (phase === 'idle') setHighlightAsset(null)
-  }, [showReadouts, lp?.asset, phase])
-
-  // Holds the dealt chart highlighted for a beat (with a confirm beep), then expands it, then reveals the
-  // entry/target overlays once open. Resets the instant we leave a round so the next spin replays from collapsed.
+  // Holds a beat after the reels lock (with a confirm beep), then reveals the entry/target overlays so the
+  // TARGET lands on the chart as the payoff. Resets the instant we leave a round so the next spin replays clean.
   useEffect(() => {
     if (showReadouts && lp?.asset) {
-      slotPick() // the slot commits to its market: a short ascending confirm under the lock-in flash
-      const expand = setTimeout(() => setExpandChart(true), LOCKIN_MS)
-      const reveal = setTimeout(() => setRevealOverlays(true), LOCKIN_MS + EXPAND_MS)
-      return () => {
-        clearTimeout(expand)
-        clearTimeout(reveal)
-      }
+      slotPick() // the slot commits: a short ascending confirm under the lock-in
+      const reveal = setTimeout(() => setRevealOverlays(true), LOCKIN_MS)
+      return () => clearTimeout(reveal)
     }
-    setExpandChart(false)
     setRevealOverlays(false)
   }, [showReadouts, lp?.asset])
 
@@ -374,7 +319,7 @@ function LuckyScreen() {
           side: d.side,
           mult: p.multiplier,
           bet,
-          chartLive: pricesRef.current[d.asset],
+          chartLive: spotRef.current,
           entrySpot: p.entrySpot,
           target: p.market.strike,
         })
@@ -528,9 +473,9 @@ function LuckyScreen() {
           <div className="shrink-0 bg-black pt-[calc(var(--screen-rim,24px)+12px)]">
             <div className="flex items-start justify-between gap-3 px-[var(--screen-rim,24px)] pb-4">
               <div className="min-w-0">
-                {/* Masked until a chart is selected (a round opens), matching the anonymous stack. */}
-                <div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-text-3">{showReadouts ? focusAsset : 'XXX'}</div>
-                <div className="tnum text-[34px] font-extrabold leading-none text-text">{showReadouts ? <LivePrice price={spot} /> : '$XXXX'}</div>
+                {/* The asset is no secret (one live market), so the live price shows at rest too, over the chart underneath. */}
+                <div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-text-3">{focusAsset}</div>
+                <div className="tnum text-[34px] font-extrabold leading-none text-text"><LivePrice price={spot} /></div>
               </div>
               <div className="shrink-0 text-right">
                 <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
@@ -551,16 +496,16 @@ function LuckyScreen() {
               </div>
             </div>
 
-            {/* Two reels: direction + multiplier. The asset is the chart the spin lights up and expands, not a reel. */}
+            {/* Two reels, the whole randomness: direction and multiplier. The asset isn't a draw, it's the chart underneath. */}
             <div className="flex border-t border-line-strong">
               <Reel
                 index={0}
                 label="Up Down"
                 pool={DIR_POOL}
-                target={roundActive && lp ? sideLabel(lp.side) : undefined}
+                target={roundActive && lp ? dirFace(lp.side) : undefined}
                 cycling={reelsCycling}
                 landing={spinning}
-                stopAt={SPIN_STOPS[1]}
+                stopAt={SPIN_STOPS[0]}
                 accent={roundActive && lp?.side === 'up' ? 'up' : roundActive && lp?.side === 'down' ? 'down' : undefined}
               />
               <Reel
@@ -570,15 +515,14 @@ function LuckyScreen() {
                 target={roundActive && play ? fmtMult(play.multiplier) : undefined}
                 cycling={reelsCycling}
                 landing={spinning}
-                stopAt={SPIN_STOPS[2]}
+                stopAt={SPIN_STOPS[1]}
                 accent={roundActive ? 'amber' : undefined}
                 last
               />
             </div>
           </div>
 
-          {/* ASSET PANEL: up to three live markets as stacked charts, bounded between the slot header and the footer. */}
-          {/* A spin lights one at random; on open the dealt chart expands to fill and the others collapse away. */}
+          {/* CHART: one full-bleed chart on the dealt/live asset, bounded between the slot header and the footer. */}
           <div className="relative min-h-0 flex-1">
             {/* COUNTDOWN: big faded watermark behind the chart line (canvas clears via clearRect, so it shows through). */}
             {/* Only while a round runs, tracking the real on-chain buzzer the timer counts to. */}
@@ -587,20 +531,21 @@ function LuckyScreen() {
                 <span className="tnum font-black leading-none text-text opacity-15 text-[clamp(64px,18vh,128px)]">{secsLeft}</span>
               </div>
             )}
-            {displayAssets.length > 0 ? (
-              <LuckyCharts
-                assets={displayAssets}
-                focusAsset={focusAsset}
-                selectedAsset={showReadouts ? (lp?.asset ?? null) : null}
-                expanded={expandChart}
-                selecting={reelsCycling}
-                highlightAsset={highlightAsset}
-                overlays={revealOverlays ? overlays : undefined}
-                livePriceRef={livePriceRef}
-                initialPrices={spotByAsset}
-                onPrice={handleRowPrice}
-              />
-            ) : null}
+            <Chart
+              asset={focusAsset}
+              overlays={revealOverlays ? overlays : undefined}
+              livePriceRef={livePriceRef}
+              initialPrice={spotByAsset[focusAsset]}
+              onPrice={handlePrice}
+              className="absolute inset-0"
+            />
+            {/* Dims the chart while the reels tumble so attention sits on the slot; the un-dim is the first frame of the landing beat. */}
+            <div
+              className={cnm(
+                'pointer-events-none absolute inset-0 bg-black transition-opacity duration-150',
+                reelsCycling ? 'opacity-40' : 'opacity-0',
+              )}
+            />
           </div>
 
           {/* FOOTER: full-width readout under the chart, live VALUE while running, bet + how-to-start at rest. Content hugs the left, clear of the PLAY body. */}
@@ -685,7 +630,7 @@ function LuckyScreen() {
       {overlay === 'howto' && (
         <InstructionOverlay
           lines={[
-            ['SPIN', 'Deals an asset, a direction (up or down), and a multiplier.'],
+            ['SPIN', 'Deals a direction (up or down) and a multiplier.'],
             ['TARGET', 'The price to reach, in your direction. A 2x sits just past your entry, so a small move your way wins. Bigger multipliers sit further out.'],
             ['WIN', 'Land past the target at the buzzer to win bet x multiplier. A touch on the way does not count, only where it ends.'],
             ['CASH OUT', 'Take the live value any time before the buzzer. Ahead? Cash out to lock it in before it can turn.'],

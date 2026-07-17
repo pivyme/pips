@@ -203,14 +203,15 @@ function TapButton({
   className?: string
 }) {
   return (
-    <div className={cnm('relative shrink-0', className)}>
+    <div className="relative inline-block shrink-0">
       <button
         type="button"
         disabled={busy}
         onClick={onTap}
         className={cnm(
-          'pointer-events-none flex h-full w-full items-center justify-center whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide transition-transform active:scale-95 disabled:opacity-40',
+          'pointer-events-none flex items-center justify-center whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide transition-transform active:scale-95 disabled:opacity-40',
           variant === 'primary' ? 'btn-primary' : 'border border-line bg-white/[0.05] text-text-2',
+          className,
         )}
       >
         {busy ? '…' : label}

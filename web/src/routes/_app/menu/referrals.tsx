@@ -158,7 +158,7 @@ function ReferralsScreen() {
 
               {/* Summary strip: friends brought in, lifetime earned, lifetime claimed. */}
               <div className="mt-4 grid grid-cols-3 divide-x divide-white/[0.08] overflow-hidden rounded-xl border border-white/[0.06] bg-black/30">
-                <SummaryCell label="Friends" value={String(info.count)} />
+                <SummaryCell label="Referred" value={String(info.count)} />
                 <SummaryCell label="Earned" value={usd(info.totalEarned)} gold />
                 <SummaryCell label="Claimed" value={usd(info.totalClaimed)} />
               </div>

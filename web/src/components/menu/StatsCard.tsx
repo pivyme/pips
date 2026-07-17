@@ -1,7 +1,7 @@
 import { Loader2, Pencil, Share2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { UserStatsDTO } from '@/lib/api'
-import type { CardTone } from '@/lib/playerCard'
+import type { CardConfig, CardStat, CardTone } from '@/lib/playerCard'
 import { buildCardModel } from '@/lib/playerCard'
 import { Avatar } from '@/components/Avatar'
 import { cnm } from '@/utils/style'
@@ -17,6 +17,7 @@ export function StatsCard({
   stats,
   displayName,
   avatarUrl,
+  config,
   onEdit,
   onShare,
   sharing,
@@ -25,13 +26,15 @@ export function StatsCard({
   displayName: string
   // The custom uploaded avatar, or null (the PIPS identicon renders when absent).
   avatarUrl?: string | null
+  // The share layout (hidden Net P&L, hero + grid picks). Omitted = the auto default. Drives the live preview.
+  config?: CardConfig
   // When set, a pen sits next to the handle so it can be changed. Omitted on the shareable card.
   onEdit?: () => void
   // When set, a share icon sits beside the pen for one-tap PNG export (renders the card via shareCard.ts).
   onShare?: () => void
   sharing?: boolean // share in progress: the icon spins and disables
 }) {
-  const card = buildCardModel(stats)
+  const card = buildCardModel(stats, config)
 
   return (
     // @container: the card sizes text + padding off its OWN width (cqi), not the viewport, so it shrinks
@@ -88,19 +91,26 @@ export function StatsCard({
             <Label>{card.hero.label}</Label>
             <div className={cnm('tnum truncate text-[clamp(32px,13cqi,52px)] font-extrabold leading-none', toneText(card.hero.tone))}>{card.hero.value}</div>
           </div>
-          <div className="min-w-0 text-right">
-            <Label>{card.netPnl.label}</Label>
-            <div className={cnm('tnum truncate text-[clamp(18px,7.5cqi,30px)] font-extrabold leading-none', toneText(card.netPnl.tone))}>
-              {card.netPnl.value}
+          {card.netPnl && (
+            <div className="min-w-0 text-right">
+              <Label>{card.netPnl.label}</Label>
+              <div className={cnm('tnum truncate text-[clamp(18px,7.5cqi,30px)] font-extrabold leading-none', toneText(card.netPnl.tone))}>
+                {card.netPnl.value}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
-        <div className="mt-4 grid grid-cols-3 divide-x divide-white/[0.08] overflow-hidden rounded-xl border border-white/[0.07] bg-black/40">
-          {card.grid.map((c) => (
-            <Cell key={c.label} label={c.label} value={c.value} tone={c.tone} />
-          ))}
-        </div>
+        {card.grid.length > 0 && (
+          <div
+            className="mt-4 grid divide-x divide-white/[0.08] overflow-hidden rounded-xl border border-white/[0.07] bg-black/40"
+            style={{ gridTemplateColumns: `repeat(${card.grid.length}, minmax(0, 1fr))` }}
+          >
+            {card.grid.map((c) => (
+              <Cell key={c.kind} stat={c} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -124,11 +134,21 @@ function Label({ children }: { children: ReactNode }) {
   return <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/55">{children}</div>
 }
 
-function Cell({ label, value, tone }: { label: string; value: string; tone: CardTone }): ReactNode {
+function Cell({ stat }: { stat: CardStat }): ReactNode {
   return (
     <div className="min-w-0 px-[clamp(8px,3cqi,12px)] py-2.5">
-      <div className="text-[10px] font-bold uppercase tracking-[0.06em] text-white/55">{label}</div>
-      <div className={cnm('tnum mt-1 truncate text-[clamp(13px,4.3cqi,17px)] font-extrabold', toneText(tone))}>{value}</div>
+      <div className="flex items-center gap-[clamp(4px,1.5cqi,6px)]">
+        {stat.icon && (
+          <img
+            src={stat.icon}
+            alt=""
+            aria-hidden
+            className="h-[clamp(13px,4.5cqi,17px)] w-[clamp(13px,4.5cqi,17px)] shrink-0 object-contain"
+          />
+        )}
+        <div className="truncate text-[10px] font-bold uppercase tracking-[0.06em] text-white/55">{stat.label}</div>
+      </div>
+      <div className={cnm('tnum mt-1 truncate text-[clamp(13px,4.3cqi,17px)] font-extrabold', toneText(stat.tone))}>{stat.value}</div>
     </div>
   )
 }

@@ -856,38 +856,44 @@ function drawOverlays(
   }
 
   // Target (Lucky): the line the price must cross to win; the winning half shades green and brightens when price is inside, so "am I winning" reads straight off the chart.
-  // The line itself is the one amber accent (SCREEN.md); faded in on a new round.
+  // The line itself is the one amber accent (SCREEN.md). It wipes in left->right as the deal's payoff; ys is always the true strike, only the drawn extent animates (never the price position).
   if (ov?.target != null && targetReveal > 0.01) {
     const { price: tp, side } = ov.target
     const a = targetReveal
     const ys = y(tp)
+    // Front-loaded ease so the line "slams" across, then settles; the cubic saturates near full width well before targetReveal does.
+    const wipe = w * (1 - Math.pow(1 - Math.min(1, targetReveal), 3))
     const winUp = side === 'up'
     const inWin = winUp ? price > tp : price < tp
     const grad = ctx.createLinearGradient(0, ys, 0, winUp ? 0 : h)
     grad.addColorStop(0, withAlpha(C.up, (inWin ? 0.2 : 0.08) * a))
     grad.addColorStop(1, withAlpha(C.up, 0))
     ctx.fillStyle = grad
-    ctx.fillRect(0, winUp ? 0 : ys, w, winUp ? ys : h - ys)
+    ctx.fillRect(0, winUp ? 0 : ys, wipe, winUp ? ys : h - ys)
 
     ctx.strokeStyle = withAlpha(C.brand, (inWin ? 1 : 0.78) * a)
     ctx.lineWidth = 1.5
     ctx.setLineDash([5, 4])
     ctx.beginPath()
     ctx.moveTo(0, ys)
-    ctx.lineTo(w, ys)
+    ctx.lineTo(wipe, ys)
     ctx.stroke()
     ctx.setLineDash([])
 
-    ctx.save()
-    ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
-    ctx.textBaseline = 'middle'
-    ctx.textAlign = 'right'
-    ctx.fillStyle = withAlpha(C.brand, 0.95 * a)
-    // Spells out the move needed in your direction next to the strike, so a target a hair from entry still reads as a real bet, not equal to entry.
-    const mv = ov.entry != null && ov.entry > 0 ? ((tp - ov.entry) / ov.entry) * 100 : null
-    const mvStr = mv != null ? `  ${mv >= 0 ? '+' : ''}${Math.abs(mv) >= 1 ? mv.toFixed(1) : mv.toFixed(2)}%` : ''
-    ctx.fillText(`TARGET ${formatPrice(tp)}${mvStr}`, labelX, clampLabelY(winUp ? ys - 10 : ys + 12))
-    ctx.restore()
+    // Label holds back until the wipe has crossed, then fades in over the remainder, so it never sits ahead of the line.
+    const labelA = Math.max(0, Math.min(1, (targetReveal - 0.6) / 0.4))
+    if (labelA > 0.01) {
+      ctx.save()
+      ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
+      ctx.textBaseline = 'middle'
+      ctx.textAlign = 'right'
+      ctx.fillStyle = withAlpha(C.brand, 0.95 * labelA)
+      // Spells out the move needed in your direction next to the strike, so a target a hair from entry still reads as a real bet, not equal to entry.
+      const mv = ov.entry != null && ov.entry > 0 ? ((tp - ov.entry) / ov.entry) * 100 : null
+      const mvStr = mv != null ? `  ${mv >= 0 ? '+' : ''}${Math.abs(mv) >= 1 ? mv.toFixed(1) : mv.toFixed(2)}%` : ''
+      ctx.fillText(`TARGET ${formatPrice(tp)}${mvStr}`, labelX, clampLabelY(winUp ? ys - 10 : ys + 12))
+      ctx.restore()
+    }
   }
 
   if (ov?.boxes?.length) {

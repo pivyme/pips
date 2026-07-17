@@ -23,7 +23,7 @@ import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
 import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
 import { Route as AppMenuWithdrawRouteImport } from './routes/_app/menu/withdraw'
 import { Route as AppMenuUsernameRouteImport } from './routes/_app/menu/username'
-import { Route as AppMenuStatsRouteImport } from './routes/_app/menu/stats'
+import { Route as AppMenuShareRouteImport } from './routes/_app/menu/share'
 import { Route as AppMenuSettingsRouteImport } from './routes/_app/menu/settings'
 import { Route as AppMenuReferralsRouteImport } from './routes/_app/menu/referrals'
 import { Route as AppMenuLeaderboardRouteImport } from './routes/_app/menu/leaderboard'
@@ -109,9 +109,9 @@ const AppMenuUsernameRoute = AppMenuUsernameRouteImport.update({
   path: '/menu/username',
   getParentRoute: () => AppRoute,
 } as any)
-const AppMenuStatsRoute = AppMenuStatsRouteImport.update({
-  id: '/menu/stats',
-  path: '/menu/stats',
+const AppMenuShareRoute = AppMenuShareRouteImport.update({
+  id: '/menu/share',
+  path: '/menu/share',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMenuSettingsRoute = AppMenuSettingsRouteImport.update({
@@ -215,7 +215,7 @@ export interface FileRoutesByFullPath {
   '/menu/leaderboard': typeof AppMenuLeaderboardRoute
   '/menu/referrals': typeof AppMenuReferralsRoute
   '/menu/settings': typeof AppMenuSettingsRoute
-  '/menu/stats': typeof AppMenuStatsRoute
+  '/menu/share': typeof AppMenuShareRoute
   '/menu/username': typeof AppMenuUsernameRoute
   '/menu/withdraw': typeof AppMenuWithdrawRoute
   '/games/': typeof AppGamesIndexRoute
@@ -246,7 +246,7 @@ export interface FileRoutesByTo {
   '/menu/leaderboard': typeof AppMenuLeaderboardRoute
   '/menu/referrals': typeof AppMenuReferralsRoute
   '/menu/settings': typeof AppMenuSettingsRoute
-  '/menu/stats': typeof AppMenuStatsRoute
+  '/menu/share': typeof AppMenuShareRoute
   '/menu/username': typeof AppMenuUsernameRoute
   '/menu/withdraw': typeof AppMenuWithdrawRoute
   '/games': typeof AppGamesIndexRoute
@@ -279,7 +279,7 @@ export interface FileRoutesById {
   '/_app/menu/leaderboard': typeof AppMenuLeaderboardRoute
   '/_app/menu/referrals': typeof AppMenuReferralsRoute
   '/_app/menu/settings': typeof AppMenuSettingsRoute
-  '/_app/menu/stats': typeof AppMenuStatsRoute
+  '/_app/menu/share': typeof AppMenuShareRoute
   '/_app/menu/username': typeof AppMenuUsernameRoute
   '/_app/menu/withdraw': typeof AppMenuWithdrawRoute
   '/_app/games/': typeof AppGamesIndexRoute
@@ -312,7 +312,7 @@ export interface FileRouteTypes {
     | '/menu/leaderboard'
     | '/menu/referrals'
     | '/menu/settings'
-    | '/menu/stats'
+    | '/menu/share'
     | '/menu/username'
     | '/menu/withdraw'
     | '/games/'
@@ -343,7 +343,7 @@ export interface FileRouteTypes {
     | '/menu/leaderboard'
     | '/menu/referrals'
     | '/menu/settings'
-    | '/menu/stats'
+    | '/menu/share'
     | '/menu/username'
     | '/menu/withdraw'
     | '/games'
@@ -375,7 +375,7 @@ export interface FileRouteTypes {
     | '/_app/menu/leaderboard'
     | '/_app/menu/referrals'
     | '/_app/menu/settings'
-    | '/_app/menu/stats'
+    | '/_app/menu/share'
     | '/_app/menu/username'
     | '/_app/menu/withdraw'
     | '/_app/games/'
@@ -494,11 +494,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMenuUsernameRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/menu/stats': {
-      id: '/_app/menu/stats'
-      path: '/menu/stats'
-      fullPath: '/menu/stats'
-      preLoaderRoute: typeof AppMenuStatsRouteImport
+    '/_app/menu/share': {
+      id: '/_app/menu/share'
+      path: '/menu/share'
+      fullPath: '/menu/share'
+      preLoaderRoute: typeof AppMenuShareRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/menu/settings': {
@@ -626,7 +626,7 @@ interface AppRouteChildren {
   AppMenuLeaderboardRoute: typeof AppMenuLeaderboardRoute
   AppMenuReferralsRoute: typeof AppMenuReferralsRoute
   AppMenuSettingsRoute: typeof AppMenuSettingsRoute
-  AppMenuStatsRoute: typeof AppMenuStatsRoute
+  AppMenuShareRoute: typeof AppMenuShareRoute
   AppMenuUsernameRoute: typeof AppMenuUsernameRoute
   AppMenuWithdrawRoute: typeof AppMenuWithdrawRoute
   AppGamesIndexRoute: typeof AppGamesIndexRoute
@@ -650,7 +650,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppMenuLeaderboardRoute: AppMenuLeaderboardRoute,
   AppMenuReferralsRoute: AppMenuReferralsRoute,
   AppMenuSettingsRoute: AppMenuSettingsRoute,
-  AppMenuStatsRoute: AppMenuStatsRoute,
+  AppMenuShareRoute: AppMenuShareRoute,
   AppMenuUsernameRoute: AppMenuUsernameRoute,
   AppMenuWithdrawRoute: AppMenuWithdrawRoute,
   AppGamesIndexRoute: AppGamesIndexRoute,

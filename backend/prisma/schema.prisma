@@ -62,8 +62,33 @@ model User {
   stats            UserStats?
   minigameScores   MinigameScore[]
   referralClaims   ReferralClaim[]   @relation("ReferralClaims")
+  deposits         Deposit[]
 
   @@index([referredById])
+}
+
+// A cross-chain bridge deposit in flight. Not load-bearing for correctness: the balance live-reads the
+// chain either way once the coins land at the user's address, so this table is for the drawer's progress
+// UI and support. Only written on mainnet, where cross-chain execution is enabled. See depositRoutes.ts.
+model Deposit {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  fromChain   String   // source chain key (ethereum, base, arbitrum, solana)
+  fromToken   String   // source symbol (USDC, ETH, SOL)
+  fromAmount  String
+  toAmount    String?  // expected out, from the quote estimate
+  toAddress   String   // user.address at quote time, stamped server-side
+  tool        String   // mayanMCTP, allbridge, ...
+  bridge      String?  // LI.FI bridge/tool key, needed to query status
+  txHash      String?  @unique // source-chain tx hash, set once the client broadcasts
+  status      String   @default("PENDING") // PENDING | DONE | FAILED | REFUNDED
+  substatus   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status])
 }
 
 // A referrer's payout of their accrued referral revshare (25% of referees' trading fees). One row per

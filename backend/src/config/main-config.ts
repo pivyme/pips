@@ -83,6 +83,31 @@ export const SUI_GRAPHQL_URL: string =
 export const TESTING_WALLET_PK: string = process.env.TESTING_WALLET_PK || '';
 export const PYTH_HERMES_URL: string = process.env.PYTH_HERMES_URL || 'https://hermes.pyth.network';
 
+// === Multichain deposit (LI.FI) ===
+// Quoting is a read-only MAINNET route lookup: it works from any network we run on, needs no wallet, and
+// is what lets the deposit drawer show real routes/fees/ETAs on testnet. The API needs no key; the key
+// only buys a per-key rate limit instead of a per-IP one, so it stays server-side (never shipped to the browser).
+export const LIFI_API_URL: string = process.env.PIPS_LIFI_API_URL || 'https://li.quest/v1';
+export const LIFI_API_KEY: string = process.env.LIFI_API_KEY || '';
+export const LIFI_INTEGRATOR: string = process.env.PIPS_LIFI_INTEGRATOR || 'pips';
+export const LIFI_TIMEOUT_MS: number = Number(process.env.PIPS_LIFI_TIMEOUT_MS) || 12_000;
+
+// Cross-chain deposit EXECUTION. Gated on mainnet by construction, not by the env var alone: bridged real
+// USDC would land in a DUSDC economy as a different coin type, invisible to the balance and unusable by
+// Predict. The flag can only ever loosen a condition that is already true, so a demo box can never be one
+// env var away from moving real money. Quoting is deliberately NOT gated by this.
+export const BRIDGE_EXECUTE_ENABLED: boolean =
+  process.env.PIPS_BRIDGE_EXECUTE_ENABLED === 'true' && SUI_NETWORK === 'mainnet';
+
+// Deposit sizing, driven by the real fee math: a $3 bridge loses ~2% and $0.50 loses ~10%, so warn under
+// MIN and hard-reject under HARD where the deposit is mostly fees. Slippage sets the quote's toAmountMin floor.
+export const DEPOSIT_MIN_USD: number = Number(process.env.PIPS_DEPOSIT_MIN_USD) || 3;
+export const DEPOSIT_HARD_MIN_USD: number = Number(process.env.PIPS_DEPOSIT_HARD_MIN_USD) || 1;
+export const DEPOSIT_SLIPPAGE: number = Number(process.env.PIPS_DEPOSIT_SLIPPAGE) || 0.01;
+// Each quote hits an external API, so it gets a tighter per-IP cap than the global one. The client already
+// debounces and aborts in-flight requests; this is the backstop.
+export const RATE_LIMIT_QUOTE_MAX: number = Number(process.env.PIPS_RATE_LIMIT_QUOTE_MAX) || 60;
+
 // Realtime chart display feed (Binance, real mode + mainnet only): chart MOTION comes from a shared aggTrade WS,
 // LEVEL stays EMA-pinned to the on-chain oracle (price-bus.ts), display-only, never settles (L-015). Fork mode never opens the socket.
 export const BINANCE_ENABLED: boolean = process.env.PIPS_BINANCE_ENABLED !== 'false';
@@ -394,6 +419,15 @@ export default {
   RATE_LIMIT_FAUCET_MAX,
   RATE_LIMIT_WITHDRAW_MAX,
   RATE_LIMIT_REFERRAL_CLAIM_MAX,
+  RATE_LIMIT_QUOTE_MAX,
+  LIFI_API_URL,
+  LIFI_API_KEY,
+  LIFI_INTEGRATOR,
+  LIFI_TIMEOUT_MS,
+  BRIDGE_EXECUTE_ENABLED,
+  DEPOSIT_MIN_USD,
+  DEPOSIT_HARD_MIN_USD,
+  DEPOSIT_SLIPPAGE,
   JWT_SECRET,
   JWT_EXPIRES_IN,
   ALLOWED_ORIGIN,
