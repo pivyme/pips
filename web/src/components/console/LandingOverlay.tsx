@@ -76,7 +76,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
     if (status === 'authed' && (connecting || (isPrivy && !demo))) onEnter()
   }, [status, connecting, isPrivy, demo, onEnter])
 
-  // Probes whether the chain deployment is gone (redeploy or devnet reset) and upgrades to
+  // Probes whether the chain deployment is gone (a backend re-deploy or migration) and upgrades to
   // CHAIN_UNAVAILABLE client-side too, since the backend may lag; spinner stays up through the probe so the right copy paints first.
   const surfaceError = useCallback(async (err: AuthError) => {
     const wiped = err.code === 'CHAIN_UNAVAILABLE' || (await probeChainWiped())
@@ -307,7 +307,7 @@ function SignInErrorSheet({
   const [showDetails, setShowDetails] = useState(false)
   // The technical line worth showing: the backend's underlying cause if present, else the message.
   const detail = error?.details || error?.message
-  // Our Predict deployment is unreachable until the next bootstrap (redeploy or fork devnet reset); the
+  // The Predict deployment is unreachable (the chain is down or the deploy is mid-migration); the
   // backend tags this via error code since details are stripped in prod.
   const chainDown = error?.code === 'CHAIN_UNAVAILABLE'
 

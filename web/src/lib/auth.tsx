@@ -87,7 +87,7 @@ export function useAuthControl(): AuthControl {
 
 const isPrivy = env.VITE_AUTH_MODE === 'privy'
 
-// After a devnet refresh every user re-arms (PredictManager nulled), so a live session 409s MANAGER_NOT_READY
+// If the backend reports a session's account isn't ready, a live session 409s MANAGER_NOT_READY
 // until POST /auth/heal re-provisions it in place; never sign out for this, just stay signed in and retry later.
 const managerLost = (u: UserDTO): boolean => !isDemo() && !u.managerReady
 // Backoff after a failed heal, so a player hammering PLAY doesn't reopen the overlay on every tap.

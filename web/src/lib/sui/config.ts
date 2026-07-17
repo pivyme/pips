@@ -1,5 +1,5 @@
 // Public Predict ids the client needs for reads (DUSDC balance, explorer links), mirrored from the backend
-// deployed.json into web/.env by the bootstrap. The client never builds a Predict moveCall, so this stays minimal.
+// committed testnet deploy record, adopted from the backend /config at boot. The client never builds a Predict moveCall, so this stays minimal.
 
 import { env } from '@/env'
 import { isDemo } from '@/lib/demo'
@@ -86,7 +86,7 @@ export const DUSDC_DECIMALS = 1_000_000
 export const fromDusdcRaw = (raw: bigint | string | number): number =>
   Number(BigInt(raw)) / DUSDC_DECIMALS
 
-// Suiscan explorer links; network comes from env so these always resolve to the active chain (mainnet/testnet/devnet all indexed).
+// Suiscan explorer links; network comes from env so these always resolve to the active chain (both mainnet and testnet indexed).
 const EXPLORER_BASE = `https://suiscan.xyz/${NETWORK}`
 
 export const explorerTxUrl = (digest: string): string => `${EXPLORER_BASE}/tx/${digest}`

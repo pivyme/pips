@@ -104,7 +104,7 @@ function AppLayout() {
   const savedThemeRef = useRef(savedTheme)
   savedThemeRef.current = savedTheme
   const themeHydratedFor = useRef<string | null>(null)
-  // Adopts the live deploy ids (the DUSDC coin type) from the backend on boot, so a devnet redeploy never needs a frontend rebuild.
+  // Adopts the live deploy ids (the DUSDC coin type) from the backend on boot, so a backend re-deploy never needs a frontend rebuild.
   // Demo has no backend, so it keeps the compile-time value.
   useEffect(() => {
     if (!isDemo()) void refreshDeployedConfig()
@@ -435,7 +435,7 @@ function AppLayout() {
         {gate.active && <InstallGate {...gate} />}
       </AppFrame>
       {loadingScreen}
-      {/* Shown only while healing a re-armed session in place (devnet refresh); never appears on a healthy login. */}
+      {/* Shown only while healing a re-armed session in place; never appears on a healthy login. */}
       {recovering && !showLoadingScreen && <RecoveryOverlay />}
       <AchievementCelebration />
       </ActivePlayProvider>

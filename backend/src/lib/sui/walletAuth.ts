@@ -41,7 +41,7 @@ export function issueWalletNonce(address: string): { message: string } {
 const ZKLOGIN_FLAG = 0x05;
 
 // zkLogin (social) wallets like Slush verify against public fullnodes (mainnet, testnet fallback): the
-// zk proof needs the network's live epoch + on-chain OAuth JWKs, which our localnet has neither. Everything else verifies offline; clients build lazily so non-zkLogin logins never touch an external node.
+// zk proof needs the network's live epoch + on-chain OAuth JWKs, so it reads a public fullnode. Everything else verifies offline; clients build lazily so non-zkLogin logins never touch an external node.
 const ZK_FULLNODE: Record<'mainnet' | 'testnet', string> = {
   mainnet: 'https://fullnode.mainnet.sui.io:443',
   testnet: 'https://fullnode.testnet.sui.io:443',

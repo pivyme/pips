@@ -1,4 +1,4 @@
-// Real Mysten DeepBook Predict deployment ids (testnet only, SUI_NETWORK==='testnet'); localnet/devnet keep our fork (config.ts). Vendored from Mysten's deployment.testnet.json into deployed-real.testnet.json, never hardcode an id elsewhere.
+// Real Mysten DeepBook Predict deployment ids (testnet default, mainnet a clean re-point). Vendored from Mysten's deployment.testnet.json into deployed-real.testnet.json, never hardcode an id elsewhere.
 // Different shape than the fork's Deployed (no adminCap/oracleCaps/per-oracle grid): the real protocol is permissionless discovery + a per-owner account wrapper.
 
 import fs from 'fs';
@@ -67,7 +67,7 @@ export function realDeployment(): DeployedReal {
   return real;
 }
 
-// Flat id exports ('' in fork mode); only real-mode code reads these, the '' fallback just keeps TS/imports happy on localnet/devnet.
+// Flat id exports; the '' fallback keeps TS/imports happy if the deploy record is missing (boot fails fast elsewhere).
 export const REAL_PREDICT_PACKAGE = real?.packages.predict ?? '';
 export const REAL_PROPBOOK_PACKAGE = real?.packages.propbook ?? '';
 export const REAL_ACCOUNT_PACKAGE = real?.packages.account ?? '';

@@ -1,5 +1,5 @@
 // The one server-side wrapper for Mysten's REAL DeepBook Predict (testnet/mainnet): per-owner derived account::AccountWrapper, fresh Auth per tx, a 3-step internal-balance deposit/mint/redeem/withdraw dance, unified tick binary+range API, per-PTB Pricer from 4 Propbook feeds, real continuous leverage (L-007).
-// Ids come from config-real.ts, never hardcoded; localnet/devnet stay on predict.ts. Keep every real builder here so a mainnet re-point is a config swap, not a rewrite.
+// Ids come from config-real.ts, never hardcoded. Keep every real builder here so a mainnet re-point is a config swap, not a rewrite.
 
 import { Transaction, coinWithBalance, type TransactionObjectArgument } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';

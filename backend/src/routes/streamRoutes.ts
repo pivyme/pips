@@ -99,7 +99,7 @@ function openStream(reply: FastifyReply, request: FastifyRequest): { send: (data
 }
 
 export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
-  // Chart price feed for one asset, ~1s cadence, client interpolates to 60fps. Cosmetic only (display bus: Binance motion pinned to on-chain oracle in real mode, gameSpot in fork mode); every truthful number reads the chain (L-015).
+  // Chart price feed for one asset, ~1s cadence, client interpolates to 60fps. Cosmetic only (display bus: Binance motion pinned to on-chain oracle); every truthful number reads the chain (L-015).
   // The WS hub (/ws) supersedes this at 10Hz; this SSE route stays as the flagged fallback for one release.
   app.get('/prices', async (request: FastifyRequest, reply: FastifyReply) => {
     const { asset, t } = request.query as { asset?: string; t?: string };

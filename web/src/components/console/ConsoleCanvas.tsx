@@ -717,6 +717,13 @@ export default function ConsoleCanvas({
     // Screen cutout in world space — projected to pixels each resize to place the HTML layer.
     // Reassigned by relayout() when the screen stretches to fill a tall frame.
     let screenWorld = screenWorldPts()
+    // Synthetic bottom-right of the screen's outer rectangle (the L's notch, occluded by the body).
+    // Used to clip the black backing to the real projected quad so it never leaks past a tilted device.
+    const screenQuadBR = new THREE.Vector3(
+      wx(1140),
+      wy(1680) + SCREEN_MESH_Y_OFFSET,
+      DEVICE_Z + 0.06,
+    )
 
     /* device elements — buttons + number wheel. Geometry/mesh factories live in consoleElements.ts; the canvas only places them and keeps the handles the loop/theme/GUI need.
        The knob is built lower down, after its `kp` tuning block. */
@@ -1965,6 +1972,9 @@ export default function ConsoleCanvas({
     // Project the device's L-shaped screen cutout to CSS px and glue the HTML screen layer onto it. Extracted from resize() so the LIVE arc can re-run it every animating frame (the camera moves).
     // Projects the cutout's LIVE world position (device float bob/tilt + deck rotation), not the rest pose, so content stays glued as it drifts; screenWorld bakes in DEVICE_Z, stripped to device-local before reapplying the current world matrix.
     const screenScratch = new THREE.Vector3()
+    const quadScratch = new THREE.Vector3()
+    const quadDir = new THREE.Vector3()
+    const quadCenter = new THREE.Vector3()
     function projectScreenLayer() {
       const el = screenLayerRef.current
       if (!el || viewW === 0 || viewH === 0) return
@@ -2006,6 +2016,38 @@ export default function ConsoleCanvas({
       el.style.setProperty('--screen-rim', `${Math.round(rimPx / contentScale)}px`)
       const notchPx = Math.max(0, Math.round(maxY + M - notchTopY))
       el.style.setProperty('--screen-notch', `${Math.round(notchPx / contentScale)}px`)
+
+      // Clip the black backing to the live projected screen quad, inflated by the rim bleed (M in world
+      // units). The bare box is axis-aligned, so on the tilted, floating landing pose its corners poke
+      // past the device; clipping to the actual projected outline keeps the black strictly under the body.
+      // Forward-facing (gameplay) the quad equals the full box, so this is a no-op there.
+      const bleedWorld = M / Math.max(1e-6, scale)
+      quadCenter
+        .copy(screenWorld[5])
+        .add(screenWorld[4])
+        .add(screenQuadBR)
+        .add(screenWorld[0])
+        .multiplyScalar(0.25)
+      const ox = minX - M
+      const oy = minY - M
+      const clip = [screenWorld[5], screenWorld[4], screenQuadBR, screenWorld[0]]
+        .map((v) => {
+          quadDir.copy(v).sub(quadCenter)
+          const k = bleedWorld / (quadDir.length() || 1)
+          const n = quadScratch
+            .set(
+              v.x + quadDir.x * k,
+              v.y + quadDir.y * k,
+              v.z + quadDir.z * k - DEVICE_Z,
+            )
+            .applyMatrix4(device.matrixWorld)
+            .project(camera)
+          const px = (n.x * 0.5 + 0.5) * viewW - ox
+          const py = (-n.y * 0.5 + 0.5) * viewH - oy
+          return `${px.toFixed(1)}px ${py.toFixed(1)}px`
+        })
+        .join(', ')
+      el.style.clipPath = `polygon(${clip})`
 
       projectButtonOverlay()
     }

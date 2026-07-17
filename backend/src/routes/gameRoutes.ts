@@ -38,8 +38,7 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   // every priceable asset with an oracle-driven `live` flag, so display-only assets chart but never deal. See markets-feed.ts.
   app.get('/markets', { preHandler: [authMiddleware] }, async (_request: FastifyRequest, reply: FastifyReply) => {
     try {
-      // Payload carries the real-mode sponsor-floor pause so a game can show "topping up" instead of a
-      // hard PLAY failure (always false in fork mode).
+      // Payload carries the sponsor-floor pause so a game can show "topping up" instead of a hard PLAY failure.
       return reply.code(200).send({ success: true, error: null, data: await buildMarketsPayload() });
     } catch (error) {
       return handleError(reply, 500, 'Could not load markets', 'MARKETS_FAILED', error as Error);

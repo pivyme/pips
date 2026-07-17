@@ -236,7 +236,7 @@ fastify.get('/health/ready', { config: { rateLimit: false } }, async (_request: 
 });
 
 // Public deploy config. The frontend fetches this at boot so the DUSDC coin type (and explorer ids)
-// follow the live deployment without a rebuild: after a devnet wipe the client re-reads the new type
+// follow the live deployment without a rebuild: after a backend re-deploy the client re-reads the new type
 // instead of showing a stale balance. Unauthenticated on purpose (read-only, the client needs it pre-login).
 fastify.get('/config', async (_request: FastifyRequest, reply: FastifyReply) => {
   return reply.status(200).send({

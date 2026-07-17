@@ -120,7 +120,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   });
 
   // Re-provisions the signed-in user in place (re-creates the PredictManager, re-funds chips/gas) if a
-  // devnet refresh re-armed the account; idempotent, so a no-op once healthy. managerReady on the response tells the client whether the heal worked or it should fall back to the door.
+  // re-arms the account if it isn't ready; idempotent, so a no-op once healthy. managerReady on the response tells the client whether the heal worked or it should fall back to the door.
   app.post('/heal', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const healed = await provisionUser(request.user!);

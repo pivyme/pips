@@ -31,15 +31,15 @@ export const removeMarket = (oracleId: string): void => {
   markets.delete(oracleId);
 };
 
-// Markets a play can mint against right now: unsettled and far enough from expiry that the price-pusher still keeps them fresh inside the safety window.
+// Markets a play can mint against right now: unsettled and far enough from expiry to stay live inside the safety window.
 export const tradeableMarkets = (now: number, safetyMs: number): Market[] =>
   allMarkets().filter((m) => !m.settled && m.expiryMs - now > safetyMs);
 
 export const liveByAsset = (asset: string, now: number, minRemainingMs: number): Market[] =>
   allMarkets().filter((m) => m.underlying === asset && !m.settled && m.expiryMs - now > minRemainingMs);
 
-// Freshest on-chain spot for an asset, in display units, from the live oracle set (price-pusher writes it
-// as operator, market-sync reads it off chain as follower, so the chart matches what the round settles against). Picks the most recently observed live market, null if none is live yet.
+// Freshest on-chain spot for an asset, in display units, from the live oracle set (Mysten's oracle writes it
+// on chain, market-sync reads it off chain, so the chart matches what the round settles against). Picks the most recently observed live market, null if none is live yet.
 export const assetSpot = (asset: string): number | null => {
   let best: Market | undefined;
   for (const m of markets.values()) {

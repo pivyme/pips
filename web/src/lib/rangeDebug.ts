@@ -1,5 +1,5 @@
 // RANGE console audit: at each lifecycle moment (PLAY, OPEN, LOCK, SETTLE/CASH OUT) prints the UI-shown number next
-// to the chain-recorded one plus the delta, so a devnet round can be checked end to end. On by default; silence with `localStorage.pips_range_debug = '0'`.
+// to the chain-recorded one plus the delta, so a round can be checked end to end. On by default; silence with `localStorage.pips_range_debug = '0'`.
 
 import type { PlayDTO } from './api'
 

@@ -11,17 +11,15 @@ import { NETWORK } from './config.ts';
 const DEFAULT_FULLNODE: Record<string, string> = {
   mainnet: 'https://fullnode.mainnet.sui.io:443',
   testnet: 'https://fullnode.testnet.sui.io:443',
-  devnet: 'https://fullnode.devnet.sui.io:443',
-  localnet: 'http://127.0.0.1:9000',
 };
-const baseUrl = SUI_FULLNODE_URL || DEFAULT_FULLNODE[NETWORK] || DEFAULT_FULLNODE.devnet;
+const baseUrl = SUI_FULLNODE_URL || DEFAULT_FULLNODE[NETWORK] || DEFAULT_FULLNODE.testnet;
 
 export const suiClient = new SuiGrpcClient({ network: NETWORK, baseUrl });
 
 // Historical-query client (events + tx history); only market-sync oracle discovery and predict redeem-reconcile use it, everything else stays on gRPC.
 export const graphqlClient = new SuiGraphQLClient({ url: SUI_GRAPHQL_URL, network: NETWORK });
 
-// Suiscan explorer links; network comes from config (devnet now, mainnet later), Suiscan natively indexes mainnet/testnet/devnet.
+// Suiscan explorer links; network comes from config (testnet now, mainnet later), Suiscan natively indexes both.
 const EXPLORER_BASE = `https://suiscan.xyz/${NETWORK}`;
 
 export const explorerTxUrl = (digest: string): string => `${EXPLORER_BASE}/tx/${digest}`;

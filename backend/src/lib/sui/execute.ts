@@ -137,7 +137,7 @@ async function refGasPrice(): Promise<bigint> {
 }
 
 // A sponsored tx (empty gas payment, drawn from the sponsor's SUI address balance) needs a ValidDuring expiration: Predict txs are all shared-object inputs (no owned input) and the gRPC resolver, unlike the generic core one, does not auto-add it at build(), so without this the node rejects at input-object check (was looping manager creation, would block every sponsored play).
-// Epoch + chain id are cached: devnet/localnet epochs are long, and a stale-by-one epoch stays valid since the window spans [epoch, epoch+1].
+// Epoch + chain id are cached: testnet epochs are long, and a stale-by-one epoch stays valid since the window spans [epoch, epoch+1].
 let chainCtxCache: { epoch: bigint; chain: string; at: number } | null = null;
 async function chainCtx(): Promise<{ epoch: bigint; chain: string }> {
   const now = Date.now();
@@ -224,7 +224,7 @@ function toExecResult(out: FullTxResult, label: string): ExecResult {
   return { digest: t.digest ?? t.effects.transactionDigest ?? '', objectChanges, events };
 }
 
-// Submit a sponsored user tx, self-healing an empty gas accumulator: if the node rejects on the sponsor's address-balance reservation (e.g. right after a devnet wipe), top it up and retry the SAME bytes once.
+// Submit a sponsored user tx, self-healing an empty gas accumulator: if the node rejects on the sponsor's address-balance reservation (e.g. the sponsor balance ran dry), top it up and retry the SAME bytes once.
 // Safe because the reservation is checked at input validation before execution, so a rejected tx never ran; any other error (or a second failure) surfaces normally.
 async function submitSponsored(txBytes: Uint8Array, signature: string | string[], digest: string) {
   try {

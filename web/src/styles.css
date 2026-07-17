@@ -1086,3 +1086,22 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   animation-duration: 200ms !important;
   animation-timing-function: var(--ease-out-quart) !important;
 }
+
+/* Privy login modal: theme/accentColor only set the base + accent, so Privy's derived neutral ramp
+   (close button, selected row, input borders) keeps its default blue tint. Force those tokens onto
+   the PIPS black/grey palette; amber accent still comes from appearance.accentColor. */
+#privy-dialog,
+#privy-modal-content {
+  --privy-color-background: #0f0f0f !important;
+  --privy-color-background-2: var(--color-surface) !important;
+  --privy-color-background-3: var(--color-surface-2) !important;
+  --privy-color-background-hover: #1a1a1a !important;
+  --privy-color-background-clicked: #202020 !important;
+  --privy-color-background-interactive: #161616 !important;
+  --privy-color-background-interactive-hover: var(--color-surface) !important;
+  --privy-color-background-interactive-clicked: var(--color-surface-2) !important;
+  --privy-color-border-default: var(--color-line) !important;
+  --privy-color-border-hover: var(--color-line-strong) !important;
+  --privy-color-border-interactive: var(--color-line) !important;
+  --privy-color-border-interactive-hover: var(--color-line-strong) !important;
+}

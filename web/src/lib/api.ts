@@ -307,7 +307,7 @@ export const setAuthToken = (token: string | null): void => {
 }
 export const getAuthToken = (): string | null => authToken
 
-// After a devnet refresh users re-arm (PredictManager nulled), so a live session 409s MANAGER_NOT_READY
+// If the backend reports a session's account isn't ready, a live session 409s MANAGER_NOT_READY
 // until re-login; the auth layer registers a handler here to react the moment the backend reports it.
 let onManagerNotReady: (() => void) | null = null
 export const setManagerNotReadyHandler = (fn: (() => void) | null): void => {

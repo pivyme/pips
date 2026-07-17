@@ -194,7 +194,7 @@ const isRealMarketGone = (e: unknown): boolean =>
     e instanceof Error ? e.message : String(e),
   );
 
-// Cached wrapper id is stale (a devnet wipe deleted the shared object) so the mint aborts on a missing input; only meaningful when a cache exists, a first play derives fresh.
+// Cached wrapper id is stale (the shared object is gone) so the mint aborts on a missing input; only meaningful when a cache exists, a first play derives fresh.
 const isWrapperGone = (e: unknown): boolean =>
   /not found|does not exist|no such object|deleted|notexist/i.test(e instanceof Error ? e.message : String(e));
 
@@ -281,7 +281,7 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
       } catch (e) {
         lastErr = e;
         if (attempt >= MAX_ATTEMPTS - 1) throw e;
-        // Stale wrapper-id cache (devnet wipe): drop it and re-derive on the next attempt.
+        // Stale wrapper-id cache (object gone): drop it and re-derive on the next attempt.
         if (acct.predictWrapperId && isWrapperGone(e)) {
           await prismaQuery.user.update({ where: { id: acct.id }, data: { predictWrapperId: null } }).catch(() => {});
           acct = { ...acct, predictWrapperId: null };
