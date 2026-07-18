@@ -227,6 +227,12 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
           maxPayout: dto.maxPayout,
           status: dto.status,
           lockPrice: dto.lockPrice,
+          // Market fields too: a mid-flight re-route/restrike moves the real strike/band/entry/expiry, so push them so the client overlay + countdown snap to what actually minted, not the stale pending values.
+          entrySpot: dto.entrySpot,
+          strike: dto.market.strike,
+          lower: dto.market.lower,
+          upper: dto.market.upper,
+          expiry: dto.market.expiry,
           ts: Date.now(),
         });
       } catch {

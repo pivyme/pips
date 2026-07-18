@@ -122,6 +122,33 @@ export function LiveValuePanel({
   )
 }
 
+// Chart-synced live verdict for the binary + range games: shows the projected payout ("+$X" on the winning
+// side, "$0.00" off it) driven by the 60fps chart price, since the backend mark is neutral during an open round.
+// `winning` is the client's live on-side/in-zone read; `payout` is the max payout; `cashoutPnl` the neutral cash-out delta.
+export function LiveVerdictPanel({
+  winning,
+  payout,
+  cashoutPnl,
+}: {
+  winning: boolean | null
+  payout: string
+  cashoutPnl: string
+}) {
+  const up = winning !== false
+  const neg = cashoutPnl.trim().startsWith('-')
+
+  return (
+    <>
+      <div className={cnm('tnum text-[40px] font-extrabold leading-none', up ? 'text-up' : 'text-down')}>
+        {up ? `+$${formatExactDecimal(payout, { absolute: true })}` : '$0.00'}
+      </div>
+      <div className="mt-1 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-text-3">
+        If you cash out now {neg ? '-' : '+'}${formatExactDecimal(cashoutPnl, { absolute: true })}
+      </div>
+    </>
+  )
+}
+
 export function ResultOverlay({
   play,
   winTitle,

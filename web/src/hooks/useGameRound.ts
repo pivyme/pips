@@ -10,6 +10,12 @@ export type LivePlaySnapshot = {
   maxPayout?: string
   status: PlayStatus
   lockPrice?: string
+  // Real minted market, carried so a mid-flight re-route/restrike snaps overlays + countdown (mergeSnapshotMarket).
+  entrySpot?: string
+  strike?: string
+  lower?: string
+  upper?: string
+  expiry?: number
 }
 
 const toSnapshot = (play: PlayTick | PlayDTO): LivePlaySnapshot => ({
@@ -20,7 +26,33 @@ const toSnapshot = (play: PlayTick | PlayDTO): LivePlaySnapshot => ({
   maxPayout: play.maxPayout,
   status: play.status,
   lockPrice: play.lockPrice,
+  entrySpot: play.entrySpot,
+  // The SSE tick carries market fields flat; the full-DTO watchdog path nests them under `market`. Discriminate on `market` (always on the DTO, never on the tick).
+  strike: 'market' in play ? play.market.strike : play.strike,
+  lower: 'market' in play ? play.market.lower : play.lower,
+  upper: 'market' in play ? play.market.upper : play.upper,
+  expiry: 'market' in play ? play.market.expiry : play.expiry,
 })
+
+// Snap a play's real minted market onto the row when a mid-flight re-route/restrike moved it; returns the same
+// reference when nothing changed, so React bails out of a no-op render. Only fields the overlays + countdown read.
+export function mergeSnapshotMarket(play: PlayDTO, s: LivePlaySnapshot): PlayDTO {
+  const entrySpot = s.entrySpot ?? play.entrySpot
+  const strike = s.strike ?? play.market.strike
+  const lower = s.lower ?? play.market.lower
+  const upper = s.upper ?? play.market.upper
+  const expiry = s.expiry ?? play.market.expiry
+  if (
+    entrySpot === play.entrySpot &&
+    strike === play.market.strike &&
+    lower === play.market.lower &&
+    upper === play.market.upper &&
+    expiry === play.market.expiry
+  ) {
+    return play
+  }
+  return { ...play, entrySpot, market: { ...play.market, strike, lower, upper, expiry } }
+}
 
 const syncOpenBalance = (
   status: PlayStatus,

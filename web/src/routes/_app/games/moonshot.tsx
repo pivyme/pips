@@ -8,7 +8,7 @@ import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay
 import {
   FooterStatusPanel,
   InstructionOverlay,
-  LiveValuePanel,
+  LiveVerdictPanel,
   ResultOverlay,
 } from '@/components/game/gamePanels'
 import { GameScreen, ScreenMessage, Cell } from '@/components/game/screen'
@@ -18,6 +18,7 @@ import { useConsoleControls } from '@/components/console/controls'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
 import {
+  mergeSnapshotMarket,
   usePhaseElapsed,
   usePlayResolutionWatch,
   useRoundCountdown,
@@ -107,11 +108,17 @@ function MoonshotScreen() {
   const [live, setLive] = useState<Live | null>(null)
   const [spot, setSpot] = useState<number | null>(null)
   const [overlay, setOverlay] = useState<Overlay>('none')
+  // Exact oracle settlement price, sent only once the settlement tx lands; may arrive just before the play finalizes.
+  const [lockPrice, setLockPrice] = useState<string | null>(null)
+  // Live on-target read off the 60fps chart line: whether the price currently sits past the called target.
+  const [onTarget, setOnTarget] = useState<boolean | null>(null)
 
   const finalized = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const balanceSyncedPlayId = useRef<string | null>(null)
   const livePriceRef = useRef(0)
+  const onTargetRef = useRef<boolean | null>(null) // mirrors onTarget so the rAF only re-renders on a real flip
+  const wasOnTarget = useRef<boolean | null>(null) // last state, for the crossing haptic
 
   const { liveAssets, noLiveMarket, playsPaused, isLoading: marketsLoading, isError: marketsError } = useLiveMarkets()
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
@@ -147,31 +154,22 @@ function MoonshotScreen() {
   const lp = play ? (play.params as LuckyParams) : null
   const roundLive = phase === 'open' || phase === 'cashing'
   const showReadouts = play != null && roundLive
-  // The position is real on-chain only once the mint confirms (status leaves 'pending'; a failed mint goes
-  // 'error'). The entry/strike overlay gates on this, not the optimistic 'pending' window, so nothing draws for a position that hasn't actually opened.
+  // A real position exists the instant the deal returns (pending included); only 'error' means nothing opened.
+  // The real entry+strike come back with the pending play, so we draw them immediately instead of the preview, matching Range's band.
   const status = live?.status ?? play?.status
-  const entered = status != null && status !== 'pending' && status !== 'error'
+  const positioned = status != null && status !== 'error'
   const multiplier = live?.multiplier ?? play?.multiplier ?? reach
 
   const strike = play?.market.strike ? parseFloat(play.market.strike) : undefined
+  const playSide = lp?.side // the called direction, drives the live on-target verdict
   const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
   const entryVal = Number.isFinite(entrySpotNum) && entrySpotNum > 0 ? entrySpotNum : null
 
-  // Pre-play preview TARGET: the aim line that tracks the live price as you turn REACH / flip the side.
+  // Pre-play preview TARGET: the aim line that tracks the live price as you turn REACH / flip the side. Cold-start only, snaps to the real strike the instant the deal returns.
   const previewTarget =
     spot != null && spot > 0
       ? spot * (1 + (side === 'up' ? 1 : -1) * Math.max(ROUND_VOL_EST * (REACH_Z[reach] ?? 0), MIN_TARGET_FRAC))
       : null
-
-  // Chart overlays: real strike+entry once the position opens on-chain, live preview aim while idle/placing; nothing locked draws during the mint (open + still pending).
-  const overlays: ChartOverlays | undefined = entered && lp
-    ? {
-        ...(entryVal != null ? { entry: entryVal } : {}),
-        ...(strike != null ? { target: { price: strike, side: lp.side } } : {}),
-      }
-    : (phase === 'idle' || phase === 'placing') && previewTarget != null
-      ? { target: { price: previewTarget, side } }
-      : undefined
   const { secsLeft, remainingMs, settleMs } = useRoundCountdown({
     enabled: phase === 'open',
     play,
@@ -188,6 +186,25 @@ function MoonshotScreen() {
   const liveHold = phase === 'open' && confirmed && remainingMs != null && remainingMs > SETTLE_LOCK_MS
   const cashing = phase === 'cashing'
   const settleSecs = Math.floor(settleMs / 1000)
+
+  // Exact on-chain settlement price, only once oracle.settlement_price lands; pins the frozen chart tip onto the true result while settling.
+  const lockNum = lockPrice ? parseFloat(lockPrice) : null
+  const settleLine = settling && lockNum != null && lockNum > 0 ? lockNum : undefined
+
+  // Chart overlays: the REAL entry+strike the instant the deal returns (pending included) so the aim never blanks
+  // during the mint; the client preview aim shows pre-deal (idle/placing) so the knob keeps tracking after a round.
+  // Gate the real overlay on a live/settling round, never idle: a resolved play lingers, so without this the idle aim preview would freeze on the last strike. Settle line pins at the buzzer.
+  const roundOverlayOn = positioned && (phase === 'open' || phase === 'cashing' || phase === 'result')
+  const overlays: ChartOverlays | undefined =
+    roundOverlayOn && lp
+      ? {
+          ...(entryVal != null ? { entry: entryVal } : {}),
+          ...(strike != null ? { target: { price: strike, side: lp.side } } : {}),
+          ...(settleLine != null ? { settle: settleLine } : {}),
+        }
+      : (phase === 'idle' || phase === 'placing') && previewTarget != null
+        ? { target: { price: previewTarget, side } }
+        : undefined
 
   const clearResetTimer = () => {
     if (resetTimer.current) clearTimeout(resetTimer.current)
@@ -250,7 +267,7 @@ function MoonshotScreen() {
     watchdogMs: WATCHDOG_MS,
     syncedOpenPlayIdRef: balanceSyncedPlayId,
     refreshOnOpen: refresh,
-    onSnapshot: (snapshot) =>
+    onSnapshot: (snapshot) => {
       setLive({
         markValue: snapshot.markValue,
         pnl: snapshot.pnl,
@@ -258,7 +275,11 @@ function MoonshotScreen() {
         entryValue: snapshot.entryValue,
         maxPayout: snapshot.maxPayout,
         status: snapshot.status,
-      }),
+      })
+      setLockPrice(snapshot.lockPrice ?? null)
+      // Snap the call to the real minted market if a mid-flight re-route/restrike moved the strike/entry.
+      setPlay((cur) => (cur ? mergeSnapshotMarket(cur, snapshot) : cur))
+    },
     onTerminal: resolveTerminal,
   })
 
@@ -272,6 +293,31 @@ function MoonshotScreen() {
     return () => stopMoonshotBgm()
   }, [bedPlaying])
 
+  // Live on-target verdict off the 60fps eased chart price (the backend mark is neutral during an open round),
+  // so "if it ends now" swings with the line like Range's in/out. Only during the live hold, before the seal; a light tick on each cross.
+  useEffect(() => {
+    if (!liveHold || strike == null || playSide == null) {
+      onTargetRef.current = null
+      wasOnTarget.current = null
+      setOnTarget(null)
+      return
+    }
+    let raf = 0
+    const loop = () => {
+      const p = livePriceRef.current
+      const now = p > 0 ? (playSide === 'up' ? p >= strike : p <= strike) : null
+      if (now !== onTargetRef.current) {
+        onTargetRef.current = now
+        if (wasOnTarget.current != null && wasOnTarget.current !== now) haptic('selection')
+        wasOnTarget.current = now
+        setOnTarget(now)
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [liveHold, strike, playSide])
+
   const doPlay = useCallback(async () => {
     if (phase !== 'idle') return
     if (playsPaused) {
@@ -284,6 +330,7 @@ function MoonshotScreen() {
     }
     clearResetTimer()
     finalized.current = false
+    setLockPrice(null)
     setOverlay('none')
     setPhase('placing')
     haptic('heavy')
@@ -512,7 +559,7 @@ function MoonshotScreen() {
               </div>
             )}
             {asset ? (
-              <Chart asset={asset} overlays={overlays} livePriceRef={livePriceRef} onPrice={(p) => setSpot(p)} className="absolute inset-0" />
+              <Chart asset={asset} overlays={overlays} livePriceRef={livePriceRef} onPrice={(p) => setSpot(p)} frozen={settling} className="absolute inset-0" />
             ) : null}
           </div>
 
@@ -537,13 +584,33 @@ function MoonshotScreen() {
               ) : cashing ? (
                 <FooterStatusPanel kicker="Cashing out" head="CASHING OUT" tone="up" recap={recap} progress={Math.min(92, (cashMs / CASHOUT_SETTLE_MS) * 100)} />
               ) : showReadouts ? (
-                <LiveValuePanel
-                  key={play?.id}
-                  markValue={live?.markValue ?? play?.markValue ?? '0'}
-                  pnl={live?.pnl ?? play?.pnl ?? '0'}
-                  entryValue={live?.entryValue ?? play?.entryValue ?? '0'}
-                  maxPayout={live?.maxPayout ?? play?.maxPayout ?? '0'}
-                />
+                <>
+                  <div className="flex items-center gap-2">
+                    <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                      If it ends now
+                    </div>
+                    {onTarget != null && (
+                      <span
+                        className={cnm(
+                          'inline-flex items-center border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.1em]',
+                          onTarget ? 'border-up/60 text-up' : 'border-down/60 text-down',
+                        )}
+                      >
+                        {onTarget ? 'On target' : 'Off'}
+                      </span>
+                    )}
+                  </div>
+                  <LiveVerdictPanel
+                    winning={onTarget}
+                    payout={live?.maxPayout ?? play?.maxPayout ?? '0'}
+                    cashoutPnl={live?.pnl ?? play?.pnl ?? '0'}
+                  />
+                  <div className="mt-2.5 grid grid-cols-3 gap-x-3">
+                    <Cell label="Mult" value={fmtMult(multiplier)} />
+                    <Cell label="Cost" value={`$${formatExactDecimal(live?.entryValue ?? play?.entryValue ?? '0')}`} />
+                    <Cell label="Win" value={`$${formatExactDecimal(live?.maxPayout ?? play?.maxPayout ?? '0')}`} />
+                  </div>
+                </>
               ) : firstRun ? (
                 <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Welcome</div>

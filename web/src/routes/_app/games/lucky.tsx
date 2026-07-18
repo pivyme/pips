@@ -9,15 +9,16 @@ import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay
 import {
   FooterStatusPanel,
   InstructionOverlay,
-  LiveValuePanel,
+  LiveVerdictPanel,
   ResultOverlay,
 } from '@/components/game/gamePanels'
-import { GameScreen, ScreenMessage } from '@/components/game/screen'
+import { GameScreen, ScreenMessage, Cell } from '@/components/game/screen'
 import { TradeConfirmSheet, useTradeConfirm } from '@/components/game/tradeConfirm'
 import { LivePrice } from '@/components/game/LivePrice'
 import { Chart } from '@/components/game/Chart'
 import { Reel } from '@/components/game/lucky/LuckyReels'
 import {
+  mergeSnapshotMarket,
   usePhaseElapsed,
   usePlayResolutionWatch,
   useRoundCountdown,
@@ -98,8 +99,14 @@ function LuckyScreen() {
   const [overlay, setOverlay] = useState<Overlay>('none')
   // Entry/target overlays hold off for a beat after the reels lock, so they land on the chart as the payoff, not the instant the round opens.
   const [revealOverlays, setRevealOverlays] = useState(false)
+  // Exact oracle settlement price at the buzzer; pins the frozen chart onto the true result. Null until the settlement tx lands.
+  const [lockPrice, setLockPrice] = useState<string | null>(null)
+  // Live on-target read off the 60fps chart line: whether the price currently sits past the target in the dealt direction.
+  const [onTarget, setOnTarget] = useState<boolean | null>(null)
 
   const finalized = useRef(false)
+  const onTargetRef = useRef<boolean | null>(null) // mirrors onTarget so the rAF only re-renders on a real flip
+  const wasOnTarget = useRef<boolean | null>(null) // last state, for the crossing haptic
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const balanceSyncedPlayId = useRef<string | null>(null)
   // Latest chart spot, mirrored for the DEV deal log; the ENTRY line is never derived from this display feed, only the backend's real oracle entrySpot.
@@ -134,6 +141,7 @@ function LuckyScreen() {
   // Entry line shows only while confirmed open, not in 'result': the screen behind the overlay resets to the default stack.
   const showEntry = entered && (phase === 'open' || phase === 'cashing')
   const strike = play?.market.strike ? parseFloat(play.market.strike) : undefined
+  const side = lp?.side // the dealt direction, drives the live on-target verdict
   const spinning = phase === 'spinning'
   // Reels tumble from SPIN press through the snap ('placing' server deal + 'spinning' window), masking the deal latency.
   const reelsCycling = phase === 'placing' || phase === 'spinning'
@@ -146,11 +154,6 @@ function LuckyScreen() {
   // ENTRY, TARGET, and settlement all agree. Never a client-guessed display value, same rule as RANGE and MOONSHOT.
   const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
   const entryVal = Number.isFinite(entrySpotNum) && entrySpotNum > 0 ? entrySpotNum : null
-  // Chart overlays: the ENTRY line plus the directional TARGET line + winning-zone shading.
-  const overlays =
-    showEntry && entryVal != null
-      ? { entry: entryVal, ...(strike != null && lp ? { target: { price: strike, side: lp.side } } : {}) }
-      : undefined
   const { secsLeft, remainingMs, settleMs } = useRoundCountdown({
     enabled: phase === 'open',
     play,
@@ -164,6 +167,18 @@ function LuckyScreen() {
   // The round hit the buzzer and we are waiting on the on-chain settle (won/lost) frame.
   const settling = phase === 'open' && live?.status === 'open' && secsLeft != null && secsLeft <= 0
   const settleSecs = Math.floor(settleMs / 1000)
+  // Exact on-chain settlement price at the buzzer; pins the frozen chart tip onto the true result while settling.
+  const lockNum = lockPrice ? parseFloat(lockPrice) : null
+  const settleLine = settling && lockNum != null && lockNum > 0 ? lockNum : undefined
+  // Chart overlays: the ENTRY line, the directional TARGET + winning-zone shading, and the settle line at the buzzer.
+  const overlays =
+    showEntry && entryVal != null
+      ? {
+          entry: entryVal,
+          ...(strike != null && lp ? { target: { price: strike, side: lp.side } } : {}),
+          ...(settleLine != null ? { settle: settleLine } : {}),
+        }
+      : undefined
   // A mid-round cash-out is in flight: play the same settling beat as the buzzer.
   const cashingOut = phase === 'cashing'
   // The dealt pick, shown under OPENING / SETTLING so the round always reads back what's in flight.
@@ -241,7 +256,7 @@ function LuckyScreen() {
     watchdogMs: WATCHDOG_MS,
     syncedOpenPlayIdRef: balanceSyncedPlayId,
     refreshOnOpen: refresh,
-    onSnapshot: (snapshot) =>
+    onSnapshot: (snapshot) => {
       setLive({
         markValue: snapshot.markValue,
         pnl: snapshot.pnl,
@@ -249,7 +264,11 @@ function LuckyScreen() {
         entryValue: snapshot.entryValue,
         maxPayout: snapshot.maxPayout,
         status: snapshot.status,
-      }),
+      })
+      setLockPrice(snapshot.lockPrice ?? null)
+      // Snap the deal to the real minted market if a mid-flight re-route/restrike moved the strike/entry.
+      setPlay((cur) => (cur ? mergeSnapshotMarket(cur, snapshot) : cur))
+    },
     onTerminal: resolveTerminal,
   })
 
@@ -289,6 +308,33 @@ function LuckyScreen() {
     setRevealOverlays(false)
   }, [showReadouts, lp?.asset])
 
+  // Live on-target verdict off the 60fps eased chart price (the backend mark is neutral during an open round),
+  // so "if it ends now" swings with the line like Range's in/out. Tracks right up to the buzzer (Lucky has no seal
+  // branch, so the readout must stay truthful through the cash-out lockout); it clears only once settling. A light tick on each cross.
+  useEffect(() => {
+    const holding = phase === 'open' && status === 'open' && !settling
+    if (!holding || strike == null || side == null) {
+      onTargetRef.current = null
+      wasOnTarget.current = null
+      setOnTarget(null)
+      return
+    }
+    let raf = 0
+    const loop = () => {
+      const p = livePriceRef.current
+      const now = p > 0 ? (side === 'up' ? p >= strike : p <= strike) : null
+      if (now !== onTargetRef.current) {
+        onTargetRef.current = now
+        if (wasOnTarget.current != null && wasOnTarget.current !== now) haptic('selection')
+        wasOnTarget.current = now
+        setOnTarget(now)
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [phase, status, settling, strike, side])
+
   const doPlay = useCallback(async () => {
     // Idle only: a finished round must be dismissed (CONTINUE) before spinning again, never straight from the result.
     if (phase !== 'idle') return
@@ -302,6 +348,7 @@ function LuckyScreen() {
     }
     clearResetTimer()
     finalized.current = false
+    setLockPrice(null)
     setOverlay('none')
     setPhase('placing')
     haptic('rigid')
@@ -537,6 +584,7 @@ function LuckyScreen() {
               livePriceRef={livePriceRef}
               initialPrice={spotByAsset[focusAsset]}
               onPrice={handlePrice}
+              frozen={settling}
               className="absolute inset-0"
             />
             {/* Dims the chart while the reels tumble so attention sits on the slot; the un-dim is the first frame of the landing beat. */}
@@ -585,13 +633,33 @@ function LuckyScreen() {
                   </div>
                 </>
               ) : showReadouts ? (
-                <LiveValuePanel
-                  key={play?.id}
-                  markValue={live?.markValue ?? play?.markValue ?? '0'}
-                  pnl={live?.pnl ?? play?.pnl ?? '0'}
-                  entryValue={live?.entryValue ?? play?.entryValue ?? '0'}
-                  maxPayout={live?.maxPayout ?? play?.maxPayout ?? '0'}
-                />
+                <>
+                  <div className="flex items-center gap-2">
+                    <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                      If it ends now
+                    </div>
+                    {onTarget != null && (
+                      <span
+                        className={cnm(
+                          'inline-flex items-center border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.1em]',
+                          onTarget ? 'border-up/60 text-up' : 'border-down/60 text-down',
+                        )}
+                      >
+                        {onTarget ? 'On target' : 'Off'}
+                      </span>
+                    )}
+                  </div>
+                  <LiveVerdictPanel
+                    winning={onTarget}
+                    payout={live?.maxPayout ?? play?.maxPayout ?? '0'}
+                    cashoutPnl={live?.pnl ?? play?.pnl ?? '0'}
+                  />
+                  <div className="mt-2.5 grid grid-cols-3 gap-x-3">
+                    <Cell label="Mult" value={fmtMult(multiplier)} />
+                    <Cell label="Cost" value={`$${formatExactDecimal(live?.entryValue ?? play?.entryValue ?? '0')}`} />
+                    <Cell label="Win" value={`$${formatExactDecimal(live?.maxPayout ?? play?.maxPayout ?? '0')}`} />
+                  </div>
+                </>
               ) : reelsCycling ? (
                 <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Dealing</div>

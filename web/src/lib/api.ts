@@ -471,6 +471,12 @@ export type PlayTick = {
   maxPayout?: string
   status: PlayStatus
   lockPrice?: string
+  // Market fields, pushed so a mid-flight re-route/restrike snaps the client overlay + countdown to the real minted values.
+  entrySpot?: string
+  strike?: string
+  lower?: string
+  upper?: string
+  expiry?: number
   ts: number
 }
 // Live presence: how many players have PIPS open right now. Pushed on every join/leave.

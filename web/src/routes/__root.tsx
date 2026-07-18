@@ -102,7 +102,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body className="bg-canvas text-text antialiased">
         <LenisSmoothScrollProvider />
         <Toaster
-          position="bottom-center"
+          position="top-center"
           toastOptions={{
             style: {
               background: 'var(--color-surface)',

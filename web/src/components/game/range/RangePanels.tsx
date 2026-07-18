@@ -4,12 +4,14 @@ import type { PlayDTO } from '@/lib/api'
 import { cnm } from '@/utils/style'
 import { formatExactDecimal, priceLabel } from '@/utils/format'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
+import { LiveVerdictPanel } from '@/components/game/gamePanels'
 
 const compact = (n: number): string =>
   n >= 1000
     ? `${(n / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k`
     : n.toLocaleString('en-US', { maximumFractionDigits: n >= 1 ? 2 : 4 })
 
+// Range's live in/out verdict is the shared chart-synced panel (`inside` == on the winning side).
 export function RangePnl({
   inside,
   payout,
@@ -19,25 +21,7 @@ export function RangePnl({
   payout: string
   cashoutPnl: string
 }) {
-  const up = inside !== false
-  const neg = cashoutPnl.trim().startsWith('-')
-
-  return (
-    <>
-      <div
-        className={cnm(
-          'tnum text-[40px] font-extrabold leading-none',
-          up ? 'text-up' : 'text-down',
-        )}
-      >
-        {up ? `+$${formatExactDecimal(payout, { absolute: true })}` : '$0.00'}
-      </div>
-      <div className="mt-1 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-text-3">
-        If you cash out now {neg ? '-' : '+'}$
-        {formatExactDecimal(cashoutPnl, { absolute: true })}
-      </div>
-    </>
-  )
+  return <LiveVerdictPanel winning={inside} payout={payout} cashoutPnl={cashoutPnl} />
 }
 
 export function RangeResult({ play }: { play: PlayDTO }) {
