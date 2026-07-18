@@ -82,7 +82,7 @@ export function ScreenOverlay({
 }
 
 // One readout cell in a game's notch-safe bottom band: tiny label over a tabular value.
-export function Cell({ label, value }: { label: string; value: string }) {
+export function Cell({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-3">{label}</div>

@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SoundsRouteImport } from './routes/sounds'
 import { Route as PitchRouteImport } from './routes/pitch'
 import { Route as ExportRouteImport } from './routes/export'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
@@ -39,6 +40,11 @@ import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
 import { Route as AppGamesLineRiderRouteImport } from './routes/_app/games/line-rider'
 import { Route as AppGamesFlappyPiperRouteImport } from './routes/_app/games/flappy-piper'
 
+const SoundsRoute = SoundsRouteImport.update({
+  id: '/sounds',
+  path: '/sounds',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PitchRoute = PitchRouteImport.update({
   id: '/pitch',
   path: '/pitch',
@@ -192,6 +198,7 @@ export interface FileRoutesByFullPath {
   '/design-system': typeof DesignSystemRoute
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
+  '/sounds': typeof SoundsRoute
   '/r/$code': typeof RCodeRoute
   '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
@@ -221,6 +228,7 @@ export interface FileRoutesByTo {
   '/design-system': typeof DesignSystemRoute
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
+  '/sounds': typeof SoundsRoute
   '/r/$code': typeof RCodeRoute
   '/': typeof AppIndexRoute
   '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
@@ -253,6 +261,7 @@ export interface FileRoutesById {
   '/design-system': typeof DesignSystemRoute
   '/export': typeof ExportRoute
   '/pitch': typeof PitchRoute
+  '/sounds': typeof SoundsRoute
   '/r/$code': typeof RCodeRoute
   '/_app/': typeof AppIndexRoute
   '/_app/games/flappy-piper': typeof AppGamesFlappyPiperRoute
@@ -286,6 +295,7 @@ export interface FileRouteTypes {
     | '/design-system'
     | '/export'
     | '/pitch'
+    | '/sounds'
     | '/r/$code'
     | '/games/flappy-piper'
     | '/games/line-rider'
@@ -315,6 +325,7 @@ export interface FileRouteTypes {
     | '/design-system'
     | '/export'
     | '/pitch'
+    | '/sounds'
     | '/r/$code'
     | '/'
     | '/games/flappy-piper'
@@ -346,6 +357,7 @@ export interface FileRouteTypes {
     | '/design-system'
     | '/export'
     | '/pitch'
+    | '/sounds'
     | '/r/$code'
     | '/_app/'
     | '/_app/games/flappy-piper'
@@ -378,11 +390,19 @@ export interface RootRouteChildren {
   DesignSystemRoute: typeof DesignSystemRoute
   ExportRoute: typeof ExportRoute
   PitchRoute: typeof PitchRoute
+  SoundsRoute: typeof SoundsRoute
   RCodeRoute: typeof RCodeRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/sounds': {
+      id: '/sounds'
+      path: '/sounds'
+      fullPath: '/sounds'
+      preLoaderRoute: typeof SoundsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pitch': {
       id: '/pitch'
       path: '/pitch'
@@ -647,6 +667,7 @@ const rootRouteChildren: RootRouteChildren = {
   DesignSystemRoute: DesignSystemRoute,
   ExportRoute: ExportRoute,
   PitchRoute: PitchRoute,
+  SoundsRoute: SoundsRoute,
   RCodeRoute: RCodeRoute,
 }
 export const routeTree = rootRouteImport

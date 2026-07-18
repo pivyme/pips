@@ -1,40 +1,10 @@
-// Pure tests for the display pin math (cosmetic per L-015, no truthful number touched here): verifies
-// the chart line eases/degrades correctly with no socket, chain, or timers. Covers the slew-limited EMA step and the re-entry hysteresis, the whole non-trivial core.
+// Pure tests for the display feed's re-entry hysteresis (cosmetic per L-015, no truthful number touched
+// here): the driver flap logic that decides when Binance texture is trusted vs the on-chain fallback. The
+// level/texture math in displaySpot pulls a live chain/socket read, so it is covered by the manual QA in the plan.
 
 import { describe, expect, it } from 'bun:test';
 
-import { nextPinDriver, pinnedOffsetStep } from './price-bus.ts';
-
-describe('pinnedOffsetStep (slew-limited EMA)', () => {
-  it('pulls the offset toward the target by the time-constant factor when slew does not bind', () => {
-    // dt == tau => k = 1 - e^-1 ~ 0.632. A huge price makes the slew cap enormous, so the EMA is free.
-    const tau = 1200;
-    const next = pinnedOffsetStep(0, 100, tau, 1e12, tau, 0.004);
-    expect(next).toBeCloseTo(100 * (1 - Math.exp(-1)), 6);
-  });
-
-  it('converges monotonically over repeated steps (no overshoot)', () => {
-    let off = 0;
-    for (let i = 0; i < 50; i++) off = pinnedOffsetStep(off, 100, 200, 1e12, 1200, 0.004);
-    expect(off).toBeGreaterThan(99.9);
-    expect(off).toBeLessThanOrEqual(100);
-  });
-
-  it('slew-clamps a large upward jump to slewFrac * dt * price, not the full EMA move', () => {
-    // Gap is huge, so the EMA wants to leap; the slew cap holds it to maxStep = 0.004 * 0.1 * 100 = 0.04.
-    const next = pinnedOffsetStep(0, 1_000_000, 100, 100, 1200, 0.004);
-    expect(next).toBeCloseTo(0.04, 9);
-  });
-
-  it('slew-clamps symmetrically on a downward jump', () => {
-    const next = pinnedOffsetStep(0, -1_000_000, 100, 100, 1200, 0.004);
-    expect(next).toBeCloseTo(-0.04, 9);
-  });
-
-  it('never moves when already at the target', () => {
-    expect(pinnedOffsetStep(5, 5, 100, 100, 1200, 0.004)).toBe(5);
-  });
-});
+import { nextPinDriver } from './price-bus.ts';
 
 describe('nextPinDriver (re-entry hysteresis)', () => {
   const REENTRY = 1500;

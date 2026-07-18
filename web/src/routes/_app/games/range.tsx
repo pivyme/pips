@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import NumberFlow from '@number-flow/react'
 import toast from 'react-hot-toast'
 import type { BandOverlay } from '@/components/game/Chart'
 import type { PlayDTO, PlayStatus } from '@/lib/api'
@@ -127,6 +128,14 @@ function fmtClock(ms: number): string {
 // ±% band label with enough decimals to keep tight tiers distinct (0.021 vs 0.032).
 const fmtHalfPct = (halfPct: number): string => halfPct.toFixed(halfPct < 0.1 ? 3 : 2)
 
+// Digit-easing readouts so a knob tier change eases the multiplier/payout instead of hard-swapping.
+const MultFlow = ({ value }: { value: number }) => (
+  <NumberFlow value={value} suffix="x" format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }} />
+)
+const UsdFlow = ({ value }: { value: number }) => (
+  <NumberFlow value={value} prefix="$" format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }} />
+)
+
 // Whether the frozen lock price lands in the raw (lower, upper] band, matching on-chain settlement.
 // Console-audit only, checks the early verdict against the final result. Null until a lock price exists.
 function predictedInZone(play: PlayDTO, lockPrice: string | null): boolean | null {
@@ -161,6 +170,10 @@ function RangeScreen() {
   const [lockPrice, setLockPrice] = useState<string | null>(null)
 
   const finalized = useRef(false)
+  // Set when the result was revealed early from the on-chain settlement price (lockPrice), before our redeem
+  // tx finalized. The authoritative terminal frame still lands to refine numbers + credit the balance, it just
+  // skips replaying the reveal. Reset each new play.
+  const previewed = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const balanceSyncedPlayId = useRef<string | null>(null)
   const wasInside = useRef<boolean | null>(null) // last in/out band state, for the crossing tick
@@ -345,20 +358,63 @@ function RangeScreen() {
         maxPayout: final.maxPayout,
         status: final.status,
       })
+      void refresh() // the redeem landed: the balance now reflects the claimed chips
+      // Settle/cashout moved the record: freshen stats (streak), achievements, and history.
+      for (const key of ['stats', 'achievements', 'plays'])
+        void qc.invalidateQueries({ queryKey: [key] })
+      // The lockPrice preview already flipped to RESULT, played the sting, and armed auto-advance; the
+      // terminal only refines the numbers + credits the balance above, so don't replay the reveal.
+      if (previewed.current) return
       setPhase('result')
       stopRangeBgm() // cut the tension bed the instant it resolves, so the sting lands clean
       haptic(final.status === 'lost' ? 'error' : 'success')
       if (final.status === 'lost') rangeLose()
       else rangeWin()
-      void refresh()
-      // Settle/cashout moved the record: freshen stats (streak), achievements, and history.
-      for (const key of ['stats', 'achievements', 'plays'])
-        void qc.invalidateQueries({ queryKey: [key] })
       clearResetTimer()
       resetTimer.current = setTimeout(() => setPhase('idle'), RESULT_MS)
     },
     [refresh, qc],
   )
+
+  // Early result reveal from the real on-chain settlement price. The SSE delivers lockPrice (the frozen
+  // oracle settlement_price) within ~1s of Pyth settling, ~1-2s before our redeem tx finalizes. A range play
+  // is 1x (no liquidation), so the verdict is a deterministic function of that price: settle in (lower, upper].
+  // Reveal it now; the authoritative terminal frame lands right behind to refine + credit chips (finishResult).
+  const revealFromLock = useCallback((p: PlayDTO, lock: number) => {
+    previewed.current = true
+    wasInside.current = null
+    const lo = p.market.lower != null ? parseFloat(p.market.lower) : NaN
+    const hi = p.market.upper != null ? parseFloat(p.market.upper) : NaN
+    const won = lock > lo && lock <= hi // (lower, upper], the exact on-chain settlement rule
+    const payout = won ? p.maxPayout : '0'
+    const pnl = (parseFloat(payout) - parseFloat(p.entryValue)).toFixed(2)
+    const preview: PlayDTO = { ...p, status: won ? 'won' : 'lost', payout, markValue: payout, pnl, settlePrice: String(lock) }
+    setPlay(preview)
+    setLive({ markValue: preview.markValue, pnl: preview.pnl, multiplier: preview.multiplier, entryValue: preview.entryValue, maxPayout: preview.maxPayout, status: preview.status })
+    setPhase('result')
+    stopRangeBgm()
+    haptic(won ? 'success' : 'error')
+    if (won) rangeWin()
+    else rangeLose()
+    clearResetTimer()
+    resetTimer.current = setTimeout(() => setPhase('idle'), RESULT_MS)
+  }, [])
+
+  // Fire the early reveal the instant the on-chain settlement price lands past the buzzer. Skip the sub-tick
+  // ambiguous edge (settle within ~1% of a band bound) and fall back to the terminal there, so a revealed
+  // verdict can never disagree with the chain.
+  useEffect(() => {
+    if (finalized.current || previewed.current) return
+    if (!settling || !confirmed) return // past the buzzer, on a confirmed real position only
+    if (!play || play.game !== 'range') return
+    if (lockNum == null || lockNum <= 0) return
+    const lo = play.market.lower != null ? parseFloat(play.market.lower) : NaN
+    const hi = play.market.upper != null ? parseFloat(play.market.upper) : NaN
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return
+    const margin = (hi - lo) * 0.01 // wider than the display-vs-tick rounding; near a bound, wait for the terminal
+    if (Math.abs(lockNum - lo) < margin || Math.abs(lockNum - hi) < margin) return
+    revealFromLock(play, lockNum)
+  }, [settling, confirmed, lockNum, play, revealFromLock])
 
   // Resolves a round from a status, idempotent via `finalized` so the SSE and the watchdog can both feed it.
   // 'error' = the mint never opened (chips safe, clean re-rack); a win/loss/cashout refetches the finalized play.
@@ -389,13 +445,18 @@ function RangeScreen() {
   )
 
   usePlayResolutionWatch({
-    enabled: phase === 'open',
+    // Stay subscribed through the lockPrice-preview window too (phase flips to 'result' before finalized),
+    // so the authoritative terminal frame still lands to refine + credit the balance.
+    enabled: phase === 'open' || (phase === 'result' && !finalized.current),
     playId: play?.id,
     finalizedRef: finalized,
     watchdogMs: WATCHDOG_MS,
     syncedOpenPlayIdRef: balanceSyncedPlayId,
     refreshOnOpen: refresh,
     onSnapshot: (snapshot) => {
+      // Once revealed early from the on-chain settlement price, ignore trailing 'open' marks so they can't
+      // revert the shown result; the terminal frame (onTerminal) still refines it.
+      if (previewed.current) return
       setLive({
         markValue: snapshot.markValue,
         pnl: snapshot.pnl,
@@ -435,6 +496,7 @@ function RangeScreen() {
     }
     clearResetTimer()
     finalized.current = false
+    previewed.current = false
     wasInside.current = null
     setLockPrice(null)
     // Drop the previous play before placing the next one; it lingers after a result (the overlay reads
@@ -896,13 +958,11 @@ function RangeScreen() {
                     cashoutPnl={live?.pnl ?? play?.pnl ?? '0'}
                   />
                   <div className="mt-2.5 grid grid-cols-3 gap-x-3">
-                    {/* The real minted multiple off the OrderMinted event, never the preview estimate. */}
-                    <Cell label="Locked" value={`${mult.toFixed(2).replace(/\.?0+$/, '')}x`} />
-                    <Cell label="Cost" value={`$${formatExactDecimal(playCost)}`} />
-                    <Cell
-                      label="Win"
-                      value={`$${formatExactDecimal(live?.maxPayout ?? play?.maxPayout ?? '0')}`}
-                    />
+                    {/* The real minted multiple off the OrderMinted event, never the preview estimate; eased so the
+                        CONFIRMING-estimate -> real-minted snap glides into place instead of hard-swapping. */}
+                    <Cell label="Locked" value={<MultFlow value={mult} />} />
+                    <Cell label="Cost" value={<UsdFlow value={parseFloat(playCost) || 0} />} />
+                    <Cell label="Win" value={<UsdFlow value={parseFloat(live?.maxPayout ?? play?.maxPayout ?? '0') || 0} />} />
                   </div>
                 </>
               ) : firstRun ? (
@@ -940,12 +1000,12 @@ function RangeScreen() {
                     )}
                   </div>
                   <div className="tnum text-[40px] font-extrabold leading-none text-brand-500">
-                    {idleMult.toFixed(2)}x
+                    <MultFlow value={idleMult} />
                   </div>
                   <div className="mt-2.5 grid grid-cols-3 gap-x-3">
                     <Cell label="Bet" value={`$${stake}`} />
-                    <Cell label="Win" value={`$${(netStakeUsd(stake) * idleMult).toFixed(2)}`} />
-                    <Cell label="Odds" value={`~${Math.round(tierView.prob * 100)}%`} />
+                    <Cell label="Win" value={<UsdFlow value={netStakeUsd(stake) * idleMult} />} />
+                    <Cell label="Odds" value={<NumberFlow value={Math.round(tierView.prob * 100)} prefix="~" suffix="%" />} />
                   </div>
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
                     Land inside ±{fmtHalfPct(halfLivePct)}% at the buzzer

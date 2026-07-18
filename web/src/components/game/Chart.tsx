@@ -102,6 +102,7 @@ const HALF_GROW = 0.12 // zoom-out ease when content needs more room
 const HALF_SHRINK = 0.03 // zoom-in ease when there is slack, slow so the frame stays calm
 const LIVE_CALM = 0.34 // ~3x slower recenter/zoom while a round is live, so entry/target barely drift
 const FILL_SMOOTH = 0.08 // band right-zone -> full-width ease on lock
+const BAND_SMOOTH = 0.12 // per-frame ease for band width/reshape (~0.4s settle), so it shrinks/expands smoothly
 const PAD = 1.22 // headroom around the fitted content (tighter = the move fills more of the frame)
 // Last-resort floor so a flat/degenerate line never zooms to infinity, not a target zoom level.
 // Must sit well under real testnet BTC's ~0.05% per-round move and the ±0.02% tightest range band.
@@ -182,6 +183,11 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
   const range = useRef<{ min: number; max: number }>({ min: 0, max: 1 })
   const entryReveal = useRef(0) // 0 -> 1 fade-in as the entry line appears on a new round
   const targetReveal = useRef(0) // 0 -> 1 fade-in as the target line appears on a new round
+  // Eased band geometry so width changes (knob tier, round-clock shrink) and the idle->locked reshape glide
+  // instead of snapping. Center + half, so the idle preview still tracks the live price with no lag.
+  const bandC = useRef(0)
+  const bandHalf = useRef(0)
+  const bandMode = useRef<'none' | 'idle' | 'locked'>('none')
   const momDir = useRef<'up' | 'down' | 'flat'>('flat') // momentum-arrow state, hysteretic
   const trendUp = useRef(true) // whole-line direction: green up / red down, flips on a real move
   const lastTickP = useRef(0) // last raw tick, to detect momentum swings
@@ -304,16 +310,32 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     }
     const ro = new ResizeObserver(resize)
 
-    // Range band -> absolute price bounds. Idle: a live ±pct zone around the smoothed price. Locked: fixed strike bounds carried by the play.
+    // Range band -> absolute price bounds, eased. Idle: a live ±pct zone whose CENTER tracks the smoothed price
+    // (no lag) while the half-width eases, so a knob tier change or the round-clock shrink glides instead of jumping.
+    // Locked: fixed strike bounds, with the idle->locked reshape easing center+half in from the preview.
     // Uses display (smoothed), not the raw per-tick price, so the band never jitters.
     const resolveBand = (): { lower: number; upper: number } | null => {
       const b = overlaysRef.current?.band
-      if (!b) return null
-      if (b.locked) return { lower: b.lower, upper: b.upper }
+      if (!b) {
+        bandMode.current = 'none'
+        return null
+      }
+      const cont = !reducedRef.current
+      const locked = b.locked === true
       const c = display.current
-      if (!Number.isFinite(c) || c <= 0) return null
-      const half = (c * b.pct) / 100
-      return { lower: c - half, upper: c + half }
+      if (!locked && (!Number.isFinite(c) || c <= 0)) return null // no price yet to center the preview on
+      const tc = locked ? (b.lower + b.upper) / 2 : c
+      const th = locked ? (b.upper - b.lower) / 2 : (c * b.pct) / 100
+      if (bandMode.current === 'none' || !cont) {
+        bandC.current = tc // first appearance (or reduced motion): snap, never expand from a collapsed line
+        bandHalf.current = th
+      } else {
+        // Idle center rides the live price with no lag; a locked center eases in from the preview on lock.
+        bandC.current = locked ? bandC.current + (tc - bandC.current) * BAND_SMOOTH : tc
+        bandHalf.current += (th - bandHalf.current) * BAND_SMOOTH
+      }
+      bandMode.current = locked ? 'locked' : 'idle'
+      return { lower: bandC.current - bandHalf.current, upper: bandC.current + bandHalf.current }
     }
 
     const paint = (now: number) => {

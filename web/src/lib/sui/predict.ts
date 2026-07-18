@@ -3,7 +3,7 @@
 
 import { SuiGrpcClient } from '@mysten/sui/grpc'
 
-import { api } from '../api'
+import { api, ApiError } from '../api'
 import { DUSDC_TYPE, NETWORK, PACKAGE_ID, fromDusdcRaw } from './config'
 import type { Game, PlayDTO } from '../api'
 import { env } from '@/env'
@@ -88,10 +88,27 @@ export async function readWalletBalances(address: string): Promise<WalletBalance
   }
 }
 
+// The server enforces a short per-user cooldown between plays (finite testnet gas, L-008). A rapid
+// back-to-back replay would 429 RATE_LIMITED; instead of surfacing that, wait the cooldown out and re-fire
+// so plays just queue. A rate-limited request never landed (no chips touched), so the retry is safe.
+const RATE_LIMIT_RETRY_MS = 450
+const RATE_LIMIT_MAX_WAIT_MS = 4500 // covers the 3s cooldown with margin, then lets the error surface
+
 // Place a play; the backend signs + submits server-side in both modes, so this returns a finalized open PlayDTO.
 export async function placePlay(game: Game, body: Record<string, unknown>): Promise<PlayOutcome> {
-  const { play } = await api.play(game, body)
-  return { play, unlocked: [] }
+  const deadline = Date.now() + RATE_LIMIT_MAX_WAIT_MS
+  for (;;) {
+    try {
+      const { play } = await api.play(game, body)
+      return { play, unlocked: [] }
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'RATE_LIMITED' && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, RATE_LIMIT_RETRY_MS))
+        continue
+      }
+      throw e
+    }
+  }
 }
 
 // Cash out an open play at the live mark. Same finalized shape as placePlay.

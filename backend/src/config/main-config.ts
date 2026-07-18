@@ -125,10 +125,15 @@ export const BINANCE_SYMBOLS: Record<string, string> = Object.fromEntries(
 // to every subscriber, so charts stay in lock-step. 100ms = 10Hz. The client eases between frames.
 export const PRICE_WS_BROADCAST_MS: number = Number(process.env.PIPS_PRICE_WS_BROADCAST_MS) || 100;
 
-// Display pin tuning (price-bus.ts, real mode only, display-only per L-015). TAU: speed the smoothed offset
-// pulls the line to the oracle. SLEW: max offset correction/sec. REENTRY: healthy Binance streak before resuming after an outage. BUZZER: converge fully before expiry.
+// Display feed tuning (price-bus.ts, real mode only, display-only per L-015). The line's LEVEL is the fresh
+// on-chain oracle; Binance adds only bounded, zero-mean texture so entry/band/settle sit on the line.
+// ORACLE_TTL: how fresh the BTC anchor read is kept. LEVEL_TAU: eases the sub-2s oracle steps onto the line.
+// PIN_TAU: the Binance slow-EMA window defining "high-frequency texture". WIGGLE_MAX: max stray from the oracle
+// (fraction of price). REENTRY: healthy Binance streak before resuming texture after an outage. BUZZER: converge fully before expiry.
+export const PRICE_ORACLE_TTL_MS: number = Number(process.env.PIPS_PRICE_ORACLE_TTL_MS) || 750;
+export const PRICE_LEVEL_TAU_MS: number = Number(process.env.PIPS_PRICE_LEVEL_TAU_MS) || 450;
 export const PRICE_PIN_TAU_MS: number = Number(process.env.PIPS_PRICE_PIN_TAU_MS) || 1200;
-export const PRICE_PIN_SLEW_FRAC_PER_SEC: number = Number(process.env.PIPS_PRICE_PIN_SLEW_FRAC_PER_SEC) || 0.004;
+export const PRICE_WIGGLE_MAX_FRAC: number = Number(process.env.PIPS_PRICE_WIGGLE_MAX_FRAC) || 0.00003;
 export const PRICE_PIN_REENTRY_MS: number = Number(process.env.PIPS_PRICE_PIN_REENTRY_MS) || 1500;
 export const PRICE_PIN_BUZZER_MS: number = Number(process.env.PIPS_PRICE_PIN_BUZZER_MS) || 4000;
 
