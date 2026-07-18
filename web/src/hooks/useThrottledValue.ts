@@ -12,7 +12,7 @@ export function useThrottledValue<T>(value: T, intervalMs: number): T {
   useEffect(() => {
     const elapsed = Date.now() - lastUpdate.current
     if (elapsed >= intervalMs) {
-      lastUpdate.current = Date.now()
+      if (value != null) lastUpdate.current = Date.now() // a nullish placeholder doesn't start the window, so the first real value lands instantly
       setThrottled(value)
       return
     }

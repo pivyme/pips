@@ -329,11 +329,14 @@ function load(): DemoState {
   try {
     const raw = window.localStorage.getItem(STATE_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw) as DemoState
+      const parsed = JSON.parse(raw) as DemoState & { _open?: PlayDTO[]; _ctx?: Array<[string, MarkCtx]> }
       if (parsed.v === STATE_VERSION) {
         // Additive settings backfill: a state saved before a new toggle existed lacks the key, default
         // it in place rather than bumping the version and wiping the demo record.
         if (parsed.settings.confirmTrades == null) parsed.settings.confirmTrades = false
+        hydrateOpen(parsed._open, parsed._ctx) // re-attach any live round left riding at the last save
+        delete parsed._open
+        delete parsed._ctx
         return parsed
       }
     }
@@ -348,7 +351,10 @@ function load(): DemoState {
 function save(s: DemoState = state): void {
   if (typeof window === 'undefined') return
   try {
-    window.localStorage.setItem(STATE_KEY, JSON.stringify(s))
+    // Open plays + their mark contexts ride along, so a live round survives a hard refresh (restored via
+    // GET /plays?status=open, same as the real product). Session-only before; now demo has refresh parity.
+    const blob = { ...s, _open: openList, _ctx: Array.from(ctx.entries()) }
+    window.localStorage.setItem(STATE_KEY, JSON.stringify(blob))
   } catch {
     // ignore
   }
@@ -362,6 +368,34 @@ export function resetDemo(): void {
   ctx.clear()
   for (const p of state.history) byId.set(p.id, p)
   save()
+}
+
+// Re-attach open plays saved before a reload, so a live round restores instead of vanishing. Only non-terminal
+// plays that still carry a mark context come back; their ctx timestamps are absolute wall-clock, so the stream
+// resumes and settles them exactly as if the page never reloaded (a round that ended while away settles at once).
+function hydrateOpen(open?: PlayDTO[], ctxEntries?: Array<[string, MarkCtx]>): void {
+  if (!open?.length || !ctxEntries?.length) return
+  const ctxMap = new Map(ctxEntries)
+  for (const p of open) {
+    if (p.status !== 'open' && p.status !== 'pending') continue
+    const c = ctxMap.get(p.id)
+    if (!c) continue
+    byId.set(p.id, p)
+    openList.push(p) // saved newest-first; push preserves that order
+    openIds.add(p.id)
+    ctx.set(p.id, c)
+  }
+}
+
+// Lazy settle: demo has no settle worker, so a round that expired while you were away (or sitting on the hub)
+// is closed here on the next open-plays read. Keeps the balance honest and clears a stale In Play pill.
+function settleExpiredDemo(): void {
+  const now = nowMs()
+  for (const p of [...openList]) {
+    const c = ctx.get(p.id)
+    if (!c) continue
+    if (now >= (c.settleAtMs ?? c.expiryMs + SETTLE_HOLD_MS)) closePlay(p.id, 'settle')
+  }
 }
 
 // === Helpers ===
@@ -426,7 +460,7 @@ function estimateMultiplier(halfPct: number, durationSec: number): number {
 
 // RANGE payout tiers, mirroring the backend ladder (main-config RANGE_TIER_PROBS); band width inverts
 // demo's own win-prob model so a tier's quote and its locked multiple always agree.
-const RANGE_TIER_PROBS = [0.85, 0.65, 0.45, 0.3, 0.18]
+const RANGE_TIER_PROBS = [0.85, 0.65, 0.45, 0.3, 0.18, 0.11, 0.065]
 const rangeTierHalfPct = (p: number): number => -Math.log(1 - p) * 0.6 * Math.sqrt(RANGE_ROUND_SEC / 30)
 const rangeTierProb = (tier: number): number =>
   RANGE_TIER_PROBS[Math.max(0, Math.min(RANGE_TIER_PROBS.length - 1, Math.round(tier)))]
@@ -1133,6 +1167,7 @@ export const demoApi = {
 
   plays: async (q: { status?: string; limit?: number } = {}) => {
     await delay(120)
+    settleExpiredDemo() // credit any round that expired while away before reporting what's still open
     const all = [...openList, ...state.history]
     const filtered = q.status ? all.filter((p) => p.status === q.status) : all
     return { plays: filtered.slice(0, q.limit ?? 50) }
@@ -1267,7 +1302,10 @@ export function demoStreamPlay(playId: string, onTick: (t: PlayTick) => void, on
       onTick({ markValue: str(c.stake), pnl: '0.00', multiplier: c.lockedMult, status: 'pending', ts: t })
       return false
     }
-    if (p.status === 'pending') p.status = 'open'
+    if (p.status === 'pending') {
+      p.status = 'open'
+      save() // persist the open transition so a hard refresh restores the play as open, not stuck pending
+    }
     // Lock-in: LOCK_LEAD_MS before the buzzer, price freezes (mirrors backend); snapshot it ONCE as lockPrice.
     // Win/loss is decided by this snapshot, not where the price drifts afterward.
     if (c.settlePrice == null && t >= c.expiryMs - LOCK_LEAD_MS) c.settlePrice = currentPrice(c.asset)

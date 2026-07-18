@@ -46,17 +46,18 @@ export interface ChartOverlays {
   // winning half shaded green (brighter when the live price is inside).
   target?: { price: number; side: 'up' | 'down' }
   band?: BandOverlay
-  // Range-v2 multiplay: concurrent locked bands in the forward zone. Fill deepens where more bands cover a
-  // price; each band's edges light green/red by whether the live price rides inside it. `n` is the position's
-  // slot number, drawn as a flag at the band's center so the chip strip and the chart tie together. Settled flash.
-  bands?: Array<{ lower: number; upper: number; state?: 'live' | 'won' | 'lost'; n?: number }>
+  // Range-v2 multiplay: each locked band anchored in TIME from its entry (t0) to its cutoff/expiry (t1), so it
+  // scrolls left with the line while the now-dot rides from the band's left edge toward its right. Edges light
+  // green/red by whether the live price rides inside. `n` is the slot number (flag near the cutoff edge) tying
+  // the chip strip to the chart. t0/t1 are Date.now epoch ms; omit them to fall back to a static forward lane.
+  bands?: Array<{ lower: number; upper: number; state?: 'live' | 'won' | 'lost'; n?: number; t0?: number; t1?: number }>
   // Range-v2 aim: where the NEXT play's band would land, a live ±pct bracket tracking the price (amber, dashed).
   aim?: { pct: number; tag?: string }
   // Exact settled RESULT price after oracle.settlement_price exists.
   settle?: number
   boxes?: ChartBox[]
-  // Time-anchored dots (round start, settle) mapped by timestamp on the same axis as the price line,
-  // so they scroll with it. Dimmer than the live "now" dot, which rides between them.
+  // Time-anchored dots (e.g. each position's entry) mapped by Date.now epoch on the same axis as the price line,
+  // so they scroll left with it. Dimmer than the live "now" dot, which rides between them.
   markers?: Array<{ t: number; p: number }>
 }
 
@@ -473,7 +474,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       }
 
       // Overlays sit under the line.
-      drawOverlays(ctx, ov, band, { w, h, nowX, entryReveal: entryReveal.current, targetReveal: targetReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
+      drawOverlays(ctx, ov, band, { w, h, now, nowX, entryReveal: entryReveal.current, targetReveal: targetReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
 
       // Advance the cosmetic micro-life, applied to the DRAWN leading edge only, continuous mode and non-live feeds only (the real Binance bus already has its own).
       // display.current itself stays untouched, so P/L, header price, win-zone, and frame fit never see this wiggle.
@@ -546,8 +547,9 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       // Round markers: dim amber dots anchored in time (round start, settle) so they scroll with the line; drawn first so the bright now-dot sits on top.
       if (continuous && ov?.markers?.length) {
         const pxPerMs = nowX / WINDOW_MS
+        const nowEpoch = performance.timeOrigin + now
         for (const m of ov.markers) {
-          const mx = nowX - (now - m.t) * pxPerMs
+          const mx = nowX - (nowEpoch - m.t) * pxPerMs
           if (mx < -DOT_R || mx > w + DOT_R) continue
           const my = y(m.p)
           ctx.fillStyle = withAlpha(C.brand, 0.22)
@@ -619,6 +621,44 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
           ctx.fillStyle = withAlpha(C.text, 0.82)
           ctx.fillText(price, tx, yDisp + 0.5)
           drawArrow(ctx, tx - ctx.measureText(price).width - 6 - aw / 2, yDisp, dir, momColor)
+        }
+        ctx.restore()
+      }
+
+      // Cutoff lines: the settlement boundary for each open expiry, scrolling in from the right toward the now-dot.
+      // Faint as it enters view, ramping to bright white in the final seconds so the buzzer is unmissable. Drawn on
+      // top of the line so it reads as a hard cut; when it reaches the now-dot the positions before it are settling.
+      if (continuous && ov?.bands?.length) {
+        const pxPerMs = nowX / WINDOW_MS
+        const nowEpoch = performance.timeOrigin + now
+        const expiries = Array.from(
+          new Set(ov.bands.filter((b) => b.state !== 'won' && b.state !== 'lost' && b.t1 != null).map((b) => b.t1!)),
+        )
+        ctx.save()
+        ctx.font = '700 9px ui-monospace, SFMono-Regular, Menlo, monospace'
+        ctx.textBaseline = 'top'
+        for (const t1 of expiries) {
+          const secs = (t1 - nowEpoch) / 1000
+          if (secs > 12) continue // only draw once it's closing in
+          const cx = nowX - (nowEpoch - t1) * pxPerMs
+          if (cx < nowX - 2 || cx > w + 2) continue
+          const a = Math.max(0.14, Math.min(1, (12 - secs) / 6)) // faint far out, full white by ~6s
+          const near = secs <= 8
+          ctx.strokeStyle = withAlpha(C.text, a)
+          ctx.lineWidth = near ? 1.6 : 1
+          ctx.setLineDash(near ? [] : [3, 5])
+          ctx.beginPath()
+          ctx.moveTo(cx, TOP_PAD)
+          ctx.lineTo(cx, h - BOT_PAD)
+          ctx.stroke()
+          ctx.setLineDash([])
+          // Label sits just to the RIGHT of the line, flipping left only if it would clip the edge.
+          const putRight = cx + 46 < w - rimRef.current
+          ctx.textAlign = putRight ? 'left' : 'right'
+          const lx = cx + (putRight ? 5 : -5)
+          ctx.fillStyle = withAlpha(C.text, Math.min(1, a + 0.1))
+          ctx.fillText('CUTOFF', lx, TOP_PAD + 2)
+          if (secs > 0) ctx.fillText(`${Math.ceil(secs)}s`, lx, TOP_PAD + 13)
         }
         ctx.restore()
       }
@@ -723,9 +763,9 @@ function drawOverlays(
   ctx: CanvasRenderingContext2D,
   ov: ChartOverlays | undefined,
   band: { lower: number; upper: number } | null,
-  ctxv: { w: number; h: number; nowX: number; entryReveal: number; targetReveal: number; rim: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
+  ctxv: { w: number; h: number; now: number; nowX: number; entryReveal: number; targetReveal: number; rim: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
 ) {
-  const { w, h, nowX, entryReveal, targetReveal, rim, price, locked, y, C } = ctxv
+  const { w, h, now, nowX, entryReveal, targetReveal, rim, price, locked, y, C } = ctxv
 
   // TARGET rides the RIGHT edge (the amber hero), ENTRY stays LEFT; opposite corners so they can never stack on a small move.
   const labelX = w - rim - 2
@@ -770,86 +810,99 @@ function drawOverlays(
     ctx.restore()
   }
 
-  // Range-v2 multiplay. Three layers: (1) a coverage fill that deepens where more live bands overlap
-  // (payout territory), (2) each band's own dashed edge pair, green while the price rides inside it and
-  // red once it's crossed out, so the exact band you're losing is visible, (3) a numbered flag per band
-  // matching its chip in the strip. Settled bands flash their verdict on top, then sweep out.
+  // Range-v2 multiplay: each locked band drawn as a rectangle anchored in TIME, from its entry (t0) to its
+  // cutoff/expiry (t1), so it scrolls left with the line while the now-dot rides from the band's left edge
+  // toward its right. Before the cutoff: fill + dashed edges light green inside / red out (the exact band you're
+  // losing is visible), a left spine marks where the play was placed. Once the cutoff passes the settlement price
+  // is locked, so the band STOPS reacting to the line: it freezes and PULSES, neutral while awaiting the verdict,
+  // then green (won) / red (lost). A numbered flag near the cutoff edge ties to its chip. Missing t0/t1 falls back
+  // to a static forward lane.
   if (ov?.bands?.length) {
-    const fx = nowX
-    const live = ov.bands.filter((b) => b.state !== 'won' && b.state !== 'lost')
-    const settled = ov.bands.filter((b) => b.state === 'won' || b.state === 'lost')
-    ctx.save()
-    if (live.length) {
-      // Sweep the unique band edges into segments; each segment's green alpha scales with its coverage count.
-      const edges = Array.from(new Set(live.flatMap((b) => [b.lower, b.upper]))).sort((a, z) => a - z)
-      for (let i = 0; i < edges.length - 1; i++) {
-        const mid = (edges[i] + edges[i + 1]) / 2
-        let cov = 0
-        for (const b of live) if (mid > b.lower && mid < b.upper) cov++
-        if (cov === 0) continue
-        ctx.fillStyle = withAlpha(C.up, Math.min(0.3, 0.05 + cov * 0.05))
-        ctx.fillRect(fx, y(edges[i + 1]), w - fx, y(edges[i]) - y(edges[i + 1]))
-      }
-      // Per-band edges: the in/out truth per position, not a misleading union boundary.
-      ctx.lineWidth = 1
-      ctx.setLineDash([4, 4])
-      for (const b of live) {
-        const inside = price > b.lower && price <= b.upper
-        ctx.strokeStyle = withAlpha(inside ? C.up : C.down, inside ? 0.4 : 0.5)
-        for (const p of [b.lower, b.upper]) {
-          ctx.beginPath()
-          ctx.moveTo(fx, y(p))
-          ctx.lineTo(w, y(p))
-          ctx.stroke()
-        }
-      }
-      ctx.setLineDash([])
+    const pxPerMs = nowX / WINDOW_MS
+    const nowEpoch = performance.timeOrigin + now
+    const pulse = 0.45 + 0.55 * Math.abs(Math.sin(performance.now() / 300)) // shared breathing for every frozen/settled band
+    const spanOf = (b: { t0?: number; t1?: number }): { xl: number; xr: number } => {
+      const rawL = b.t0 != null ? nowX - (nowEpoch - b.t0) * pxPerMs : nowX
+      const rawR = b.t1 != null ? nowX - (nowEpoch - b.t1) * pxPerMs : w
+      const xl = Math.max(0, Math.min(rawL, w))
+      const xr = Math.max(Math.min(rawR, w), xl + 1)
+      return { xl, xr }
     }
-    // Settled bands: a brief verdict flash (green won / red lost) on top of the live cloud, then they sweep out.
-    for (const b of settled) {
+    // A band's phase: live (reacts to the line), settling (cutoff passed, verdict pending), or the resolved verdict.
+    const phaseOf = (b: { state?: 'live' | 'won' | 'lost'; t1?: number }): 'live' | 'settling' | 'won' | 'lost' =>
+      b.state === 'won' || b.state === 'lost' ? b.state : b.t1 != null && nowEpoch >= b.t1 ? 'settling' : 'live'
+    const rectEdges = (xl: number, xr: number, top: number, bot: number) => {
+      ctx.beginPath()
+      ctx.moveTo(xl, top)
+      ctx.lineTo(xr, top)
+      ctx.moveTo(xl, bot)
+      ctx.lineTo(xr, bot)
+      ctx.stroke()
+    }
+    ctx.save()
+    for (const b of ov.bands) {
+      const { xl, xr } = spanOf(b)
       const top = y(b.upper)
       const bot = y(b.lower)
-      const col = b.state === 'won' ? C.up : C.down
-      ctx.fillStyle = withAlpha(col, b.state === 'won' ? 0.24 : 0.14)
-      ctx.fillRect(fx, top, w - fx, bot - top)
-      ctx.lineWidth = 1.6
-      ctx.strokeStyle = withAlpha(col, 0.9)
-      for (const yy of [top, bot]) {
+      const phase = phaseOf(b)
+      if (phase === 'live') {
+        // Pre-cutoff: track the line. Green inside, red out. Overlaps deepen via stacked alpha.
+        const inside = price > b.lower && price <= b.upper
+        ctx.fillStyle = withAlpha(C.up, inside ? 0.14 : 0.05)
+        ctx.fillRect(xl, top, xr - xl, bot - top)
+        ctx.lineWidth = 1
+        ctx.setLineDash([4, 4])
+        ctx.strokeStyle = withAlpha(inside ? C.up : C.down, inside ? 0.45 : 0.55)
+        rectEdges(xl, xr, top, bot)
+        ctx.setLineDash([])
+        // Left spine at entry: the placed gate the price scrolled in from.
+        ctx.strokeStyle = withAlpha(inside ? C.up : C.down, 0.4)
         ctx.beginPath()
-        ctx.moveTo(fx, yy)
-        ctx.lineTo(w, yy)
+        ctx.moveTo(xl, top)
+        ctx.lineTo(xl, bot)
         ctx.stroke()
+      } else {
+        // Cutoff passed: frozen, pulsing. Neutral white while settling, then the verdict color, never the live price.
+        const col = phase === 'won' ? C.up : phase === 'lost' ? C.down : C.text
+        const base = phase === 'won' ? 0.26 : phase === 'lost' ? 0.16 : 0.09
+        ctx.fillStyle = withAlpha(col, base * pulse)
+        ctx.fillRect(xl, top, xr - xl, bot - top)
+        ctx.lineWidth = phase === 'settling' ? 1.4 : 1.8
+        ctx.setLineDash([])
+        ctx.strokeStyle = withAlpha(col, 0.95 * pulse)
+        rectEdges(xl, xr, top, bot)
       }
     }
-    // Numbered flags: one square per band at its center on the right edge, the same slot number as its chip.
-    // Lit solid green when the price is inside (paying), red-outlined when out, solid verdict color when settled.
-    const flags = ov.bands
-      .filter((b) => b.n != null)
-      .map((b) => ({ b, cy: (y(b.lower) + y(b.upper)) / 2 }))
-      .sort((a, z) => a.cy - z.cy)
+    // Numbered flags: one square per band, pinned to its cutoff edge (clamped on-screen), the same slot number as
+    // its chip. Green when the price is inside (paying), red when out, neutral while settling, verdict when resolved.
     const FS = 14
     const gap = FS + 3
+    const flags = ov.bands
+      .filter((b) => b.n != null)
+      .map((b) => ({ b, fx: Math.max(rim + FS, Math.min(w - rim - FS, spanOf(b).xr)) - FS, cy: (y(b.lower) + y(b.upper)) / 2 }))
+      .sort((a, z) => a.cy - z.cy)
     for (const f of flags) f.cy = Math.max(FS, Math.min(h - FS, f.cy))
     for (let i = 1; i < flags.length; i++) if (flags[i].cy - flags[i - 1].cy < gap) flags[i].cy = flags[i - 1].cy + gap
     for (let i = flags.length - 1; i >= 0; i--) {
       const cap = h - FS - (flags.length - 1 - i) * gap
       if (flags[i].cy > cap) flags[i].cy = cap
     }
-    const flagX = w - rim - FS
     ctx.font = '700 9px ui-monospace, SFMono-Regular, Menlo, monospace'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    for (const { b, cy } of flags) {
+    for (const { b, fx, cy } of flags) {
+      const phase = phaseOf(b)
       const inside = price > b.lower && price <= b.upper
-      const col = b.state === 'won' ? C.up : b.state === 'lost' ? C.down : inside ? C.up : C.down
-      const filled = b.state === 'won' || b.state === 'lost' || inside
-      ctx.fillStyle = filled ? withAlpha(col, 0.92) : 'rgba(0, 0, 0, 0.75)'
-      ctx.fillRect(flagX, cy - FS / 2, FS, FS)
-      ctx.strokeStyle = withAlpha(col, 0.9)
+      const col = phase === 'won' ? C.up : phase === 'lost' ? C.down : phase === 'settling' ? C.text : inside ? C.up : C.down
+      const filled = phase === 'won' || phase === 'lost' || phase === 'settling' || inside
+      const a = phase === 'settling' ? pulse : 1
+      ctx.fillStyle = filled ? withAlpha(col, 0.92 * a) : 'rgba(0, 0, 0, 0.75)'
+      ctx.fillRect(fx, cy - FS / 2, FS, FS)
+      ctx.strokeStyle = withAlpha(col, 0.9 * a)
       ctx.lineWidth = 1
-      ctx.strokeRect(flagX + 0.5, cy - FS / 2 + 0.5, FS - 1, FS - 1)
+      ctx.strokeRect(fx + 0.5, cy - FS / 2 + 0.5, FS - 1, FS - 1)
       ctx.fillStyle = filled ? '#000' : withAlpha(col, 0.95)
-      ctx.fillText(String(b.n), flagX + FS / 2, cy + 0.5)
+      ctx.fillText(String(b.n), fx + FS / 2, cy + 0.5)
     }
     ctx.restore()
   }

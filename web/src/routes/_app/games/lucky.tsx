@@ -21,6 +21,7 @@ import {
   mergeSnapshotMarket,
   usePhaseElapsed,
   usePlayResolutionWatch,
+  useRestoreOpenPlay,
   useRoundCountdown,
 } from '@/hooks/useGameRound'
 import { haptic } from '@/lib/haptics'
@@ -274,6 +275,29 @@ function LuckyScreen() {
   })
 
   useEffect(() => () => clearResetTimer(), [])
+
+  // Restore a live round on (re)mount from the durable open-plays list, so leaving to Home and back, or a hard
+  // refresh, drops you straight back onto the running position (chart, TARGET, countdown, CASH OUT) instead of
+  // idle. Skips the reel deal (the round already opened); the SSE watch + countdown take over from 'open'.
+  const restoreOpenPlay = useCallback(
+    (p: PlayDTO) => {
+      finalized.current = false
+      setLockPrice(null)
+      setPlay(p)
+      setLive({
+        markValue: p.markValue,
+        pnl: p.pnl,
+        multiplier: p.multiplier,
+        entryValue: p.entryValue,
+        maxPayout: p.maxPayout,
+        status: p.status,
+      })
+      setPhase('open')
+      track({ id: p.id, game: 'lucky' })
+    },
+    [track],
+  )
+  useRestoreOpenPlay({ game: 'lucky', active: phase !== 'idle', onRestore: restoreOpenPlay })
 
   // Bed rides the whole round: fades in as reels deal, out the moment the phase leaves the live window.
   // finishResult also cuts it so the sting lands over silence. Bright + bouncy, the counterpart to Range's tension.

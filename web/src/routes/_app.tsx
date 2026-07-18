@@ -62,6 +62,10 @@ type OnboardingStep = 'username' | 'customize' | 'welcome'
 // The landing route ("/") just redirects here.
 export const Route = createFileRoute('/_app')({ component: AppLayout })
 
+// Marks that a demo session already walked through the door, so a refresh restores it instead of
+// bouncing back to the landing. Real/dev restore from the JWT; demo has no token, so it needs this.
+const DEMO_ENTERED_KEY = 'pips_entered'
+
 function AppLayout() {
   const { status, user, recovering, refresh } = useAuth()
   const reduced = useReducedMotion()
@@ -184,7 +188,12 @@ function AppLayout() {
   const [entered, setEntered] = useState(false)
   const [restoredSession, setRestoredSession] = useState(false)
   useIsoLayoutEffect(() => {
-    if (!isDemo() && !onboardingDebug && loadToken() != null) {
+    if (onboardingDebug) return // QA forces the real first-run arc, never a silent restore
+    // A returning session skips the door: real/dev restore from the stored JWT, demo from the entered flag.
+    const returning = isDemo()
+      ? typeof window !== 'undefined' && window.localStorage.getItem(DEMO_ENTERED_KEY) === '1'
+      : loadToken() != null
+    if (returning) {
       setEntered(true)
       setRestoredSession(true)
     }
@@ -206,6 +215,7 @@ function AppLayout() {
   useEffect(() => {
     if (status === 'anon' || status === 'error') setRestoredSession(false)
     if (status === 'anon') {
+      if (typeof window !== 'undefined') window.localStorage.removeItem(DEMO_ENTERED_KEY) // sign-out returns to the door
       setEntered(false)
       onboardedRef.current = false
       setOnboarding(false)
@@ -267,6 +277,12 @@ function AppLayout() {
     },
     [phase, navigate],
   )
+
+  // Walk in through the door, and in demo remember it so a refresh restores the session instead of re-showing the door.
+  const enterApp = useCallback(() => {
+    setEntered(true)
+    if (isDemo() && typeof window !== 'undefined') window.localStorage.setItem(DEMO_ENTERED_KEY, '1')
+  }, [])
 
   // The loading veil covers the first paint until auth resolves (anon -> door, authed -> app), then wipes up to reveal the console.
   useEffect(() => {
@@ -381,7 +397,7 @@ function AppLayout() {
             <DeviceSettledProvider settled={deviceSettled}>{deviceChild}</DeviceSettledProvider>
           </Console3DRoute>
 
-          {phase === 'landing' && !restoring && <LandingOverlay onEnter={() => setEntered(true)} />}
+          {phase === 'landing' && !restoring && <LandingOverlay onEnter={enterApp} />}
 
           {/* Mounted a step early (on username) so the skin canvas pre-warms behind the handle screen; `active` flips on the skin step to snap it in and zoom out.
               Pre-warming kills the old ~500ms build stall at hand-off. */}

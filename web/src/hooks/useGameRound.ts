@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
-import { api, streamPlay, type PlayDTO, type PlayStatus, type PlayTick } from '@/lib/api'
+import { api, streamPlay, type Game, type PlayDTO, type PlayStatus, type PlayTick } from '@/lib/api'
 
 export type LivePlaySnapshot = {
   markValue: string
@@ -197,6 +198,47 @@ export function useRoundCountdown({
   }, [enabled, fallbackDurationSec, intervalMs, play])
 
   return { secsLeft, remainingMs, settleMs }
+}
+
+// Restore a live round when a game screen (re)mounts. The durable `GET /plays?status=open` is the truth that
+// survives navigating Home and back AND a hard refresh (the in-session phase/play state does not). Fires
+// onRestore once with this game's open play, so the screen rehydrates into its live phase instead of idle.
+// Reuses the hub's query key, so Home -> game hits the warm cache and restores with no flash; a cold refresh
+// fetches fresh. `active` gates it off once the player has a round going this mount (never clobbers a fresh
+// mint); `exclude` lets Range V1 skip Range V2's plays (both are `range` on the backend).
+export function useRestoreOpenPlay({
+  game,
+  active,
+  onRestore,
+  exclude,
+}: {
+  game: Game
+  active: boolean
+  onRestore: (play: PlayDTO) => void
+  exclude?: (play: PlayDTO) => boolean
+}) {
+  const restoredRef = useRef(false)
+  const onRestoreRef = useRef(onRestore)
+  const excludeRef = useRef(exclude)
+  onRestoreRef.current = onRestore
+  excludeRef.current = exclude
+
+  const openQ = useQuery({
+    queryKey: ['plays', 'open'],
+    queryFn: () => api.plays({ status: 'open', limit: 30 }),
+    refetchInterval: 5000,
+    staleTime: 3000,
+    retry: false,
+  })
+
+  const plays = openQ.data?.plays
+  useEffect(() => {
+    if (restoredRef.current || active || !plays) return
+    const match = plays.find((p) => p.game === game && !(excludeRef.current?.(p) ?? false))
+    if (!match) return
+    restoredRef.current = true
+    onRestoreRef.current(match)
+  }, [plays, active, game])
 }
 
 export function usePhaseElapsed(active: boolean, intervalMs = 100): number {

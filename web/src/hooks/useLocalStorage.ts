@@ -22,6 +22,9 @@ export function useLocalStorage<T>(
   // Server and first client render must agree or consumers binding this into markup trip hydration warnings.
   // Synced to the real value in a layout effect so client-only mounts (game screens) pick it up before paint.
   const [storedValue, setStoredValue] = useState<T>(initialValue)
+  // Mirrors the live value so setValue can resolve the next value synchronously, never from a stale closure.
+  const valueRef = useRef(storedValue)
+  valueRef.current = storedValue
 
   useIsoLayoutEffect(() => {
     const nextValue = readValue()
@@ -31,11 +34,11 @@ export function useLocalStorage<T>(
   const setValue = useCallback(
     (value: T | ((prev: T) => T)) => {
       try {
-        let nextValue = initialRef.current
-        setStoredValue((prev) => {
-          nextValue = value instanceof Function ? value(prev) : value
-          return nextValue
-        })
+        // Resolve now (not inside the updater): React may run the updater lazily, and the persisted value
+        // must be the one we actually set, not initialRef. This is what made every write save the default.
+        const nextValue = value instanceof Function ? (value as (prev: T) => T)(valueRef.current) : value
+        valueRef.current = nextValue
+        setStoredValue(nextValue)
         if (typeof window !== 'undefined') {
           window.localStorage.setItem(key, JSON.stringify(nextValue))
         }

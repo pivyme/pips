@@ -21,6 +21,7 @@ import {
   mergeSnapshotMarket,
   usePhaseElapsed,
   usePlayResolutionWatch,
+  useRestoreOpenPlay,
   useRoundCountdown,
 } from '@/hooks/useGameRound'
 import { haptic } from '@/lib/haptics'
@@ -284,6 +285,29 @@ function MoonshotScreen() {
   })
 
   useEffect(() => () => clearResetTimer(), [])
+
+  // Restore a live round on (re)mount from the durable open-plays list, so leaving to Home and back, or a hard
+  // refresh, drops you straight back onto the running call (chart, TARGET, countdown, CASH OUT) instead of idle.
+  // Skips the FIRING beat (the round already opened); the SSE watch + countdown take over from 'open'.
+  const restoreOpenPlay = useCallback(
+    (p: PlayDTO) => {
+      finalized.current = false
+      setLockPrice(null)
+      setPlay(p)
+      setLive({
+        markValue: p.markValue,
+        pnl: p.pnl,
+        multiplier: p.multiplier,
+        entryValue: p.entryValue,
+        maxPayout: p.maxPayout,
+        status: p.status,
+      })
+      setPhase('open')
+      track({ id: p.id, game: 'moonshot' })
+    },
+    [track],
+  )
+  useRestoreOpenPlay({ game: 'moonshot', active: phase !== 'idle', onRestore: restoreOpenPlay })
 
   // The bed rides the active window (placing -> open) and cuts the moment it resolves so the sting lands clean. Tense + punchy, the ignition counterpart to Lucky's funk and Range's dark techno.
   const bedPlaying = phase === 'placing' || phase === 'open'

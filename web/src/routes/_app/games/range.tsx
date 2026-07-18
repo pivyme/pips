@@ -22,6 +22,7 @@ import { useLiveMarkets } from '@/hooks/useLiveMarkets'
 import {
   usePhaseElapsed,
   usePlayResolutionWatch,
+  useRestoreOpenPlay,
   useRoundCountdown,
 } from '@/hooks/useGameRound'
 import { haptic } from '@/lib/haptics'
@@ -41,6 +42,7 @@ import { rangeDebug, type RangeEntryIntent } from '@/lib/rangeDebug'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { useActivePlay } from '@/lib/activePlay'
+import { rv2LivePlayIds } from '@/lib/rangeV2'
 import { cnm } from '@/utils/style'
 import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
@@ -63,6 +65,8 @@ const FALLBACK_TIERS: Array<TierView> = [
   { tier: 2, prob: 0.45, multiplier: 2.13, sigmaMult: 0.598, halfPct: 0.032 },
   { tier: 3, prob: 0.3, multiplier: 3.2, sigmaMult: 0.385, halfPct: 0.021 },
   { tier: 4, prob: 0.18, multiplier: 5.33, sigmaMult: 0.228, halfPct: 0.012 },
+  { tier: 5, prob: 0.11, multiplier: 8.73, sigmaMult: 0.138, halfPct: 0.0074 },
+  { tier: 6, prob: 0.065, multiplier: 14.77, sigmaMult: 0.082, halfPct: 0.0044 },
 ]
 // Default tier the knob lands on at mount: the middle rung.
 const DEFAULT_TIER_IDX = 2
@@ -124,9 +128,6 @@ function fmtClock(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
-
-// ±% band label with enough decimals to keep tight tiers distinct (0.021 vs 0.032).
-const fmtHalfPct = (halfPct: number): string => halfPct.toFixed(halfPct < 0.1 ? 3 : 2)
 
 // Digit-easing readouts so a knob tier change eases the multiplier/payout instead of hard-swapping.
 const MultFlow = ({ value }: { value: number }) => (
@@ -471,6 +472,36 @@ function RangeScreen() {
   })
 
   useEffect(() => () => clearResetTimer(), [])
+
+  // Restore a live round on (re)mount from the durable open-plays list, so leaving to Home and back, or a hard
+  // refresh, drops you straight back onto the running band (chart, ENTRY, countdown, CASH OUT) instead of idle.
+  // Excludes Range V2's plays (both mint `range`); the SSE watch + countdown take over from 'open'.
+  const restoreOpenPlay = useCallback(
+    (p: PlayDTO) => {
+      finalized.current = false
+      previewed.current = false
+      wasInside.current = null
+      setLockPrice(null)
+      setPlay(p)
+      setLive({
+        markValue: p.markValue,
+        pnl: p.pnl,
+        multiplier: p.multiplier,
+        entryValue: p.entryValue,
+        maxPayout: p.maxPayout,
+        status: p.status,
+      })
+      setPhase('open')
+      track({ id: p.id, game: 'range' })
+    },
+    [track],
+  )
+  useRestoreOpenPlay({
+    game: 'range',
+    active: phase !== 'idle',
+    onRestore: restoreOpenPlay,
+    exclude: (p) => rv2LivePlayIds().has(p.id),
+  })
 
   // Tension bed rides the whole active window: fades in on PLAY press, out the instant the phase leaves
   // it (cash out, settle, re-rack, navigate away). finishResult also cuts it so the sting lands over silence.
@@ -999,16 +1030,15 @@ function RangeScreen() {
                       </span>
                     )}
                   </div>
-                  <div className="tnum text-[40px] font-extrabold leading-none text-brand-500">
-                    <MultFlow value={idleMult} />
-                  </div>
-                  <div className="mt-2.5 grid grid-cols-3 gap-x-3">
-                    <Cell label="Bet" value={`$${stake}`} />
-                    <Cell label="Win" value={<UsdFlow value={netStakeUsd(stake) * idleMult} />} />
-                    <Cell label="Odds" value={<NumberFlow value={Math.round(tierView.prob * 100)} prefix="~" suffix="%" />} />
-                  </div>
-                  <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
-                    Land inside ±{fmtHalfPct(halfLivePct)}% at the buzzer
+                  {/* Payout is the hero; bet + win ride beside it so the readout stays two short rows. */}
+                  <div className="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1.5">
+                    <div className="tnum text-[40px] font-extrabold leading-none text-brand-500">
+                      <MultFlow value={idleMult} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-3 pb-0.5">
+                      <Cell label="Bet" value={`$${stake}`} />
+                      <Cell label="Win" value={<UsdFlow value={netStakeUsd(stake) * idleMult} />} />
+                    </div>
                   </div>
                 </>
               )}

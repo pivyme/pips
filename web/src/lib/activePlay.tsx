@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { streamPlay, type Game, type PlayStatus } from '@/lib/api'
+import { api, streamPlay, type Game, type PlayStatus } from '@/lib/api'
+import { rv2LivePlayIds } from '@/lib/rangeV2'
 
 export type TrackedPlay = { id: string; game: Game }
 export type ActivePlay = TrackedPlay & { status: PlayStatus | null; pnl: string | null }
@@ -27,6 +28,27 @@ export function ActivePlayProvider({ children }: { children: ReactNode }) {
   const track = useCallback((play: TrackedPlay | null) => {
     setTracked(play)
     setLive({ status: null, pnl: null })
+  }, [])
+
+  // Re-seed from the durable open-plays list on mount, so the chip + off-screen settle toast survive a hard
+  // refresh (the in-memory tracking above is lost on reload). Only seeds when nothing is already tracked (the
+  // functional update makes it a no-op if a game screen tracked a fresh mint first); the stream below fills in
+  // status/pnl. Range V2 plays are skipped: it manages its own board and the chip can't tell V1/V2 apart.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .plays({ status: 'open', limit: 30 })
+      .then(({ plays }) => {
+        if (cancelled || !plays.length) return
+        const rv2 = rv2LivePlayIds()
+        const open = plays.find((p) => !(p.game === 'range' && rv2.has(p.id)))
+        if (!open) return
+        setTracked((cur) => cur ?? { id: open.id, game: open.game })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {

@@ -279,8 +279,10 @@ export const REAL_BINARY_MIN_OFFSET_SIGMA: number = Number(process.env.PIPS_REAL
 // max_entry_probability; cap the half-width so the band's prob stays under this. A too-tight user band is left as-is.
 export const REAL_RANGE_MAX_PROB: number = Number(process.env.PIPS_REAL_RANGE_MAX_PROB) || 0.85;
 // RANGE knob ladder: target win probabilities, safest first. A tier mints at 1x leverage so its payout is
-// ~1/p whenever the tap lands; the band half-width (z((1+p)/2)*sigma) is what absorbs the clock.
-const RANGE_TIER_DEFAULTS = [0.85, 0.65, 0.45, 0.3, 0.18];
+// ~1/p whenever the tap lands; the band half-width (z((1+p)/2)*sigma) is what absorbs the clock. The two
+// tightest rungs (~9x, ~15x) are the big-payout end; the chain admits asks down to 0.01 (~100x ceiling)
+// and ticksForRange floors the band at one admission tick, so they stay mintable, with sim-calibrated quotes.
+const RANGE_TIER_DEFAULTS = [0.85, 0.65, 0.45, 0.3, 0.18, 0.11, 0.065];
 const rangeTierEnv = (process.env.PIPS_RANGE_TIER_PROBS ?? '')
   .split(',')
   .map((s) => Number(s.trim()))

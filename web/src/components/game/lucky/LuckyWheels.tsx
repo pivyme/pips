@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { haptic } from '@/lib/haptics'
 import { slotLock } from '@/lib/sound'
+import { useReducedMotion } from '@/hooks/useReducedMotion'
 import type { Side } from '@/lib/api'
 
 // Two prize wheels deal the LUCKY hand: a direction wheel (up/down arrows) and a multiplier wheel (2/3/5/10x).
@@ -27,6 +28,7 @@ const RIM = 47 // outer frame radius
 const RL_NUM = 27 // multiplier number radius
 const RL_ARROW = 25 // direction arrow radius
 const FREE_DEG_PER_MS = 0.72 // free-spin speed while the deal lands
+const IDLE_DEG_PER_MS = 0.03 // gentle carousel drift at rest, so the wheels always feel alive (~12s/turn)
 const LAND_TURNS = 3 // full turns before settling, for the arcade wind-down
 const easeOut = (p: number): number => 1 - Math.pow(1 - p, 3)
 
@@ -83,6 +85,7 @@ function SpinWheel({
   const idxsRef = useRef<number[] | null>(targetIdxs)
   idxsRef.current = targetIdxs
   const [landed, setLanded] = useState<number | null>(null)
+  const reduced = useReducedMotion()
 
   const n = segments.length
   const seg = 360 / n
@@ -142,13 +145,25 @@ function SpinWheel({
       lastPick.current = pick
       setLanded(pick)
     } else {
+      // Fully idle (no dealt hand): drift slowly like a real prize wheel so the cluster never feels dead.
+      // The two wheels turn opposite ways for a bit of life. Calm to a stop under reduced-motion.
       lastPick.current = null
       setLanded(null)
+      if (!reduced) {
+        const dir = index % 2 === 0 ? 1 : -1
+        let prev = performance.now()
+        const tick = (now: number) => {
+          write(rot.current + (now - prev) * IDLE_DEG_PER_MS * dir)
+          prev = now
+          raf.current = requestAnimationFrame(tick)
+        }
+        raf.current = requestAnimationFrame(tick)
+      }
     }
     return cancel
     // idxs read via ref; targetKey is the stable dep that tracks its content.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cycling, landing, stopAt, targetKey, n, index, last])
+  }, [cycling, landing, stopAt, targetKey, n, index, last, reduced])
 
   const hasLanded = landed != null
   const lit = hasLanded && !cycling // fully locked: glow + accent, mirrors the reel's dim-then-light
@@ -163,9 +178,11 @@ function SpinWheel({
             const [x1, y1] = polar(R, (i + 1) * seg)
             const c = HUE_VAR[s.hue]
             const isLanded = landed === i
-            const fillOp = isLanded ? (lit ? 0.34 : 0.22) : cycling ? 0.16 : lit ? 0.1 : 0.07
-            const strokeOp = isLanded ? 1 : cycling ? 0.7 : 0.45
-            const labelOp = isLanded ? 1 : cycling ? 0.92 : lit ? 0.78 : 0.58
+            const fillOp = isLanded ? (lit ? 0.36 : 0.24) : cycling ? 0.2 : lit ? 0.14 : 0.12
+            const strokeOp = isLanded ? 1 : cycling ? 0.85 : 0.62
+            const labelOp = isLanded ? 1 : cycling ? 1 : lit ? 0.82 : 0.72
+            // Labels charge up while the wheel spins and stay lit once locked.
+            const labelGlow = isLanded && lit ? 5 : cycling ? 3 : 0
             const slice = (
               <path
                 d={`M${CX} ${CY} L${x0.toFixed(2)} ${y0.toFixed(2)} A${R} ${R} 0 0 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`}
@@ -181,7 +198,7 @@ function SpinWheel({
                   <path
                     d={triPath(ax, ay, aSize, s.hue === 'down')}
                     transform={`rotate(${centers[i].toFixed(2)} ${ax.toFixed(2)} ${ay.toFixed(2)})`}
-                    style={{ fill: c, opacity: labelOp, filter: isLanded && lit ? `drop-shadow(0 0 4px ${c})` : undefined }}
+                    style={{ fill: c, opacity: labelOp, filter: labelGlow ? `drop-shadow(0 0 ${labelGlow}px ${c})` : undefined }}
                   />
                 </g>
               )
@@ -198,7 +215,7 @@ function SpinWheel({
                   transform={`rotate(${centers[i].toFixed(2)} ${lx.toFixed(2)} ${ly.toFixed(2)})`}
                   fontSize={isLanded ? 17 : 15}
                   className="tnum"
-                  style={{ fill: c, fontWeight: 900, opacity: labelOp, filter: isLanded && lit ? `drop-shadow(0 0 5px ${c})` : undefined }}
+                  style={{ fill: c, fontWeight: 900, opacity: labelOp, filter: labelGlow ? `drop-shadow(0 0 ${labelGlow}px ${c})` : undefined }}
                 >
                   {s.text}
                 </text>
@@ -207,10 +224,19 @@ function SpinWheel({
           })}
         </g>
 
-        <circle cx={CX} cy={CY} r={RIM} fill="none" stroke="var(--color-line-strong)" strokeWidth={1.25} />
+        <circle
+          cx={CX}
+          cy={CY}
+          r={RIM}
+          fill="none"
+          stroke={cycling ? 'var(--color-brand-500)' : 'var(--color-line-strong)'}
+          strokeOpacity={cycling ? 0.9 : 1}
+          strokeWidth={1.25}
+          style={{ filter: cycling ? 'drop-shadow(0 0 4px var(--color-brand-500))' : undefined }}
+        />
         <path
           d="M50 12 L44 2 L56 2 Z"
-          style={{ fill: 'var(--color-brand-500)', filter: `drop-shadow(0 0 ${lit ? 5 : 2}px var(--color-brand-500))` }}
+          style={{ fill: 'var(--color-brand-500)', filter: `drop-shadow(0 0 ${lit || cycling ? 5 : 2}px var(--color-brand-500))` }}
         />
       </svg>
     </div>

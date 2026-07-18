@@ -21,6 +21,7 @@ import { cashOut, placePlay } from '@/lib/sui/predict'
 import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
+import { RV2_POSITIONS_KEY } from '@/lib/rangeV2'
 import { cnm } from '@/utils/style'
 import { formatStringToNumericDecimals } from '@/utils/format'
 
@@ -33,6 +34,11 @@ export const Route = createFileRoute('/_app/games/range-v2')({
 })
 
 const STAKE_KEY = 'pips_stake_idx' // shared with Lucky + Range so the chip stays put across screens
+// The stacked positions + running session survive leaving the screen (Home and back), so a rider returns to
+// exactly the board they left. Restored open plays re-attach their watcher and reconcile to chain truth, so this
+// is persistence, never a fabricated state.
+const POSITIONS_KEY = RV2_POSITIONS_KEY // one source of truth, also read by the hub + Range V1 (lib/rangeV2)
+const SESSION_KEY = 'pips_rv2_session'
 // Payout-tier ladder, identical to Range: the knob picks a payout (bigger pays = tighter, probability-sized band).
 // A fixed %-band knob can't hold in real mode. A short BTC round's achievable half-width is only ~0.02-0.04%, so any
 // wider request clamps down on-chain and the aim preview ends up bigger than what actually mints. Tiers size by target
@@ -109,6 +115,11 @@ const usd = (n: number): string =>
   (Number.isFinite(n) ? n : 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtMult = (m: number): string => `${m.toFixed(2).replace(/\.?0+$/, '')}×`
 const num = (s?: string): number => (s ? parseFloat(s) || 0 : 0)
+// Trailing number in a `pos-N` key, so the key counter can re-seed above restored chips without colliding.
+const keyIndex = (k: string): number => {
+  const n = parseInt(k.slice(k.lastIndexOf('-') + 1), 10)
+  return Number.isFinite(n) ? n : -1
+}
 
 const setsEqual = (a: Set<string>, b: Set<string>): boolean => {
   if (a.size !== b.size) return false
@@ -131,7 +142,7 @@ function RangeV2Screen() {
   const [spot, setSpot] = useState<number | null>(null)
   const [overlay, setOverlay] = useState<Overlay>('none')
   const [inZoneKeys, setInZoneKeys] = useState<Set<string>>(new Set())
-  const [session, setSession] = useState<Session>({ net: 0, wins: 0, losses: 0, best: 0, streak: 0 })
+  const [session, setSession] = useLocalStorage<Session>(SESSION_KEY, { net: 0, wins: 0, losses: 0, best: 0, streak: 0 })
   const [wave, setWave] = useState<Wave | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [, setSelfPlaceSignal] = useState(0) // bump to pop a coin for your own play (crowd overlay temporarily disabled)
@@ -210,6 +221,37 @@ function RangeV2Screen() {
   const nextSecs = soonestExpiry != null ? Math.max(0, Math.ceil((soonestExpiry - nowMs) / 1000)) : null
   const settlingWave = soonestExpiry != null && soonestExpiry <= nowMs && openPos.length > 0
 
+  // Restore the board left riding when the screen was last open (navigated Home and back). Runs once. Drops any
+  // mid-mint chip with no playId (its placePlay promise died with the old mount, unrecoverable), and re-seeds the
+  // key counter above the restored chips so a fresh PLAY can't collide. The PositionWatch list re-attaches an SSE +
+  // watchdog to every restored open play, so open positions reconcile to chain truth instead of showing a stale mark.
+  const restoredRef = useRef(false)
+  useEffect(() => {
+    if (restoredRef.current) return
+    restoredRef.current = true
+    let saved: Position[] = []
+    try {
+      const raw = window.localStorage.getItem(POSITIONS_KEY)
+      if (raw) saved = JSON.parse(raw) as Position[]
+    } catch {
+      /* corrupt store: start clean */
+    }
+    const usable = saved.filter((p) => p.playId)
+    if (!usable.length) return
+    keySeq.current = usable.reduce((m, p) => Math.max(m, keyIndex(p.key)), -1) + 1
+    setPositions(usable)
+  }, [])
+
+  // Persist the live set so it survives leaving the screen. Only fires when the array REFERENCE changes; the 250ms
+  // sweep returns the same array while idle, so there's no per-tick localStorage churn.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(POSITIONS_KEY, JSON.stringify(positions))
+    } catch {
+      /* quota/private-mode: persistence is best-effort */
+    }
+  }, [positions])
+
   // A single ~250ms clock drives the shared countdown + the resolved-band cleanup.
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 250)
@@ -236,11 +278,17 @@ function RangeV2Screen() {
     let lastTick = 0
     const loop = () => {
       const p = livePriceRef.current
+      const nowT = Date.now()
       const next = new Set<string>()
       const tracked = new Set<string>()
       if (p > 0) {
         for (const pos of positionsRef.current) {
-          if (pos.band && (pos.status === 'open' || pos.status === 'pending')) {
+          if (!pos.band || !(pos.status === 'open' || pos.status === 'pending')) continue
+          if (pos.expiry != null && nowT >= pos.expiry) {
+            // Cutoff passed: the settle price is locked, so FREEZE the in/out verdict at its last live read (keeps the
+            // footer counting a win instead of flashing "all out"), but drop it from `tracked` so no new cross fires.
+            if (prevIn.has(pos.key)) next.add(pos.key)
+          } else {
             tracked.add(pos.key)
             if (p > pos.band.lower && p <= pos.band.upper) next.add(pos.key)
           }
@@ -261,7 +309,8 @@ function RangeV2Screen() {
         lastTick = t
         haptic(exited ? 'rigid' : 'selection')
       }
-      const allIn = tracked.size > 0 && next.size === tracked.size
+      // Board armed = every still-LIVE zone paying (frozen settling zones don't gate the sound).
+      const allIn = tracked.size > 0 && [...tracked].every((k) => next.has(k))
       if (allIn && !prevAllIn && entered) rangeCross(true) // the board armed: every zone paying
       else if (!allIn && prevAllIn && exited) rangeCross(false) // dropped out of the armed state
       prevAllIn = allIn
@@ -506,22 +555,43 @@ function RangeV2Screen() {
         : { label: 'PLAY', color: 'amber', onPress: () => void doPlay() },
   })
 
-  // Chart overlays: the open bands as forward-zone lanes (live + flashing verdicts) PLUS a persistent aim
-  // bracket showing where the NEXT play lands, so you can always size the next band even with a full stack.
-  // The aim hides at MAX (nothing more to place), which doubles as the "you're full" cue.
+  // Chart overlays: each open band as a TIME-ANCHORED lane (entry -> cutoff), so it scrolls left with the line
+  // and the before/after of every play reads at a glance, PLUS a persistent aim bracket showing where the NEXT
+  // play lands. A dim entry dot per live position marks exactly where it was placed. Aim hides at MAX (nothing
+  // more to place), which doubles as the "you're full" cue. The chart derives the cutoff line(s) from t1.
   const positionBands = positions
     .filter((p) => p.band && p.asset === asset && p.status !== 'placing')
-    .map((p) => ({
-      lower: p.band!.lower,
-      upper: p.band!.upper,
-      state: (isResolved(p) ? (p.won ? 'won' : 'lost') : 'live') as 'live' | 'won' | 'lost',
-      n: p.slot, // the chart flag mirrors the chip's number
-    }))
+    .map((p) => {
+      // Past the cutoff the settle price is locked and a 1x range is deterministic, so reveal the verdict from the
+      // frozen in-zone read (same source as the footer) instead of a neutral wait, then snap to the real result.
+      const cutoffPassed = p.expiry != null && nowMs >= p.expiry
+      const state: 'live' | 'won' | 'lost' = isResolved(p)
+        ? p.won
+          ? 'won'
+          : 'lost'
+        : cutoffPassed
+          ? inZoneKeys.has(p.key)
+            ? 'won'
+            : 'lost'
+          : 'live'
+      return {
+        lower: p.band!.lower,
+        upper: p.band!.upper,
+        state,
+        n: p.slot, // the chart flag mirrors the chip's number
+        t0: p.openedAt, // entry: the band's left edge, scrolling into the past
+        t1: p.expiry, // cutoff: the band's right edge + the settlement line
+      }
+    })
+  const entryMarkers = positions
+    .filter((p) => isLive(p) && p.asset === asset && p.entrySpot != null && p.openedAt != null)
+    .map((p) => ({ t: p.openedAt!, p: p.entrySpot! }))
   const showAim = canPlay && !atMax && spot != null
   const overlays =
     positionBands.length || showAim
       ? {
           bands: positionBands.length ? positionBands : undefined,
+          markers: entryMarkers.length ? entryMarkers : undefined,
           aim: showAim ? { pct: aimHalfPct, tag: `NEXT ${fmtMult(idleMult)}` } : undefined,
         }
       : undefined
@@ -578,7 +648,7 @@ function RangeV2Screen() {
               </div>
               <div className="shrink-0 text-right">
                 <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                  {settlingWave ? 'Settling' : n > 0 ? 'Next buzzer' : 'Available'}
+                  {settlingWave ? 'Settling' : n > 0 ? 'Cutoff in' : 'Available'}
                 </div>
                 <div className="tnum text-xl font-bold leading-none text-text-2">
                   {settlingWave
@@ -682,12 +752,12 @@ function RangeV2Screen() {
                     ${usd(allOut ? cashOutNow : collectNow)}
                   </div>
                   <div className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-text-3">
-                    {allOut ? 'Cash out value now' : 'If the buzzer hit now'}
+                    {allOut ? 'Cash out value now' : 'If the cutoff hit now'}
                   </div>
                   <div className="mt-2.5 grid grid-cols-3 gap-x-3">
                     <Cell label="Cash all" value={`$${usd(cashOutNow)}`} />
                     <Cell label="To win" value={`$${usd(totalToWin)}`} />
-                    <Cell label="Next" value={settlingWave ? '···' : `${nextSecs ?? 0}s`} />
+                    <Cell label="Cutoff" value={settlingWave ? '···' : `${nextSecs ?? 0}s`} />
                   </div>
                 </>
               ) : waveShown && wave != null ? (
@@ -739,7 +809,7 @@ function RangeV2Screen() {
                     <Cell label="Odds" value={`~${Math.round(tierView.prob * 100)}%`} />
                   </div>
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
-                    Stack as many as you like. They all settle on the buzzer.
+                    Stack as many as you like. They all settle at the cutoff.
                   </div>
                 </>
               )}
@@ -767,10 +837,10 @@ function RangeV2Screen() {
       {overlay === 'howto' && (
         <InstructionOverlay
           lines={[
-            ['ZONES', 'PLAY drops a numbered zone that rides to the buzzer. Stack up to 5.'],
-            ['CHIPS', 'Green chip = price inside that zone, it pays at the buzzer. Red = outside.'],
+            ['ZONES', 'PLAY drops a numbered zone that scrolls left to its cutoff. Stack up to 5.'],
+            ['CUTOFF', 'The white line is settlement. Zones inside it when it hits win, outside lose.'],
             ['KNOB', 'Picks your payout. Bigger pays, tighter band.'],
-            ['CASH ALL', 'Bank every open zone at its live value before the buzzer.'],
+            ['CASH ALL', 'Bank every open zone at its live value before the cutoff.'],
           ]}
         />
       )}
@@ -853,6 +923,8 @@ function PositionChip({ p, inZone, nowMs }: { p: Position; inZone: boolean; nowM
   const won = resolved && p.won
   const lost = resolved && !p.won
   const live = isLive(p) && p.status !== 'placing'
+  // Cutoff passed, verdict pending: the settle price is locked, so the chip stops reacting to the line and pulses neutral.
+  const settling = live && p.expiry != null && nowMs >= p.expiry
   const payout = num(p.maxPayout) || p.stake * p.multiplier
   const label =
     p.status === 'placing'
@@ -861,7 +933,7 @@ function PositionChip({ p, inZone, nowMs }: { p: Position; inZone: boolean; nowM
         ? `${won ? '+' : '−'}$${usd(Math.abs(num(p.pnl)))}`
         : `$${usd(payout)}`
   const frac =
-    live && p.expiry != null && p.openedAt != null && p.expiry > p.openedAt
+    live && !settling && p.expiry != null && p.openedAt != null && p.expiry > p.openedAt
       ? Math.max(0, Math.min(1, (p.expiry - nowMs) / (p.expiry - p.openedAt)))
       : null
   return (
@@ -874,9 +946,13 @@ function PositionChip({ p, inZone, nowMs }: { p: Position; inZone: boolean; nowM
             ? 'border-up bg-up/20 text-up'
             : lost
               ? 'border-down text-down opacity-70'
-              : inZone
-                ? 'border-up bg-up/20 text-up'
-                : 'border-down/70 text-down',
+              : settling
+                ? inZone
+                  ? 'animate-pulse border-up bg-up/20 text-up' // cutoff passed, frozen winning: pulse green
+                  : 'animate-pulse border-down bg-down/10 text-down' // frozen losing: pulse red
+                : inZone
+                  ? 'border-up bg-up/20 text-up'
+                  : 'border-down/70 text-down',
       )}
     >
       <span className="text-[8px] leading-none opacity-60">{p.slot}</span>

@@ -7,6 +7,7 @@ import { useConsoleControls } from '@/components/console/controls'
 import { GameScreen } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { api } from '@/lib/api'
+import { rv2LivePlayIds } from '@/lib/rangeV2'
 import { useAuth } from '@/lib/auth'
 import { useLivePresence } from '@/lib/presence'
 import { isDemo } from '@/lib/demo'
@@ -59,6 +60,30 @@ function GamesConsole() {
 
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const streak = statsQ.data?.stats.currentStreak ?? 0
+
+  // Which real games have positions still riding, so the row can flag it. Open plays from the backend are the fresh,
+  // chain-reconciled truth; range-v2 shares the `range` game with Range, so its own tagged ids split the two rows apart.
+  const openPlaysQ = useQuery({
+    queryKey: ['plays', 'open'],
+    queryFn: () => api.plays({ status: 'open', limit: 30 }),
+    refetchInterval: 5000,
+    staleTime: 3000,
+    retry: false,
+  })
+  const openPlays = openPlaysQ.data?.plays ?? []
+  const rv2Ids = rv2LivePlayIds()
+  const rangeV2Live = openPlays.some((p) => p.game === 'range' && rv2Ids.has(p.id))
+  const rangeLive = openPlays.some((p) => p.game === 'range' && !rv2Ids.has(p.id))
+  const inPlayFor = (to: string): boolean =>
+    to === '/games/lucky'
+      ? openPlays.some((p) => p.game === 'lucky')
+      : to === '/games/moonshot'
+        ? openPlays.some((p) => p.game === 'moonshot')
+        : to === '/games/range'
+          ? rangeLive
+          : to === '/games/range-v2'
+            ? rangeV2Live
+            : false
   // First-run only: same signal Lucky's idle hint uses, no extra storage, disappears for good after the first play.
   const firstRun = !statsQ.isLoading && (statsQ.data?.stats.gamesPlayed ?? 0) === 0
 
@@ -73,13 +98,15 @@ function GamesConsole() {
     [setSelTo],
   )
 
-  // The PLAY button lands here. A rigid tick sells picking the cartridge up.
+  // The PLAY button lands here. A rigid tick sells picking the cartridge up. Remember what we launched
+  // (a direct row tap skips the knob, which is what persists selection), so Home reopens on your last game, not the default.
   const launch = useCallback(
     (i: number) => {
       haptic('rigid')
+      setSelTo(ALL[i].to)
       void navigate({ to: ALL[i].to })
     },
-    [navigate],
+    [navigate, setSelTo],
   )
 
   useConsoleControls({
@@ -136,7 +163,7 @@ function GamesConsole() {
         {GAMES.map((g, i) => (
           <div key={g.to}>
             {i > 0 && <Rule />}
-            <GameRow index={i + 1} game={g} selected={i === sel} onLaunch={() => launch(i)} />
+            <GameRow index={i + 1} game={g} selected={i === sel} inPlay={inPlayFor(g.to)} onLaunch={() => launch(i)} />
           </div>
         ))}
       </div>
@@ -191,11 +218,13 @@ function GameRow({
   index,
   game,
   selected,
+  inPlay,
   onLaunch,
 }: {
   index: number
   game: { icon: LucideIcon; name: string; tag: string }
   selected: boolean
+  inPlay: boolean
   onLaunch: () => void
 }) {
   const Icon = game.icon
@@ -220,6 +249,13 @@ function GameRow({
         <div className={cnm('text-[18px] font-extrabold uppercase leading-tight tracking-[0.02em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</div>
         <div className="truncate font-mono text-[11px] uppercase tracking-[0.08em] text-text-3">{game.tag}</div>
       </div>
+      {/* live positions still riding: a green status pill, sharp-cornered like the in-play chips per SCREEN.md */}
+      {inPlay && (
+        <span className="inline-flex shrink-0 items-center gap-1.5 border border-up/60 bg-up/15 px-1.5 py-1 font-mono text-[9px] font-bold uppercase leading-none tracking-[0.12em] text-up">
+          <span className="h-1.5 w-1.5 bg-up motion-safe:animate-pulse" />
+          In Play
+        </span>
+      )}
       {selected && <span className="font-mono text-lg text-brand-500">▶</span>}
     </button>
   )
