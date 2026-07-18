@@ -1,12 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ExternalLink } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { ChevronDown, ExternalLink, Loader2, Share2, X } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
 import { api, type Game, type LuckyParams, type PlayDTO, type RangeParams } from '@/lib/api'
 import { explorerObjectUrl, explorerTxUrl } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
+import { Modal, useOverlayState } from '@/ui/Modal'
+import { Switch } from '@/ui/Switch'
+import { renderPlayCard, sharePlayCard } from '@/lib/playCard'
 import { cnm } from '@/utils/style'
 import { formatExactDecimal } from '@/utils/format'
 
@@ -150,6 +153,7 @@ function detailRows(play: PlayDTO): Array<[string, ReactNode]> {
 
 function HistoryRow({ play }: { play: PlayDTO }) {
   const [open, setOpen] = useState(false)
+  const share = useOverlayState()
   const pnl = parseFloat(play.pnl ?? '0')
   const positive = play.status === 'won' || (play.status === 'cashed_out' && pnl > 0)
   const label = play.status === 'won' ? 'Won' : play.status === 'cashed_out' ? 'Cashed' : 'Lost'
@@ -193,6 +197,18 @@ function HistoryRow({ play }: { play: PlayDTO }) {
 
       {open && (
         <div className="border-t border-white/[0.06] px-4 pb-4 pt-3">
+          {/* Turn any settled round into a shareable 16:9 P&L card. */}
+          <div className="relative mb-3">
+            <button
+              type="button"
+              className="pointer-events-none flex w-full items-center justify-center gap-2 rounded-xl bg-white/[0.06] py-2.5 text-[13px] font-extrabold uppercase tracking-wide text-text transition-colors active:bg-white/[0.1]"
+            >
+              <Share2 className="h-[15px] w-[15px]" strokeWidth={2.6} />
+              Share P&L card
+            </button>
+            <HapticOverlay className="absolute inset-0 rounded-xl" preset="medium" silent onTap={() => share.open()} />
+          </div>
+
           <div className="grid grid-cols-2 gap-x-4 gap-y-2">
             {detailRows(play).map(([k, v]) => (
               <div key={k} className="flex items-baseline justify-between gap-2">
@@ -214,7 +230,106 @@ function HistoryRow({ play }: { play: PlayDTO }) {
           </div>
         </div>
       )}
+
+      <PlayShareModal play={play} isOpen={share.isOpen} onOpenChange={share.setOpen} />
     </div>
+  )
+}
+
+// The share sheet: a live preview of the exported PNG and one Share button (native sheet, download fallback).
+function PlayShareModal({ play, isOpen, onOpenChange }: { play: PlayDTO; isOpen: boolean; onOpenChange: (open: boolean) => void }) {
+  const [url, setUrl] = useState<string | null>(null)
+  const [sharing, setSharing] = useState(false)
+  // Dollar P&L is private for a lot of people, so it's opt-in. The ROI % always shows.
+  const [showPnl, setShowPnl] = useState(false)
+  const urlRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!isOpen) return
+    let cancelled = false
+    setUrl(null)
+    renderPlayCard(play, { showPnl }).then((blob) => {
+      if (cancelled || !blob) return
+      const next = URL.createObjectURL(blob)
+      urlRef.current = next
+      setUrl(next)
+    })
+    return () => {
+      cancelled = true
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current)
+      urlRef.current = null
+    }
+  }, [isOpen, play, showPnl])
+
+  const doShare = async () => {
+    if (sharing) return
+    haptic('medium')
+    setSharing(true)
+    try {
+      await sharePlayCard(play, { showPnl })
+      haptic('success')
+    } catch {
+      const { default: toast } = await import('react-hot-toast')
+      toast.error('Could not make your card. Try again.', { id: 'share-play' })
+    } finally {
+      setSharing(false)
+    }
+  }
+
+  return (
+    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="md" placement="center" className="border border-line bg-[#161615]">
+      {/* Own header (matches the referrals modal): app-style Gabarito heading + a top-right close button. */}
+      <button
+        type="button"
+        onClick={() => onOpenChange(false)}
+        aria-label="Close"
+        className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.06] text-white/70 transition-transform active:scale-90"
+      >
+        <X className="h-[18px] w-[18px]" strokeWidth={2.6} />
+      </button>
+      <h2 className="pr-10 font-sans text-[22px] font-black leading-none text-white">Share P&L</h2>
+      <p className="mt-2 text-[14px] leading-snug text-text-3">Turn this play into a card to share.</p>
+
+      <div className="mt-5 flex flex-col gap-4 pb-1">
+        <div className="relative aspect-[16/9] w-full overflow-hidden rounded-md bg-black/50 ring-1 ring-white/10">
+          {url ? (
+            <img src={url} alt="Your play as a shareable card" className="h-full w-full object-contain" />
+          ) : (
+            <div className="absolute inset-0 grid place-items-center">
+              <Loader2 className="h-5 w-5 animate-spin text-white/50" strokeWidth={2.6} />
+            </div>
+          )}
+        </div>
+
+        {/* The one knob: the dollar P&L is private for a lot of people. ROI % stays on either way. */}
+        <div className="surface-skeuo flex items-center gap-3 rounded-card px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[14px] font-bold text-white">Show P&L value</div>
+            <div className="mt-0.5 text-[12px] leading-snug text-text-3">Your net dollar profit on the card.</div>
+          </div>
+          <Switch
+            label="Show P&L value"
+            isSelected={showPnl}
+            onChange={(v) => {
+              haptic('selection')
+              setShowPnl(v)
+            }}
+          />
+        </div>
+
+        <div className="relative">
+          <button
+            type="button"
+            disabled={sharing}
+            className="btn-primary pointer-events-none flex w-full items-center justify-center gap-2 rounded-md py-3.5 text-[15px] font-extrabold uppercase tracking-wide disabled:opacity-70"
+          >
+            {sharing ? <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={2.6} /> : <Share2 className="h-[18px] w-[18px]" strokeWidth={2.6} />}
+            {sharing ? 'Making your card' : 'Share card'}
+          </button>
+          <HapticOverlay className="absolute inset-0 rounded-md" preset="medium" disabled={sharing} silent onTap={() => void doShare()} />
+        </div>
+      </div>
+    </Modal>
   )
 }
 

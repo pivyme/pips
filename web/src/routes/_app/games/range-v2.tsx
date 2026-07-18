@@ -33,15 +33,25 @@ export const Route = createFileRoute('/_app/games/range-v2')({
 })
 
 const STAKE_KEY = 'pips_stake_idx' // shared with Lucky + Range so the chip stays put across screens
-const BAND_LADDER: Array<number> = [0.02, 0.035, 0.05, 0.08, 0.15]
-const DEFAULT_WIDTH_IDX = 2
+// Payout-tier ladder, identical to Range: the knob picks a payout (bigger pays = tighter, probability-sized band).
+// A fixed %-band knob can't hold in real mode. A short BTC round's achievable half-width is only ~0.02-0.04%, so any
+// wider request clamps down on-chain and the aim preview ends up bigger than what actually mints. Tiers size by target
+// win probability, so every step is distinct, achievable, and the preview equals the opened band. Estimate only, snaps on fetch.
+const FALLBACK_TIERS: Array<TierView> = [
+  { tier: 0, prob: 0.85, multiplier: 1.13, sigmaMult: 1.44, halfPct: 0.077 },
+  { tier: 1, prob: 0.65, multiplier: 1.48, sigmaMult: 0.935, halfPct: 0.05 },
+  { tier: 2, prob: 0.45, multiplier: 2.13, sigmaMult: 0.598, halfPct: 0.032 },
+  { tier: 3, prob: 0.3, multiplier: 3.2, sigmaMult: 0.385, halfPct: 0.021 },
+  { tier: 4, prob: 0.18, multiplier: 5.33, sigmaMult: 0.228, halfPct: 0.012 },
+]
+const DEFAULT_TIER_IDX = 2
+const SECONDS_PER_YEAR = 365.25 * 24 * 3600
 const FALLBACK_ASSETS = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
 const TOKEN_LOGOS: Record<string, string> = {
   BTC: '/assets/images/coins/btc-logo.png',
   ETH: '/assets/images/coins/eth-logo.png',
   SUI: '/assets/images/coins/sui-logo.png',
 }
-const NOMINAL_ROUND_SEC = 30
 // How many positions can ride at once. Caps the chart clutter + keeps the per-user mint queue sane.
 const MAX_POSITIONS = 5
 // How long a resolved band flashes its verdict on the chart/strip before it clears out.
@@ -80,6 +90,15 @@ type Session = { net: number; wins: number; losses: number; best: number; streak
 // stable per wave (keys the panel so its pop/count-up runs once while merged totals keep chasing).
 type Wave = { pnl: number; wins: number; losses: number; at: number; startedAt: number }
 type Overlay = 'none' | 'howto' | 'board'
+// What the knob steps through: a server tier quote, or the cold-start fallback (no expiryMs). Same shape as Range.
+type TierView = {
+  tier: number
+  prob: number
+  multiplier: number
+  sigmaMult: number
+  halfPct: number
+  expiryMs?: number
+}
 
 const isResolved = (p: Position): boolean =>
   p.status === 'won' || p.status === 'lost' || p.status === 'cashed_out'
@@ -97,19 +116,15 @@ const setsEqual = (a: Set<string>, b: Set<string>): boolean => {
   return true
 }
 
-// Cold-start multiple estimate, only until the real per-band quote loads (same shape as Range).
-function estimateMultiplier(halfPct: number, durationSec: number): number {
-  const sigma = 0.05 * Math.sqrt(durationSec / 30)
-  const prob = 1 - Math.exp(-halfPct / sigma)
-  return Math.max(1.05, Math.min(0.97 / Math.max(prob, 0.03), 99))
-}
+// ±% band label with enough decimals to keep tight tiers distinct (0.021 vs 0.032). Mirrors Range.
+const fmtHalfPct = (halfPct: number): string => halfPct.toFixed(halfPct < 0.1 ? 3 : 2)
 
 function RangeV2Screen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
   const navigate = useNavigate()
 
-  const [widthIdx, setWidthIdx] = useState(DEFAULT_WIDTH_IDX)
+  const [tierIdx, setTierIdx] = useState(DEFAULT_TIER_IDX) // knob index into the payout-tier ladder
   const [stakeIdx, setStakeIdx] = useLocalStorage(STAKE_KEY, 2)
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null)
   const [positions, setPositions] = useState<Position[]>([])
@@ -147,22 +162,35 @@ function RangeV2Screen() {
   const stake = STAKE_LADDER[safeBetIdx]
   const cantAfford = balance < STAKE_LADDER[0]
 
-  const halfPct = BAND_LADDER[Math.min(widthIdx, BAND_LADDER.length - 1)]
   const canPlay = liveAssets.length > 0
 
-  // Real Predict-ask quotes for the ladder, so the idle "pays" preview shows the true next-play multiple.
-  const bandWidthsPct = BAND_LADDER.map((h) => h * 2)
+  // Server payout-tier quotes (the SAME source as Range): stable multiples + the live-band decay model, so the
+  // aim preview and the "next pays" number reflect what actually mints. Kept live even while positions ride, since
+  // the aim is for the NEXT play, not the open ones. FALLBACK_TIERS carries the knob until the first fetch.
   const quotesQ = useQuery({
-    queryKey: ['rangeQuotes', asset],
-    queryFn: () => api.rangeQuotes(asset, bandWidthsPct),
+    queryKey: ['rangeTierQuotes', asset],
+    queryFn: () => api.rangeTierQuotes(asset),
     enabled: canPlay && !!asset,
     placeholderData: (prev) => prev,
     staleTime: 4_000,
     refetchInterval: 8_000,
     retry: false,
   })
-  const quotedMult = quotesQ.data?.quotes[widthIdx]?.multiplier
-  const idleMult = quotedMult && quotedMult > 0 ? quotedMult : estimateMultiplier(halfPct, NOMINAL_ROUND_SEC)
+  const tiers: Array<TierView> = quotesQ.data?.quotes.length ? quotesQ.data.quotes : FALLBACK_TIERS
+  const model = quotesQ.data?.model ?? null
+  const tierView = tiers[Math.min(tierIdx, tiers.length - 1)]
+  // The tier's payout is time-independent (1x leverage, ~1/prob); the mint snaps it to the real on-chain multiple.
+  const idleMult = tierView.multiplier
+  // Live aim half-width: the tier's band decays with the round clock (mirrors Range), so the ±% preview equals the
+  // band that mints instead of a fixed request the chain would clamp. Falls back to the quote's static width pre-model.
+  const roundEndsMs = model && tierView.expiryMs ? tierView.expiryMs - nowMs : null
+  const aimHalfPct =
+    model && roundEndsMs != null
+      ? tierView.sigmaMult *
+        model.annualVol *
+        Math.sqrt(Math.max(roundEndsMs, model.minRoundMs) / 1000 / SECONDS_PER_YEAR) *
+        100
+      : tierView.halfPct
 
   // Derived board numbers.
   const inPlay = positions.filter(isLive)
@@ -375,7 +403,7 @@ function RangeV2Screen() {
     setSelfPlaceSignal((s) => s + 1) // your own coin-pop, same primitive as the crowd
     haptic('heavy')
     try {
-      const { play } = await placePlay('range', { stake, asset, widthPct: halfPct * 2 })
+      const { play } = await placePlay('range', { stake, asset, tier: tierView.tier })
       setPositions((prev) =>
         prev.map((p) =>
           p.key === key
@@ -404,7 +432,7 @@ function RangeV2Screen() {
       setPositions((prev) => prev.filter((p) => p.key !== key))
       toastError(e)
     }
-  }, [asset, stake, halfPct, idleMult, canPlay, playsPaused, cantAfford, refresh])
+  }, [asset, stake, tierView.tier, idleMult, canPlay, playsPaused, cantAfford, refresh])
 
   // Bank every open position at the live mark. Failures (buzzer beat the redeem) reconcile through the watcher.
   const cashAll = useCallback(() => {
@@ -441,13 +469,16 @@ function RangeV2Screen() {
 
   useConsoleControls({
     knob: {
-      label: 'RANGE',
+      label: 'PAYS',
       min: 0,
-      max: BAND_LADDER.length - 1,
+      max: tiers.length - 1, // step through the payout-tier ladder (safest to wildest)
       step: 1,
-      value: widthIdx,
-      onChange: setWidthIdx,
-      format: (v) => `±${BAND_LADDER[Math.min(v, BAND_LADDER.length - 1)].toFixed(1)}%`,
+      value: tierIdx,
+      onChange: setTierIdx,
+      format: (v) => {
+        const t = tiers[Math.min(v, tiers.length - 1)]
+        return `${t.multiplier.toFixed(t.multiplier >= 10 ? 0 : 1)}x`
+      },
     },
     numberWheel: {
       label: 'DUSDC',
@@ -491,7 +522,7 @@ function RangeV2Screen() {
     positionBands.length || showAim
       ? {
           bands: positionBands.length ? positionBands : undefined,
-          aim: showAim ? { pct: halfPct, tag: `NEXT ${fmtMult(idleMult)}` } : undefined,
+          aim: showAim ? { pct: aimHalfPct, tag: `NEXT ${fmtMult(idleMult)}` } : undefined,
         }
       : undefined
 
@@ -702,9 +733,10 @@ function RangeV2Screen() {
                   <div className="tnum text-[40px] font-extrabold leading-none text-brand-500">
                     {idleMult.toFixed(2)}x
                   </div>
-                  <div className="mt-2.5 grid grid-cols-2 gap-x-3">
+                  <div className="mt-2.5 grid grid-cols-3 gap-x-3">
                     <Cell label="Amount" value={`$${stake}`} />
-                    <Cell label="Band" value={`±${halfPct.toFixed(1)}%`} />
+                    <Cell label="Band" value={`±${fmtHalfPct(aimHalfPct)}%`} />
+                    <Cell label="Odds" value={`~${Math.round(tierView.prob * 100)}%`} />
                   </div>
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
                     Stack as many as you like. They all settle on the buzzer.
@@ -737,7 +769,7 @@ function RangeV2Screen() {
           lines={[
             ['ZONES', 'PLAY drops a numbered zone that rides to the buzzer. Stack up to 5.'],
             ['CHIPS', 'Green chip = price inside that zone, it pays at the buzzer. Red = outside.'],
-            ['KNOB', 'Sizes the next band. Tighter pays more.'],
+            ['KNOB', 'Picks your payout. Bigger pays, tighter band.'],
             ['CASH ALL', 'Bank every open zone at its live value before the buzzer.'],
           ]}
         />

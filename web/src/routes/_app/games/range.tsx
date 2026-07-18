@@ -213,9 +213,11 @@ function RangeScreen() {
   const roundLive =
     phase === 'open' || phase === 'cashing' || phase === 'result'
   // entrySpot + bounds are real and fixed the instant PLAY returns, so they draw immediately, held 'confirming' through the ~1s mint confirm, never guessed.
-  // 'positioned' = a real band exists (confirming included); cash-out/verdict stay gated on 'open' below.
+  // 'positioned' = a real band exists for the CURRENT live round (confirming included). Gated on roundLive,
+  // not just a lingering play, so a finished round's band + ENTRY line drop back to the breathing preview
+  // the instant it returns to idle instead of stranding last round's band on the chart.
   const enteredStatus = live?.status ?? play?.status
-  const positioned = enteredStatus != null && enteredStatus !== 'error'
+  const positioned = roundLive && enteredStatus != null && enteredStatus !== 'error'
   const confirming = enteredStatus === 'pending'
 
   // Server payout-tier quotes: stable multiples plus the live-band decay model, cached per asset so the

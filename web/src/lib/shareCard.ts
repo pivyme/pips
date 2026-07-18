@@ -22,8 +22,8 @@ function drawXLogo(ctx: CanvasRenderingContext2D, x: number, y: number, size: nu
   ctx.restore()
 }
 
-// 16:9 full-bleed share card: the amber body fills the whole PNG (no outer margin, no rounding), a dark
-// screen window holds the content, name + avatar up top, hero centered, the three stats on the bottom.
+// 16:9 full-bleed share card, laid out like the DOM StatsCard: a thin amber bezel, a header strip (logo +
+// PLAYER CARD), then a recessed dark screen holding name/avatar, the hero + Net P&L, and the stats readout bar.
 const W = 1600
 const H = 900
 const FONT = '"Gabarito Variable", ui-sans-serif, system-ui, sans-serif'
@@ -40,6 +40,7 @@ const C = {
   down: '#ff5a4d',
   white: '#ffffff',
   screen: '#0a0a0a',
+  label: 'rgba(255,255,255,0.55)',
 }
 
 // Mirror of toneText in StatsCard.tsx: gold featured, up/down signed, white neutral.
@@ -104,6 +105,13 @@ function loadImageCors(src: string): Promise<HTMLImageElement | null> {
   })
 }
 
+// Tracked uppercase micro-label (mirrors the DOM's uppercase tracking on labels).
+function tracked(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, em: number, size: number): void {
+  ctx.letterSpacing = `${em * size}px`
+  ctx.fillText(text, x, y)
+  ctx.letterSpacing = '0px'
+}
+
 export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: CardOpts): Promise<Blob | null> {
   const canvas = document.createElement('canvas')
   canvas.width = W
@@ -116,7 +124,7 @@ export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: Car
   if (typeof document !== 'undefined' && document.fonts) {
     try {
       await Promise.all([
-        document.fonts.load(`800 140px "Gabarito Variable"`),
+        document.fonts.load(`800 150px "Gabarito Variable"`),
         document.fonts.load(`700 60px 'Open Runde'`),
       ])
       await document.fonts.ready
@@ -127,50 +135,60 @@ export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: Car
 
   ctx.textBaseline = 'alphabetic'
 
-  // ── Full-bleed amber body (edge to edge, no black background, no outer rounding) ──
+  // ── Full-bleed amber bezel. Skeuo comes from a thin bright top lip and a dark bottom lip, not a big white
+  //    wash, so the amber stays rich (matches .trader-bezel). ──
   const body = ctx.createLinearGradient(0, 0, 0, H)
   body.addColorStop(0, C.amberTop)
   body.addColorStop(0.46, C.amberMid)
   body.addColorStop(1, C.amberBot)
   ctx.fillStyle = body
   ctx.fillRect(0, 0, W, H)
-  // Top gloss + bottom inner shade for the skeuo read, across the full width.
-  const gloss = ctx.createLinearGradient(0, 0, 0, 300)
-  gloss.addColorStop(0, 'rgba(255,255,255,0.42)')
+  const gloss = ctx.createLinearGradient(0, 0, 0, 96)
+  gloss.addColorStop(0, 'rgba(255,255,255,0.5)')
+  gloss.addColorStop(0.16, 'rgba(255,255,255,0.14)')
   gloss.addColorStop(1, 'rgba(255,255,255,0)')
   ctx.fillStyle = gloss
-  ctx.fillRect(0, 0, W, 300)
-  const shade = ctx.createLinearGradient(0, H - 160, 0, H)
-  shade.addColorStop(0, 'rgba(108,66,0,0)')
-  shade.addColorStop(1, 'rgba(108,66,0,0.4)')
-  ctx.fillStyle = shade
-  ctx.fillRect(0, H - 160, W, 160)
+  ctx.fillRect(0, 0, W, 96)
+  ctx.fillStyle = 'rgba(255,255,255,0.6)' // the bright lifted top edge
+  ctx.fillRect(0, 0, W, 3)
+  const lip = ctx.createLinearGradient(0, H - 72, 0, H)
+  lip.addColorStop(0, 'rgba(120,74,0,0)')
+  lip.addColorStop(1, 'rgba(120,74,0,0.42)')
+  ctx.fillStyle = lip
+  ctx.fillRect(0, H - 72, W, 72)
+  ctx.fillStyle = 'rgba(120,74,0,0.55)' // the hard bottom lip
+  ctx.fillRect(0, H - 3, W, 3)
 
-  // ── Header on the bezel: logo left, PLAYER CARD right ──
-  const pad = 64
-  const headY = 60
+  // ── Header strip: logo left, PLAYER CARD right ──
+  const pad = 36
+  const hx = pad + 24
+  const logoH = 86
+  const logoY = 44
   const logo = await loadImage('/assets/logos/pips-horizontal-black.svg')
   if (logo) {
-    const lh = 62
-    const lw = lh * (logo.width / logo.height || 1539 / 629)
-    ctx.drawImage(logo, pad, headY, lw, lh)
+    const lw = logoH * (logo.width / logo.height || 1539 / 629)
+    ctx.drawImage(logo, hx, logoY, lw, logoH)
   } else {
     ctx.textAlign = 'left'
     ctx.fillStyle = C.ink
-    ctx.font = `800 52px ${FONT}`
-    ctx.fillText('PIPS', pad, headY + 48)
+    ctx.font = `800 72px ${FONT}`
+    ctx.fillText('PIPS', hx, logoY + 66)
   }
   ctx.textAlign = 'right'
+  ctx.textBaseline = 'middle'
+  ctx.font = `800 34px ${FONT}`
+  ctx.fillStyle = 'rgba(255,255,255,0.28)' // soft white top-shadow, mirrors the DOM text-shadow
+  tracked(ctx, 'PLAYER CARD', W - hx, logoY + logoH / 2 + 2, 0.18, 34)
   ctx.fillStyle = 'rgba(46,30,0,0.6)'
-  ctx.font = `800 30px ${FONT}`
-  ctx.fillText('PLAYER CARD', W - pad, headY + 44)
+  tracked(ctx, 'PLAYER CARD', W - hx, logoY + logoH / 2, 0.18, 34)
+  ctx.textBaseline = 'alphabetic'
 
   // ── The recessed screen window (fills the body below the header) ──
   const sx = pad
-  const sy = 168
+  const sy = 150
   const sw = W - pad * 2
   const sh = H - sy - pad
-  const sr = 44
+  const sr = 48
 
   ctx.save()
   roundRect(ctx, sx, sy, sw, sh, sr)
@@ -196,18 +214,32 @@ export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: Car
   ctx.lineWidth = 2
   ctx.strokeStyle = 'rgba(0,0,0,0.55)'
   ctx.stroke()
+  // Bright hairline just below the recess (the amber lifts around the screen).
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(sx + sr, sy + sh + 2)
+  ctx.lineTo(sx + sw - sr, sy + sh + 2)
+  ctx.stroke()
 
   // ── Screen content ──
-  const sp = 72
+  const sp = 60
   const cx = sx + sp
   const cr = sx + sw - sp
   const card = buildCardModel(stats, opts)
   const gridIcons = await Promise.all(card.grid.map((c) => (c.icon ? loadImage(c.icon) : Promise.resolve(null))))
 
-  // Top: avatar (real photo if set, else the PIPS identicon) + handle (left), persona chip (right).
-  const avR = 58
+  // Stats readout bar docked flush to the bottom of the screen (mirrors the DOM). Computed first so the hero
+  // band knows where it ends. Hidden when every stat is off.
+  const hasGrid = card.grid.length > 0
+  const rowH = 204
+  const rowY = sy + sh - rowH
+  const rowMid = rowY + rowH / 2
+
+  // Top: avatar + handle (left), persona chip (right).
+  const avR = 72
   const avCX = cx + avR
-  const avCY = sy + 66 + avR
+  const avCY = sy + sp + avR
   const avatarImg = user.avatarUrl ? await loadImageCors(user.avatarUrl) : null
   if (avatarImg) {
     ctx.save()
@@ -238,49 +270,20 @@ export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: Car
   ctx.strokeStyle = 'rgba(255,255,255,0.16)'
   ctx.stroke()
 
-  // Handle next to the avatar. With a linked X account, the handle sits up top and an X pill drops beneath it.
-  const nameX = avCX + avR + 30
-  ctx.textAlign = 'left'
-  ctx.fillStyle = C.white
-  ctx.font = `800 64px ${FONT}`
-  if (user.twitter) {
-    ctx.textBaseline = 'alphabetic'
-    ctx.fillText(user.displayName, nameX, avCY - 6)
-    // X pill: logo + @handle, a soft rounded chip under the name.
-    const at = `@${user.twitter.username}`
-    ctx.font = `600 26px ${FONT}`
-    const atW = ctx.measureText(at).width
-    const logo = 24
-    const padX = 16
-    const gap = 9
-    const pillH = 46
-    const pillW = padX + logo + gap + atW + padX
-    const pillY = avCY + 12
-    roundRect(ctx, nameX, pillY, pillW, pillH, pillH / 2)
-    ctx.fillStyle = 'rgba(255,255,255,0.09)'
-    ctx.fill()
-    drawXLogo(ctx, nameX + padX, pillY + (pillH - logo) / 2, logo, C.white)
-    ctx.fillStyle = 'rgba(255,255,255,0.82)'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(at, nameX + padX + logo + gap, pillY + pillH / 2 + 1)
-    ctx.textBaseline = 'alphabetic'
-  } else {
-    ctx.textBaseline = 'middle'
-    ctx.fillText(user.displayName, nameX, avCY + 2)
-    ctx.textBaseline = 'alphabetic'
-  }
-
+  // Rank chip first (right-aligned) so the name knows how much room it has before it.
+  let chipLeft = cr
   if (card.rank) {
     const rekt = card.rank.kind === 'rekt'
     const rgb = rekt ? '255,90,77' : '52,211,153'
     const label = `#${card.rank.rank} TOP ${rekt ? 'REKT' : 'GAINER'}`
-    ctx.font = `900 30px ${FONT}`
+    ctx.font = `900 44px ${FONT}`
     const tw = ctx.measureText(label).width
-    const chipH = 62
-    const chipW = tw + 56
+    const chipH = 84
+    const chipW = tw + 90
     const chipX = cr - chipW
     const chipY = avCY - chipH / 2
     const rad = chipH / 2
+    chipLeft = chipX
     // Filled enamel pill (no outline): tone gradient, recessed top, tone glow rising from the bottom.
     ctx.save()
     roundRect(ctx, chipX, chipY, chipW, chipH, rad)
@@ -290,16 +293,16 @@ export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: Car
     base.addColorStop(1, `rgba(${rgb},0.13)`)
     ctx.fillStyle = base
     ctx.fillRect(chipX, chipY, chipW, chipH)
-    const recess = ctx.createLinearGradient(0, chipY, 0, chipY + 15)
-    recess.addColorStop(0, 'rgba(0,0,0,0.55)')
-    recess.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.fillStyle = recess
-    ctx.fillRect(chipX, chipY, chipW, 15)
-    const glow = ctx.createLinearGradient(0, chipY + chipH - 24, 0, chipY + chipH)
+    const chipRecess = ctx.createLinearGradient(0, chipY, 0, chipY + 20)
+    chipRecess.addColorStop(0, 'rgba(0,0,0,0.55)')
+    chipRecess.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = chipRecess
+    ctx.fillRect(chipX, chipY, chipW, 20)
+    const glow = ctx.createLinearGradient(0, chipY + chipH - 32, 0, chipY + chipH)
     glow.addColorStop(0, `rgba(${rgb},0)`)
     glow.addColorStop(1, `rgba(${rgb},0.55)`)
     ctx.fillStyle = glow
-    ctx.fillRect(chipX, chipY + chipH - 24, chipW, 24)
+    ctx.fillRect(chipX, chipY + chipH - 32, chipW, 32)
     ctx.restore()
     ctx.fillStyle = rekt ? C.down : C.up
     ctx.textAlign = 'center'
@@ -309,11 +312,82 @@ export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: Car
     ctx.textBaseline = 'alphabetic'
   }
 
-  // Bottom: the stats as a full-width readout bar docked flush to the bottom of the screen (mirrors the DOM
-  // card), not a floating pill. Bottom corners clip to the screen rounding. Hidden when every stat is off.
-  const rowH = 170
-  const hasGrid = card.grid.length > 0
-  const rowY = sy + sh - rowH
+  // Handle next to the avatar, shrunk to fit the space before the rank chip. With a linked X account the
+  // handle sits up top and an X pill drops beneath it.
+  const nameX = avCX + avR + 32
+  const nameMax = chipLeft - 24 - nameX
+  let nameFont = 72
+  ctx.font = `800 ${nameFont}px ${FONT}`
+  while (ctx.measureText(user.displayName).width > nameMax && nameFont > 36) {
+    nameFont -= 2
+    ctx.font = `800 ${nameFont}px ${FONT}`
+  }
+  ctx.textAlign = 'left'
+  ctx.fillStyle = C.white
+  let pillBottom = avCY + avR
+  if (user.twitter) {
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillText(user.displayName, nameX, avCY - 10)
+    // X pill: logo + @handle, a soft rounded chip under the name.
+    const at = `@${user.twitter.username}`
+    ctx.font = `600 37px ${FONT}`
+    const atW = ctx.measureText(at).width
+    const glyph = 34
+    const padX = 24
+    const gap = 14
+    const pillH = 68
+    const pillW = padX + glyph + gap + atW + padX
+    const pillY = avCY + 16
+    pillBottom = pillY + pillH
+    roundRect(ctx, nameX, pillY, pillW, pillH, pillH / 2)
+    ctx.fillStyle = 'rgba(255,255,255,0.09)'
+    ctx.fill()
+    drawXLogo(ctx, nameX + padX, pillY + (pillH - glyph) / 2, glyph, C.white)
+    ctx.fillStyle = 'rgba(255,255,255,0.82)'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(at, nameX + padX + glyph + gap, pillY + pillH / 2 + 1)
+    ctx.textBaseline = 'alphabetic'
+  } else {
+    ctx.textBaseline = 'middle'
+    ctx.fillText(user.displayName, nameX, avCY + 2)
+    ctx.textBaseline = 'alphabetic'
+  }
+
+  // Middle: the hero (left) + Net P&L (right, when shown). Both values sit on ONE bottom line (like the DOM's
+  // items-end), and each label is tucked just above its OWN value, so a smaller Net P&L doesn't float.
+  const nameBottom = user.twitter ? pillBottom : avCY + avR
+  const bandTop = nameBottom
+  const bandBottom = hasGrid ? rowY : sy + sh - 50
+  const heroFont = 148
+  const labelFont = 34
+  const labelGap = 26
+  const heroCap = heroFont * 0.72
+  const labelCap = labelFont * 0.72
+  const blockH = labelCap + labelGap + heroCap
+  const valueBaseline = (bandTop + bandBottom) / 2 + blockH / 2
+
+  ctx.textAlign = 'left'
+  ctx.font = `700 ${labelFont}px ${FONT}`
+  ctx.fillStyle = C.label
+  tracked(ctx, card.hero.label.toUpperCase(), cx, valueBaseline - heroCap - labelGap, 0.12, labelFont)
+  ctx.font = `800 ${heroFont}px ${FONT}`
+  ctx.fillStyle = toneColor(card.hero.tone)
+  ctx.fillText(card.hero.value, cx - 2, valueBaseline)
+
+  if (card.netPnl) {
+    const npFont = 98
+    const npCap = npFont * 0.72
+    ctx.textAlign = 'right'
+    ctx.font = `700 ${labelFont}px ${FONT}`
+    ctx.fillStyle = C.label
+    tracked(ctx, card.netPnl.label.toUpperCase(), cr, valueBaseline - npCap - labelGap, 0.12, labelFont)
+    ctx.font = `800 ${npFont}px ${FONT}`
+    ctx.fillStyle = toneColor(card.netPnl.tone)
+    ctx.fillText(card.netPnl.value, cr, valueBaseline)
+  }
+
+  // Bottom: the stats readout bar, docked flush to the bottom edge. Each cell is the icon centered next to a
+  // label-over-value block, the pair vertically centered on the row (mirrors the DOM Cell's items-center).
   if (hasGrid) {
     const rowW = sw
     const segW = rowW / card.grid.length
@@ -329,63 +403,34 @@ export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: Car
     ctx.lineTo(sx + rowW, rowY + 0.75)
     ctx.stroke()
     ctx.restore()
-    const midY = rowY + rowH / 2 - 6
     card.grid.forEach((c, i) => {
       const ex = sx + i * segW
       if (i > 0) {
         ctx.strokeStyle = 'rgba(255,255,255,0.09)'
         ctx.lineWidth = 1.5
         ctx.beginPath()
-        ctx.moveTo(ex, rowY + 34)
-        ctx.lineTo(ex, rowY + rowH - 44)
+        ctx.moveTo(ex, rowY + 36)
+        ctx.lineTo(ex, rowY + rowH - 36)
         ctx.stroke()
       }
-      // Two columns: the 3D icon on the left, label over a bigger value on the right. Mirrors the DOM Cell.
       const icon = gridIcons[i]
-      const iconSize = 64
-      const padL = 44
+      const iconSize = 94
+      const padL = 50
       let textX = ex + padL
       if (icon) {
-        ctx.drawImage(icon, ex + padL, midY - iconSize / 2, iconSize, iconSize)
-        textX = ex + padL + iconSize + 18
+        ctx.drawImage(icon, ex + padL, rowMid - iconSize / 2, iconSize, iconSize)
+        textX = ex + padL + iconSize + 22
       }
       ctx.textAlign = 'left'
       ctx.textBaseline = 'alphabetic'
-      ctx.fillStyle = 'rgba(255,255,255,0.55)'
-      ctx.font = `700 24px ${FONT}`
-      ctx.fillText(c.label.toUpperCase(), textX, midY - 8)
+      ctx.fillStyle = C.label
+      ctx.font = `700 34px ${FONT}`
+      tracked(ctx, c.label.toUpperCase(), textX, rowMid - 22, 0.05, 34)
       ctx.fillStyle = toneColor(c.tone)
-      ctx.font = `800 54px ${FONT}`
-      ctx.fillText(c.value, textX, midY + 42)
+      ctx.font = `800 70px ${FONT}`
+      ctx.fillText(c.value, textX, rowMid + 52)
     })
   }
-
-  // Middle: the hero (left) + Net P&L (right, when shown), centered in the band between the name block and
-  // the stats pill. With no pill, the band runs down to just above the footer.
-  const bandTop = avCY + avR
-  const bandBottom = hasGrid ? rowY : sy + sh - 56
-  const bandMid = (bandTop + bandBottom) / 2
-  const labelY = bandMid - 66
-  const valueY = bandMid + 52
-  ctx.textAlign = 'left'
-  ctx.fillStyle = 'rgba(255,255,255,0.55)'
-  ctx.font = `700 28px ${FONT}`
-  ctx.fillText(card.hero.label.toUpperCase(), cx, labelY)
-  ctx.textAlign = 'left'
-  ctx.fillStyle = toneColor(card.hero.tone)
-  ctx.font = `800 140px ${FONT}`
-  ctx.fillText(card.hero.value, cx - 2, valueY)
-
-  if (card.netPnl) {
-    ctx.textAlign = 'right'
-    ctx.fillStyle = 'rgba(255,255,255,0.55)'
-    ctx.font = `700 28px ${FONT}`
-    ctx.fillText(card.netPnl.label.toUpperCase(), cr, labelY)
-    ctx.fillStyle = toneColor(card.netPnl.tone)
-    ctx.font = `800 90px ${FONT}`
-    ctx.fillText(card.netPnl.value, cr, valueY)
-  }
-
 
   return new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'))
 }

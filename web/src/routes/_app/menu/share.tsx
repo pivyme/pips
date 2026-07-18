@@ -1,9 +1,9 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, RefreshCw, Share2 } from 'lucide-react'
+import { Loader2, Share2 } from 'lucide-react'
 import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
-import { StatsCard, StatsCardSkeleton } from '@/components/menu/StatsCard'
+import { StatsCardSkeleton } from '@/components/menu/StatsCard'
 import { Switch } from '@/ui/Switch'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { api } from '@/lib/api'
@@ -100,11 +100,8 @@ function ShareEditor({
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Live preview: exactly what the PNG renders. */}
-      <StatsCard stats={stats} displayName={displayName} avatarUrl={avatarUrl} twitter={twitter} showNetPnl={showNetPnl} rank={rank} />
-
-      {/* TEMP dev tooling: the real exported PNG, live. Remove once the card is dialed in. */}
-      <CardPngPreview stats={stats} displayName={displayName} avatarUrl={avatarUrl} twitter={twitter} showNetPnl={showNetPnl} rank={rank} />
+      {/* The preview IS the exported PNG, so what you see is exactly what gets shared. */}
+      <CardPreview stats={stats} displayName={displayName} avatarUrl={avatarUrl} twitter={twitter} showNetPnl={showNetPnl} rank={rank} />
 
       {/* The one knob: dollar P&L is private for a lot of people. */}
       <div className="surface-skeuo flex items-center gap-3 rounded-card px-4 py-3.5">
@@ -142,10 +139,9 @@ function ShareEditor({
   )
 }
 
-// TEMP dev tooling: renders the actual exported PNG (the canvas in shareCard.ts, not the DOM card) and shows
-// it inline, re-rendering on every input change and on manual refresh. Refresh also re-runs after editing
-// shareCard.ts (HMR), so the card can be dialed in without hitting Share every time. Delete when done.
-function CardPngPreview({
+// The preview IS the real exported PNG (the canvas in shareCard.ts), so it's pixel-identical to what gets
+// shared. Re-renders whenever an input changes (e.g. the P&L toggle).
+function CardPreview({
   stats,
   displayName,
   avatarUrl,
@@ -162,7 +158,6 @@ function CardPngPreview({
 }) {
   const [url, setUrl] = useState<string | null>(null)
   const [rendering, setRendering] = useState(true)
-  const [nonce, setNonce] = useState(0)
   const urlRef = useRef<string | null>(null)
 
   const swapUrl = (next: string | null) => {
@@ -185,34 +180,18 @@ function CardPngPreview({
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stats, displayName, avatarUrl, twitter, showNetPnl, rank, nonce])
+  }, [stats, displayName, avatarUrl, twitter, showNetPnl, rank])
 
   useEffect(() => () => swapUrl(null), [])
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <div className="text-[11px] font-bold uppercase tracking-widest text-text-3">PNG preview (dev)</div>
-        <button
-          type="button"
-          onClick={() => {
-            haptic('selection')
-            setNonce((n) => n + 1)
-          }}
-          className="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-text-2 active:scale-95"
-        >
-          <RefreshCw className={rendering ? 'h-3 w-3 animate-spin' : 'h-3 w-3'} strokeWidth={2.6} />
-          Refresh
-        </button>
-      </div>
-      <div className="relative aspect-[16/9] w-full overflow-hidden rounded-card bg-black/40 ring-1 ring-white/10">
-        {url && <img src={url} alt="Exported card preview" className="h-full w-full object-contain" />}
-        {rendering && (
-          <div className="absolute inset-0 grid place-items-center">
-            <Loader2 className="h-5 w-5 animate-spin text-white/50" strokeWidth={2.6} />
-          </div>
-        )}
-      </div>
+    <div className="relative aspect-[16/9] w-full overflow-hidden rounded-card bg-black/40 ring-1 ring-white/10">
+      {url && <img src={url} alt="Your PIPS card" className="h-full w-full object-contain" />}
+      {rendering && !url && (
+        <div className="absolute inset-0 grid place-items-center">
+          <Loader2 className="h-5 w-5 animate-spin text-white/50" strokeWidth={2.6} />
+        </div>
+      )}
     </div>
   )
 }

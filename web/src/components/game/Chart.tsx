@@ -392,9 +392,10 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
         center = tCenter
         half = tHalf
       } else if (continuous) {
-        // While a round is live, entry/target are fixed-price references; recentering the frame would make them drift, reading as not-tracking.
+        // While a round is live, entry/target/locked bands are fixed-price references; recentering the frame would make them drift, reading as not-tracking.
+        // Range-v2's locked bands anchor the frame exactly like Range's entry line, so the price visibly moves against them instead of the frame chasing it flat.
         // Ease the scale much calmer once a round is on; the hard clamp below still prevents clipping.
-        const calm = ov?.entry != null || ov?.target != null ? LIVE_CALM : 1
+        const calm = ov?.entry != null || ov?.target != null || Boolean(ov?.bands?.length) ? LIVE_CALM : 1
         center += (tCenter - center) * CENTER_SMOOTH * calm
         half += (tHalf - half) * (tHalf > half ? HALF_GROW : HALF_SHRINK) * calm
         if (Number.isFinite(lo) && Number.isFinite(hi)) {
@@ -871,20 +872,27 @@ function drawOverlays(
   if (ov?.entry != null && entryReveal > 0.01) {
     const ys = y(ov.entry)
     const a = entryReveal
-    // A clean solid reference at your entry price, neutral white (amber stays the live now-dot), faded in so it reads as "you entered here," not permanent furniture.
-    ctx.strokeStyle = withAlpha(C.text, 0.42 * a)
+    // Confirming = the mint is still landing on chain (a real ~2-5s wait), so the entry reads as provisional:
+    // dashed, dimmer, a soft pulse, and tagged CONFIRMING. It snaps to the solid neutral-white ENTRY reference
+    // (amber stays the live now-dot) the instant the position is truly live, so "you entered here" is never faked ahead of the chain.
+    const pending = ov?.band?.locked === true && ov.band.confirming === true
+    const pulse = pending ? 0.55 + 0.45 * Math.abs(Math.sin(performance.now() / 260)) : 1
+    ctx.strokeStyle = withAlpha(C.text, (pending ? 0.3 : 0.42) * a * pulse)
     ctx.lineWidth = 1
+    if (pending) ctx.setLineDash([4, 4])
     ctx.beginPath()
     ctx.moveTo(0, ys)
     ctx.lineTo(w, ys)
     ctx.stroke()
+    ctx.setLineDash([])
     ctx.save()
     ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'left'
-    ctx.fillStyle = withAlpha(C.text, 0.85 * a)
+    ctx.fillStyle = withAlpha(C.text, (pending ? 0.7 : 0.85) * a * pulse)
     // Inset off the left rim, flipped below the line when it sits too near the top to label above it.
-    ctx.fillText(`ENTRY ${formatPrice(ov.entry)}`, rim + 2, clampLabelY(ys - 16 < 4 ? ys + 14 : ys - 9))
+    const label = pending ? 'CONFIRMING' : 'ENTRY'
+    ctx.fillText(`${label} ${formatPrice(ov.entry)}`, rim + 2, clampLabelY(ys - 16 < 4 ? ys + 14 : ys - 9))
     ctx.restore()
   }
 
