@@ -906,6 +906,47 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
+/* Range-v2 collect hero: a quick settle-down pop when a zone lights up or drops. */
+@keyframes zone-pop {
+  0% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Range-v2 wave payoff: the batch's ±$ pops over the chart with a slight overshoot, holds, fades out. */
+.wave-splash {
+  animation: wave-splash 1.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes wave-splash {
+  0% {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+  16% {
+    transform: scale(1.07);
+    opacity: 1;
+  }
+  30% {
+    transform: scale(1);
+  }
+  72% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.02);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wave-splash {
+    animation: none;
+  }
+}
+
 /* ── Game-screen instrument viz (teenage-engineering line graphics) ──────
    Crisp vivid SVG line instruments rendered inside the console screen. The
    motion lives here as cheap GPU transforms so the components stay pure. Each

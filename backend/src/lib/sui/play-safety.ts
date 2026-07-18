@@ -4,6 +4,7 @@
 import cron from 'node-cron';
 
 import {
+  PLAY_GAS_BUDGET,
   PLAY_RATE_LIMIT_MS,
   SPONSOR_FLOOR_SUI,
   SPONSOR_BURN_WARN_SUI,
@@ -92,10 +93,13 @@ export async function refreshSponsorPauseState(): Promise<void> {
   }
   lastReserveSui = reserveSui;
 
-  const shouldPause = reserveSui < SPONSOR_FLOOR_SUI;
+  // The effective floor is never below one play's upfront gas reservation: below PLAY_GAS_BUDGET every
+  // sponsored tx fails "Invalid withdraw reservation" outright, which must surface as the pause, not raw errors.
+  const floorSui = Math.max(SPONSOR_FLOOR_SUI, Number(PLAY_GAS_BUDGET) / MIST_PER_SUI);
+  const shouldPause = reserveSui < floorSui;
   if (shouldPause && !pauseState.paused) {
     pauseState.paused = true;
-    pauseState.reason = `sponsor reserve ${reserveSui.toFixed(3)} SUI below floor ${SPONSOR_FLOOR_SUI} SUI`;
+    pauseState.reason = `sponsor reserve ${reserveSui.toFixed(3)} SUI below floor ${floorSui} SUI`;
     console.warn(`[play-safety] PAUSING new plays: ${pauseState.reason}. Fund ${sponsorAddress} with testnet SUI to resume.`);
   } else if (!shouldPause && pauseState.paused) {
     pauseState.paused = false;

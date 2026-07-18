@@ -46,9 +46,10 @@ export interface ChartOverlays {
   // winning half shaded green (brighter when the live price is inside).
   target?: { price: number; side: 'up' | 'down' }
   band?: BandOverlay
-  // Range-v2 multiplay: concurrent locked bands rendered as one aggregate "win zone" in the forward zone,
-  // shaded by how many cover each price (the chips own the per-position numbers). Settled ones flash their verdict.
-  bands?: Array<{ lower: number; upper: number; state?: 'live' | 'won' | 'lost' }>
+  // Range-v2 multiplay: concurrent locked bands in the forward zone. Fill deepens where more bands cover a
+  // price; each band's edges light green/red by whether the live price rides inside it. `n` is the position's
+  // slot number, drawn as a flag at the band's center so the chip strip and the chart tie together. Settled flash.
+  bands?: Array<{ lower: number; upper: number; state?: 'live' | 'won' | 'lost'; n?: number }>
   // Range-v2 aim: where the NEXT play's band would land, a live ±pct bracket tracking the price (amber, dashed).
   aim?: { pct: number; tag?: string }
   // Exact settled RESULT price after oracle.settlement_price exists.
@@ -746,9 +747,10 @@ function drawOverlays(
     ctx.restore()
   }
 
-  // Range-v2 multiplay: no per-band lanes or tags (the chips own the numbers). The forward zone is one
-  // aggregate "win zone" shaded by how many live bands cover each price level, so overlapping bands read as a
-  // single cloud that deepens where more bands agree, never a stack of muddy rectangles. Settled bands flash on top.
+  // Range-v2 multiplay. Three layers: (1) a coverage fill that deepens where more live bands overlap
+  // (payout territory), (2) each band's own dashed edge pair, green while the price rides inside it and
+  // red once it's crossed out, so the exact band you're losing is visible, (3) a numbered flag per band
+  // matching its chip in the strip. Settled bands flash their verdict on top, then sweep out.
   if (ov?.bands?.length) {
     const fx = nowX
     const live = ov.bands.filter((b) => b.state !== 'won' && b.state !== 'lost')
@@ -762,20 +764,21 @@ function drawOverlays(
         let cov = 0
         for (const b of live) if (mid > b.lower && mid < b.upper) cov++
         if (cov === 0) continue
-        ctx.fillStyle = withAlpha(C.up, Math.min(0.34, 0.07 + cov * 0.055))
+        ctx.fillStyle = withAlpha(C.up, Math.min(0.3, 0.05 + cov * 0.05))
         ctx.fillRect(fx, y(edges[i + 1]), w - fx, y(edges[i]) - y(edges[i + 1]))
       }
-      // Soft dashed boundary on the union's outer edges so the zone has a defined top and bottom.
-      const lo = edges[0]
-      const hi = edges[edges.length - 1]
+      // Per-band edges: the in/out truth per position, not a misleading union boundary.
       ctx.lineWidth = 1
       ctx.setLineDash([4, 4])
-      ctx.strokeStyle = withAlpha(C.up, 0.5)
-      for (const p of [lo, hi]) {
-        ctx.beginPath()
-        ctx.moveTo(fx, y(p))
-        ctx.lineTo(w, y(p))
-        ctx.stroke()
+      for (const b of live) {
+        const inside = price > b.lower && price <= b.upper
+        ctx.strokeStyle = withAlpha(inside ? C.up : C.down, inside ? 0.4 : 0.5)
+        for (const p of [b.lower, b.upper]) {
+          ctx.beginPath()
+          ctx.moveTo(fx, y(p))
+          ctx.lineTo(w, y(p))
+          ctx.stroke()
+        }
       }
       ctx.setLineDash([])
     }
@@ -795,6 +798,36 @@ function drawOverlays(
         ctx.stroke()
       }
     }
+    // Numbered flags: one square per band at its center on the right edge, the same slot number as its chip.
+    // Lit solid green when the price is inside (paying), red-outlined when out, solid verdict color when settled.
+    const flags = ov.bands
+      .filter((b) => b.n != null)
+      .map((b) => ({ b, cy: (y(b.lower) + y(b.upper)) / 2 }))
+      .sort((a, z) => a.cy - z.cy)
+    const FS = 14
+    const gap = FS + 3
+    for (const f of flags) f.cy = Math.max(FS, Math.min(h - FS, f.cy))
+    for (let i = 1; i < flags.length; i++) if (flags[i].cy - flags[i - 1].cy < gap) flags[i].cy = flags[i - 1].cy + gap
+    for (let i = flags.length - 1; i >= 0; i--) {
+      const cap = h - FS - (flags.length - 1 - i) * gap
+      if (flags[i].cy > cap) flags[i].cy = cap
+    }
+    const flagX = w - rim - FS
+    ctx.font = '700 9px ui-monospace, SFMono-Regular, Menlo, monospace'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const { b, cy } of flags) {
+      const inside = price > b.lower && price <= b.upper
+      const col = b.state === 'won' ? C.up : b.state === 'lost' ? C.down : inside ? C.up : C.down
+      const filled = b.state === 'won' || b.state === 'lost' || inside
+      ctx.fillStyle = filled ? withAlpha(col, 0.92) : 'rgba(0, 0, 0, 0.75)'
+      ctx.fillRect(flagX, cy - FS / 2, FS, FS)
+      ctx.strokeStyle = withAlpha(col, 0.9)
+      ctx.lineWidth = 1
+      ctx.strokeRect(flagX + 0.5, cy - FS / 2 + 0.5, FS - 1, FS - 1)
+      ctx.fillStyle = filled ? '#000' : withAlpha(col, 0.95)
+      ctx.fillText(String(b.n), flagX + FS / 2, cy + 0.5)
+    }
     ctx.restore()
   }
 
@@ -806,7 +839,8 @@ function drawOverlays(
     const bot = y(price - half)
     const fx = nowX
     ctx.save()
-    ctx.fillStyle = withAlpha(C.brand, 0.05)
+    // Faint on purpose: with a live stack the amber bracket must read as a preview, never another position.
+    ctx.fillStyle = withAlpha(C.brand, 0.03)
     ctx.fillRect(fx, top, w - fx, bot - top)
     ctx.lineWidth = 1.2
     ctx.setLineDash([3, 4])
@@ -829,7 +863,8 @@ function drawOverlays(
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'right'
     ctx.fillStyle = withAlpha(C.brand, 0.95)
-    ctx.fillText(ov.aim.tag ?? 'NEXT', w - rim - 2, clampLabelY(top - 8))
+    // Inset left of the multiplay flag column so the tag never collides with a band's numbered flag.
+    ctx.fillText(ov.aim.tag ?? 'NEXT', w - rim - (ov.bands?.length ? 20 : 2), clampLabelY(top - 8))
     ctx.restore()
   }
 

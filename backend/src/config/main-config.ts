@@ -273,6 +273,14 @@ export const REAL_BINARY_MIN_OFFSET_SIGMA: number = Number(process.env.PIPS_REAL
 // Upper target probability for a RANGE band. A wide centered band is near-certain (p~1), tripping
 // max_entry_probability; cap the half-width so the band's prob stays under this. A too-tight user band is left as-is.
 export const REAL_RANGE_MAX_PROB: number = Number(process.env.PIPS_REAL_RANGE_MAX_PROB) || 0.85;
+// RANGE knob ladder: target win probabilities, safest first. A tier mints at 1x leverage so its payout is
+// ~1/p whenever the tap lands; the band half-width (z((1+p)/2)*sigma) is what absorbs the clock.
+const RANGE_TIER_DEFAULTS = [0.85, 0.65, 0.45, 0.3, 0.18];
+const rangeTierEnv = (process.env.PIPS_RANGE_TIER_PROBS ?? '')
+  .split(',')
+  .map((s) => Number(s.trim()))
+  .filter((p) => p >= 0.05 && p <= 0.9);
+export const RANGE_TIER_PROBS: number[] = rangeTierEnv.length > 0 ? rangeTierEnv : RANGE_TIER_DEFAULTS;
 // Game-round durations offered to the player (seconds). The on-chain expiry is the oracle's; this is the UX timer.
 export const GAME_DURATIONS: number[] = (process.env.PIPS_GAME_DURATIONS || '10,30,60')
   .split(',')

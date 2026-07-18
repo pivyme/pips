@@ -70,7 +70,7 @@ export const invalidateBal = (userId: string): void => {
 
 export type CreatePlayInput =
   | { game: 'lucky'; stake: string | number }
-  | { game: 'range'; stake: string | number; asset: string; widthPct: number }
+  | { game: 'range'; stake: string | number; asset: string; widthPct?: number; tier?: number }
   | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number };
 
 export type CreateResult = { play: PlayDTO };

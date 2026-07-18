@@ -104,7 +104,7 @@ function loadImageCors(src: string): Promise<HTMLImageElement | null> {
   })
 }
 
-async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: CardOpts): Promise<Blob | null> {
+export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: CardOpts): Promise<Blob | null> {
   const canvas = document.createElement('canvas')
   canvas.width = W
   canvas.height = H

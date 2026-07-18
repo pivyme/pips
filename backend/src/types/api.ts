@@ -53,6 +53,25 @@ export interface RangeQuoteDTO {
   widthPct: number; // the requested full band width (echoed back)
 }
 
+// RANGE payout-tier quote: the multiplier is time-independent (1x leverage, ~1/prob), the band width is
+// what tracks the clock; sigmaMult + expiryMs let the client redraw the live half-width between fetches.
+export interface RangeTierQuoteDTO {
+  tier: number; // index into the server tier ladder (echo back on play)
+  prob: number; // target win probability, the honest odds
+  multiplier: number; // stable payout multiple (spread haircut applied)
+  sigmaMult: number; // half-width in sigmas: half = sigmaMult * sigma(secsLeft)
+  halfPct: number; // effective half-band % at quote time
+  lower: string; // band bounds at quote time (preview; the mint re-centers at tap)
+  upper: string;
+  entrySpot: string;
+  duration: number; // seconds to the routed round's buzzer at quote time
+  expiryMs: number; // absolute buzzer, drives the client round clock + band decay
+}
+export interface RangeQuoteModelDTO {
+  annualVol: number; // sigma(t) = annualVol * sqrt(t / yearSeconds)
+  minRoundMs: number; // taps closer than this to the buzzer route to the next round
+}
+
 export interface PlayDTO {
   id: string;
   game: Game;

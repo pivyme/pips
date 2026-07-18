@@ -16,7 +16,7 @@ import { GameScreen, ScreenMessage, Cell } from '@/components/game/screen'
 import { TradeConfirmSheet, useTradeConfirm } from '@/components/game/tradeConfirm'
 import { LivePrice } from '@/components/game/LivePrice'
 import { Chart } from '@/components/game/Chart'
-import { Reel } from '@/components/game/lucky/LuckyReels'
+import { DirectionWheel, MultiplierWheel } from '@/components/game/lucky/LuckyWheels'
 import {
   mergeSnapshotMarket,
   usePhaseElapsed,
@@ -41,10 +41,10 @@ export const Route = createFileRoute('/_app/games/lucky')({ component: LuckyScre
 // Persisted stake index shared with the home idle wheel (same key, see ConsoleCanvas); ladder sized
 // live via betLadder().
 const STAKE_KEY = 'pips_stake_idx'
-// Reel cycle pools (cosmetic blur before the snap). The real targets come from the dealt play.
-const DIR_POOL = ['▲ UP', '▼ DOWN']
-const MULT_POOL = ['2x', '3x', '5x', '10x']
-const SPIN_STOPS = [720, 980] // staggered reel stops (ms): direction, then multiplier
+const SPIN_STOPS = [720, 980] // staggered wheel stops (ms): direction, then multiplier
+const WHEEL_BIG = 148 // big prize-wheel diameter (px) while dealing
+const DEAL_ZONE_H = 200 // deal-zone height with the wheels up
+const LOCKED_ZONE_H = 66 // collapsed height once the hand morphs to the compact strip
 const SPIN_TOTAL = 1060
 // Beat between the last reel locking and the TARGET landing on the chart, so the deal reads before the stake does.
 const LOCKIN_MS = 450
@@ -81,8 +81,6 @@ const money = (n: number): string =>
 const fmtMult = (n: number): string =>
   `${n.toFixed(2).replace(/\.?0+$/, '')}x`
 const sideLabel = (s: Side): string => (s === 'up' ? 'UP' : 'DOWN')
-// Reel face carries a directional glyph; the bare label (sideLabel) is still used in recaps.
-const dirFace = (s: Side): string => (s === 'up' ? '▲ UP' : '▼ DOWN')
 
 function LuckyScreen() {
   const { refresh, user } = useAuth()
@@ -150,6 +148,9 @@ function LuckyScreen() {
   // Reels carry the dealt direction/multiplier only while a round is genuinely in play, else reset to '?'.
   const roundActive = phase === 'spinning' || phase === 'open' || phase === 'cashing'
   const multiplier = live?.multiplier ?? play?.multiplier ?? 0
+  // Big prize wheels own the top through idle + the deal + the lock-in beat, then morph out to a compact
+  // dealt strip the moment the round reveals, handing the freed height back to the chart.
+  const bigWheels = phase === 'idle' || reelsCycling || (showReadouts && !revealOverlays)
   // Entry reference: the real on-chain spot the strike was solved against (read live at the tap), so
   // ENTRY, TARGET, and settlement all agree. Never a client-guessed display value, same rule as RANGE and MOONSHOT.
   const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
@@ -516,7 +517,7 @@ function LuckyScreen() {
         <ScreenMessage title="Market catching up" />
       ) : (
         <div className="relative flex h-full flex-col">
-          {/* HEADER: persistent context (price/balance) over the slot band; no foot hairline, the slot runs straight into the chart to save vertical room. */}
+          {/* HEADER: persistent price/balance context; the deal zone (wheels, then dealt strip) sits below it. */}
           <div className="shrink-0 bg-black pt-[calc(var(--screen-rim,24px)+12px)]">
             <div className="flex items-start justify-between gap-3 px-[var(--screen-rim,24px)] pb-4">
               <div className="min-w-0">
@@ -543,29 +544,75 @@ function LuckyScreen() {
               </div>
             </div>
 
-            {/* Two reels, the whole randomness: direction and multiplier. The asset isn't a draw, it's the chart underneath. */}
-            <div className="flex border-t border-line-strong">
-              <Reel
+          </div>
+
+          {/* DEAL ZONE: big prize wheels through idle + the deal, morphing out to a compact dealt strip once the */}
+          {/* round is live so the chart reclaims the height. Height collapses while the two layers cross-fade. */}
+          <div
+            className="relative shrink-0 overflow-hidden border-y border-line-strong bg-black"
+            style={{
+              height: bigWheels ? DEAL_ZONE_H : LOCKED_ZONE_H,
+              transition: 'height 460ms cubic-bezier(0.4,0,0.2,1)',
+            }}
+          >
+            {/* Wheels: fade + settle up as they hand off. pointer-events off, the console buttons drive them. */}
+            <div
+              className="absolute inset-0 flex"
+              style={{
+                opacity: bigWheels ? 1 : 0,
+                transform: bigWheels ? 'translateY(0) scale(1)' : 'translateY(-10px) scale(0.7)',
+                transformOrigin: 'center top',
+                transition: 'opacity 300ms ease, transform 420ms cubic-bezier(0.4,0,0.2,1)',
+                pointerEvents: 'none',
+              }}
+            >
+              <DirectionWheel
                 index={0}
-                label="Up Down"
-                pool={DIR_POOL}
-                target={roundActive && lp ? dirFace(lp.side) : undefined}
+                size={WHEEL_BIG}
+                side={roundActive && lp ? lp.side : undefined}
                 cycling={reelsCycling}
                 landing={spinning}
                 stopAt={SPIN_STOPS[0]}
-                accent={roundActive && lp?.side === 'up' ? 'up' : roundActive && lp?.side === 'down' ? 'down' : undefined}
               />
-              <Reel
+              <MultiplierWheel
                 index={1}
-                label="Multiplier"
-                pool={MULT_POOL}
-                target={roundActive && play ? fmtMult(play.multiplier) : undefined}
+                size={WHEEL_BIG}
+                multiplier={roundActive && play ? play.multiplier : undefined}
                 cycling={reelsCycling}
                 landing={spinning}
                 stopAt={SPIN_STOPS[1]}
-                accent={roundActive ? 'amber' : undefined}
                 last
               />
+            </div>
+
+            {/* Compact dealt strip: the direction + multiplier the wheels landed on, the readout the chart rides under. */}
+            <div
+              className="absolute inset-0 flex items-center justify-center gap-8 px-[var(--screen-rim,24px)]"
+              style={{ opacity: bigWheels ? 0 : 1, transition: 'opacity 300ms ease 120ms', pointerEvents: 'none' }}
+            >
+              {lp && (
+                <>
+                  <div className="text-center">
+                    <div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-text-3">Up Down</div>
+                    <div
+                      className={cnm('tnum text-[26px] font-extrabold leading-none', lp.side === 'up' ? 'text-up' : 'text-down')}
+                      style={{ textShadow: `0 0 14px var(--color-${lp.side === 'up' ? 'up' : 'down'})` }}
+                    >
+                      {lp.side === 'up' ? '▲ UP' : '▼ DOWN'}
+                    </div>
+                  </div>
+                  <div className="h-9 w-px bg-line-strong" />
+                  <div className="text-center">
+                    <div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-text-3">Multiplier</div>
+                    <div
+                      className="tnum text-[26px] font-extrabold leading-none text-brand-500"
+                      style={{ textShadow: '0 0 14px var(--color-brand-500)' }}
+                    >
+                      {fmtMult(multiplier)}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

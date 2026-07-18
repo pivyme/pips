@@ -61,6 +61,25 @@ export interface RangeQuote {
   widthPct: number
 }
 
+// RANGE payout-tier quote: the multiplier is time-independent (1x leverage, ~1/prob); the band width is
+// what tracks the clock. sigmaMult + expiryMs + model let the client redraw the live width between fetches.
+export interface RangeTierQuote {
+  tier: number // ladder index, echoed back on play
+  prob: number // target win probability, the honest odds
+  multiplier: number // stable payout multiple (spread haircut applied)
+  sigmaMult: number // half-width in sigmas: half = sigmaMult * sigma(secsLeft)
+  halfPct: number // effective half-band % at quote time
+  lower: string
+  upper: string
+  entrySpot: string
+  duration: number
+  expiryMs: number // absolute buzzer, drives the round clock + live band decay
+}
+export interface RangeQuoteModel {
+  annualVol: number // sigma(t) = annualVol * sqrt(t / yearSeconds)
+  minRoundMs: number // taps closer than this to the buzzer route to the next round
+}
+
 export interface PlayDTO {
   id: string
   game: Game
@@ -382,6 +401,9 @@ const realApi = {
   // Price the whole band ladder for an asset in one call; cached on select so every band shows its real multiple instantly, no estimate fallback.
   rangeQuotes: (asset: string, widthPcts: number[]) =>
     request<{ quotes: RangeQuote[] }>('GET', `/games/range/quotes?asset=${encodeURIComponent(asset)}&widths=${widthPcts.join(',')}`),
+  // Price the server payout-tier ladder (the RANGE knob): stable multiples + the live-band decay model.
+  rangeTierQuotes: (asset: string) =>
+    request<{ quotes: RangeTierQuote[]; model: RangeQuoteModel | null }>('GET', `/games/range/quotes?asset=${encodeURIComponent(asset)}&tiers=1`),
   play: (game: Game, body: Record<string, unknown>) => request<PlayResult>('POST', `/games/${game}/play`, body),
   cashout: (playId: string) => request<CashoutResult>('POST', `/plays/${playId}/cashout`, {}),
   plays: (q: { status?: string; limit?: number } = {}) => {

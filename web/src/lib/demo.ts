@@ -23,6 +23,8 @@ import type {
   PlayDTO,
   PlayResult,
   RangeQuote,
+  RangeQuoteModel,
+  RangeTierQuote,
   PlayStatus,
   PlayTick,
   PriceTick,
@@ -422,6 +424,13 @@ function estimateMultiplier(halfPct: number, durationSec: number): number {
   return Math.max(1.05, Math.min(0.97 / Math.max(prob, 0.03), 99))
 }
 
+// RANGE payout tiers, mirroring the backend ladder (main-config RANGE_TIER_PROBS); band width inverts
+// demo's own win-prob model so a tier's quote and its locked multiple always agree.
+const RANGE_TIER_PROBS = [0.85, 0.65, 0.45, 0.3, 0.18]
+const rangeTierHalfPct = (p: number): number => -Math.log(1 - p) * 0.6 * Math.sqrt(RANGE_ROUND_SEC / 30)
+const rangeTierProb = (tier: number): number =>
+  RANGE_TIER_PROBS[Math.max(0, Math.min(RANGE_TIER_PROBS.length - 1, Math.round(tier)))]
+
 function meets(metric: string, threshold: number, c: Counters): boolean {
   switch (metric) {
     case 'games_played':
@@ -625,8 +634,9 @@ function createRange(body: Record<string, unknown>): PlayDTO {
   ensureBalance(stake)
   const asset = String(body.asset ?? ASSETS[0])
   const duration = RANGE_ROUND_SEC // one real settled round; matches the backend's oracle-expiry round
-  const widthPct = Number(body.widthPct ?? 2) // full band width %
-  const halfPct = widthPct / 2
+  // Tier play (the payout knob): band width derives from the tier's target odds; legacy widthPct kept for range-v2.
+  const halfPct = body.tier != null ? rangeTierHalfPct(rangeTierProb(Number(body.tier))) : Number(body.widthPct ?? 2) / 2
+  const widthPct = halfPct * 2
   const entry = currentPrice(asset)
   const lower = entry * (1 - halfPct / 100)
   const upper = entry * (1 + halfPct / 100)
@@ -947,6 +957,29 @@ export const demoApi = {
       }
     })
     return { quotes }
+  },
+
+  // Payout-tier twin. Demo rounds start at the tap (no shared wall-clock buzzer), so model stays null:
+  // the client shows the static width and no round clock, which is the demo truth.
+  rangeTierQuotes: async (asset: string): Promise<{ quotes: RangeTierQuote[]; model: RangeQuoteModel | null }> => {
+    await delay(80)
+    const entry = currentPrice(asset)
+    const quotes = RANGE_TIER_PROBS.map((p, tier) => {
+      const halfPct = rangeTierHalfPct(p)
+      return {
+        tier,
+        prob: p,
+        multiplier: Math.max(1.05, 0.97 / p),
+        sigmaMult: -Math.log(1 - p),
+        halfPct,
+        lower: str(entry * (1 - halfPct / 100)),
+        upper: str(entry * (1 + halfPct / 100)),
+        entrySpot: str(entry),
+        duration: RANGE_ROUND_SEC,
+        expiryMs: nowMs() + RANGE_ROUND_SEC * 1000,
+      }
+    })
+    return { quotes, model: null }
   },
 
   play: async (game: Game, body: Record<string, unknown>): Promise<PlayResult> => {

@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyReque
 import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { buildMarketsPayload } from '../lib/markets-feed.ts';
-import { PlayError, httpStatusForPlayError, quoteRangeBatchReal } from '../services/games.ts';
+import { PlayError, httpStatusForPlayError, quoteRangeBatchReal, quoteRangeTiersReal } from '../services/games.ts';
 import {
   createPlay,
   cashoutPlay,
@@ -48,8 +48,16 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   // Pre-mint Range price previews for the whole band ladder off the live Predict ask, so the UI shows
   // what it will actually mint. Client fetches once on select and caches it (cheap, read-only, no DB). `widths` is a CSV of full-band widths (percent); static path so no collision with the play route.
   app.get('/games/range/quotes', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const q = request.query as { asset?: string; widths?: string };
+    const q = request.query as { asset?: string; widths?: string; tiers?: string };
     const asset = (q.asset ?? '').toUpperCase();
+    // Tier mode: price the server payout ladder (empty quotes + null model while no market is live; the client falls back).
+    if (q.tiers) {
+      if (!asset) {
+        return fail(reply, new PlayError('INVALID_PARAMS', 'asset is required'), 'QUOTE_FAILED', 'Could not price those tiers');
+      }
+      const payload = await quoteRangeTiersReal();
+      return reply.code(200).send({ success: true, error: null, data: payload ?? { quotes: [], model: null } });
+    }
     const widthPcts = (q.widths ?? '')
       .split(',')
       .map((s) => Number(s.trim()))
@@ -140,9 +148,16 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
   }
 
   // range: the round holds to the routed oracle's real expiry, so the client sends no duration.
-  const widthPct = Number(body.widthPct);
+  // Two shapes: a payout `tier` (the knob's ladder index, the current game) or a legacy `widthPct` band.
   const asset = String(body.asset ?? '');
-  if (!asset || !Number.isFinite(widthPct)) {
+  if (!asset) throw new PlayError('INVALID_PARAMS', 'Pick an asset');
+  if (body.tier != null) {
+    const tier = Number(body.tier);
+    if (!Number.isFinite(tier)) throw new PlayError('INVALID_PARAMS', 'Pick a payout tier');
+    return { game, stake, asset, tier };
+  }
+  const widthPct = Number(body.widthPct);
+  if (!Number.isFinite(widthPct)) {
     throw new PlayError('INVALID_PARAMS', 'Pick an asset and band width');
   }
   return { game, stake, asset, widthPct };

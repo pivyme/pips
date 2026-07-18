@@ -43,8 +43,10 @@ import { useActivePlay } from '@/lib/activePlay'
 import { cnm } from '@/utils/style'
 import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
 
-// RANGE: size a band around the live price with the knob (tighter = higher multiple), PLAY locks it, hold to
-// the buzzer for a real spread-free mint_range settle, or CASH OUT early. Layout: web/CLAUDE.md, style: docs/SCREEN.md.
+// RANGE: the knob picks a payout tier (bigger pays = tighter band, longer odds), PLAY locks the band around
+// the live price, hold to the buzzer for a real spread-free mint_range settle, or CASH OUT early.
+// The tier's multiple is time-independent (1x leverage, ~1/prob); the band width is what tracks the round
+// clock, so it visibly tightens as the buzzer nears. Layout: web/CLAUDE.md, style: docs/SCREEN.md.
 export const Route = createFileRoute('/_app/games/range')({
   component: RangeScreen,
 })
@@ -52,11 +54,18 @@ export const Route = createFileRoute('/_app/games/range')({
 // Persisted stake index shared with Lucky + the home idle wheel (same key), so the chosen chip
 // survives navigation and reloads instead of resetting each mount.
 const STAKE_KEY = 'pips_stake_idx'
-// Band ladder: the ± half-band the knob steps through. Tight bands calibrated to REAL_BTC_ANNUAL_VOL so a
-// short BTC round doesn't clear them near-certainly and the knob actually varies the multiplier.
-const BAND_LADDER: Array<number> = [0.02, 0.035, 0.05, 0.08, 0.15]
-// Default band the knob lands on at mount: the middle rung (±0.05%).
-const DEFAULT_WIDTH_IDX = 2
+// Cold-start knob ladder until the server tier quotes land: mirrors backend RANGE_TIER_PROBS defaults
+// (mult = (1/p)*0.96, sigmaMult = z((1+p)/2), halfPct at a nominal 30s round). Estimate only, snaps on fetch.
+const FALLBACK_TIERS: Array<TierView> = [
+  { tier: 0, prob: 0.85, multiplier: 1.13, sigmaMult: 1.44, halfPct: 0.077 },
+  { tier: 1, prob: 0.65, multiplier: 1.48, sigmaMult: 0.935, halfPct: 0.05 },
+  { tier: 2, prob: 0.45, multiplier: 2.13, sigmaMult: 0.598, halfPct: 0.032 },
+  { tier: 3, prob: 0.3, multiplier: 3.2, sigmaMult: 0.385, halfPct: 0.021 },
+  { tier: 4, prob: 0.18, multiplier: 5.33, sigmaMult: 0.228, halfPct: 0.012 },
+]
+// Default tier the knob lands on at mount: the middle rung.
+const DEFAULT_TIER_IDX = 2
+const SECONDS_PER_YEAR = 365.25 * 24 * 3600
 const FALLBACK_ASSETS = ['BTC', 'ETH', 'SUI', 'SOL', 'DEEP']
 const TOKEN_LOGOS: Record<string, string> = {
   BTC: '/assets/images/coins/btc-logo.png',
@@ -84,6 +93,15 @@ const TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out', 'error'])
 const RESULT_TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out'])
 
 type Phase = 'idle' | 'placing' | 'open' | 'cashing' | 'result'
+// What the knob steps through: a server tier quote, or the cold-start fallback (no expiryMs).
+type TierView = {
+  tier: number
+  prob: number
+  multiplier: number
+  sigmaMult: number
+  halfPct: number
+  expiryMs?: number
+}
 type Live = {
   markValue: string
   pnl: string
@@ -100,14 +118,14 @@ const compact = (n: number): string =>
     ? `${(n / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k`
     : n.toLocaleString('en-US', { maximumFractionDigits: n >= 1 ? 2 : 4 })
 
-// Rough monotonic estimate, only a cold-start fallback until the backend's real per-band win-prob quote loads.
-// Sigma is ~0.05%/30s so the cold-start multiplier is in the right ballpark before the real quote lands.
-function estimateMultiplier(halfPct: number, durationSec: number): number {
-  const sigma = 0.05 * Math.sqrt(durationSec / 30) // ~1-sigma % move, scales with sqrt(T)
-  const ratio = halfPct / sigma
-  const prob = 1 - Math.exp(-ratio)
-  return Math.max(1.05, Math.min(0.97 / Math.max(prob, 0.03), 99))
+// 83000ms -> '1:23' for the round-clock chip.
+function fmtClock(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
+
+// ±% band label with enough decimals to keep tight tiers distinct (0.021 vs 0.032).
+const fmtHalfPct = (halfPct: number): string => halfPct.toFixed(halfPct < 0.1 ? 3 : 2)
 
 // Whether the frozen lock price lands in the raw (lower, upper] band, matching on-chain settlement.
 // Console-audit only, checks the early verdict against the final result. Null until a lock price exists.
@@ -126,7 +144,7 @@ function RangeScreen() {
   const navigate = useNavigate()
   const { track } = useActivePlay()
 
-  const [widthIdx, setWidthIdx] = useState(DEFAULT_WIDTH_IDX) // knob index into BAND_LADDER
+  const [tierIdx, setTierIdx] = useState(DEFAULT_TIER_IDX) // knob index into the payout-tier ladder
   // One persistent stake shared with Lucky + the home wheel (same ladder), so it stays put across nav.
   const [stakeIdx, setStakeIdx] = useLocalStorage(STAKE_KEY, 2)
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null) // the player's pick, by symbol
@@ -191,7 +209,6 @@ function RangeScreen() {
   // TOP UP instead of a dead-end toast.
   const cantAfford = balance < STAKE_LADDER[0]
 
-  const halfPct = BAND_LADDER[Math.min(widthIdx, BAND_LADDER.length - 1)]
   const canPlay = liveAssets.length > 0
   const roundLive =
     phase === 'open' || phase === 'cashing' || phase === 'result'
@@ -201,28 +218,57 @@ function RangeScreen() {
   const positioned = enteredStatus != null && enteredStatus !== 'error'
   const confirming = enteredStatus === 'pending'
 
-  // Real Predict-ask quotes for the whole band ladder, batched per asset off one oracle snapshot and
-  // cached, so every band shows its true multiple with no flicker. Paused while a round is live; the client estimate is cold-start fallback only.
-  const bandWidthsPct = BAND_LADDER.map((h) => h * 2)
+  // Server payout-tier quotes: stable multiples plus the live-band decay model, cached per asset so the
+  // knob never flickers. Paused while a round is live; FALLBACK_TIERS carries the knob until the first fetch.
   const quotesQ = useQuery({
-    queryKey: ['rangeQuotes', activeAsset],
-    queryFn: () => api.rangeQuotes(activeAsset, bandWidthsPct),
+    queryKey: ['rangeTierQuotes', activeAsset],
+    queryFn: () => api.rangeTierQuotes(activeAsset),
     enabled: canPlay && !!activeAsset && !roundLive,
     placeholderData: (prev) => prev,
     staleTime: 4_000,
     refetchInterval: 8_000,
     retry: false,
   })
-  const quotedMult = quotesQ.data?.quotes[widthIdx]?.multiplier
+  const tiers: Array<TierView> = quotesQ.data?.quotes.length ? quotesQ.data.quotes : FALLBACK_TIERS
+  const model = quotesQ.data?.model ?? null
+  const tierView = tiers[Math.min(tierIdx, tiers.length - 1)]
+  const quotesRefetch = quotesQ.refetch
+
+  // Wall-clock tick while idle so the round clock and the breathing band stay live between quote fetches.
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    if (roundLive) return
+    const t = setInterval(() => setNowTick(Date.now()), 250)
+    return () => clearInterval(t)
+  }, [roundLive])
+
+  // Time to the target round's buzzer. Inside minRoundMs a tap routes to the NEXT round: the chip flips
+  // to NEXT ROUND, the width math clamps at the floor, and one refetch re-routes the quote.
+  const roundEndsMs = model && tierView.expiryMs ? tierView.expiryMs - nowTick : null
+  const nextRound = roundEndsMs != null && model != null && roundEndsMs < model.minRoundMs
+  const boundaryRef = useRef(0)
+  useEffect(() => {
+    if (!nextRound || !tierView.expiryMs || roundLive) return
+    if (boundaryRef.current === tierView.expiryMs) return
+    boundaryRef.current = tierView.expiryMs
+    void quotesRefetch()
+  }, [nextRound, tierView.expiryMs, roundLive, quotesRefetch])
+
+  // Live band half-width: sigmaMult * sigma(time left), floored at the shortest round a tap can enter.
+  // Without a model (demo / cold start) the quote's static width is the truth.
+  const halfLivePct =
+    model && roundEndsMs != null
+      ? tierView.sigmaMult *
+        model.annualVol *
+        Math.sqrt(Math.max(roundEndsMs, model.minRoundMs) / 1000 / SECONDS_PER_YEAR) *
+        100
+      : tierView.halfPct
 
   const liveMult = live?.multiplier ?? play?.multiplier
-  // Idle preview prefers the cached real multiple; the rough estimate is cold-start fallback only
-  // (also guards an unmintable 0 from the chain).
-  const idleMult =
-    quotedMult && quotedMult > 0
-      ? quotedMult
-      : estimateMultiplier(halfPct, NOMINAL_ROUND_SEC)
-  const mult = liveMult ?? idleMult
+  // The tier's payout is time-independent (1x leverage), so the idle number IS the promise; the mint
+  // snaps it to the real on-chain multiple moments after the tap.
+  const idleMult = tierView.multiplier
+  const mult = liveMult != null && liveMult > 0 ? liveMult : idleMult
   const { secsLeft, remainingMs, settleMs } = useRoundCountdown({
     enabled: phase === 'open',
     play,
@@ -230,14 +276,14 @@ function RangeScreen() {
   })
   const cashMs = usePhaseElapsed(phase === 'cashing')
 
-  // Live ±halfPct preview while idle, locked to the play's strike bounds while live. Gated on roundLive (not `play`, which lingers after settle) so the band resumes the preview instead of freezing.
+  // Live ± preview while idle (the tier's breathing width), locked to the play's strike bounds while live. Gated on roundLive (not `play`, which lingers after settle) so the band resumes the preview instead of freezing.
   // Oracle-space overlays (band/entry/settle) sit on the line when drawn raw, no client feed offset needed.
   const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
 
   // Band bounds, drawn raw. These oracle bounds drive the real settlement and now also sit on the line.
   const lower = play?.market.lower != null ? parseFloat(play.market.lower) : null
   const upper = play?.market.upper != null ? parseFloat(play.market.upper) : null
-  // While placing, no guessed band is painted, the chart keeps the live ±halfPct preview; the moment the play resolves it snaps to the REAL bounds, never a fabricated number.
+  // While placing, no guessed band is painted, the chart keeps the live ± preview; the moment the play resolves it snaps to the REAL bounds, never a fabricated number.
   // Inside the cash-out safety/settling window, seal the live band lighting, the result is still pending until settlement lands.
   const bandSealed =
     phase === 'open' && remainingMs != null && remainingMs <= SETTLE_LOCK_MS
@@ -245,7 +291,7 @@ function RangeScreen() {
     positioned && lower != null && upper != null
       ? { lower, upper, locked: true, sealed: bandSealed, confirming }
       : spot != null
-        ? { pct: halfPct }
+        ? { pct: halfLivePct }
         : undefined
   const showBand = phase !== 'result' || play != null
 
@@ -400,11 +446,11 @@ function RangeScreen() {
     const intent: RangeEntryIntent = {
       asset,
       stake,
-      halfPct,
+      halfPct: halfLivePct,
       uiSpot: spot ?? livePriceRef.current,
       chartPrice: livePriceRef.current,
       previewMult: idleMult,
-      quoted: quotedMult,
+      quoted: model ? idleMult : undefined,
     }
     entryIntentRef.current = intent
     rangeDebug.entry(intent)
@@ -416,7 +462,7 @@ function RangeScreen() {
       const { play: p } = await placePlay('range', {
         stake,
         asset,
-        widthPct: halfPct * 2,
+        tier: tierView.tier,
       })
       setPlay(p)
       track({ id: p.id, game: 'range' })
@@ -434,20 +480,20 @@ function RangeScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, stake, asset, halfPct, spot, idleMult, quotedMult, playsPaused, track])
+  }, [phase, canPlay, stake, asset, halfLivePct, spot, idleMult, model, tierView.tier, playsPaused, track])
 
-  // Trade confirmation (opt-in, off by default): PLAY arms, CONFIRM places; the sheet shows the band +
-  // quoted multiple the second press will lock. Off, press() places immediately.
+  // Trade confirmation (opt-in, off by default): PLAY arms, CONFIRM places; the sheet shows the odds +
+  // payout the second press will lock. Off, press() places immediately.
   const confirm = useTradeConfirm(
     () => void doPlay(),
     () => ({
       stake,
-      headline: `${asset} · ±${halfPct.toFixed(1)}%`,
+      headline: `${asset} · ~${Math.round(tierView.prob * 100)}% odds`,
       multiplier: idleMult,
       // Net of the house rake (config.ts netStakeUsd): the position sizes off net, so this is the true
       // max win, never stake * idleMult. No-op in demo or when the rake is off.
       maxPayout: netStakeUsd(stake) * idleMult,
-      note: 'Hold to the buzzer',
+      note: 'Land inside the band at the buzzer',
     }),
   )
   // Disarms the moment placement would be blocked or idle ends, so CONFIRM can't fire a play the
@@ -588,14 +634,16 @@ function RangeScreen() {
   const resultColor: 'up' | 'down' = resultPositive ? 'up' : 'down'
   useConsoleControls({
     knob: {
-      label: 'RANGE',
+      label: 'PAYS',
       min: 0,
-      max: BAND_LADDER.length - 1, // step through the ±0.1% .. ±1.5% ladder
+      max: tiers.length - 1, // step through the payout-tier ladder (safest to wildest)
       step: 1,
-      value: widthIdx,
-      onChange: setWidthIdx,
-      format: (v) =>
-        `±${BAND_LADDER[Math.min(v, BAND_LADDER.length - 1)].toFixed(1)}%`,
+      value: tierIdx,
+      onChange: setTierIdx,
+      format: (v) => {
+        const t = tiers[Math.min(v, tiers.length - 1)]
+        return `${t.multiplier.toFixed(t.multiplier >= 10 ? 0 : 1)}x`
+      },
     },
     numberWheel: {
       label: 'DUSDC',
@@ -688,7 +736,7 @@ function RangeScreen() {
   const recap =
     lower != null && upper != null
       ? `${asset} · ${compact(lower)}–${compact(upper)} · Cost $${formatExactDecimal(playCost)}`
-      : `${asset} · ±${halfPct.toFixed(1)}% · Cost $${formatExactDecimal(playCost)}`
+      : `${asset} · ~${Math.round(tierView.prob * 100)}% odds · Cost $${formatExactDecimal(playCost)}`
 
   // A one-shot riser at the buzzer, the last seconds before the oracle settles, to spike the tension.
   useEffect(() => {
@@ -846,7 +894,8 @@ function RangeScreen() {
                     cashoutPnl={live?.pnl ?? play?.pnl ?? '0'}
                   />
                   <div className="mt-2.5 grid grid-cols-3 gap-x-3">
-                    <Cell label="Mult" value={`${mult.toFixed(2).replace(/\.?0+$/, '')}x`} />
+                    {/* The real minted multiple off the OrderMinted event, never the preview estimate. */}
+                    <Cell label="Locked" value={`${mult.toFixed(2).replace(/\.?0+$/, '')}x`} />
                     <Cell label="Cost" value={`$${formatExactDecimal(playCost)}`} />
                     <Cell
                       label="Win"
@@ -869,18 +918,35 @@ function RangeScreen() {
                 </>
               ) : (
                 <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
-                    Pays
+                  <div className="flex items-center gap-2">
+                    <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                      Pays
+                    </div>
+                    {/* Round clock to the buzzer this tap settles at; flips to NEXT ROUND once a tap
+                        would roll into the following minute market (quotes re-route right behind it). */}
+                    {roundEndsMs != null && (
+                      <span
+                        className={cnm(
+                          'inline-flex items-center border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.1em]',
+                          nextRound
+                            ? 'border-brand-500/60 text-brand-500'
+                            : 'border-line-strong text-text-2',
+                        )}
+                      >
+                        {nextRound ? 'Next round' : `Ends ${fmtClock(roundEndsMs)}`}
+                      </span>
+                    )}
                   </div>
                   <div className="tnum text-[40px] font-extrabold leading-none text-brand-500">
                     {idleMult.toFixed(2)}x
                   </div>
-                  <div className="mt-2.5 grid grid-cols-2 gap-x-3">
-                    <Cell label="Amount" value={`$${stake}`} />
-                    <Cell label="Band" value={`±${halfPct.toFixed(1)}%`} />
+                  <div className="mt-2.5 grid grid-cols-3 gap-x-3">
+                    <Cell label="Bet" value={`$${stake}`} />
+                    <Cell label="Win" value={`$${(netStakeUsd(stake) * idleMult).toFixed(2)}`} />
+                    <Cell label="Odds" value={`~${Math.round(tierView.prob * 100)}%`} />
                   </div>
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
-                    Tighter range, bigger prize
+                    Land inside ±{fmtHalfPct(halfLivePct)}% at the buzzer
                   </div>
                 </>
               )}
@@ -893,9 +959,9 @@ function RangeScreen() {
       {overlay === 'howto' && (
         <InstructionOverlay
           lines={[
-            ['BAND', 'Turn the knob to size your price band. Tighter pays more.'],
-            ['PLAY', 'Locks the band around the live price.'],
-            ['WIN', 'Land inside the band at the buzzer to win your play amount × the multiple.'],
+            ['PAYS', 'Turn the knob to pick your payout. Bigger pays, tighter band, longer odds.'],
+            ['PLAY', 'Locks the band around the live price. It tightens as the round clock runs.'],
+            ['WIN', 'Land inside the band at the buzzer to win your play amount × the payout.'],
             ['CASH OUT', 'Take the live value any time before the buzzer.'],
           ]}
         />

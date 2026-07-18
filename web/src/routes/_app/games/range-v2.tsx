@@ -6,7 +6,7 @@ import type { PlayDTO } from '@/lib/api'
 import type { LivePlaySnapshot } from '@/hooks/useGameRound'
 import { useConsoleControls } from '@/components/console/controls'
 import { Chart, type ChartGeometry } from '@/components/game/Chart'
-import { CrowdLayer } from '@/components/game/CrowdLayer'
+// import { CrowdLayer } from '@/components/game/CrowdLayer' // temporarily disabled
 import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
 import { InstructionOverlay } from '@/components/game/gamePanels'
 import { LivePrice } from '@/components/game/LivePrice'
@@ -15,7 +15,7 @@ import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
 import { usePlayResolutionWatch } from '@/hooks/useGameRound'
 import { haptic } from '@/lib/haptics'
-import { rangeBuzzer, rangeLose, rangeWin, startRangeBgm, stopRangeBgm } from '@/lib/sound'
+import { rangeBuzzer, rangeCross, rangeLose, rangeWin, startRangeBgm, stopRangeBgm } from '@/lib/sound'
 import { api } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
 import { betLadder } from '@/lib/sui/config'
@@ -46,12 +46,19 @@ const NOMINAL_ROUND_SEC = 30
 const MAX_POSITIONS = 5
 // How long a resolved band flashes its verdict on the chart/strip before it clears out.
 const RESULT_HOLD_MS = 3500
+// Resolutions landing within this window of the PREVIOUS one merge into one WAVE (one splash, one
+// running total). Rolling, because settlement staggers over seconds: a buzzer batch must read as a
+// single payoff beat that grows, never a burst of disjoint blinks.
+const WAVE_MERGE_MS = 2500
+// How long the wave's ±$ splash rides over the chart. Non-blocking, PLAY stays hot under it.
+const WAVE_SPLASH_MS = 1700
 // Safety-net poll behind each position's SSE, same as the single-play screens.
 const WATCHDOG_MS = 3000
 
 type Status = 'placing' | 'pending' | 'open' | 'won' | 'lost' | 'cashed_out'
 type Position = {
   key: string // stable local id, set before the mint lands
+  slot: number // display number tying the chip to its chart flag; lowest free at fire time
   playId?: string // filled once placePlay returns
   asset: string
   status: Status
@@ -68,7 +75,10 @@ type Position = {
   won?: boolean
   resolvedAt?: number
 }
-type Session = { net: number; wins: number; losses: number; best: number }
+type Session = { net: number; wins: number; losses: number; best: number; streak: number }
+// `at` is the LAST folded-in resolution (drives the display windows + splash re-pop), `startedAt` is
+// stable per wave (keys the panel so its pop/count-up runs once while merged totals keep chasing).
+type Wave = { pnl: number; wins: number; losses: number; at: number; startedAt: number }
 type Overlay = 'none' | 'howto' | 'board'
 
 const isResolved = (p: Position): boolean =>
@@ -106,9 +116,10 @@ function RangeV2Screen() {
   const [spot, setSpot] = useState<number | null>(null)
   const [overlay, setOverlay] = useState<Overlay>('none')
   const [inZoneKeys, setInZoneKeys] = useState<Set<string>>(new Set())
-  const [session, setSession] = useState<Session>({ net: 0, wins: 0, losses: 0, best: 0 })
+  const [session, setSession] = useState<Session>({ net: 0, wins: 0, losses: 0, best: 0, streak: 0 })
+  const [wave, setWave] = useState<Wave | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
-  const [selfPlaceSignal, setSelfPlaceSignal] = useState(0) // bump to pop a coin for your own play
+  const [, setSelfPlaceSignal] = useState(0) // bump to pop a coin for your own play (crowd overlay temporarily disabled)
 
   const livePriceRef = useRef(0)
   const geometryRef = useRef<ChartGeometry | null>(null) // chart-published geometry for the crowd overlay
@@ -116,6 +127,7 @@ function RangeV2Screen() {
   positionsRef.current = positions
   const keySeq = useRef(0)
   const resolvedIds = useRef<Set<string>>(new Set())
+  const waveRef = useRef<Wave | null>(null)
   const lastPingRef = useRef(0)
   const buzzedExpiryRef = useRef<number | null>(null)
 
@@ -185,17 +197,48 @@ function RangeV2Screen() {
   }, [nowMs])
 
   // 60fps in/out read off the eased chart price, re-rendering only when the in-zone SET actually changes.
+  // A position crossing an edge (open in both frames, membership flipped) fires a subtle haptic. The cross
+  // SOUND is reserved for the whole board arming (every zone lit) or losing that armed state; per-edge
+  // sound with a 5-band stack would turn into a metronome.
   useEffect(() => {
     let raf = 0
+    let prevIn = new Set<string>()
+    let prevTracked = new Set<string>()
+    let prevAllIn = false
+    let lastTick = 0
     const loop = () => {
       const p = livePriceRef.current
       const next = new Set<string>()
+      const tracked = new Set<string>()
       if (p > 0) {
         for (const pos of positionsRef.current) {
-          if (pos.band && (pos.status === 'open' || pos.status === 'pending') && p > pos.band.lower && p <= pos.band.upper)
-            next.add(pos.key)
+          if (pos.band && (pos.status === 'open' || pos.status === 'pending')) {
+            tracked.add(pos.key)
+            if (p > pos.band.lower && p <= pos.band.upper) next.add(pos.key)
+          }
         }
       }
+      let entered = false
+      let exited = false
+      for (const k of tracked) {
+        if (!prevTracked.has(k)) continue // newly opened or just resolved: not a price cross
+        const is = next.has(k)
+        if (is !== prevIn.has(k)) {
+          if (is) entered = true
+          else exited = true
+        }
+      }
+      const t = performance.now()
+      if ((entered || exited) && t - lastTick > 400) {
+        lastTick = t
+        haptic(exited ? 'rigid' : 'selection')
+      }
+      const allIn = tracked.size > 0 && next.size === tracked.size
+      if (allIn && !prevAllIn && entered) rangeCross(true) // the board armed: every zone paying
+      else if (!allIn && prevAllIn && exited) rangeCross(false) // dropped out of the armed state
+      prevAllIn = allIn
+      prevIn = next
+      prevTracked = tracked
       setInZoneKeys((prev) => (setsEqual(prev, next) ? prev : next))
       raf = requestAnimationFrame(loop)
     }
@@ -261,7 +304,21 @@ function RangeV2Screen() {
         wins: s.wins + (won ? 1 : 0),
         losses: s.losses + (won ? 0 : 1),
         best: Math.max(s.best, pnl),
+        streak: won ? s.streak + 1 : 0,
       }))
+      // Fold this resolution into the current wave (or start one): one splash + one running total per
+      // buzzer batch. The window rolls forward on each merge so staggered settlement stays one beat.
+      const now = Date.now()
+      const w =
+        waveRef.current && now - waveRef.current.at < WAVE_MERGE_MS
+          ? waveRef.current
+          : { pnl: 0, wins: 0, losses: 0, at: now, startedAt: now }
+      w.pnl += pnl
+      if (won) w.wins++
+      else w.losses++
+      w.at = now
+      waveRef.current = w
+      setWave({ ...w })
       ping(won)
       void refresh()
       for (const key of ['stats', 'achievements', 'plays']) void qc.invalidateQueries({ queryKey: [key] })
@@ -309,7 +366,11 @@ function RangeV2Screen() {
     }
     if (cantAfford) return
     const key = `pos-${keySeq.current++}`
-    const placing: Position = { key, status: 'placing', asset, stake, multiplier: idleMult }
+    // Lowest number not on the board (flashing results still hold theirs), so chip and chart flag match.
+    const used = new Set(positionsRef.current.map((p) => p.slot))
+    let slot = 1
+    while (used.has(slot)) slot++
+    const placing: Position = { key, slot, status: 'placing', asset, stake, multiplier: idleMult }
     setPositions((prev) => [...prev, placing])
     setSelfPlaceSignal((s) => s + 1) // your own coin-pop, same primitive as the crowd
     haptic('heavy')
@@ -423,6 +484,7 @@ function RangeV2Screen() {
       lower: p.band!.lower,
       upper: p.band!.upper,
       state: (isResolved(p) ? (p.won ? 'won' : 'lost') : 'live') as 'live' | 'won' | 'lost',
+      n: p.slot, // the chart flag mirrors the chip's number
     }))
   const showAim = canPlay && !atMax && spot != null
   const overlays =
@@ -433,17 +495,15 @@ function RangeV2Screen() {
         }
       : undefined
 
-  // Strip order: live bands first by soonest buzzer (the ones about to resolve lead), then freshest results.
-  const orderedPositions = [...positions].sort((a, b) => {
-    const ra = isResolved(a)
-    const rb = isResolved(b)
-    if (ra !== rb) return ra ? 1 : -1
-    if (!ra) return (a.expiry ?? Infinity) - (b.expiry ?? Infinity)
-    return (b.resolvedAt ?? 0) - (a.resolvedAt ?? 0)
-  })
+  // Strip order: by slot number, always. A chip never moves while it lives (verdicts flash in place),
+  // so the eye can track "chip 3" from fire to result without re-scanning the row.
+  const orderedPositions = [...positions].sort((a, b) => a.slot - b.slot)
 
   const sessionShown = session.wins + session.losses > 0
   const netStr = `${session.net >= 0 ? '+' : '−'}$${usd(Math.abs(session.net))}`
+  // The footer holds the wave's total for the same window the chips flash, so the payoff beat and the
+  // strip clear together instead of the readout snapping straight back to the idle preview.
+  const waveShown = wave != null && nowMs - wave.at < RESULT_HOLD_MS
 
   const showResults = positions.length > 0
   const blankScreen = marketsLoading || marketsError || (noLiveMarket && !showResults) || (playsPaused && !showResults)
@@ -505,8 +565,8 @@ function RangeV2Screen() {
           {/* POSITIONS STRIP: a live row of chips, one per position. Top of the L is full width, never occluded. */}
           {positions.length > 0 && (
             <div className="shrink-0 border-b border-line-strong bg-black px-[var(--screen-rim,24px)] py-2">
-              {/* Live positions sort first (see orderedPositions), so all 5 always sit in row 1; compact chips
-                  keep them on one line even on a narrow device, resolved ones wrap below. */}
+              {/* Slot-ordered (stable): each chip stays put from fire to verdict, numbered to its chart flag.
+                  Compact chips keep the full stack on one line even on a narrow device; overflow wraps. */}
               <div className="flex flex-wrap items-center gap-1">
                 {orderedPositions.map((p) => (
                   <PositionChip key={p.key} p={p} inZone={inZoneKeys.has(p.key)} nowMs={nowMs} />
@@ -526,6 +586,20 @@ function RangeV2Screen() {
                 </span>
               </div>
             )}
+            {/* Wave payoff splash: the batch's ±$ pops over the chart, then fades. Non-blocking, PLAY stays hot. */}
+            {wave != null && nowMs - wave.at < WAVE_SPLASH_MS && (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center overflow-hidden">
+                <span
+                  key={wave.at}
+                  className={cnm(
+                    'wave-splash tnum font-black leading-none text-[clamp(44px,12vh,84px)]',
+                    wave.pnl >= 0 ? 'text-up' : 'text-down',
+                  )}
+                >
+                  {`${wave.pnl >= 0 ? '+' : '−'}$${usd(Math.abs(wave.pnl))}`}
+                </span>
+              </div>
+            )}
             {asset ? (
               <>
                 <Chart
@@ -538,7 +612,8 @@ function RangeV2Screen() {
                 />
                 {/* Social crowd: fake other-players riding the line so the round never reads dead. Cosmetic,
                     isolated (no chain/api), pinned to the price line via the chart's geometry snapshot. */}
-                <CrowdLayer geometryRef={geometryRef} livePriceRef={livePriceRef} selfPlaceSignal={selfPlaceSignal} />
+                {/* Temporarily disabled: other-player activity crowd overlay.
+                <CrowdLayer geometryRef={geometryRef} livePriceRef={livePriceRef} selfPlaceSignal={selfPlaceSignal} /> */}
               </>
             ) : null}
           </div>
@@ -546,7 +621,7 @@ function RangeV2Screen() {
           {/* FOOTER: left-only readout (bottom-right is the knob/PLAY body). In-play shows the live collect; idle shows the next-play preview. */}
           <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5 min-h-[var(--screen-notch,21%)]">
             <div className="max-w-[62%]">
-              {n > 0 ? (
+              {openPos.length > 0 ? (
                 <>
                   <div className="flex items-center gap-2">
                     <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
@@ -555,15 +630,21 @@ function RangeV2Screen() {
                     <span
                       className={cnm(
                         'inline-flex items-center border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.1em]',
-                        inZoneCount > 0 ? 'border-up/60 text-up' : 'border-down/60 text-down',
+                        inZoneCount > 0 && inZoneCount === openPos.length
+                          ? 'border-up bg-up/20 text-up' // every zone lit: the jackpot-armed state
+                          : inZoneCount > 0
+                            ? 'border-up/60 text-up'
+                            : 'border-down/60 text-down',
                       )}
                     >
                       {inZoneCount > 0 ? `${inZoneCount}/${openPos.length} in zone` : 'All out'}
                     </span>
                   </div>
+                  {/* Keyed on the zone count so the number pops when a zone lights up or drops, never on mark drift. */}
                   <div
+                    key={`${inZoneCount}/${openPos.length}`}
                     className={cnm(
-                      'tnum mt-0.5 text-[40px] font-extrabold leading-none',
+                      'tnum mt-0.5 origin-left text-[40px] font-extrabold leading-none animate-[zone-pop_200ms_ease-out]',
                       allOut ? 'text-brand-500' : 'text-up',
                     )}
                   >
@@ -576,6 +657,43 @@ function RangeV2Screen() {
                     <Cell label="Cash all" value={`$${usd(cashOutNow)}`} />
                     <Cell label="To win" value={`$${usd(totalToWin)}`} />
                     <Cell label="Next" value={settlingWave ? '···' : `${nextSecs ?? 0}s`} />
+                  </div>
+                </>
+              ) : waveShown && wave != null ? (
+                <>
+                  {/* The payoff panel: the wave's one big number, then straight into the next-play numbers. */}
+                  <div className="flex items-center gap-2">
+                    <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
+                      Wave result
+                    </div>
+                    <span
+                      className={cnm(
+                        'inline-flex items-center border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.1em]',
+                        wave.wins > 0 ? 'border-up/60 text-up' : 'border-down/60 text-down',
+                      )}
+                    >
+                      {wave.wins}/{wave.wins + wave.losses} hit
+                    </span>
+                  </div>
+                  <div
+                    key={wave.startedAt}
+                    className={cnm(
+                      'tnum mt-0.5 origin-left text-[40px] font-extrabold leading-none animate-[zone-pop_200ms_ease-out]',
+                      wave.pnl >= 0 ? 'text-up' : 'text-down',
+                    )}
+                  >
+                    {wave.pnl >= 0 ? (
+                      <CountUp value={wave.pnl} format={(v) => `+$${usd(v)}`} />
+                    ) : (
+                      `−$${usd(Math.abs(wave.pnl))}`
+                    )}
+                  </div>
+                  <div className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-text-3">
+                    {wave.pnl >= 0 ? 'Banked. Fire the next wave.' : 'Missed. Fire again.'}
+                  </div>
+                  <div className="mt-2.5 grid grid-cols-2 gap-x-3">
+                    <Cell label="Next pays" value={`${idleMult.toFixed(2)}x`} />
+                    <Cell label="Amount" value={`$${stake}`} />
                   </div>
                 </>
               ) : (
@@ -601,6 +719,12 @@ function RangeV2Screen() {
                   <span className="tnum text-text-2">
                     {session.wins}-{session.losses}
                   </span>
+                  {session.streak >= 2 && (
+                    <>
+                      <span className="text-text-3">·</span>
+                      <span className="tnum text-brand-500">Streak {session.streak}</span>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -611,10 +735,10 @@ function RangeV2Screen() {
       {overlay === 'howto' && (
         <InstructionOverlay
           lines={[
-            ['BAND', 'Turn the knob to size a price band. Tighter pays more.'],
-            ['PLAY', 'Drops a band and rides it to the buzzer. Fire as many as you want.'],
-            ['STACK', 'Every band settles on its own buzzer. Results pop as they land.'],
-            ['CASH ALL', 'Bank every open band at its live value before the buzzer.'],
+            ['ZONES', 'PLAY drops a numbered zone that rides to the buzzer. Stack up to 5.'],
+            ['CHIPS', 'Green chip = price inside that zone, it pays at the buzzer. Red = outside.'],
+            ['KNOB', 'Sizes the next band. Tighter pays more.'],
+            ['CASH ALL', 'Bank every open zone at its live value before the buzzer.'],
           ]}
         />
       )}
@@ -666,19 +790,44 @@ function PositionWatch({
   return null
 }
 
-// A single position in the strip: pulsing while placing, amber/green while live (green = live price in its band),
-// green/red flash with the ±pnl on its verdict. A hairline underline depletes toward its buzzer while live.
+// Slot-machine tick-up for the wave's winnings: eases 0 -> total on mount, then chases merged updates.
+// Remounts per wave (parent keyed on wave.at), so every payoff counts up fresh.
+function CountUp({ value, format }: { value: number; format: (v: number) => string }) {
+  const [shown, setShown] = useState(0)
+  const fromRef = useRef(0)
+  useEffect(() => {
+    const from = fromRef.current
+    fromRef.current = value
+    if (from === value) return
+    const t0 = performance.now()
+    let raf = 0
+    const step = (t: number) => {
+      const k = Math.min(1, (t - t0) / 700)
+      const e = 1 - Math.pow(1 - k, 3)
+      setShown(from + (value - from) * e)
+      if (k < 1) raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [value])
+  return <>{format(shown)}</>
+}
+
+// A single position in the strip, numbered to match its chart flag. The label is money, not the multiplier
+// (four 2.2x chips read as noise; "$2.77" reads as a prize). Green-lit = price inside its zone (pays at the
+// buzzer), red = outside right now. Verdict flashes ±pnl in place. A hairline underline depletes to its buzzer.
 function PositionChip({ p, inZone, nowMs }: { p: Position; inZone: boolean; nowMs: number }) {
   const resolved = isResolved(p)
   const won = resolved && p.won
   const lost = resolved && !p.won
   const live = isLive(p) && p.status !== 'placing'
+  const payout = num(p.maxPayout) || p.stake * p.multiplier
   const label =
     p.status === 'placing'
       ? '···'
       : resolved
         ? `${won ? '+' : '−'}$${usd(Math.abs(num(p.pnl)))}`
-        : fmtMult(p.multiplier)
+        : `$${usd(payout)}`
   const frac =
     live && p.expiry != null && p.openedAt != null && p.expiry > p.openedAt
       ? Math.max(0, Math.min(1, (p.expiry - nowMs) / (p.expiry - p.openedAt)))
@@ -686,18 +835,19 @@ function PositionChip({ p, inZone, nowMs }: { p: Position; inZone: boolean; nowM
   return (
     <span
       className={cnm(
-        'tnum relative inline-flex items-center overflow-hidden border px-1 py-[3px] font-mono text-[10px] font-bold uppercase tracking-[0.04em]',
+        'tnum relative inline-flex items-center gap-1 overflow-hidden border px-1 py-[3px] font-mono text-[10px] font-bold uppercase tracking-[0.04em]',
         p.status === 'placing'
           ? 'animate-pulse border-dashed border-line-strong text-text-3'
           : won
-            ? 'border-up bg-up/15 text-up'
+            ? 'border-up bg-up/20 text-up'
             : lost
               ? 'border-down text-down opacity-70'
               : inZone
-                ? 'border-up text-up'
-                : 'border-brand-500/60 text-brand-500',
+                ? 'border-up bg-up/20 text-up'
+                : 'border-down/70 text-down',
       )}
     >
+      <span className="text-[8px] leading-none opacity-60">{p.slot}</span>
       {label}
       {frac != null && (
         <>

@@ -4,16 +4,18 @@ import {
   LUCKY_ROUND_MS,
   RANGE_MAX_ORACLE_LIFE_MS,
   RANGE_MIN_ORACLE_LIFE_MS,
+  RANGE_TIER_PROBS,
   REAL_BINARY_MIN_OFFSET_SIGMA,
   REAL_BTC_ANNUAL_VOL,
   REAL_RANGE_MAX_PROB,
   REAL_STRIKE_MAX_OFFSET_FRAC,
   REAL_STRIKE_MIN_PROB,
 } from '../config/main-config.ts';
-import { FLOAT_SCALING } from '../lib/sui/config.ts';
+import { FLOAT_SCALING, multiplier as multiplierOf } from '../lib/sui/config.ts';
 import { liveByAsset, type Market } from '../lib/sui/markets.ts';
-import { LEVERAGE_ONE, POSITION_LOT_SIZE, readBtcSpot, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
-import type { Game, RangeQuoteDTO as RangeQuote, Side } from '../types/api.ts';
+import { LEVERAGE_ONE, POSITION_LOT_SIZE, readBtcSpot, resolveWrapper, simulateMint, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
+import { treasuryAddress } from '../lib/sui/signer.ts';
+import type { Game, RangeQuoteDTO as RangeQuote, RangeQuoteModelDTO, RangeTierQuoteDTO, Side } from '../types/api.ts';
 import { PlayError } from './games-base.ts';
 import { newSeed, pickTier, seedFloat } from './rng.ts';
 
@@ -50,16 +52,22 @@ export type ResolvedReal = {
 
 export type CreatePlayInputShape =
   | { game: 'lucky'; stake: string | number }
-  | { game: 'range'; stake: string | number; asset: string; widthPct: number }
+  | { game: 'range'; stake: string | number; asset: string; widthPct?: number; tier?: number }
   | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number };
 
-function realMarket(roundMs: number): Market {
+function realMarket(roundMs: number, minRemainingMs: number = EXPIRY_SAFETY_MS): Market {
   const at = now();
-  const live = liveByAsset(REAL_BTC_GAME_ASSET, at, EXPIRY_SAFETY_MS);
+  const live = liveByAsset(REAL_BTC_GAME_ASSET, at, Math.max(minRemainingMs, EXPIRY_SAFETY_MS));
   if (live.length === 0) throw new PlayError('MARKET_UNAVAILABLE', 'No live market right now');
   const target = at + roundMs;
   return live.reduce((best, market) => (Math.abs(market.expiryMs - target) < Math.abs(best.expiryMs - target) ? market : best));
 }
+
+// RANGE routing: target the usual round length, but never enter a round with under RANGE_MIN_ORACLE_LIFE_MS
+// left. A tap that late used to buy a near-certain 10s dud (~1.1x on a much bigger promise); now it rolls
+// into the next minute market, and quotes share this routing so the preview prices the round a tap would get.
+const RANGE_TARGET_MS = Math.round((RANGE_MIN_ORACLE_LIFE_MS + RANGE_MAX_ORACLE_LIFE_MS) / 2);
+const rangeMarket = (): Market => realMarket(RANGE_TARGET_MS, RANGE_MIN_ORACLE_LIFE_MS);
 
 function realEcon(market: Market): { spot1e9: bigint; tickSize: bigint; admissionTickSize: bigint; maxLeverage1e9: bigint } {
   if (!market.spot1e9 || !market.admissionTickSizeRaw) throw new PlayError('ORACLE_STALE', 'Market has no price yet');
@@ -229,18 +237,113 @@ async function resolveRealBinary(game: 'lucky' | 'moonshot', netRaw: bigint, sta
   };
 }
 
-async function resolveRealRange(netRaw: bigint, stakeRaw: bigint, widthPct: number): Promise<ResolvedReal> {
-  if (!(widthPct > 0) || widthPct > 10) throw new PlayError('INVALID_PARAMS', 'Band width out of range');
-  const market = realMarket(Math.round((RANGE_MIN_ORACLE_LIFE_MS + RANGE_MAX_ORACLE_LIFE_MS) / 2));
+// A tier's analytic payout fallback at 1x leverage, until the sim calibration below supplies chain truth.
+const tierMultOf = (p: number): number => Math.max(1.01, (1 / p) * (1 - REAL_RANGE_QUOTE_HAIRCUT));
+
+// === Sim-calibrated RANGE pricing ===
+// The chain's pricer (Block Scholes vol surface) disagrees hard with any fixed REAL_BTC_ANNUAL_VOL
+// (observed ~0.2 implied vs the 0.55 seed, so a "45%" band minted at ~1.08x). Each refresh probes the
+// tier ladder with SIMULATED mints (treasury as actor, nothing lands), fits the implied annual vol from
+// the emitted entry_probability, and keeps the simulated multiple per tier as the quote truth.
+type RangeCalib = { sigmaAnnual: number; mults: Array<number | null>; at: number };
+const rangeCalib: RangeCalib = { sigmaAnnual: REAL_BTC_ANNUAL_VOL, mults: RANGE_TIER_PROBS.map(() => null), at: 0 };
+let calibInflight: Promise<void> | null = null;
+const CALIB_TTL_MS = 4000;
+const PROBE_AMOUNT_RAW = 1_500_000n; // $1.50 draw per probe, above the $1 min net premium
+const PROBE_DEPOSIT_RAW = 2_000_000n; // probe deposit: the mint draws fees on top of the amount budget
+const SIGMA_ANNUAL_MIN = 0.02;
+const SIGMA_ANNUAL_MAX = 3;
+
+const rangeSigmaFrac = (seconds: number): number => rangeCalib.sigmaAnnual * Math.sqrt(Math.max(1, seconds) / SECONDS_PER_YEAR);
+
+async function refreshRangeCalib(): Promise<void> {
+  if (!treasuryAddress) return; // no treasury key: analytic fallback stays
+  const market = rangeMarket();
+  const { spot1e9, tickSize, admissionTickSize } = realEcon(market);
+  const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+  const sqrtT = Math.sqrt(seconds / SECONDS_PER_YEAR);
+  const w = await resolveWrapper(treasuryAddress);
+  const probes = RANGE_TIER_PROBS.map((p) => {
+    const halfFrac = probit((1 + p) / 2) * rangeCalib.sigmaAnnual * sqrtT;
+    const half = (spot1e9 * BigInt(Math.round(halfFrac * 1e9))) / FLOAT_SCALING;
+    return { halfFrac, ...ticksForRange(spot1e9 - half, spot1e9 + half, tickSize, admissionTickSize) };
+  });
+  const results = await Promise.all(
+    probes.map((b) =>
+      simulateMint({
+        marketId: market.oracleId,
+        lowerTick: b.lowerTick,
+        higherTick: b.higherTick,
+        amountRaw: PROBE_AMOUNT_RAW,
+        depositRaw: PROBE_DEPOSIT_RAW,
+        leverage1e9: LEVERAGE_ONE,
+        sender: treasuryAddress,
+        wrapperId: w.wrapperId,
+        wrapperExists: w.exists,
+      }),
+    ),
+  );
+  const implied: number[] = [];
+  const mults = results.map((r, i) => {
+    if (!r) return null;
+    const p = Number(r.entryProbability1e9) / 1e9;
+    if (p > 0.005 && p < 0.995) implied.push(probes[i].halfFrac / (probit((1 + p) / 2) * sqrtT));
+    return multiplierOf(r.costRaw, r.quantityRaw);
+  });
+  if (implied.length > 0) {
+    implied.sort((a, b) => a - b);
+    // Median, damped so one weird probe can't yank the ladder; converges within a refresh or two.
+    const med = implied[Math.floor(implied.length / 2)];
+    const next = Math.min(rangeCalib.sigmaAnnual * 3, Math.max(rangeCalib.sigmaAnnual / 3, med));
+    rangeCalib.sigmaAnnual = Math.min(SIGMA_ANNUAL_MAX, Math.max(SIGMA_ANNUAL_MIN, next));
+  } else if (results.every((r) => r == null)) {
+    // Every probe aborted: near-certainly the bands sit past max_entry_probability (sigma estimate too
+    // high), so walk it down and re-fit next refresh. The floor stops a runaway.
+    rangeCalib.sigmaAnnual = Math.max(SIGMA_ANNUAL_MIN, rangeCalib.sigmaAnnual / 2);
+  }
+  rangeCalib.mults = mults;
+  rangeCalib.at = now();
+}
+
+// TTL + in-flight dedupe; a failed refresh keeps the prior calibration (analytic fallback covers cold start).
+async function ensureRangeCalib(): Promise<void> {
+  if (now() - rangeCalib.at < CALIB_TTL_MS) return;
+  calibInflight ??= refreshRangeCalib()
+    .catch(() => {})
+    .finally(() => {
+      calibInflight = null;
+    });
+  await calibInflight;
+}
+
+// RANGE mints at 1x leverage on the tier path: the win condition stays exactly "inside the band at the
+// buzzer" (no mid-round liquidation knockout) and the payout is ~1/p whenever the tap lands. The legacy
+// widthPct path (range-v2) keeps its fixed band + leverage stack.
+async function resolveRealRange(netRaw: bigint, stakeRaw: bigint, input: { widthPct?: number; tier?: number }): Promise<ResolvedReal> {
+  void ensureRangeCalib(); // keep the implied vol warm in the background; never block a tap on it
+  const market = rangeMarket();
   const { spot1e9: cachedSpot, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
   const spot1e9 = await freshRealSpot(cachedSpot);
   const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
-  const sigma = roundSigmaFrac(seconds);
-  const maxHalfFrac = probit((1 + REAL_RANGE_MAX_PROB) / 2) * sigma;
-  const halfFrac = Math.min(widthPct / 100 / 2, maxHalfFrac);
+  const sigma = rangeSigmaFrac(seconds);
+  let halfFrac: number;
+  let leverage1e9: bigint;
+  let tierMult = 0;
+  if (input.tier != null && Number.isFinite(input.tier)) {
+    const tierIdx = Math.max(0, Math.min(RANGE_TIER_PROBS.length - 1, Math.round(input.tier)));
+    const p = RANGE_TIER_PROBS[tierIdx];
+    halfFrac = probit((1 + p) / 2) * sigma;
+    leverage1e9 = LEVERAGE_ONE;
+    tierMult = rangeCalib.mults[tierIdx] ?? tierMultOf(p);
+  } else {
+    const widthPct = input.widthPct ?? NaN;
+    if (!(widthPct > 0) || widthPct > 10) throw new PlayError('INVALID_PARAMS', 'Band width out of range');
+    const maxHalfFrac = probit((1 + REAL_RANGE_MAX_PROB) / 2) * sigma;
+    halfFrac = Math.min(widthPct / 100 / 2, maxHalfFrac);
+    leverage1e9 = rangeLeverage(rangeWinProb(halfFrac, sigma), maxLeverage1e9);
+  }
   const half = (spot1e9 * BigInt(Math.round(halfFrac * 1e9))) / FLOAT_SCALING;
   const { lowerTick, higherTick } = ticksForRange(spot1e9 - half, spot1e9 + half, tickSize, admissionTickSize);
-  const leverage1e9 = rangeLeverage(rangeWinProb(halfFrac, sigma), maxLeverage1e9);
   return {
     game: 'range',
     kind: 'range',
@@ -258,22 +361,57 @@ async function resolveRealRange(netRaw: bigint, stakeRaw: bigint, widthPct: numb
     expiryMs: market.expiryMs,
     duration: Math.max(1, Math.round(seconds)),
     entrySpot: realFmt(spot1e9),
-    tierMultiplier: 0,
+    tierMultiplier: tierMult,
     lowerDisplay: realFmt(spot1e9 - half),
     upperDisplay: realFmt(spot1e9 + half),
-    widthPct,
+    widthPct: input.widthPct ?? Math.round(halfFrac * 200 * 1e4) / 1e4,
   };
+}
+
+// Tier quotes: multiplier = the last SIMULATED mint's multiple per tier (chain truth incl. fees/spread,
+// analytic fallback pre-calibration), so the promise holds whenever the tap lands; sigmaMult + expiryMs +
+// the calibrated annualVol let the client redraw the live band width between fetches.
+export async function quoteRangeTiersReal(): Promise<{ quotes: RangeTierQuoteDTO[]; model: RangeQuoteModelDTO } | null> {
+  try {
+    await ensureRangeCalib();
+    const market = rangeMarket();
+    const { spot1e9 } = realEcon(market);
+    const spot = Number(spot1e9) / 1e9;
+    const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+    const sigma = rangeSigmaFrac(seconds);
+    const duration = Math.max(1, Math.round(seconds));
+    const quotes = RANGE_TIER_PROBS.map((p, tier) => {
+      const sigmaMult = probit((1 + p) / 2);
+      const halfFrac = sigmaMult * sigma;
+      const half = spot * halfFrac;
+      return {
+        tier,
+        prob: p,
+        multiplier: rangeCalib.mults[tier] ?? tierMultOf(p),
+        sigmaMult,
+        halfPct: halfFrac * 100,
+        lower: String(spot - half),
+        upper: String(spot + half),
+        entrySpot: String(spot),
+        duration,
+        expiryMs: market.expiryMs,
+      };
+    });
+    return { quotes, model: { annualVol: rangeCalib.sigmaAnnual, minRoundMs: RANGE_MIN_ORACLE_LIFE_MS } };
+  } catch {
+    return null;
+  }
 }
 
 export function quoteRangeBatchReal(widthPcts: number[]): RangeQuote[] {
   const widths = widthPcts.filter((width) => width > 0 && width <= 10);
   if (widths.length === 0) return [];
   try {
-    const market = realMarket(Math.round((RANGE_MIN_ORACLE_LIFE_MS + RANGE_MAX_ORACLE_LIFE_MS) / 2));
+    const market = rangeMarket();
     const { spot1e9, maxLeverage1e9 } = realEcon(market);
     const spot = Number(spot1e9) / 1e9;
     const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
-    const sigma = roundSigmaFrac(seconds);
+    const sigma = rangeSigmaFrac(seconds); // calibrated implied vol, same as the tier path
     const maxHalfFrac = probit((1 + REAL_RANGE_MAX_PROB) / 2) * sigma;
     const duration = Math.max(1, Math.round(seconds));
     return widths.map((widthPct) => {
@@ -303,5 +441,5 @@ export async function resolveReal(input: CreatePlayInputShape, netRaw: bigint, s
     if (!Number.isFinite(input.reach)) throw new PlayError('INVALID_PARAMS', 'Pick a reach');
     return resolveRealBinary('moonshot', netRaw, stakeRaw, input.side, Math.max(2, Math.min(25, input.reach)));
   }
-  return resolveRealRange(netRaw, stakeRaw, input.widthPct);
+  return resolveRealRange(netRaw, stakeRaw, input);
 }

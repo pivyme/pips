@@ -515,6 +515,49 @@ export type MintResult = {
   marketId: string;
 };
 
+// Simulated mint: nothing signs, nothing lands, but the emitted OrderMinted carries the pricer's real
+// entry_probability and cost. The one pre-tap window into the package-private pricing (L-012 workaround);
+// the sender's wallet must hold the deposit DUSDC (the treasury does). Null when the band would abort.
+export async function simulateMint(p: {
+  marketId: string;
+  lowerTick: bigint;
+  higherTick: bigint;
+  amountRaw: bigint;
+  depositRaw: bigint; // must exceed amountRaw: the mint draws its fees on top of the amount budget
+  leverage1e9: bigint;
+  sender: string;
+  wrapperId: string;
+  wrapperExists: boolean;
+}): Promise<MintResult | null> {
+  try {
+    const tx = new Transaction();
+    buildMintPlay(tx, {
+      marketId: p.marketId,
+      wrapperId: p.wrapperId,
+      wrapperExists: p.wrapperExists,
+      depositRaw: p.depositRaw,
+      amountRaw: p.amountRaw,
+      minQuantityRaw: POSITION_LOT_SIZE,
+      leverage1e9: p.leverage1e9,
+      lowerTick: p.lowerTick,
+      higherTick: p.higherTick,
+      rakeRaw: 0n,
+    });
+    tx.setSender(p.sender);
+    const res = await suiClient.simulateTransaction({ transaction: tx, include: { events: true }, checksEnabled: false });
+    if (res.$kind !== 'Transaction') return null;
+    const t = res.Transaction as unknown as {
+      status?: { success?: boolean };
+      events?: Array<{ eventType?: string; json?: unknown }>;
+    };
+    if (!t.status?.success) return null;
+    const events = (t.events ?? []).map((e) => ({ type: e.eventType ?? '', parsedJson: (e.json ?? null) as Record<string, unknown> | null }));
+    return parseMint(events);
+  } catch {
+    return null;
+  }
+}
+
 export function parseMint(events: RealEvent[]): MintResult {
   const e = events.find((x) => x.type.endsWith(OrderMintedSuffix));
   if (!e?.parsedJson) throw new Error('missing OrderMinted event');
