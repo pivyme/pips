@@ -5,6 +5,7 @@ import {
 } from '@tanstack/react-router'
 import { Toaster } from 'react-hot-toast'
 import { ErrorPage, NotFoundPage } from '../components/FaultScreen'
+import { MigrationBanner } from '../components/MigrationBanner'
 import LenisSmoothScrollProvider from '../providers/LenisSmoothScrollProvider'
 import appCss from '../styles.css?url'
 import type { QueryClient } from '@tanstack/react-query'
@@ -99,6 +100,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         />
       </head>
       <body className="bg-canvas text-text antialiased">
+        <MigrationBanner />
         <LenisSmoothScrollProvider />
         <Toaster
           position="top-center"
