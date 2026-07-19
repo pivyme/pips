@@ -169,7 +169,7 @@ function SpinWheel({
   const lit = hasLanded && !cycling // fully locked: glow + accent, mirrors the reel's dim-then-light
 
   return (
-    <div className="relative flex flex-1 flex-col items-center justify-center gap-2 border-l border-line-strong bg-black px-2 py-3 first:border-l-0">
+    <div className="relative flex flex-1 flex-col items-center justify-center gap-2 border-l border-white/25 bg-black px-2 py-3 first:border-l-0">
       <span className="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-text-3">{label}</span>
       <svg viewBox="0 0 100 100" width={size} height={size} style={{ overflow: 'visible' }}>
         <g ref={gRef}>

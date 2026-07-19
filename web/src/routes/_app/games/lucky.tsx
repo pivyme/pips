@@ -550,7 +550,7 @@ function LuckyScreen() {
         <div className="relative flex h-full flex-col">
           {/* HEADER: persistent price/balance context; the deal zone (wheels, then dealt strip) sits below it. */}
           <div className="shrink-0 bg-black pt-[calc(var(--screen-rim,24px)+12px)]">
-            <div className="flex items-start justify-between gap-3 px-[var(--screen-rim,24px)] pb-4">
+            <div className="flex items-start justify-between gap-3 px-[var(--screen-rim,24px)] pb-2">
               <div className="min-w-0">
                 {/* The asset is no secret (one live market), so the live price shows at rest too, over the chart underneath. */}
                 <div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-text-3">{focusAsset}</div>
@@ -580,7 +580,7 @@ function LuckyScreen() {
           {/* DEAL ZONE: big prize wheels through idle + the deal, morphing out to a compact dealt strip once the */}
           {/* round is live so the chart reclaims the height. Height collapses while the two layers cross-fade. */}
           <div
-            className="relative shrink-0 overflow-hidden border-y border-line-strong bg-black"
+            className="relative shrink-0 overflow-hidden border-y border-white/25 bg-black"
             style={{
               height: bigWheels ? DEAL_ZONE_H : LOCKED_ZONE_H,
               transition: 'height 460ms cubic-bezier(0.4,0,0.2,1)',

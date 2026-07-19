@@ -70,6 +70,26 @@ const WAVE_MERGE_MS = 2500
 const WAVE_SPLASH_MS = 1700
 // Safety-net poll behind each position's SSE, same as the single-play screens.
 const WATCHDOG_MS = 3000
+// Hard cap on how long a chip may sit at "···" before we fail it. A mint that can't land promptly must NOT
+// linger and drop into a later round (the "stuck then places at the next cutoff" bug); fail it, chips are safe.
+const PLACE_TIMEOUT_MS = 8000
+
+class PlaceTimeout extends Error {}
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new PlaceTimeout()), ms)
+    promise.then(
+      (v) => {
+        clearTimeout(t)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(t)
+        reject(e)
+      },
+    )
+  })
+}
 
 type Status = 'placing' | 'pending' | 'open' | 'won' | 'lost' | 'cashed_out'
 type Position = {
@@ -482,7 +502,7 @@ function RangeV2Screen() {
     setSelfPlaceSignal((s) => s + 1) // your own coin-pop, same primitive as the crowd
     haptic('heavy')
     try {
-      const { play } = await placePlay('range', { stake, asset, tier: tierView.tier })
+      const { play } = await withTimeout(placePlay('range', { stake, asset, tier: tierView.tier }), PLACE_TIMEOUT_MS)
       setPositions((prev) =>
         prev.map((p) =>
           p.key === key
@@ -509,7 +529,12 @@ function RangeV2Screen() {
       void refresh()
     } catch (e) {
       setPositions((prev) => prev.filter((p) => p.key !== key))
-      toastError(e)
+      if (e instanceof PlaceTimeout) {
+        haptic('error')
+        toast.error('That one took too long, chips are safe. Fire again.', { id: 'rv2-slow' })
+      } else {
+        toastError(e)
+      }
     }
   }, [asset, stake, tierView.tier, idleMult, canPlay, playsPaused, cantAfford, nextRound, nudge, quotesRefetch, refresh])
 
@@ -613,6 +638,17 @@ function RangeV2Screen() {
   // so the eye can track "chip 3" from fire to result without re-scanning the row.
   const orderedPositions = [...positions].sort((a, b) => a.slot - b.slot)
 
+  // Positions sharing a cutoff deplete their countdown bars in LOCKSTEP: a chip added late shows the same fill
+  // as the ones already riding to that buzzer, not a fresh 100%. Anchor each cutoff group to its earliest open
+  // (keyed by exact expiry, so a play in a different round keeps its own timeline).
+  const cutoffStart = new Map<number, number>()
+  for (const p of positions) {
+    if (p.expiry != null && p.openedAt != null) {
+      const cur = cutoffStart.get(p.expiry)
+      if (cur == null || p.openedAt < cur) cutoffStart.set(p.expiry, p.openedAt)
+    }
+  }
+
   // The footer holds the wave's total for the same window the chips flash, so the payoff beat and the
   // strip clear together instead of the readout snapping straight back to the idle preview.
   const waveShown = wave != null && nowMs - wave.at < RESULT_HOLD_MS
@@ -684,7 +720,13 @@ function RangeV2Screen() {
             >
               <div className="grid grid-cols-5 gap-1.5">
                 {orderedPositions.map((p) => (
-                  <PositionChip key={p.key} p={p} inZone={inZoneKeys.has(p.key)} nowMs={nowMs} />
+                  <PositionChip
+                    key={p.key}
+                    p={p}
+                    inZone={inZoneKeys.has(p.key)}
+                    nowMs={nowMs}
+                    groupStart={p.expiry != null ? cutoffStart.get(p.expiry) : undefined}
+                  />
                 ))}
                 {Array.from({ length: Math.max(0, MAX_POSITIONS - orderedPositions.length) }).map((_, i) => (
                   <GhostSlot key={`ghost-${i}`} />
@@ -929,7 +971,17 @@ function CountUp({ value, format }: { value: number; format: (v: number) => stri
 // A single slot in the 5-wide rail, sized to fill its cell so five ride full-width without truncation. The label
 // is money, not the multiplier (five 2.2x chips read as noise; "$2.77" reads as a prize). Green-lit = price inside
 // its zone (pays at the buzzer), red = outside right now. Verdict flashes ±pnl in place. A hairline depletes to buzzer.
-function PositionChip({ p, inZone, nowMs }: { p: Position; inZone: boolean; nowMs: number }) {
+function PositionChip({
+  p,
+  inZone,
+  nowMs,
+  groupStart,
+}: {
+  p: Position
+  inZone: boolean
+  nowMs: number
+  groupStart?: number // earliest open among positions sharing this cutoff, so same-buzzer bars deplete in lockstep
+}) {
   const resolved = isResolved(p)
   const won = resolved && p.won
   const lost = resolved && !p.won
@@ -943,9 +995,12 @@ function PositionChip({ p, inZone, nowMs }: { p: Position; inZone: boolean; nowM
       : resolved
         ? `${won ? '+' : '−'}$${usd(Math.abs(num(p.pnl)))}`
         : `$${usd(payout)}`
+  // Deplete over the cutoff group's span (earliest open -> buzzer), not this chip's own open, so a late add
+  // shows the same fill as its group-mates instead of restarting at 100%.
+  const start = groupStart ?? p.openedAt
   const frac =
-    live && !settling && p.expiry != null && p.openedAt != null && p.expiry > p.openedAt
-      ? Math.max(0, Math.min(1, (p.expiry - nowMs) / (p.expiry - p.openedAt)))
+    live && !settling && p.expiry != null && start != null && p.expiry > start
+      ? Math.max(0, Math.min(1, (p.expiry - nowMs) / (p.expiry - start)))
       : null
   return (
     <span
