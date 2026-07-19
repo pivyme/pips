@@ -6,8 +6,8 @@ import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
 import { StatsCardSkeleton } from '@/components/menu/StatsCard'
 import { Switch } from '@/ui/Switch'
 import { HapticOverlay } from '@/components/HapticOverlay'
-import { api } from '@/lib/api'
 import type { UserStatsDTO } from '@/lib/api'
+import { leaderboardQuery, statsQuery } from '@/lib/menuQueries'
 import type { RankStanding } from '@/lib/playerCard'
 import { useAuth } from '@/lib/auth'
 import { renderCard, shareStatsCard } from '@/lib/shareCard'
@@ -23,9 +23,9 @@ export const Route = createFileRoute('/_app/menu/share')({ component: ShareScree
 function ShareScreen() {
   const { user } = useAuth()
   const navigate = useNavigate()
-  const q = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
+  const q = useQuery(statsQuery())
   // Same key the leaderboard screen uses, so this reads warm cache; drives the "#4 TOP REKT" chip.
-  const lbq = useQuery({ queryKey: ['leaderboard'], queryFn: () => api.leaderboard() })
+  const lbq = useQuery(leaderboardQuery())
   const stats = q.data?.stats
   const rank = lbq.data?.leaderboard.global.you ?? null
 

@@ -4,7 +4,8 @@ import { useState } from 'react'
 import { MenuScreen, ScreenError } from '@/components/menu/shared'
 import { XGlyph } from '@/components/menu/BrandGlyphs'
 import { Avatar } from '@/components/Avatar'
-import { api, type GlobalLeaderboard, type LeaderboardPnlEntry } from '@/lib/api'
+import { type GlobalLeaderboard, type LeaderboardPnlEntry } from '@/lib/api'
+import { leaderboardQuery } from '@/lib/menuQueries'
 import { useAuth } from '@/lib/auth'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { cnm } from '@/utils/style'
@@ -40,7 +41,7 @@ function label(e: { username: string | null }): { display: string; seed: string 
 function LeaderboardScreen() {
   const [board, setBoard] = useState<Board>('gainers')
   // One query for the whole board; the toggle reads a slice of it, so switching never refetches.
-  const q = useQuery({ queryKey: ['leaderboard'], queryFn: () => api.leaderboard() })
+  const q = useQuery(leaderboardQuery())
   const global = q.data?.leaderboard.global
 
   return (

@@ -11,6 +11,7 @@ import { Alert } from '@/ui/Alert'
 import { useAuth } from '@/lib/auth'
 import { api, ApiError } from '@/lib/api'
 import type { DepositOptionsDTO } from '@/lib/api'
+import { depositOptionsQuery } from '@/lib/menuQueries'
 import { networkLabel, resolveMode, unsupportedCopy } from '@/lib/deposit/mode'
 import { NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
@@ -42,11 +43,7 @@ function DepositScreen() {
   const address = user?.address ?? ''
   const [claiming, setClaiming] = useState(false)
 
-  const { data } = useQuery({
-    queryKey: ['deposit-options'],
-    queryFn: () => api.depositOptions(),
-    staleTime: 5 * 60_000,
-  })
+  const { data } = useQuery(depositOptionsQuery())
   const options = data ?? FALLBACK_OPTIONS
 
   const [currency, setCurrency] = useState(options.chipSymbol)

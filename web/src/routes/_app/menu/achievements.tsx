@@ -8,7 +8,7 @@ import {
   openFromCard,
   useAchievementDetail,
 } from '@/components/menu/AchievementDetail'
-import { api } from '@/lib/api'
+import { achievementsQuery } from '@/lib/menuQueries'
 import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import { cnm } from '@/utils/style'
 
@@ -19,10 +19,7 @@ export const Route = createFileRoute('/_app/menu/achievements')({
 })
 
 function AchievementsScreen() {
-  const q = useQuery({
-    queryKey: ['achievements'],
-    queryFn: () => api.achievements(),
-  })
+  const q = useQuery(achievementsQuery())
 
   if (q.isLoading) {
     return (

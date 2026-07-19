@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import { MenuScreen, ScreenError } from '@/components/menu/shared'
 import { Modal, useOverlayState } from '@/ui/Modal'
 import { api, ApiError, type ReferralClaimDTO } from '@/lib/api'
+import { referralQuery } from '@/lib/menuQueries'
 import { useAuth } from '@/lib/auth'
 import { buildReferralLink } from '@/lib/referral'
 import { explorerTxUrl } from '@/lib/sui/config'
@@ -23,7 +24,7 @@ const usd = (s: string): string => `$${formatStringToNumericDecimals(s || '0', 2
 
 function ReferralsScreen() {
   const { user, refresh } = useAuth()
-  const q = useQuery({ queryKey: ['referral'], queryFn: () => api.referral() })
+  const q = useQuery(referralQuery())
   const info = q.data
   const hasUsername = Boolean(user?.username)
 

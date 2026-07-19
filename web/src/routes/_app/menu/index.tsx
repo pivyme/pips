@@ -1,8 +1,8 @@
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { Link, createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDownToLine, ArrowUpFromLine, LogOut, Pencil } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
 import {
@@ -18,7 +18,12 @@ import { SocialFooter } from '@/components/SocialFooter'
 import { Button } from '@/ui/Button'
 import { Illo } from '@/ui/Illo'
 import { achievementImage, mergeCatalog } from '@/lib/achievements'
-import { api } from '@/lib/api'
+import {
+  achievementsQuery,
+  leaderboardQuery,
+  prefetchMenuData,
+  statsQuery,
+} from '@/lib/menuQueries'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
@@ -31,6 +36,13 @@ export const Route = createFileRoute('/_app/menu/')({ component: MenuHome })
 
 function MenuHome() {
   const { signOut } = useAuth()
+  const qc = useQueryClient()
+
+  // Warm every sub-screen's data the moment the hub is visible, so the first tap in lands on cache
+  // instead of a cold fetch. The drawer rise is compositor-animated, so this never janks the open.
+  useEffect(() => {
+    prefetchMenuData(qc)
+  }, [qc])
 
   return (
     <div className="relative min-h-full bg-black px-4 pb-8">
@@ -174,6 +186,14 @@ function BalanceHero() {
   )
 }
 
+// Warm a route's JS chunk on finger-down so the tap doesn't wait on a cold module fetch. The tiles
+// navigate through the HapticOverlay switch (the Link is pointer-events-none), so the router never sees
+// hover intent, this restores that head start. Idempotent and best-effort; a miss just loads on navigate.
+function usePreload() {
+  const router = useRouter()
+  return (to: string) => void router.preloadRoute({ to }).catch(() => {})
+}
+
 function MoneyButton({
   to,
   icon: Icon,
@@ -186,12 +206,13 @@ function MoneyButton({
   primary?: boolean
 }) {
   const navigate = useNavigate()
+  const preload = usePreload()
   const go = () => {
     prepareMenuTransition('forward')
     void navigate({ to, viewTransition: true })
   }
   return (
-    <div className="relative h-11">
+    <div className="relative h-11" onPointerDownCapture={() => preload(to)}>
       <Link
         to={to}
         viewTransition
@@ -215,9 +236,9 @@ function MoneyButton({
 function StatsSection() {
   const { user } = useAuth()
   const navigate = useNavigate()
-  const q = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
+  const q = useQuery(statsQuery())
   // Shares the Leaderboard screen's cache; feeds the card's "#4 TOP REKT" rank chip.
-  const lbq = useQuery({ queryKey: ['leaderboard'], queryFn: () => api.leaderboard() })
+  const lbq = useQuery(leaderboardQuery())
   const stats = q.data?.stats
   const rank = lbq.data?.leaderboard.global.you ?? null
 
@@ -325,6 +346,7 @@ function NavTile({
 }): ReactNode {
   const drawer = useMenuDrawer()
   const navigate = useNavigate()
+  const preload = usePreload()
   const activate = () => {
     if (launch && drawer) {
       drawer.closeTo(to)
@@ -335,7 +357,7 @@ function NavTile({
     void navigate({ to, viewTransition: true })
   }
   return (
-    <div className="relative">
+    <div className="relative" onPointerDownCapture={() => preload(to)}>
       <Link
         to={to}
         viewTransition={!launch}
@@ -363,10 +385,7 @@ function NavTile({
 }
 
 function AchievementsSection() {
-  const q = useQuery({
-    queryKey: ['achievements'],
-    queryFn: () => api.achievements(),
-  })
+  const q = useQuery(achievementsQuery())
 
   if (q.isLoading) {
     return (

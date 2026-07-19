@@ -4,7 +4,8 @@ import { ChevronDown, ExternalLink, Loader2, Share2, X } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
-import { api, type Game, type LuckyParams, type PlayDTO, type RangeParams } from '@/lib/api'
+import { type Game, type LuckyParams, type PlayDTO, type RangeParams } from '@/lib/api'
+import { historyQuery } from '@/lib/menuQueries'
 import { explorerObjectUrl, explorerTxUrl, NETWORK } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
@@ -221,10 +222,7 @@ function HistoryPage() {
   // account never sees it. everDevnet latches true and never flips back, so narrowing can't hide the control.
   const [showDevnet, setShowDevnet] = useState(true)
   const [everDevnet, setEverDevnet] = useState(false)
-  const q = useQuery({
-    queryKey: ['plays', 'history', showDevnet],
-    queryFn: () => api.plays({ limit: 50, network: showDevnet ? undefined : NETWORK }),
-  })
+  const q = useQuery(historyQuery(showDevnet))
 
   useEffect(() => {
     if (!everDevnet && (q.data?.plays ?? []).some((p) => p.network === 'devnet')) setEverDevnet(true)
