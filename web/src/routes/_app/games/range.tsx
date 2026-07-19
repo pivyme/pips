@@ -107,6 +107,7 @@ type Position = {
   openedAt?: number // when the mint landed, so the chip's countdown bar knows the full round length
   markValue?: string
   pnl?: string
+  payout?: string // total collected once resolved (stake + profit), the recorded on-chain payout
   maxPayout?: string
   lockPrice?: string
   won?: boolean
@@ -114,7 +115,7 @@ type Position = {
 }
 // `at` is the LAST folded-in resolution (drives the display windows + splash re-pop), `startedAt` is
 // stable per wave (keys the panel so its pop/count-up runs once while merged totals keep chasing).
-type Wave = { pnl: number; wins: number; losses: number; at: number; startedAt: number }
+type Wave = { pnl: number; payout: number; wins: number; losses: number; at: number; startedAt: number }
 type Overlay = 'none' | 'howto' | 'board'
 // What the knob steps through: a server tier quote, or the cold-start fallback (no expiryMs).
 type TierView = {
@@ -400,6 +401,7 @@ function RangeScreen() {
                 ...p,
                 status: final.status as Status,
                 pnl: final.pnl,
+                payout: final.payout ?? p.payout,
                 maxPayout: final.maxPayout ?? p.maxPayout,
                 multiplier: final.multiplier || p.multiplier,
                 band:
@@ -418,8 +420,9 @@ function RangeScreen() {
       const w =
         waveRef.current && now - waveRef.current.at < WAVE_MERGE_MS
           ? waveRef.current
-          : { pnl: 0, wins: 0, losses: 0, at: now, startedAt: now }
+          : { pnl: 0, payout: 0, wins: 0, losses: 0, at: now, startedAt: now }
       w.pnl += pnl
+      w.payout += num(final.payout ?? '0') // total collected across the batch (losers add 0)
       if (won) w.wins++
       else w.losses++
       w.at = now
@@ -759,7 +762,7 @@ function RangeScreen() {
                     wave.pnl >= 0 ? 'text-up' : 'text-down',
                   )}
                 >
-                  {`${wave.pnl >= 0 ? '+' : '−'}$${usd(Math.abs(wave.pnl))}`}
+                  {wave.pnl >= 0 ? `+$${usd(wave.payout)}` : `−$${usd(Math.abs(wave.pnl))}`}
                 </span>
               </div>
             )}
@@ -855,7 +858,7 @@ function RangeScreen() {
                     )}
                   >
                     {wave.pnl >= 0 ? (
-                      <CountUp value={wave.pnl} format={(v) => `+$${usd(v)}`} />
+                      <CountUp value={wave.payout} format={(v) => `+$${usd(v)}`} />
                     ) : (
                       `−$${usd(Math.abs(wave.pnl))}`
                     )}
@@ -997,7 +1000,7 @@ function PositionChip({
       ? '···'
       : resolved
         ? won
-          ? `+$${usd(p.stake + num(p.pnl))}` // total collected (stake + profit), matches the live chip
+          ? `+$${usd(num(p.payout) || p.stake + num(p.pnl))}` // total collected (stake + profit), matches the live chip
           : `−$${usd(Math.abs(num(p.pnl)))}`
         : `$${usd(payout)}`
   // Deplete over the cutoff group's span (earliest open -> buzzer), not this chip's own open, so a late add
