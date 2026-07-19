@@ -18,7 +18,7 @@ import { usePlayResolutionWatch } from '@/hooks/useGameRound'
 import { haptic } from '@/lib/haptics'
 import { rangeBuzzer, rangeCross, rangeLose, rangeWin, startRangeBgm, stopRangeBgm } from '@/lib/sound'
 import { api } from '@/lib/api'
-import { cashOut, placePlay } from '@/lib/sui/predict'
+import { placePlay } from '@/lib/sui/predict'
 import { betLadder, netStakeUsd } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
@@ -28,8 +28,8 @@ import { formatStringToNumericDecimals } from '@/utils/format'
 
 // RANGE V2 (experiment): the multiplay variant. Instead of one round at a time, you STACK positions,
 // each a real Range mint that rides to its own buzzer, and fire more without waiting. Results pop inline,
-// never a full-screen result gate, so the loop never stalls. Backend is unchanged: multiple open plays already
-// work (settle worker batches them), so this is a pure client screen calling the same placePlay/cashOut/streamPlay.
+// never a full-screen result gate, so the loop never stalls. No cash-out: a stacked band just rides to its
+// cutoff. Backend is unchanged (settle worker batches the open plays), so this is a pure client screen over placePlay/streamPlay.
 export const Route = createFileRoute('/_app/games/range-v2')({
   component: RangeV2Screen,
 })
@@ -214,10 +214,6 @@ function RangeV2Screen() {
   const totalToWin = openPos.reduce((a, p) => a + num(p.maxPayout), 0)
   // Settlement-if-now: the in-zone bands pay full, the rest pay zero. The gamey hero the price chases.
   const collectNow = openPos.filter((p) => inZoneKeys.has(p.key)).reduce((a, p) => a + num(p.maxPayout), 0)
-  // Cash-all-now: the live redeem mark across every open band, i.e. what CASH ALL actually banks this instant.
-  const cashOutNow = openPos.reduce((a, p) => a + num(p.markValue), 0)
-  // Out of every band: the settle-now hero would be a dead $0, so it swaps to the cash-out value instead.
-  const allOut = openPos.length > 0 && collectNow <= 0
   const inZoneCount = openPos.filter((p) => inZoneKeys.has(p.key)).length
   const expiries = openPos.map((p) => p.expiry).filter((e): e is number => typeof e === 'number' && e > 0)
   const soonestExpiry = expiries.length ? Math.min(...expiries) : null
@@ -479,18 +475,6 @@ function RangeV2Screen() {
     }
   }, [asset, stake, tierView.tier, idleMult, canPlay, playsPaused, cantAfford, refresh])
 
-  // Bank every open position at the live mark. Failures (buzzer beat the redeem) reconcile through the watcher.
-  const cashAll = useCallback(() => {
-    const open = positionsRef.current.filter((p) => p.playId && p.status === 'open')
-    if (!open.length) return
-    haptic('rigid')
-    for (const p of open) {
-      void cashOut(p.playId!)
-        .then(({ play }) => resolvePosition(p.playId!, play))
-        .catch(() => {})
-    }
-  }, [resolvePosition])
-
   const goDeposit = useCallback(() => {
     haptic('rigid')
     void navigate({ to: '/menu/deposit' })
@@ -534,10 +518,7 @@ function RangeV2Screen() {
       onChange: setStakeIdx,
       format: (v) => `$${STAKE_LADDER[Math.min(v, maxBetIdx)]}`,
     },
-    action1:
-      openPos.length > 0
-        ? { label: 'CASH ALL', color: 'up', onPress: cashAll }
-        : { label: infoLabel, color: 'neutral', onPress: rotateInfo },
+    action1: { label: infoLabel, color: 'neutral', onPress: rotateInfo },
     action2: {
       label: asset,
       color: 'neutral',
@@ -714,7 +695,7 @@ function RangeV2Screen() {
           </div>
 
           {/* FOOTER: left-only readout (bottom-right is the knob/PLAY body). In-play shows the live collect; idle shows the next-play preview. */}
-          <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3.5 min-h-[var(--screen-notch,21%)]">
+          <div className="shrink-0 border-t border-line-strong bg-black px-[var(--screen-rim,24px)] pb-[var(--screen-rim,24px)] pt-3 min-h-[var(--screen-notch,21%)]">
             <div className="max-w-[62%]">
               {openPos.length > 0 ? (
                 <>
@@ -735,20 +716,19 @@ function RangeV2Screen() {
                       {inZoneCount > 0 ? `${inZoneCount}/${openPos.length} in zone` : 'All out'}
                     </span>
                   </div>
-                  {/* Rolls as zones light up / marks drift; the color carries the in/out read so it stays smooth. */}
+                  {/* Settle-if-now: rolls as zones light up. Green when a band is paying, dim at $0 (hold to the cutoff). */}
                   <div
                     className={cnm(
                       'tnum mt-0.5 origin-left text-[40px] font-extrabold leading-none',
-                      allOut ? 'text-brand-500' : 'text-up',
+                      collectNow > 0 ? 'text-up' : 'text-text-2',
                     )}
                   >
-                    <UsdFlow value={allOut ? cashOutNow : collectNow} />
+                    <UsdFlow value={collectNow} />
                   </div>
                   <div className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-text-3">
-                    {allOut ? 'Cash out value now' : 'If the cutoff hit now'}
+                    If the cutoff hit now
                   </div>
-                  <div className="mt-2.5 grid grid-cols-3 gap-x-3">
-                    <Cell label="Cash all" value={<UsdFlow value={cashOutNow} />} />
+                  <div className="mt-1.5 grid grid-cols-2 gap-x-3">
                     <Cell label="To win" value={<UsdFlow value={totalToWin} />} />
                     <Cell label="Cutoff" value={settlingWave ? '···' : `${nextSecs ?? 0}s`} />
                   </div>
@@ -785,24 +765,24 @@ function RangeV2Screen() {
                   <div className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-text-3">
                     {wave.pnl >= 0 ? 'Banked. Fire the next wave.' : 'Missed. Fire again.'}
                   </div>
-                  <div className="mt-2.5 grid grid-cols-2 gap-x-3">
+                  <div className="mt-1.5 grid grid-cols-2 gap-x-3">
                     <Cell label="Next pays" value={<MultFlow value={idleMult} />} />
                     <Cell label="Amount" value={`$${stake}`} />
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Pays</div>
-                  <div className="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1.5">
-                    <div className="tnum text-[40px] font-extrabold leading-none text-brand-500">
-                      <MultFlow value={idleMult} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-x-3 pb-0.5">
-                      <Cell label="Amount" value={`$${stake}`} />
-                      <Cell label="Win" value={<UsdFlow value={netStakeUsd(stake) * idleMult} />} />
+                  {/* Bet -> win rides the kicker line so the multiplier hero stays one row at any size. */}
+                  <div className="flex items-baseline justify-between gap-3">
+                    <div className="font-mono text-[12px] font-bold uppercase tracking-[0.14em] text-text-3">Pays</div>
+                    <div className="tnum font-mono text-[13px] font-semibold uppercase tracking-[0.08em] text-text-2">
+                      ${stake} → <span className="text-up"><UsdFlow value={netStakeUsd(stake) * idleMult} /></span>
                     </div>
                   </div>
-                  <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
+                  <div className="tnum mt-1 text-[40px] font-extrabold leading-none text-brand-500">
+                    <MultFlow value={idleMult} />
+                  </div>
+                  <div className="mt-2 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
                     Stack as many as you like. They all settle at the cutoff.
                   </div>
                 </>
@@ -818,7 +798,7 @@ function RangeV2Screen() {
             ['ZONES', 'PLAY drops a numbered zone that scrolls left to its cutoff. Stack up to 5.'],
             ['CUTOFF', 'The white line is settlement. Zones inside it when it hits win, outside lose.'],
             ['KNOB', 'Picks your payout. Bigger pays, tighter band.'],
-            ['CASH ALL', 'Bank every open zone at its live value before the cutoff.'],
+            ['STACK', 'Fire as many as you like. They all ride to their own cutoff, no waiting.'],
           ]}
         />
       )}

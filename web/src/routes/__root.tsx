@@ -4,8 +4,7 @@ import {
   createRootRouteWithContext,
 } from '@tanstack/react-router'
 import { Toaster } from 'react-hot-toast'
-import ErrorPage from '../components/ErrorPage'
-import NotFoundPage from '../components/NotFoundPage'
+import { ErrorPage, NotFoundPage } from '../components/FaultScreen'
 import LenisSmoothScrollProvider from '../providers/LenisSmoothScrollProvider'
 import appCss from '../styles.css?url'
 import type { QueryClient } from '@tanstack/react-query'

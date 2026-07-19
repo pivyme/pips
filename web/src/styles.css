@@ -1146,3 +1146,23 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   --privy-color-border-interactive: var(--color-line) !important;
   --privy-color-border-interactive-hover: var(--color-line-strong) !important;
 }
+
+/* ── Fault screens (404 + crash), the dead-device trace ─────────────────────
+   The trace draws itself in once (pathLength=1 normalizes so offset animates
+   1->0). No looping flicker, a single clean reveal. */
+.fault-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: fault-draw 1.15s var(--ease-out-expo) forwards;
+}
+@keyframes fault-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fault-draw {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+}
