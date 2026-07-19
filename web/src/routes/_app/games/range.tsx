@@ -996,7 +996,9 @@ function PositionChip({
     p.status === 'placing'
       ? '···'
       : resolved
-        ? `${won ? '+' : '−'}$${usd(Math.abs(num(p.pnl)))}`
+        ? won
+          ? `+$${usd(p.stake + num(p.pnl))}` // total collected (stake + profit), matches the live chip
+          : `−$${usd(Math.abs(num(p.pnl)))}`
         : `$${usd(payout)}`
   // Deplete over the cutoff group's span (earliest open -> buzzer), not this chip's own open, so a late add
   // shows the same fill as its group-mates instead of restarting at 100%.

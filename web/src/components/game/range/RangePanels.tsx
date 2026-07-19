@@ -87,11 +87,11 @@ export function RangeResult({ play }: { play: PlayDTO }) {
       >
         {lost
           ? `$${formatExactDecimal('0')}`
-          : `${pnl >= 0 ? '+' : '-'}$${formatExactDecimal(play.pnl, { absolute: true })}`}
+          : `${positive ? '+' : ''}$${formatExactDecimal(play.payout ?? '0', { absolute: true })}`}
       </motion.div>
       <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
-        Payout ${formatExactDecimal(play.payout ?? '0')} · Cost $
-        {formatExactDecimal(play.entryValue)}
+        Cost ${formatExactDecimal(play.entryValue)} · Profit {pnl >= 0 ? '+' : '-'}$
+        {formatExactDecimal(play.pnl, { absolute: true })}
       </div>
       {hasGauge ? (
         <SettlementGauge

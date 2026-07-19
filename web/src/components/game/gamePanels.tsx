@@ -197,10 +197,11 @@ export function ResultOverlay({
       >
         {lost
           ? `$${formatExactDecimal('0')}`
-          : `${pnl >= 0 ? '+' : '-'}$${formatExactDecimal(play.pnl, { absolute: true })}`}
+          : `${positive ? '+' : ''}$${formatExactDecimal(play.payout ?? '0', { absolute: true })}`}
       </motion.div>
       <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text-2">
-        Payout ${formatExactDecimal(play.payout ?? '0')} · Cost ${formatExactDecimal(play.entryValue)}
+        Cost ${formatExactDecimal(play.entryValue)} · Profit {pnl >= 0 ? '+' : '-'}$
+        {formatExactDecimal(play.pnl, { absolute: true })}
       </div>
       {won && streak > 0 && (
         <div className="mt-1 inline-flex items-center border border-brand-500/60 px-2 py-0.5 font-mono text-[12px] font-bold uppercase tracking-[0.1em] text-brand-500">

@@ -49,14 +49,15 @@ export function StatsCard({
     <div className="trader-bezel @container overflow-hidden rounded-[26px] p-2.5">
       <CardHeader />
       <div className="trader-screen relative overflow-hidden rounded-[18px] p-[clamp(13px,5cqi,20px)]">
-        <div className="flex items-center gap-[clamp(8px,3cqi,12px)]">
+        {/* Single row, same height as before. The rank chip is taken out of flow (absolute, under the actions)
+            so it never eats the name's width. With no actions it just sits top-right (e.g. the exported card). */}
+        <div className="relative flex items-center gap-[clamp(8px,3cqi,12px)]">
           <Avatar
             name={displayName}
             src={avatarUrl}
             size={44}
             className="shrink-0 ring-1 ring-white/15"
           />
-          {/* Name eats the slack (flex-1) so the rank pill lands hard right, just before the actions. */}
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="truncate text-[clamp(17px,6cqi,24px)] font-extrabold leading-tight text-white">{displayName}</div>
             {twitter && (
@@ -66,7 +67,6 @@ export function StatsCard({
               </span>
             )}
           </div>
-          {card.rank && <RankChip badge={card.rank} />}
           {(onShare || onEdit) && (
             <div className="flex shrink-0 items-center gap-2">
               {onShare && (
@@ -94,6 +94,17 @@ export function StatsCard({
                   <Pencil className="h-[18px] w-[18px]" strokeWidth={2.4} />
                 </button>
               )}
+            </div>
+          )}
+          {/* Under the actions when present, else pinned top-right. Absolute so it adds no height. */}
+          {card.rank && (
+            <div
+              className={cnm(
+                'pointer-events-none absolute right-0',
+                onShare || onEdit ? 'top-full mt-[clamp(6px,2cqi,9px)]' : 'top-0',
+              )}
+            >
+              <RankChip badge={card.rank} />
             </div>
           )}
         </div>
