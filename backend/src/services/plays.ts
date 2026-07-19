@@ -6,15 +6,17 @@ import { Transaction } from '@mysten/sui/transactions';
 import type { Play, Prisma, User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
 import { publishPlay } from '../lib/play-bus.ts';
-import { SETTLE_MAX_REDEEMS_PER_TICK, LIVE_MARK_TTL_MS } from '../config/main-config.ts';
+import { SETTLE_MAX_REDEEMS_PER_TICK, SETTLE_MAX_PLAYS_PER_TICK, LIVE_MARK_TTL_MS } from '../config/main-config.ts';
 import { fromDusdcRaw, multiplier as multiplierOf } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
+import { getMarket } from '../lib/sui/markets.ts';
 import {
   buildRedeemSettled,
   buildMintPlay,
   buildRedeemLivePlay,
   decodeOrderId,
   findRealRedeem,
+  isSettledDefiniteLoss,
   LEVERAGE_ONE,
   parseMint,
   parseRedeem,
@@ -463,7 +465,24 @@ async function reconcileRealSettle(play: Play, wrapperId: string, orderId: bigin
   console.error(`[Settle] real ${play.id} redeem_settled failed, will retry:`, err instanceof Error ? err.message : err);
 }
 
-// Settle one open real play; returns true iff it spent a redeem tx (for the per-tick budget), false if not-yet-settleable so it doesn't burn the budget.
+// Gas saver: a settled position the frozen price puts a full tick outside its band pays 0 no matter what, so
+// finalize the loss straight from chain reads with no redeem tx. Returns true iff it finalized such a loss.
+// Only ever skips a PROVABLE loss (isSettledDefiniteLoss is conservative); a win, an on-boundary price, an
+// unsettled market, or an unknown tick size all return false and fall through to redeem_settled below, so a
+// winner is never skipped and our redeem still drives settlement when nobody else has settled the market.
+async function trySkipLostRedeem(play: Play, orderId: bigint, lagS: number): Promise<boolean> {
+  const market = getMarket(play.oracleId);
+  if (!market) return false; // tick size unknown (market pruned from cache): redeem to be safe
+  const ms = await readMarketSettlement(play.oracleId).catch(() => null);
+  if (!ms?.settled || ms.settlementPrice1e9 == null) return false; // not frozen yet: redeem drives settlement
+  if (!isSettledDefiniteLoss(decodeOrderId(orderId), ms.settlementPrice1e9, BigInt(market.tickSize))) return false;
+  roundLog(`[Round SETTLE] ${play.game.padEnd(5)} ${play.asset.padEnd(4)} real order=${orderId.toString().slice(0, 8)}… LOSS payout=$0.00 (expired ${lagS}s ago, no redeem) @${hhmmss()}`);
+  await finalizeRealSettle(play, { payoutRaw: 0n, status: 'lost', settlePrice1e9: ms.settlementPrice1e9, digest: undefined });
+  return true;
+}
+
+// Settle one open real play; returns true iff it spent a redeem tx (for the per-tick budget), false if it
+// skipped the redeem (provable loss) or isn't settleable yet, so neither burns the redeem budget.
 async function settleOnePlayReal(play: Play, now: number): Promise<boolean> {
   const wrapperId = await wrapperIdForUser(play.userId);
   if (!wrapperId) {
@@ -472,6 +491,8 @@ async function settleOnePlayReal(play: Play, now: number): Promise<boolean> {
   }
   const { orderId, quantityRaw } = realOrderOf(play);
   const lagS = Math.round((now - Number(play.expiry)) / 1000);
+  // Provable loss: finalize from chain reads alone, no redeem tx (returns false to leave the redeem budget for real wins).
+  if (await trySkipLostRedeem(play, orderId, lagS)) return false;
   try {
     const tx = new Transaction();
     buildRedeemSettled(tx, { marketId: play.oracleId, wrapperId, orderId, closeQuantityRaw: quantityRaw });
@@ -496,8 +517,11 @@ export async function settleDuePlaysReal(): Promise<void> {
   if (due.length === 0) return;
   const now = Date.now();
   let redeems = 0;
+  let processed = 0;
   for (const play of due) {
-    if (redeems >= SETTLE_MAX_REDEEMS_PER_TICK) break;
+    // Two brakes: redeem txs (gas) and total plays examined (read/DB load, since skipped losses spend no tx). Either full defers the rest to the next 1s tick.
+    if (redeems >= SETTLE_MAX_REDEEMS_PER_TICK || processed >= SETTLE_MAX_PLAYS_PER_TICK) break;
+    processed++;
     try {
       if (await settleOnePlayReal(play, now)) redeems++;
     } catch (e) {

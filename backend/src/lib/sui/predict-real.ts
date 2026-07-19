@@ -751,6 +751,22 @@ export function decodeOrderId(orderId: bigint): DecodedOrder {
   };
 }
 
+// True only when the frozen settlement price puts a position a full tick OUTSIDE its (lower, higher] band, a
+// loss that pays 0 under every boundary convention (leverage/liquidation can only zero a would-be win, never
+// revive a loss). The settle worker uses this to finalize such losses with no redeem tx, saving the gas.
+// Deliberately conservative: returns false for a win, an on-boundary or within-a-tick price, a non-positive
+// price, or a missing tick size, so the caller always redeems in every non-loss case and a winner is never
+// skipped. Ticks are from decodeOrderId (lowerTick 0 = -inf, higherTick == pos_inf_tick = +inf); prices are
+// 1e9-scaled and a strike is tick-aligned, so its price is exactly tick * tickSize.
+export function isSettledDefiniteLoss(order: DecodedOrder, settlementPrice1e9: bigint, tickSizeRaw: bigint): boolean {
+  if (settlementPrice1e9 <= 0n || tickSizeRaw <= 0n) return false;
+  // Below a finite lower strike by at least one tick: a win needs price strictly above lower.
+  if (order.lowerTick > 0n && settlementPrice1e9 <= order.lowerTick * tickSizeRaw - tickSizeRaw) return true;
+  // Above a finite higher strike by at least one tick: a win needs price at or below higher.
+  if (order.higherTick < TICK_MASK && settlementPrice1e9 >= order.higherTick * tickSizeRaw + tickSizeRaw) return true;
+  return false;
+}
+
 // Read a market's settlement state from json (settlement_price is null until frozen); null if the
 // market object is gone (orphaned play), so the caller can give up.
 export type MarketSettlement = { settled: boolean; settlementPrice1e9: bigint | null };

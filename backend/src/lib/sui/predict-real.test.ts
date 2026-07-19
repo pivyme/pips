@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { decodeOrderId, matchRealRedeemInPage } from './predict-real.ts';
+import { decodeOrderId, isSettledDefiniteLoss, matchRealRedeemInPage } from './predict-real.ts';
 
 // decodeOrderId derives the full-close quantity + strike ticks straight from the packed u256 order id, so
 // the settle worker needs no extra column. Fixture is a real testnet OrderMinted event (all 25 sampled live events decoded exactly), locking the offsets/masks against source drift.
@@ -10,6 +10,49 @@ describe('decodeOrderId', () => {
     expect(d.quantityRaw).toBe(10_390_000n);
     expect(d.lowerTick).toBe(6_213_400n);
     expect(d.higherTick).toBe(1_073_741_823n); // pos_inf_tick: an upper-open (binary-up) position
+  });
+});
+
+// isSettledDefiniteLoss lets the settle worker skip the redeem tx for a provable loss. It must NEVER flag a
+// winner (that would burn real chips), so every boundary/win/unknown case returns false and only a price a
+// full tick outside the band returns true. BTC tick_size = 1e7 raw ($0.01); prices are 1e9-scaled.
+describe('isSettledDefiniteLoss', () => {
+  const TICK = 10_000_000n; // BTC $0.01
+  const px = (dollars: number): bigint => BigInt(Math.round(dollars * 1e9)); // $ -> 1e9-scaled price
+  const order = (lowerTick: bigint, higherTick: bigint) => ({ quantityRaw: 10_000_000n, lowerTick, higherTick });
+
+  // Real fixture order: binary-up, lowerTick 6_213_400 (strike $62,134), higherTick pos_inf.
+  const BINARY_UP = order(6_213_400n, 1_073_741_823n);
+  const BINARY_DOWN = order(0n, 6_213_400n); // (-inf, $62,134]
+  const RANGE = order(6_213_000n, 6_214_000n); // ($62,130, $62,140]
+
+  it('binary-up: a settlement below the strike is a definite loss', () => {
+    expect(isSettledDefiniteLoss(BINARY_UP, px(62_000), TICK)).toBe(true);
+  });
+  it('binary-up: a settlement above the strike is a win, never skipped', () => {
+    expect(isSettledDefiniteLoss(BINARY_UP, px(62_200), TICK)).toBe(false);
+  });
+  it('binary-up: a settlement at the strike is on-boundary, never skipped', () => {
+    expect(isSettledDefiniteLoss(BINARY_UP, px(62_134), TICK)).toBe(false);
+  });
+  it('binary-up: within one tick below the strike is not skipped (redeem decides)', () => {
+    expect(isSettledDefiniteLoss(BINARY_UP, px(62_134) - TICK + 1n, TICK)).toBe(false);
+    expect(isSettledDefiniteLoss(BINARY_UP, px(62_134) - TICK, TICK)).toBe(true); // a full tick below: loss
+  });
+  it('binary-down: above the strike is a loss, below/at is a win', () => {
+    expect(isSettledDefiniteLoss(BINARY_DOWN, px(62_200), TICK)).toBe(true);
+    expect(isSettledDefiniteLoss(BINARY_DOWN, px(62_100), TICK)).toBe(false);
+    expect(isSettledDefiniteLoss(BINARY_DOWN, px(62_134), TICK)).toBe(false);
+  });
+  it('range: inside the band is a win, either side out is a loss', () => {
+    expect(isSettledDefiniteLoss(RANGE, px(62_135), TICK)).toBe(false);
+    expect(isSettledDefiniteLoss(RANGE, px(62_120), TICK)).toBe(true);
+    expect(isSettledDefiniteLoss(RANGE, px(62_150), TICK)).toBe(true);
+  });
+  it('never skips on a missing/garbage price or tick size', () => {
+    expect(isSettledDefiniteLoss(BINARY_UP, 0n, TICK)).toBe(false);
+    expect(isSettledDefiniteLoss(BINARY_UP, px(62_000), 0n)).toBe(false);
+    expect(isSettledDefiniteLoss(BINARY_UP, -1n, TICK)).toBe(false);
   });
 });
 

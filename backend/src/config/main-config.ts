@@ -307,6 +307,10 @@ export const MARKET_SYNC_CRON: string = process.env.PIPS_MARKET_SYNC_CRON || '*/
 // Cap on-chain redeems per settle tick so a backlog drains gradually instead of monopolizing the settle
 // executor. The rest carry over to the next tick.
 export const SETTLE_MAX_REDEEMS_PER_TICK: number = Number(process.env.PIPS_SETTLE_MAX_REDEEMS_PER_TICK) || 6;
+// Cap total plays examined per settle tick. A provable loss is finalized from chain reads with no redeem tx,
+// so it no longer counts against the redeem budget; this bounds the read/DB burst if a big backlog expires at
+// once (a restart), pacing it across ticks. Generous so steady-state settles clear in a single tick.
+export const SETTLE_MAX_PLAYS_PER_TICK: number = Number(process.env.PIPS_SETTLE_MAX_PLAYS_PER_TICK) || 32;
 // Stop streaming live prices this long before expiry so an in-flight mint can't race settlement.
 export const EXPIRY_SAFETY_MS: number = Number(process.env.PIPS_EXPIRY_SAFETY_MS) || 5000;
 
