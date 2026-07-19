@@ -1,13 +1,12 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Activity, CandlestickChart, Dices, Layers, Rocket, Target } from 'lucide-react'
+import { Activity, CandlestickChart, Dices, Rocket, Target } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useCallback } from 'react'
 import { useConsoleControls } from '@/components/console/controls'
 import { GameScreen } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { api } from '@/lib/api'
-import { rv2LivePlayIds } from '@/lib/rangeV2'
 import { useAuth } from '@/lib/auth'
 import { useLivePresence } from '@/lib/presence'
 import { isDemo } from '@/lib/demo'
@@ -33,9 +32,8 @@ type GameDef = { to: string; icon: LucideIcon; name: string; tag: string }
 
 // Real plays. Every one settles a DeepBook Predict position with actual funds.
 const GAMES: ReadonlyArray<GameDef> = [
-  { to: '/games/lucky', icon: Dices, name: 'I Feel Lucky', tag: 'Spin. Win. Cash out.' },
   { to: '/games/range', icon: Target, name: 'Range', tag: 'Call the zone. Tighter pays more.' },
-  { to: '/games/range-v2', icon: Layers, name: 'Range V2', tag: 'Stack bands. Never wait a round.' },
+  { to: '/games/lucky', icon: Dices, name: 'I Feel Lucky', tag: 'Spin. Win. Cash out.' },
   { to: '/games/moonshot', icon: Rocket, name: 'Moonshot', tag: 'Long or short. Reach further, win bigger.' },
 ]
 
@@ -61,8 +59,8 @@ function GamesConsole() {
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
   const streak = statsQ.data?.stats.currentStreak ?? 0
 
-  // Which real games have positions still riding, so the row can flag it. Open plays from the backend are the fresh,
-  // chain-reconciled truth; range-v2 shares the `range` game with Range, so its own tagged ids split the two rows apart.
+  // Which real games have positions still riding, so the row can flag it. Open plays from the backend are the
+  // fresh, chain-reconciled truth.
   const openPlaysQ = useQuery({
     queryKey: ['plays', 'open'],
     queryFn: () => api.plays({ status: 'open', limit: 30 }),
@@ -71,19 +69,14 @@ function GamesConsole() {
     retry: false,
   })
   const openPlays = openPlaysQ.data?.plays ?? []
-  const rv2Ids = rv2LivePlayIds()
-  const rangeV2Live = openPlays.some((p) => p.game === 'range' && rv2Ids.has(p.id))
-  const rangeLive = openPlays.some((p) => p.game === 'range' && !rv2Ids.has(p.id))
   const inPlayFor = (to: string): boolean =>
     to === '/games/lucky'
       ? openPlays.some((p) => p.game === 'lucky')
       : to === '/games/moonshot'
         ? openPlays.some((p) => p.game === 'moonshot')
         : to === '/games/range'
-          ? rangeLive
-          : to === '/games/range-v2'
-            ? rangeV2Live
-            : false
+          ? openPlays.some((p) => p.game === 'range')
+          : false
   // First-run only: same signal Lucky's idle hint uses, no extra storage, disappears for good after the first play.
   const firstRun = !statsQ.isLoading && (statsQ.data?.stats.gamesPlayed ?? 0) === 0
 

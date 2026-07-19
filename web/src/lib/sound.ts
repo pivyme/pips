@@ -1016,7 +1016,7 @@ export function rangeLose(): void {
   }
 }
 
-// --- Crowd sting (Range V2 social layer): one quiet, rate-limited coin plink when ANOTHER player places.
+// --- Crowd sting (Range social layer): one quiet, rate-limited coin plink when ANOTHER player places.
 // Deliberately far below the player's own win/lose/buzzer so "your own stays the loudest." A burst of
 // simultaneous crowd events debounces into one sting. One-shot only, no bed, so setSoundEnabled is untouched.
 

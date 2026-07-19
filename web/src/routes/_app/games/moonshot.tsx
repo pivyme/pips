@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import NumberFlow from '@number-flow/react'
 import toast from 'react-hot-toast'
 import type { ChartOverlays } from '@/components/game/Chart'
 import { Chart } from '@/components/game/Chart'
@@ -34,7 +35,7 @@ import {
   startMoonshotBgm,
   stopMoonshotBgm,
 } from '@/lib/sound'
-import { api, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
+import { api, type LuckyParams, type MoonshotAim, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
 import { betLadder, netStakeUsd } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
@@ -63,10 +64,13 @@ const TOKEN_LOGOS: Record<string, string> = {
   SUI: '/assets/images/coins/sui-logo.png',
 }
 
-// Preview TARGET placement (pre-play only): same vol + reach->quantile mapping the backend solver uses, so the aim line previews where the real strike lands; snaps to the true strike on open.
-const ROUND_VOL_EST = 0.022
-const MIN_TARGET_FRAC = 0.0015
-const REACH_Z: Record<number, number> = { 2: 0, 3: 0.4307, 5: 0.8416, 10: 1.2816, 25: 1.7507 }
+// Preview TARGET placement (idle only): the strike offset each reach actually mints at, fetched from the
+// server aim quote (api.moonshotAim) so the aimed line lands where the real strike lands, then snaps to the
+// exact strike the instant the deal returns. AIM_FALLBACK covers the cold-start before the first quote,
+// calibrated to what short real BTC rounds mint (~0.01-0.05% of spot); the quote (+ the demo twin) overwrite it fast.
+const AIM_FALLBACK: Record<number, number> = { 2: 0.00013, 3: 0.00017, 5: 0.00017, 10: 0.00023, 25: 0.00051 }
+const aimOffset = (levels: MoonshotAim[] | null | undefined, reach: number): number =>
+  levels?.find((l) => l.reach === reach)?.offsetFrac ?? AIM_FALLBACK[reach] ?? AIM_FALLBACK[5]
 
 const NOMINAL_ROUND_SEC = 30
 const RESULT_MS = 6500
@@ -89,10 +93,17 @@ type Live = {
 }
 type Overlay = 'none' | 'howto' | 'board'
 
-const money = (n: number): string =>
-  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtMult = (n: number): string => `${n.toFixed(2).replace(/\.?0+$/, '')}x`
 const sideLabel = (s: Side): string => (s === 'up' ? 'LONG' : 'SHORT')
+
+// Digit-easing readouts (same as Range) so turning the AIM knob or a mark drift eases the number instead of
+// hard-swapping. Styling (size/color) rides the parent span; NumberFlow only animates the digits.
+const MultFlow = ({ value }: { value: number }) => (
+  <NumberFlow value={value} suffix="x" format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }} />
+)
+const UsdFlow = ({ value }: { value: number }) => (
+  <NumberFlow value={value} prefix="$" format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }} />
+)
 
 function MoonshotScreen() {
   const { refresh, user } = useAuth()
@@ -143,6 +154,19 @@ function MoonshotScreen() {
   const side: Side = aim >= 0 ? 'up' : 'down'
   const reach = Math.abs(aim)
 
+  // Server aim quote: the strike offset each reach mints at, so the previewed TARGET equals the drawn strike
+  // (same idea as Range's tier quote). Light refetch cadence; snaps to the true strike on the deal anyway.
+  const aimQ = useQuery({
+    queryKey: ['moonshotAim', asset],
+    queryFn: () => api.moonshotAim(asset),
+    enabled: canPlay && !!asset,
+    placeholderData: (prev) => prev,
+    staleTime: 4_000,
+    refetchInterval: 5_000,
+    retry: false,
+  })
+  const aimLevels = aimQ.data?.levels ?? null
+
   // BET clamps to what the balance affords, so the wheel never offers an unplayable bet.
   const STAKE_LADDER = betLadder()
   const balance = parseFloat(user?.balance ?? '0') || 0
@@ -166,10 +190,11 @@ function MoonshotScreen() {
   const entrySpotNum = play?.entrySpot ? parseFloat(play.entrySpot) : NaN
   const entryVal = Number.isFinite(entrySpotNum) && entrySpotNum > 0 ? entrySpotNum : null
 
-  // Pre-play preview TARGET: the aim line that tracks the live price as you turn REACH / flip the side. Cold-start only, snaps to the real strike the instant the deal returns.
+  // Pre-play preview TARGET: the aim line tracking the live price as you turn REACH / flip the side, placed at
+  // the offset the server says this reach mints at. Idle only, snaps to the real strike the instant the deal returns.
   const previewTarget =
     spot != null && spot > 0
-      ? spot * (1 + (side === 'up' ? 1 : -1) * Math.max(ROUND_VOL_EST * (REACH_Z[reach] ?? 0), MIN_TARGET_FRAC))
+      ? spot * (1 + (side === 'up' ? 1 : -1) * aimOffset(aimLevels, reach))
       : null
   const { secsLeft, remainingMs, settleMs } = useRoundCountdown({
     enabled: phase === 'open',
@@ -631,7 +656,7 @@ function MoonshotScreen() {
                     cashoutPnl={live?.pnl ?? play?.pnl ?? '0'}
                   />
                   <div className="mt-2.5 grid grid-cols-3 gap-x-3">
-                    <Cell label="Mult" value={fmtMult(multiplier)} />
+                    <Cell label="Mult" value={<MultFlow value={multiplier} />} />
                     <Cell label="Cost" value={`$${formatExactDecimal(live?.entryValue ?? play?.entryValue ?? '0')}`} />
                     <Cell label="Win" value={`$${formatExactDecimal(live?.maxPayout ?? play?.maxPayout ?? '0')}`} />
                   </div>
@@ -649,7 +674,9 @@ function MoonshotScreen() {
                 <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Aim</div>
                   <div className="flex items-baseline gap-2">
-                    <span className="tnum text-[40px] font-extrabold leading-none text-brand-500">{reach}x</span>
+                    <span className="tnum text-[40px] font-extrabold leading-none text-brand-500">
+                      <NumberFlow value={reach} suffix="x" format={{ maximumFractionDigits: 0 }} />
+                    </span>
                     <span className={cnm('font-mono text-[13px] font-bold uppercase tracking-[0.08em]', side === 'up' ? 'text-up' : 'text-down')}>
                       {sideLabel(side)}
                     </span>
@@ -657,7 +684,7 @@ function MoonshotScreen() {
                   <div className="mt-2.5 grid grid-cols-2 gap-x-3">
                     <Cell label="Amount" value={`$${stake}`} />
                     {/* Net of the house rake, so this never over-promises the aimed win (config.ts). */}
-                    <Cell label="Win up to" value={`$${money(netStakeUsd(stake) * reach)}`} />
+                    <Cell label="Win up to" value={<UsdFlow value={netStakeUsd(stake) * reach} />} />
                   </div>
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
                     Further reach, bigger multiple

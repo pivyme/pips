@@ -72,6 +72,14 @@ export interface RangeQuoteModelDTO {
   minRoundMs: number; // taps closer than this to the buzzer route to the next round
 }
 
+// MOONSHOT aim preview: the exact strike offset each reach mints at, so the client's TARGET line sits where
+// the strike actually lands instead of a blind vol guess. offsetFrac = |strike - entry| / entry; the client
+// applies the dialed side's sign and multiplies by the live spot. Empty while no market is live (client falls back).
+export interface MoonshotAimLevelDTO {
+  reach: number; // dialed target multiple (2..25), matches the client's aim ladder
+  offsetFrac: number; // strike distance as a fraction of spot (e.g. 0.00017 = 0.017%)
+}
+
 export interface PlayDTO {
   id: string;
   game: Game;

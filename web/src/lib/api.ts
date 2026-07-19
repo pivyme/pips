@@ -80,6 +80,13 @@ export interface RangeQuoteModel {
   minRoundMs: number // taps closer than this to the buzzer route to the next round
 }
 
+// MOONSHOT aim preview: the strike offset each reach mints at, so the aimed TARGET line lands where the strike
+// lands. offsetFrac = |strike - entry| / entry; the client applies the dialed side's sign and the live spot.
+export interface MoonshotAim {
+  reach: number
+  offsetFrac: number
+}
+
 export interface PlayDTO {
   id: string
   game: Game
@@ -402,6 +409,9 @@ const realApi = {
   // Price the server payout-tier ladder (the RANGE knob): stable multiples + the live-band decay model.
   rangeTierQuotes: (asset: string) =>
     request<{ quotes: RangeTierQuote[]; model: RangeQuoteModel | null }>('GET', `/games/range/quotes?asset=${encodeURIComponent(asset)}&tiers=1`),
+  // The MOONSHOT aim ladder: the strike offset each reach mints at, so the previewed TARGET equals the drawn strike.
+  moonshotAim: (asset: string) =>
+    request<{ levels: MoonshotAim[] }>('GET', `/games/moonshot/aim?asset=${encodeURIComponent(asset)}`),
   play: (game: Game, body: Record<string, unknown>) => request<PlayResult>('POST', `/games/${game}/play`, body),
   cashout: (playId: string) => request<CashoutResult>('POST', `/plays/${playId}/cashout`, {}),
   plays: (q: { status?: string; limit?: number } = {}) => {

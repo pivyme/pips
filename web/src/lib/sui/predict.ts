@@ -90,7 +90,7 @@ export async function readWalletBalances(address: string): Promise<WalletBalance
 
 // The server rate-limits plays per user with a burst-tolerant token bucket (finite testnet gas, L-008). A
 // burst past the bucket depth 429s RATE_LIMITED; instead of surfacing that, wait briefly for a slot and re-fire
-// so plays just queue (Range V2 stacks several at once). A rate-limited request never landed, so the retry is
+// so plays just queue (Range stacks several at once). A rate-limited request never landed, so the retry is
 // safe. Keep the window SHORT: it must fail fast, never linger long enough to land the play in a later round.
 const RATE_LIMIT_RETRY_MS = 400
 const RATE_LIMIT_MAX_WAIT_MS = 3500 // ~one token refill, then let the error surface so the caller can fail it

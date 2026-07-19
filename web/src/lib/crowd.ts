@@ -1,4 +1,4 @@
-// Crowd sim: emits spaced, ephemeral "someone just placed a range" events so the Range V2 chart feels
+// Crowd sim: emits spaced, ephemeral "someone just placed a range" events so the Range chart feels
 // alive without a persistent pile of avatars. Pure logic, no React, no chain. CrowdLayer turns each event
 // into a brief band flash + a fast coin pop, then it's gone. Deliberately restrained: one pulse at a time,
 // never a stack. Prototype/demo dummy data behind an abstract event source, swap to a real anonymized feed

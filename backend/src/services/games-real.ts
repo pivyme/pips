@@ -15,7 +15,7 @@ import { FLOAT_SCALING, multiplier as multiplierOf } from '../lib/sui/config.ts'
 import { liveByAsset, type Market } from '../lib/sui/markets.ts';
 import { LEVERAGE_ONE, POSITION_LOT_SIZE, readBtcSpot, resolveWrapper, simulateMint, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
 import { treasuryAddress } from '../lib/sui/signer.ts';
-import type { Game, RangeQuoteDTO as RangeQuote, RangeQuoteModelDTO, RangeTierQuoteDTO, Side } from '../types/api.ts';
+import type { Game, MoonshotAimLevelDTO, RangeQuoteDTO as RangeQuote, RangeQuoteModelDTO, RangeTierQuoteDTO, Side } from '../types/api.ts';
 import { PlayError } from './games-base.ts';
 import { newSeed, pickTier, seedFloat } from './rng.ts';
 
@@ -235,6 +235,31 @@ async function resolveRealBinary(game: 'lucky' | 'moonshot', netRaw: bigint, sta
     strikeDisplay: realFmt(strike1e9),
     seed,
   };
+}
+
+// The reach ladder MOONSHOT dials (abs of the client's aim ladder). Kept here so the aim quote and the play
+// clamp share one source of truth.
+const MOONSHOT_REACHES = [2, 3, 5, 10, 25];
+
+// MOONSHOT aim preview: the strike offset each reach actually mints at, computed by the exact same strikeFor
+// math as a real mint (leverage split + admission snap), so the client's TARGET line lands where the strike
+// lands instead of a blind vol guess. Mirrors quoteRangeTiersReal. Pure analytic off the cached live market,
+// no sim/chain round-trip. Returns null with no live market; the client falls back to a calibrated table.
+export function quoteMoonshotAimReal(): { levels: MoonshotAimLevelDTO[] } | null {
+  try {
+    const market = realMarket(LUCKY_ROUND_MS);
+    const { spot1e9, tickSize, admissionTickSize, maxLeverage1e9 } = realEcon(market);
+    const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+    const levels = MOONSHOT_REACHES.map((reach) => {
+      const leverage1e9 = binaryLeverage(reach, maxLeverage1e9);
+      const { strike1e9 } = strikeFor('up', reach, leverage1e9, spot1e9, tickSize, admissionTickSize, seconds);
+      const offsetFrac = Math.abs(Number(strike1e9 - spot1e9)) / Number(spot1e9);
+      return { reach, offsetFrac };
+    });
+    return { levels };
+  } catch {
+    return null;
+  }
 }
 
 // A tier's analytic payout fallback at 1x leverage, until the sim calibration below supplies chain truth.

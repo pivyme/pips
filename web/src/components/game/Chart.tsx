@@ -108,6 +108,7 @@ const HALF_GROW = 0.12 // zoom-out ease when content needs more room
 const HALF_SHRINK = 0.03 // zoom-in ease when there is slack, slow so the frame stays calm
 const LIVE_CALM = 0.34 // ~3x slower recenter/zoom while a round is live, so entry/target barely drift
 const FILL_SMOOTH = 0.08 // band right-zone -> full-width ease on lock
+const TARGET_MOVE_SMOOTH = 0.18 // eased glide when the aim knob moves the TARGET price (Moonshot), so the line slides instead of teleporting
 const BAND_SMOOTH = 0.12 // per-frame ease for band width/reshape (~0.4s settle), so it shrinks/expands smoothly
 const PAD = 1.22 // headroom around the fitted content (tighter = the move fills more of the frame)
 // Last-resort floor so a flat/degenerate line never zooms to infinity, not a target zoom level.
@@ -189,6 +190,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
   const range = useRef<{ min: number; max: number }>({ min: 0, max: 1 })
   const entryReveal = useRef(0) // 0 -> 1 fade-in as the entry line appears on a new round
   const targetReveal = useRef(0) // 0 -> 1 fade-in as the target line appears on a new round
+  const targetPrice = useRef<number | null>(null) // eased overlay TARGET price, so a knob move glides the line instead of snapping
   // Eased band geometry so width changes (knob tier, round-clock shrink) and the idle->locked reshape glide
   // instead of snapping. Center + half, so the idle preview still tracks the live price with no lag.
   const bandC = useRef(0)
@@ -484,6 +486,12 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       const targetTarget = ov?.target != null ? 1 : 0
       if (continuous) targetReveal.current += (targetTarget - targetReveal.current) * FILL_SMOOTH
       else targetReveal.current = targetTarget
+      // Ease the overlay TARGET price so turning the aim knob glides the line to its new level; snap on first
+      // appearance (and reduced motion) so a freshly revealed strike lands exactly where it settles.
+      const tgtP = ov?.target?.price ?? null
+      if (tgtP == null) targetPrice.current = null
+      else if (targetPrice.current == null || !continuous) targetPrice.current = tgtP
+      else targetPrice.current += (tgtP - targetPrice.current) * TARGET_MOVE_SMOOTH
       // Mirror the eased leading price out so a readout can track the line at 60fps.
       if (liveOutRef.current) liveOutRef.current.current = display.current
 
@@ -498,7 +506,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       }
 
       // Overlays sit under the line.
-      drawOverlays(ctx, ov, band, { w, h, now, nowX, entryReveal: entryReveal.current, targetReveal: targetReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), aimHalf: aimHalfEased, y, C })
+      drawOverlays(ctx, ov, band, { w, h, now, nowX, entryReveal: entryReveal.current, targetReveal: targetReveal.current, targetPrice: targetPrice.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), aimHalf: aimHalfEased, y, C })
 
       // Advance the cosmetic micro-life, applied to the DRAWN leading edge only, continuous mode and non-live feeds only (the real Binance bus already has its own).
       // display.current itself stays untouched, so P/L, header price, win-zone, and frame fit never see this wiggle.
@@ -788,9 +796,9 @@ function drawOverlays(
   ctx: CanvasRenderingContext2D,
   ov: ChartOverlays | undefined,
   band: { lower: number; upper: number } | null,
-  ctxv: { w: number; h: number; now: number; nowX: number; entryReveal: number; targetReveal: number; rim: number; price: number; locked: boolean; aimHalf: number | null; y: (p: number) => number; C: Record<string, string> },
+  ctxv: { w: number; h: number; now: number; nowX: number; entryReveal: number; targetReveal: number; targetPrice: number | null; rim: number; price: number; locked: boolean; aimHalf: number | null; y: (p: number) => number; C: Record<string, string> },
 ) {
-  const { w, h, now, nowX, entryReveal, targetReveal, rim, price, locked, aimHalf, y, C } = ctxv
+  const { w, h, now, nowX, entryReveal, targetReveal, targetPrice, rim, price, locked, aimHalf, y, C } = ctxv
 
   // TARGET rides the RIGHT edge (the amber hero), ENTRY stays LEFT; opposite corners so they can never stack on a small move.
   const labelX = w - rim - 2
@@ -1061,7 +1069,8 @@ function drawOverlays(
   // Target (Lucky): the line the price must cross to win; the winning half shades green and brightens when price is inside, so "am I winning" reads straight off the chart.
   // The line itself is the one amber accent (SCREEN.md). It wipes in left->right as the deal's payoff; ys is always the true strike, only the drawn extent animates (never the price position).
   if (ov?.target != null && targetReveal > 0.01) {
-    const { price: tp, side } = ov.target
+    const { side } = ov.target
+    const tp = targetPrice ?? ov.target.price // eased so a knob move glides the line + price; falls back to raw
     const a = targetReveal
     const ys = y(tp)
     // Front-loaded ease so the line "slams" across, then settles; the cubic saturates near full width well before targetReveal does.

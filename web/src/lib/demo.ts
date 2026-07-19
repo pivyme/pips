@@ -20,6 +20,7 @@ import type {
   Minigame,
   MinigameLeaderboard,
   MinigameSubmit,
+  MoonshotAim,
   PlayDTO,
   PlayResult,
   RangeQuote,
@@ -670,7 +671,7 @@ function createRange(body: Record<string, unknown>): PlayDTO {
   ensureBalance(stake)
   const asset = String(body.asset ?? ASSETS[0])
   const duration = RANGE_ROUND_SEC // one real settled round; matches the backend's oracle-expiry round
-  // Tier play (the payout knob): band width derives from the tier's target odds; legacy widthPct kept for range-v2.
+  // Tier play (the payout knob): band width derives from the tier's target odds; legacy widthPct kept for compat.
   const halfPct = body.tier != null ? rangeTierHalfPct(rangeTierProb(Number(body.tier))) : Number(body.widthPct ?? 2) / 2
   const widthPct = halfPct * 2
   const entry = currentPrice(asset)
@@ -1016,6 +1017,16 @@ export const demoApi = {
       }
     })
     return { quotes, model: null }
+  },
+
+  // MOONSHOT aim twin: the same offset createMoonshot places the TARGET at, so the preview equals the round.
+  moonshotAim: async (_asset: string): Promise<{ levels: MoonshotAim[] }> => {
+    await delay(60)
+    const levels = [2, 3, 5, 10, 25].map((reach) => ({
+      reach,
+      offsetFrac: Math.max(ROUND_VOL * reachZ(reach), 0.0015),
+    }))
+    return { levels }
   },
 
   play: async (game: Game, body: Record<string, unknown>): Promise<PlayResult> => {

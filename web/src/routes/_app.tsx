@@ -5,7 +5,6 @@ import type { ConsoleTheme } from '@/components/console/themes'
 import { Route as GamesRoute } from './_app/games/index'
 import { Route as LuckyRoute } from './_app/games/lucky'
 import { Route as RangeRoute } from './_app/games/range'
-import { Route as RangeV2Route } from './_app/games/range-v2'
 import { Route as MoonshotRoute } from './_app/games/moonshot'
 import { Route as LineRiderRoute } from './_app/games/line-rider'
 import { Route as FlappyPiperRoute } from './_app/games/flappy-piper'
@@ -50,7 +49,6 @@ const DEVICE_SCREENS: Record<string, ComponentType> = {
   '/games': routeComponent(GamesRoute),
   '/games/lucky': routeComponent(LuckyRoute),
   '/games/range': routeComponent(RangeRoute),
-  '/games/range-v2': routeComponent(RangeV2Route),
   '/games/moonshot': routeComponent(MoonshotRoute),
   '/games/line-rider': routeComponent(LineRiderRoute),
   '/games/flappy-piper': routeComponent(FlappyPiperRoute),
@@ -93,7 +91,6 @@ function AppLayout() {
   // The menu is a drawer over the device, not a screen inside it; the shell stays mounted behind it for the blur layer.
   const onMenu = Boolean(matchRoute({ to: '/menu', fuzzy: true }))
   const onRange = Boolean(matchRoute({ to: '/games/range' }))
-  const onRangeV2 = Boolean(matchRoute({ to: '/games/range-v2' }))
   const onLucky = Boolean(matchRoute({ to: '/games/lucky' }))
   const onMoonshot = Boolean(matchRoute({ to: '/games/moonshot' }))
   const onLineRider = Boolean(matchRoute({ to: '/games/line-rider' }))
@@ -167,9 +164,7 @@ function AppLayout() {
   // Tracks which game the device mounts (held across menu open so the chart never blinks) and where Close returns to; mounted by path, not the Outlet.
   const last3DPath = useRef('/games')
   if (!onMenu && on3D)
-    last3DPath.current = onRangeV2
-      ? '/games/range-v2'
-      : onRange
+    last3DPath.current = onRange
       ? '/games/range'
       : onLucky
         ? '/games/lucky'

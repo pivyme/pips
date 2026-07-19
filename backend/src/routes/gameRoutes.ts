@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyReque
 import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { buildMarketsPayload } from '../lib/markets-feed.ts';
-import { PlayError, httpStatusForPlayError, quoteRangeBatchReal, quoteRangeTiersReal } from '../services/games.ts';
+import { PlayError, httpStatusForPlayError, quoteMoonshotAimReal, quoteRangeBatchReal, quoteRangeTiersReal } from '../services/games.ts';
 import {
   createPlay,
   cashoutPlay,
@@ -71,6 +71,13 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     } catch (error) {
       return fail(reply, error, 'QUOTE_FAILED', 'Could not price those bands');
     }
+  });
+
+  // MOONSHOT aim preview: the strike offset each reach mints at, so the aimed TARGET line equals the drawn
+  // strike (mirrors the Range tier quote). Empty levels while no market is live; the client falls back.
+  app.get('/games/moonshot/aim', { preHandler: [authMiddleware] }, async (_request: FastifyRequest, reply: FastifyReply) => {
+    const payload = quoteMoonshotAimReal();
+    return reply.code(200).send({ success: true, error: null, data: payload ?? { levels: [] } });
   });
 
   // One endpoint per game, uniform shape. Body is the game-specific config plus a stake.
