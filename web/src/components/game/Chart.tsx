@@ -51,6 +51,11 @@ export interface ChartOverlays {
   // green/red by whether the live price rides inside. `n` is the slot number (flag near the cutoff edge) tying
   // the chip strip to the chart. t0/t1 are Date.now epoch ms; omit them to fall back to a static forward lane.
   bands?: Array<{ lower: number; upper: number; state?: 'live' | 'won' | 'lost'; n?: number; t0?: number; t1?: number }>
+  // Lucky multiplay: each open hand as a directional TARGET line (binary up/down) at its strike. The winning
+  // side shades faintly, the line + numbered tag light green when the live price is on the winning side, red
+  // when not, and snap to the verdict once resolved. `n` is the slot number (right-edge tag) tying the chip
+  // strip to the chart; `t1` (epoch ms) draws its buzzer cutoff line. Distinct from `target` (single-play).
+  targets?: Array<{ price: number; side: 'up' | 'down'; state?: 'live' | 'won' | 'lost'; n?: number; t1?: number }>
   // Range-v2 aim: where the NEXT play's band would land, a live ±pct bracket tracking the price (amber, dashed).
   aim?: { pct: number; tag?: string }
   // Exact settled RESULT price after oracle.settlement_price exists.
@@ -366,9 +371,10 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       const hasBoxes = Boolean(ov?.boxes?.length)
       const hasBand = Boolean(ov?.band)
       const hasBands = Boolean(ov?.bands?.length)
+      const hasTargets = Boolean(ov?.targets?.length)
       const hasAim = Boolean(ov?.aim)
       // Leave room on the right for a forward zone (band, boxes, multiplay lanes, or the aim bracket); else ride near the edge.
-      const nowX = hasBoxes || hasBand || hasBands || hasAim ? w * 0.58 : w * 0.92
+      const nowX = hasBoxes || hasBand || hasBands || hasTargets || hasAim ? w * 0.58 : w * 0.92
       const band = resolveBand()
       const aimHalfEased = resolveAimHalf()
 
@@ -405,6 +411,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
           consider(b.upper)
         }
       }
+      if (ov?.targets) for (const t of ov.targets) consider(t.price)
       if (ov?.aim && aimHalfEased != null) {
         const c = display.current
         consider(c - aimHalfEased)
@@ -435,7 +442,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
         // While a round is live, entry/target/locked bands are fixed-price references; recentering the frame would make them drift, reading as not-tracking.
         // Range-v2's locked bands anchor the frame exactly like Range's entry line, so the price visibly moves against them instead of the frame chasing it flat.
         // Ease the scale much calmer once a round is on; the hard clamp below still prevents clipping.
-        const calm = ov?.entry != null || ov?.target != null || Boolean(ov?.bands?.length) ? LIVE_CALM : 1
+        const calm = ov?.entry != null || ov?.target != null || Boolean(ov?.bands?.length) || Boolean(ov?.targets?.length) ? LIVE_CALM : 1
         center += (tCenter - center) * CENTER_SMOOTH * calm
         half += (tHalf - half) * (tHalf > half ? HALF_GROW : HALF_SHRINK) * calm
         if (Number.isFinite(lo) && Number.isFinite(hi)) {
@@ -645,12 +652,13 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       // Cutoff lines: the settlement boundary for each open expiry, scrolling in from the right toward the now-dot.
       // Faint as it enters view, ramping to bright white in the final seconds so the buzzer is unmissable. Drawn on
       // top of the line so it reads as a hard cut; when it reaches the now-dot the positions before it are settling.
-      if (continuous && ov?.bands?.length) {
+      if (continuous && (ov?.bands?.length || ov?.targets?.length)) {
         const pxPerMs = nowX / WINDOW_MS
         const nowEpoch = performance.timeOrigin + now
-        const expiries = Array.from(
-          new Set(ov.bands.filter((b) => b.state !== 'won' && b.state !== 'lost' && b.t1 != null).map((b) => b.t1!)),
-        )
+        const expirySet = new Set<number>()
+        if (ov?.bands) for (const b of ov.bands) if (b.state !== 'won' && b.state !== 'lost' && b.t1 != null) expirySet.add(b.t1)
+        if (ov?.targets) for (const t of ov.targets) if (t.state !== 'won' && t.state !== 'lost' && t.t1 != null) expirySet.add(t.t1)
+        const expiries = Array.from(expirySet)
         ctx.save()
         ctx.font = '700 9px ui-monospace, SFMono-Regular, Menlo, monospace'
         ctx.textBaseline = 'top'
@@ -920,6 +928,68 @@ function drawOverlays(
       ctx.strokeRect(fx + 0.5, cy - FS / 2 + 0.5, FS - 1, FS - 1)
       ctx.fillStyle = filled ? '#000' : withAlpha(col, 0.95)
       ctx.fillText(String(b.n), fx + FS / 2, cy + 0.5)
+    }
+    ctx.restore()
+  }
+
+  // Lucky multiplay: each open hand as a directional TARGET line at its strike. The winning side gets a short
+  // gradient wedge (kept thin so 3 stacked lines never flood the chart), the dashed line + right-edge numbered
+  // tag light green when the live price is on the winning side / red when not / verdict color once resolved,
+  // pulsing neutral in the cutoff-to-verdict window. The chip strip mirrors each line's number.
+  if (ov?.targets?.length) {
+    const nowEpoch = performance.timeOrigin + now
+    const pulse = 0.5 + 0.5 * Math.abs(Math.sin(performance.now() / 300))
+    const wedgeH = Math.min(90, (h - 36) * 0.22)
+    const stateOf = (t: { price: number; side: 'up' | 'down'; state?: 'live' | 'won' | 'lost'; t1?: number }) => {
+      const resolved = t.state === 'won' || t.state === 'lost'
+      const settling = !resolved && t.t1 != null && nowEpoch >= t.t1
+      const inWin = t.side === 'up' ? price > t.price : price < t.price
+      const col = t.state === 'won' ? C.up : t.state === 'lost' ? C.down : inWin ? C.up : C.down
+      const a = settling ? pulse : 1
+      return { resolved, inWin, col, a }
+    }
+    ctx.save()
+    for (const t of ov.targets) {
+      const ys = y(t.price)
+      const winUp = t.side === 'up'
+      const { resolved, inWin, col, a } = stateOf(t)
+      const grad = ctx.createLinearGradient(0, ys, 0, winUp ? ys - wedgeH : ys + wedgeH)
+      grad.addColorStop(0, withAlpha(col, (resolved ? 0.18 : inWin ? 0.14 : 0.05) * a))
+      grad.addColorStop(1, withAlpha(col, 0))
+      ctx.fillStyle = grad
+      ctx.fillRect(0, winUp ? ys - wedgeH : ys, w, wedgeH)
+      ctx.strokeStyle = withAlpha(col, (resolved ? 0.95 : inWin ? 0.9 : 0.6) * a)
+      ctx.lineWidth = resolved ? 2 : 1.5
+      ctx.setLineDash(resolved ? [] : [5, 4])
+      ctx.beginPath()
+      ctx.moveTo(0, ys)
+      ctx.lineTo(w, ys)
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+    // Numbered tags at the right edge, stacked so lines close together don't collide.
+    const FS = 14
+    const gap = FS + 3
+    const tags = ov.targets
+      .filter((t) => t.n != null)
+      .map((t) => ({ t, cy: y(t.price) }))
+      .sort((a, z) => a.cy - z.cy)
+    for (const g of tags) g.cy = Math.max(FS, Math.min(h - FS, g.cy))
+    for (let i = 1; i < tags.length; i++) if (tags[i].cy - tags[i - 1].cy < gap) tags[i].cy = tags[i - 1].cy + gap
+    for (let i = tags.length - 1; i >= 0; i--) {
+      const cap = h - FS - (tags.length - 1 - i) * gap
+      if (tags[i].cy > cap) tags[i].cy = cap
+    }
+    ctx.font = '700 9px ui-monospace, SFMono-Regular, Menlo, monospace'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const { t, cy } of tags) {
+      const { col, a } = stateOf(t)
+      const fx = w - rim - FS
+      ctx.fillStyle = withAlpha(col, 0.92 * a)
+      ctx.fillRect(fx, cy - FS / 2, FS, FS)
+      ctx.fillStyle = '#000'
+      ctx.fillText(String(t.n), fx + FS / 2, cy + 0.5)
     }
     ctx.restore()
   }

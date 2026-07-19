@@ -6,6 +6,7 @@ import cron from 'node-cron';
 import {
   PLAY_GAS_BUDGET,
   PLAY_RATE_LIMIT_MS,
+  PLAY_RATE_BURST,
   SPONSOR_FLOOR_SUI,
   SPONSOR_BURN_WARN_SUI,
   SPONSOR_MONITOR_CRON,
@@ -17,38 +18,67 @@ import { cronIntervalMs, recordRun, registerWorker } from '../worker-registry.ts
 const SUI_TYPE = '0x2::sui::SUI';
 const MIST_PER_SUI = 1_000_000_000;
 
-// === Per-user rate limit ===
+// === Per-user rate limit (token bucket) ===
+// Range V2 stacks several positions in quick succession, so a hard "one at a time" cooldown 429s legit play.
+// A per-user token bucket lets a burst of PLAY_RATE_BURST plays through, then refills one slot per
+// PLAY_RATE_LIMIT_MS. A sustained spammer is still capped at the same long-run rate; normal stacking never blocks.
+type Bucket = { tokens: number; at: number };
+const buckets = new Map<string, Bucket>();
 
-const lastPlayAt = new Map<string, number>();
+// Credits any slots earned since the last touch, capped at the bucket depth. `at` tracks the last accounted
+// instant, carrying the sub-interval remainder so refills don't drift; a full bucket resets it to now.
+function refill(userId: string): Bucket {
+  const cap = Math.max(1, PLAY_RATE_BURST);
+  const now = Date.now();
+  const b = buckets.get(userId) ?? { tokens: cap, at: now };
+  if (PLAY_RATE_LIMIT_MS <= 0) {
+    b.tokens = cap;
+    b.at = now;
+  } else {
+    const gained = Math.floor((now - b.at) / PLAY_RATE_LIMIT_MS);
+    if (gained > 0) {
+      b.tokens = Math.min(cap, b.tokens + gained);
+      b.at = b.tokens >= cap ? now : b.at + gained * PLAY_RATE_LIMIT_MS;
+    }
+  }
+  buckets.set(userId, b);
+  return b;
+}
 
 // A block reason the play path turns into a PlayError. null = allowed.
 export type PlayBlock = { code: 'PLAYS_PAUSED' | 'RATE_LIMITED'; message: string; retryAfterMs?: number };
 
-// Gates a play. Checks the sponsor pause first (blocks everyone), then the caller's own cooldown.
-// Does NOT stamp the cooldown, so call recordPlay once the play is accepted.
+// Gates a play. Checks the sponsor pause first (blocks everyone), then the caller's own bucket.
+// Does NOT spend a token, so call recordPlay once the play is accepted.
 export function checkPlayAllowed(userId: string): PlayBlock | null {
   if (pauseState.paused) {
     return { code: 'PLAYS_PAUSED', message: 'Plays are paused while we top up gas. Back in a moment.' };
   }
   if (PLAY_RATE_LIMIT_MS > 0) {
-    const since = Date.now() - (lastPlayAt.get(userId) ?? 0);
-    if (since < PLAY_RATE_LIMIT_MS) {
-      const retryAfterMs = PLAY_RATE_LIMIT_MS - since;
-      return { code: 'RATE_LIMITED', message: `One play at a time. Try again in ${Math.ceil(retryAfterMs / 1000)}s.`, retryAfterMs };
+    const b = refill(userId);
+    if (b.tokens < 1) {
+      const retryAfterMs = Math.max(0, b.at + PLAY_RATE_LIMIT_MS - Date.now());
+      return { code: 'RATE_LIMITED', message: `Slow down a touch. Try again in ${Math.ceil(retryAfterMs / 1000)}s.`, retryAfterMs };
     }
   }
   return null;
 }
 
-// Reserves the user's cooldown slot the moment a play passes the gate, so a rapid double-tap can't slip two plays past the check before either lands (no-op when the limit is off).
+// Spends a token the moment a play passes the gate, so a rapid burst can't slip past the depth before the
+// mints land (no-op when the limit is off). Check + record run synchronously and adjacent, so no interleave.
 export function recordPlay(userId: string): void {
   if (PLAY_RATE_LIMIT_MS <= 0) return;
-  lastPlayAt.set(userId, Date.now());
+  const b = refill(userId);
+  b.tokens = Math.max(0, b.tokens - 1);
 }
 
-// Releases a reserved slot when the play fails BEFORE it is accepted, so the user can retry immediately instead of eating a cooldown for a play that never happened.
+// Refunds a token when a play fails BEFORE it is accepted, so a doomed attempt (bad params / no market)
+// never eats a slot the user could have spent on a real play.
 export function clearPlay(userId: string): void {
-  lastPlayAt.delete(userId);
+  if (PLAY_RATE_LIMIT_MS <= 0) return;
+  const b = buckets.get(userId);
+  if (!b) return;
+  b.tokens = Math.min(Math.max(1, PLAY_RATE_BURST), b.tokens + 1);
 }
 
 // === Sponsor reserve floor -> pause ===

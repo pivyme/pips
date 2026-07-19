@@ -141,7 +141,7 @@ export interface LeaderboardPnlEntryDTO {
   netPnl: string; // signed DUSDC, e.g. "342.00" or "-128.50"
   gamesPlayed: number;
   isYou: boolean;
-  twitterVerified: boolean; // username matches their server-verified linked X handle
+  twitterHandle: string | null; // their server-verified linked X handle (lowercased), or null if no X linked
 }
 
 // A per-game ranked row (Lucky / Range), by summed PnL for that game. Used for both boards: signed
@@ -154,7 +154,7 @@ export interface LeaderboardGameEntryDTO {
   pnl: string; // signed summed DUSDC for this game (gainers positive, rekt negative)
   plays: number; // settled plays of this game
   isYou: boolean;
-  twitterVerified: boolean;
+  twitterHandle: string | null;
 }
 
 // A minigame high-score row (Line Rider / Flappy Piper).
@@ -165,7 +165,7 @@ export interface LeaderboardScoreEntryDTO {
   avatarUrl: string | null;
   score: number;
   isYou: boolean;
-  twitterVerified: boolean;
+  twitterHandle: string | null;
 }
 
 // GET /leaderboard

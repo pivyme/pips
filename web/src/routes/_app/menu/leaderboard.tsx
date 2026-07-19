@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { MenuScreen, ScreenError } from '@/components/menu/shared'
-import { XBadgeGlyph } from '@/components/menu/BrandGlyphs'
+import { XGlyph } from '@/components/menu/BrandGlyphs'
 import { Avatar } from '@/components/Avatar'
 import { api, type GlobalLeaderboard, type LeaderboardPnlEntry } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -149,7 +149,9 @@ function PodiumCard({ e, board, tier }: { e: LeaderboardPnlEntry; board: Board; 
             </span>
             {e.isYou && <YouPill />}
           </div>
-          {e.twitterVerified && <VerifiedChip className="mt-1.5" />}
+          {e.twitterHandle && (
+            <XHandle handle={e.twitterHandle} className="mt-1.5 max-w-full rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] font-medium" />
+          )}
         </div>
         <span className="tnum shrink-0 text-[19px] font-black" style={{ color: t.ink }}>
           {money(e.netPnl, board)}
@@ -216,12 +218,14 @@ function FlatRow({ e, board, first }: { e: LeaderboardPnlEntry; board: Board; fi
       <span className="tnum w-6 shrink-0 text-[13px] font-black text-text-3">{e.rank}</span>
       <Avatar name={l.seed} src={e.avatarUrl} size={32} />
 
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        <span className={cnm('min-w-0 truncate text-[15px] font-bold leading-tight', e.isYou ? 'text-brand-400' : 'text-text')}>
-          {l.display}
-        </span>
-        {e.twitterVerified && <XBadgeGlyph className="h-3.5 w-3.5 shrink-0 text-up" />}
-        {e.isYou && <YouPill />}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center gap-1.5">
+          <span className={cnm('min-w-0 truncate text-[15px] font-bold leading-tight', e.isYou ? 'text-brand-400' : 'text-text')}>
+            {l.display}
+          </span>
+          {e.isYou && <YouPill />}
+        </div>
+        {e.twitterHandle && <XHandle handle={e.twitterHandle} className="mt-0.5 text-[11px] font-normal" />}
       </div>
       <span className={cnm('tnum shrink-0 text-[15px] font-black', board === 'gainers' ? 'text-up' : 'text-down')}>
         {money(e.netPnl, board)}
@@ -238,17 +242,13 @@ function YouPill() {
   )
 }
 
-// The verified chip on the podium: the green X check + "Verified", on its own line under the handle.
-function VerifiedChip({ className }: { className?: string }) {
+// The player's linked X handle with the X mark, shown whenever they've connected X. It sits next to the real
+// X handle, never the PIPS @username, so the mark never implies the @username itself is their X account.
+function XHandle({ handle, className }: { handle: string; className?: string }) {
   return (
-    <span
-      className={cnm(
-        'inline-flex items-center gap-1 rounded-full bg-up/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-up',
-        className,
-      )}
-    >
-      <XBadgeGlyph className="h-3 w-3" />
-      Verified
+    <span className={cnm('inline-flex w-fit items-center gap-1 text-text-2', className)}>
+      <XGlyph className="h-2.5 w-2.5 shrink-0 text-text" />
+      <span className="truncate">@{handle}</span>
     </span>
   )
 }
@@ -278,11 +278,11 @@ function YourRankFooter({ you, board }: { you: GlobalLeaderboard['you']; board: 
           className="shrink-0 rounded-full"
           style={{ boxShadow: '0 0 0 2.5px #0a0a0a, 0 0 0 4.5px rgba(255,192,22,0.85)' }}
         >
-          <Avatar name={name} src={user?.avatarUrl} size={40} className="block" />
+          <Avatar name={name} src={user?.avatarUrl} size={46} className="block" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-black uppercase tracking-[0.18em] text-brand-400">Your rank</div>
-          <div className="mt-0.5 truncate text-[13px] font-bold">
+          <div className="text-[12px] font-black uppercase tracking-[0.02em] text-brand-400">Your rank</div>
+          <div className="mt-0.5 truncate text-[17px] font-bold">
             {you.gamesPlayed === 0 ? (
               <span className="text-text-3">Play a round to rank</span>
             ) : ranked ? (
@@ -295,14 +295,14 @@ function YourRankFooter({ you, board }: { you: GlobalLeaderboard['you']; board: 
           </div>
         </div>
         <div
-          className="flex h-11 min-w-[66px] items-center justify-center rounded-xl px-3"
+          className="flex h-12 min-w-[74px] items-center justify-center rounded-xl px-3"
           style={{
             background: 'linear-gradient(180deg,#0c0c0b,#050505)',
             boxShadow: `inset 0 1px 0 #242422, inset 0 3px 9px rgba(0,0,0,0.75), inset 0 0 0 1px rgba(${rgb},${ranked ? 0.18 : 0.06})`,
           }}
         >
           <span
-            className="tnum text-[22px] font-black leading-none"
+            className="tnum text-[27px] font-black leading-none"
             style={{
               color: ranked ? `rgb(${rgb})` : '#7a7a7a',
               textShadow: ranked ? `0 0 13px rgba(${rgb},0.6)` : 'none',

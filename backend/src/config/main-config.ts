@@ -190,10 +190,13 @@ export const GAS_SPONSORSHIP_WALLET_PK: string = process.env.GAS_SPONSORSHIP_WAL
 export const SPONSOR_MIN_SUI: number = Number(process.env.PIPS_SPONSOR_MIN_SUI) || 50;
 export const SPONSOR_TOPUP_SUI: number = Number(process.env.PIPS_SPONSOR_TOPUP_SUI) || 0.2;
 
-// Sponsor safety layer (play-safety.ts). Testnet SUI is finite (L-008): RATE_LIMIT_MS is a per-user play
-// cooldown (0 = off), FLOOR_SUI pauses new plays until the reserve recovers, BURN_WARN_SUI/MONITOR_CRON log burn rate.
+// Sponsor safety layer (play-safety.ts). Testnet SUI is finite (L-008): the per-user limiter is a token
+// bucket, RATE_LIMIT_MS is the refill interval (one slot per interval, 0 = off), RATE_BURST is the bucket
+// depth so Range V2 can stack several positions back to back without a 429; sustained rate is still capped.
+// FLOOR_SUI pauses new plays until the reserve recovers, BURN_WARN_SUI/MONITOR_CRON log burn rate.
 export const PLAY_RATE_LIMIT_MS: number =
   process.env.PIPS_PLAY_RATE_LIMIT_MS != null ? Number(process.env.PIPS_PLAY_RATE_LIMIT_MS) : 3000;
+export const PLAY_RATE_BURST: number = Math.max(1, Number(process.env.PIPS_PLAY_RATE_BURST) || 6);
 export const SPONSOR_FLOOR_SUI: number = Number(process.env.PIPS_SPONSOR_FLOOR_SUI) || 0.5;
 export const SPONSOR_BURN_WARN_SUI: number = Number(process.env.PIPS_SPONSOR_BURN_WARN_SUI) || 0.2;
 export const SPONSOR_MONITOR_CRON: string = process.env.PIPS_SPONSOR_MONITOR_CRON || '*/30 * * * * *';

@@ -947,6 +947,62 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
+/* Range-v2 rejected tap: a short horizontal shake on the positions rail (max reached / round closing). */
+.rv2-shake {
+  animation: rv2-shake 380ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+@keyframes rv2-shake {
+  10%,
+  90% {
+    transform: translateX(-1px);
+  }
+  20%,
+  80% {
+    transform: translateX(2px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-4px);
+  }
+  40%,
+  60% {
+    transform: translateX(4px);
+  }
+}
+
+/* Range-v2 nudge pill: a non-intrusive notice that drops in, holds, then fades. */
+.rv2-notice {
+  animation: rv2-notice 1700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes rv2-notice {
+  0% {
+    transform: translateY(-6px) scale(0.96);
+    opacity: 0;
+  }
+  12% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  78% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-4px) scale(1);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rv2-shake {
+    animation: none;
+  }
+  .rv2-notice {
+    opacity: 1;
+    animation: none;
+  }
+}
+
 /* ── Game-screen instrument viz (teenage-engineering line graphics) ──────
    Crisp vivid SVG line instruments rendered inside the console screen. The
    motion lives here as cheap GPU transforms so the components stay pure. Each

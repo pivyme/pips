@@ -88,11 +88,11 @@ export async function readWalletBalances(address: string): Promise<WalletBalance
   }
 }
 
-// The server enforces a short per-user cooldown between plays (finite testnet gas, L-008). A rapid
-// back-to-back replay would 429 RATE_LIMITED; instead of surfacing that, wait the cooldown out and re-fire
-// so plays just queue. A rate-limited request never landed (no chips touched), so the retry is safe.
+// The server rate-limits plays per user with a burst-tolerant token bucket (finite testnet gas, L-008). A
+// burst past the bucket depth 429s RATE_LIMITED; instead of surfacing that, wait for a slot and re-fire so
+// plays just queue (Range V2 stacks several at once). A rate-limited request never landed, so the retry is safe.
 const RATE_LIMIT_RETRY_MS = 450
-const RATE_LIMIT_MAX_WAIT_MS = 4500 // covers the 3s cooldown with margin, then lets the error surface
+const RATE_LIMIT_MAX_WAIT_MS = 9000 // covers a couple of refill intervals, then lets the error surface
 
 // Place a play; the backend signs + submits server-side in both modes, so this returns a finalized open PlayDTO.
 export async function placePlay(game: Game, body: Record<string, unknown>): Promise<PlayOutcome> {

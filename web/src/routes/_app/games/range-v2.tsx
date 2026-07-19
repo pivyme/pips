@@ -148,6 +148,7 @@ function RangeV2Screen() {
   const [inZoneKeys, setInZoneKeys] = useState<Set<string>>(new Set())
   const [wave, setWave] = useState<Wave | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const [notice, setNotice] = useState<{ text: string; id: number } | null>(null) // soft "can't place" nudge (max / round closing)
   const [, setSelfPlaceSignal] = useState(0) // bump to pop a coin for your own play (crowd overlay temporarily disabled)
 
   const livePriceRef = useRef(0)
@@ -159,6 +160,9 @@ function RangeV2Screen() {
   const waveRef = useRef<Wave | null>(null)
   const lastPingRef = useRef(0)
   const buzzedExpiryRef = useRef<number | null>(null)
+  const stripRef = useRef<HTMLDivElement>(null) // the positions rail, shaken on a rejected tap
+  const noticeSeq = useRef(0)
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { liveAssets, noLiveMarket, playsPaused, isLoading: marketsLoading, isError: marketsError } = useLiveMarkets()
 
@@ -205,6 +209,19 @@ function RangeV2Screen() {
         Math.sqrt(Math.max(roundEndsMs, model.minRoundMs) / 1000 / SECONDS_PER_YEAR) *
         100
       : tierView.halfPct
+
+  // Inside minRoundMs a tap lands in a dying round: it shows a "···" chip, then the position pops already at its
+  // cutoff and settles on the spot. So when the quote's round gets that close we roll to the next one, refetching so
+  // the aim + expiry re-point, and a tap in the gap is rejected with a soft notice instead of that instant-settle.
+  const quotesRefetch = quotesQ.refetch
+  const nextRound = model != null && roundEndsMs != null && roundEndsMs < model.minRoundMs
+  const boundaryRef = useRef(0)
+  useEffect(() => {
+    if (!nextRound || !tierView.expiryMs) return
+    if (boundaryRef.current === tierView.expiryMs) return
+    boundaryRef.current = tierView.expiryMs
+    void quotesRefetch()
+  }, [nextRound, tierView.expiryMs, quotesRefetch])
 
   // Derived board numbers.
   const inPlay = positions.filter(isLive)
@@ -419,6 +436,23 @@ function RangeV2Screen() {
     toast.error('A play could not open. Your chips are safe.', { id: 'rv2-error' })
   }, [])
 
+  // Soft "can't place" nudge: an error tick, a rail shake, and a self-clearing pill. Shared by the max and
+  // round-closing guards, so a rejected tap always says why instead of dropping a bare "···" chip.
+  const nudge = useCallback((text: string) => {
+    haptic('error')
+    noticeSeq.current += 1
+    setNotice({ text, id: noticeSeq.current })
+    if (noticeTimer.current) clearTimeout(noticeTimer.current)
+    noticeTimer.current = setTimeout(() => setNotice(null), 1700)
+    const el = stripRef.current
+    if (el) {
+      el.classList.remove('rv2-shake')
+      void el.offsetWidth // reflow so the shake restarts on a rapid repeat tap
+      el.classList.add('rv2-shake')
+    }
+  }, [])
+  useEffect(() => () => { if (noticeTimer.current) clearTimeout(noticeTimer.current) }, [])
+
   const doPlay = useCallback(async () => {
     if (playsPaused) {
       toast.error('Plays paused while we top up. Back in a moment.', { id: 'rv2-paused' })
@@ -429,8 +463,12 @@ function RangeV2Screen() {
       return
     }
     if (positionsRef.current.filter(isLive).length >= MAX_POSITIONS) {
-      haptic('error')
-      toast('Max positions in play. Let some settle first.', { id: 'rv2-max' })
+      nudge(`${MAX_POSITIONS} positions at max`)
+      return
+    }
+    if (nextRound) {
+      nudge('Round closing, next one up')
+      void quotesRefetch() // re-route the quote to the fresh round so the retry lands clean
       return
     }
     if (cantAfford) return
@@ -473,7 +511,7 @@ function RangeV2Screen() {
       setPositions((prev) => prev.filter((p) => p.key !== key))
       toastError(e)
     }
-  }, [asset, stake, tierView.tier, idleMult, canPlay, playsPaused, cantAfford, refresh])
+  }, [asset, stake, tierView.tier, idleMult, canPlay, playsPaused, cantAfford, nextRound, nudge, quotesRefetch, refresh])
 
   const goDeposit = useCallback(() => {
     haptic('rigid')
@@ -526,7 +564,7 @@ function RangeV2Screen() {
       display: { mode: 'token', ticker: asset, logoSrc: TOKEN_LOGOS[asset] },
     },
     main: atMax
-      ? { label: 'MAX', color: 'neutral', onPress: () => {} }
+      ? { label: 'MAX', color: 'neutral', onPress: () => nudge(`${MAX_POSITIONS} positions at max`) }
       : cantAfford
         ? { label: 'TOP UP', color: 'amber', onPress: goDeposit }
         : { label: 'PLAY', color: 'amber', onPress: () => void doPlay() },
@@ -537,20 +575,18 @@ function RangeV2Screen() {
   // play lands. A dim entry dot per live position marks exactly where it was placed. Aim hides at MAX (nothing
   // more to place), which doubles as the "you're full" cue. The chart derives the cutoff line(s) from t1.
   const positionBands = positions
-    .filter((p) => p.band && p.asset === asset && p.status !== 'placing')
+    // Drop the band the instant the play resolves, so it clears together with the PnL reveal instead of
+    // lingering on the chart for the result-hold window (the chip + wave splash carry the verdict now).
+    .filter((p) => p.band && p.asset === asset && isLive(p) && p.status !== 'placing')
     .map((p) => {
       // Past the cutoff the settle price is locked and a 1x range is deterministic, so reveal the verdict from the
-      // frozen in-zone read (same source as the footer) instead of a neutral wait, then snap to the real result.
+      // frozen in-zone read (same source as the footer) instead of a neutral wait; the band then clears at resolution.
       const cutoffPassed = p.expiry != null && nowMs >= p.expiry
-      const state: 'live' | 'won' | 'lost' = isResolved(p)
-        ? p.won
+      const state: 'live' | 'won' | 'lost' = cutoffPassed
+        ? inZoneKeys.has(p.key)
           ? 'won'
           : 'lost'
-        : cutoffPassed
-          ? inZoneKeys.has(p.key)
-            ? 'won'
-            : 'lost'
-          : 'live'
+        : 'live'
       return {
         lower: p.band!.lower,
         upper: p.band!.upper,
@@ -638,14 +674,20 @@ function RangeV2Screen() {
             </div>
           </div>
 
-          {/* POSITIONS STRIP: a live row of chips, one per position. Top of the L is full width, never occluded. */}
+          {/* POSITIONS RAIL: a full-width 5-slot grid across the top of the L (never occluded). Filled slots ride to
+              their cutoff, empty slots read as open room, so the "up to 5" cap is always legible. Slot-ordered so a
+              chip stays put from fire to verdict, numbered to its chart flag. A rejected tap shakes the whole rail. */}
           {positions.length > 0 && (
-            <div className="shrink-0 border-b border-line-strong bg-black px-[var(--screen-rim,24px)] py-2">
-              {/* Slot-ordered (stable): each chip stays put from fire to verdict, numbered to its chart flag.
-                  Compact chips keep the full stack on one line even on a narrow device; overflow wraps. */}
-              <div className="flex flex-wrap items-center gap-1">
+            <div
+              ref={stripRef}
+              className="shrink-0 border-b border-line-strong bg-black px-[var(--screen-rim,24px)] py-2"
+            >
+              <div className="grid grid-cols-5 gap-1.5">
                 {orderedPositions.map((p) => (
                   <PositionChip key={p.key} p={p} inZone={inZoneKeys.has(p.key)} nowMs={nowMs} />
+                ))}
+                {Array.from({ length: Math.max(0, MAX_POSITIONS - orderedPositions.length) }).map((_, i) => (
+                  <GhostSlot key={`ghost-${i}`} />
                 ))}
               </div>
             </div>
@@ -673,6 +715,17 @@ function RangeV2Screen() {
                   )}
                 >
                   {`${wave.pnl >= 0 ? '+' : '−'}$${usd(Math.abs(wave.pnl))}`}
+                </span>
+              </div>
+            )}
+            {/* Soft nudge pill: why a tap didn't land (max / round closing). Rides high over the chart, self-clears. */}
+            {notice && (
+              <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center px-4">
+                <span
+                  key={notice.id}
+                  className="rv2-notice inline-flex items-center border border-line-strong bg-black/90 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-text-2"
+                >
+                  {notice.text}
                 </span>
               </div>
             )}
@@ -873,9 +926,9 @@ function CountUp({ value, format }: { value: number; format: (v: number) => stri
   return <>{format(shown)}</>
 }
 
-// A single position in the strip, numbered to match its chart flag. The label is money, not the multiplier
-// (four 2.2x chips read as noise; "$2.77" reads as a prize). Green-lit = price inside its zone (pays at the
-// buzzer), red = outside right now. Verdict flashes ±pnl in place. A hairline underline depletes to its buzzer.
+// A single slot in the 5-wide rail, sized to fill its cell so five ride full-width without truncation. The label
+// is money, not the multiplier (five 2.2x chips read as noise; "$2.77" reads as a prize). Green-lit = price inside
+// its zone (pays at the buzzer), red = outside right now. Verdict flashes ±pnl in place. A hairline depletes to buzzer.
 function PositionChip({ p, inZone, nowMs }: { p: Position; inZone: boolean; nowMs: number }) {
   const resolved = isResolved(p)
   const won = resolved && p.won
@@ -897,7 +950,7 @@ function PositionChip({ p, inZone, nowMs }: { p: Position; inZone: boolean; nowM
   return (
     <span
       className={cnm(
-        'tnum relative inline-flex items-center gap-1 overflow-hidden border px-1 py-[3px] font-mono text-[10px] font-bold uppercase tracking-[0.04em]',
+        'tnum relative flex h-9 w-full items-center justify-center overflow-hidden border font-mono text-[12px] font-bold leading-none tracking-[0.02em]',
         p.status === 'placing'
           ? 'animate-pulse border-dashed border-line-strong text-text-3'
           : won
@@ -913,8 +966,8 @@ function PositionChip({ p, inZone, nowMs }: { p: Position; inZone: boolean; nowM
                   : 'border-down/70 text-down',
       )}
     >
-      <span className="text-[8px] leading-none opacity-60">{p.slot}</span>
-      {label}
+      <span className="absolute left-1 top-0.5 text-[8px] font-bold leading-none opacity-50">{p.slot}</span>
+      <span className="px-1">{label}</span>
       {frac != null && (
         <>
           {/* full-width track + a bright depleting fill, so the countdown reads clearly at a glance */}
@@ -925,6 +978,15 @@ function PositionChip({ p, inZone, nowMs }: { p: Position; inZone: boolean; nowM
           />
         </>
       )}
+    </span>
+  )
+}
+
+// An empty slot in the 5-wide rail: dim and inert, so the "up to 5" cap always reads even with room to spare.
+function GhostSlot() {
+  return (
+    <span className="flex h-9 w-full items-center justify-center border border-dashed border-line">
+      <span className="h-1 w-1 rounded-full bg-line-strong" />
     </span>
   )
 }

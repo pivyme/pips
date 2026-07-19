@@ -255,7 +255,7 @@ export interface LeaderboardPnlEntry {
   netPnl: string // signed DUSDC
   gamesPlayed: number
   isYou: boolean
-  twitterVerified: boolean
+  twitterHandle: string | null // linked X handle (lowercased), or null; the badge sits next to this handle
 }
 export interface LeaderboardGameEntry {
   rank: number
@@ -265,7 +265,7 @@ export interface LeaderboardGameEntry {
   pnl: string // signed summed DUSDC for the game (gainers positive, rekt negative)
   plays: number
   isYou: boolean
-  twitterVerified: boolean
+  twitterHandle: string | null
 }
 export interface LeaderboardScoreEntry {
   rank: number
@@ -274,7 +274,7 @@ export interface LeaderboardScoreEntry {
   avatarUrl: string | null
   score: number
   isYou: boolean
-  twitterVerified: boolean
+  twitterHandle: string | null
 }
 export interface GlobalLeaderboard {
   gainers: LeaderboardPnlEntry[]
