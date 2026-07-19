@@ -1,13 +1,39 @@
 // A real, invisible native switch over the tap target: iOS Safari's Taptic tick only fires for a genuine
 // physical tap on a switch checkbox, never a script .click() (closed in 26.5), so it must stay in the render tree, uncontrolled. Wrap the button `relative pointer-events-none` and drop this as an absolute sibling; touch hits this (topmost), keyboard hits the real button (tabIndex={-1}).
-import { useRef } from 'react'
 import { cnm } from '@/utils/style'
 import { haptic } from '@/lib/haptics'
 import type { HapticPreset } from '@/lib/haptics'
 
-// Past this much finger travel we treat the gesture as a scroll, not a tap. A native switch also toggles
-// on drag, so without this any scroll starting on a button fires its onChange and mis-navigates.
+// Past this much finger travel we treat the gesture as a scroll/pan, not a tap.
 const TAP_SLOP_PX = 10
+
+// One window-level gesture tracker shared by every overlay. A native iOS switch toggles at the tail of a
+// swipe too, and its own gesture handling can eat the element's own move events before React sees them,
+// so we watch the whole gesture in the capture phase (passive, unstoppable) and just ask "did it pan?".
+// panning is reset by the next press and stays set through the toggle that ends the same gesture.
+let panning = false
+let startX = 0
+let startY = 0
+let listening = false
+
+function gestureStart(x: number, y: number) {
+  startX = x
+  startY = y
+  panning = false
+}
+function gestureMove(x: number, y: number) {
+  if (Math.abs(x - startX) > TAP_SLOP_PX || Math.abs(y - startY) > TAP_SLOP_PX) panning = true
+}
+
+function ensureListening() {
+  if (listening || typeof window === 'undefined') return
+  listening = true
+  const opts = { capture: true, passive: true }
+  window.addEventListener('touchstart', (e) => { const t = (e as TouchEvent).touches[0]; if (t) gestureStart(t.clientX, t.clientY) }, opts)
+  window.addEventListener('touchmove', (e) => { const t = (e as TouchEvent).touches[0]; if (t) gestureMove(t.clientX, t.clientY) }, opts)
+  window.addEventListener('pointerdown', (e) => gestureStart((e as PointerEvent).clientX, (e as PointerEvent).clientY), opts)
+  window.addEventListener('pointermove', (e) => { const p = e as PointerEvent; if (p.buttons > 0) gestureMove(p.clientX, p.clientY) }, opts)
+}
 
 export function HapticOverlay({
   preset = 'selection',
@@ -26,17 +52,7 @@ export function HapticOverlay({
   className?: string
   style?: React.CSSProperties
 }) {
-  const start = useRef<{ x: number; y: number } | null>(null)
-  const moved = useRef(false)
-
-  const begin = (x: number, y: number) => {
-    start.current = { x, y }
-    moved.current = false
-  }
-  const track = (x: number, y: number) => {
-    const s = start.current
-    if (s && (Math.abs(x - s.x) > TAP_SLOP_PX || Math.abs(y - s.y) > TAP_SLOP_PX)) moved.current = true
-  }
+  ensureListening()
 
   return (
     <input
@@ -45,23 +61,11 @@ export function HapticOverlay({
       aria-hidden="true"
       tabIndex={-1}
       disabled={disabled}
-      onPointerDown={(e) => begin(e.clientX, e.clientY)}
-      onPointerMove={(e) => track(e.clientX, e.clientY)}
-      onTouchStart={(e) => {
-        const t = e.touches[0]
-        if (t) begin(t.clientX, t.clientY)
-      }}
-      onTouchMove={(e) => {
-        const t = e.touches[0]
-        if (t) track(t.clientX, t.clientY)
-      }}
       onChange={() => {
         if (disabled) return
-        // Scrolled/dragged past slop, not a tap: swallow it. The checkbox still toggled, but it's uncontrolled and unused.
-        if (moved.current) {
-          moved.current = false
-          return
-        }
+        // The toggle fired at the tail of a scroll/pan, not a real tap: swallow it. The checkbox still
+        // toggled, but it's uncontrolled and unused.
+        if (panning) return
         if (!silent) haptic(preset)
         onTap()
       }}
