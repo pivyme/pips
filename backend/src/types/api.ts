@@ -84,6 +84,7 @@ export interface PlayDTO {
   id: string;
   game: Game;
   status: PlayStatus;
+  network: string; // chain this play settled against: devnet | testnet | mainnet (history badge + filter)
   stake: string; // DUSDC staked
   params: LuckyParams | RangeParams;
   market: { asset: string; oracleId: string; expiry: number; strike?: string; lower?: string; upper?: string };

@@ -108,9 +108,9 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
 
   // Recent plays for history / stats.
   app.get('/plays', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const q = request.query as { status?: string; limit?: string };
+    const q = request.query as { status?: string; limit?: string; network?: string };
     try {
-      const plays = await listPlays(request.user!.id, { status: q.status, limit: q.limit ? Number(q.limit) : undefined });
+      const plays = await listPlays(request.user!.id, { status: q.status, limit: q.limit ? Number(q.limit) : undefined, network: q.network });
       return reply.code(200).send({ success: true, error: null, data: { plays } });
     } catch (error) {
       return handleError(reply, 500, 'Could not load plays', 'PLAYS_FAILED', error as Error);

@@ -91,6 +91,7 @@ export interface PlayDTO {
   id: string
   game: Game
   status: PlayStatus
+  network?: string // chain this play settled against (devnet | testnet | mainnet); absent on old cached/demo rows
   stake: string
   params: LuckyParams | RangeParams
   market: { asset: string; oracleId: string; expiry: number; strike?: string; lower?: string; upper?: string }
@@ -414,10 +415,11 @@ const realApi = {
     request<{ levels: MoonshotAim[] }>('GET', `/games/moonshot/aim?asset=${encodeURIComponent(asset)}`),
   play: (game: Game, body: Record<string, unknown>) => request<PlayResult>('POST', `/games/${game}/play`, body),
   cashout: (playId: string) => request<CashoutResult>('POST', `/plays/${playId}/cashout`, {}),
-  plays: (q: { status?: string; limit?: number } = {}) => {
+  plays: (q: { status?: string; limit?: number; network?: string } = {}) => {
     const params = new URLSearchParams()
     if (q.status) params.set('status', q.status)
     if (q.limit) params.set('limit', String(q.limit))
+    if (q.network) params.set('network', q.network)
     const qs = params.toString()
     return request<{ plays: PlayDTO[] }>('GET', `/plays${qs ? `?${qs}` : ''}`)
   },

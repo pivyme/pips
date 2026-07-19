@@ -7,11 +7,13 @@ import { normalizeSuiAddress } from '@mysten/sui/utils';
 
 import type { User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
-import { JWT_SECRET, JWT_EXPIRES_IN, STARTING_BALANCE } from '../config/main-config.ts';
+import { JWT_SECRET, JWT_EXPIRES_IN, STARTING_BALANCE, REFILL_THRESHOLD, REFILL_COOLDOWN_MS, TREASURY_MIN_DUSDC } from '../config/main-config.ts';
 import { transferDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
+import { treasuryAddress, TREASURY_ENABLED } from '../lib/sui/signer.ts';
 import { generateCustodialWallet } from '../lib/sui/custodial.ts';
 import { readUserChipsRaw } from '../lib/sui/predict-real.ts';
 import { fromDusdcRaw } from '../lib/sui/config.ts';
+import { alert } from '../lib/alert.ts';
 import { effectiveAvatar } from '../utils/miscUtils.ts';
 import type { UserDTO } from '../types/api.ts';
 
@@ -135,14 +137,41 @@ export async function provisionUser(user: User): Promise<User> {
     }
   }
 
-  // Free starting chips, exactly once, paid from the treasury reserve (transferDusdc). DUSDC is not
-  // mintable on Mysten's Predict, so an unfunded treasury surfaces loudly here.
-  if (!user.dusdcFunded) {
-    await transferDusdc(user.address, STARTING_BALANCE);
-    user = await prismaQuery.user.update({ where: { id: user.id }, data: { dusdcFunded: true } });
+  // Chips from the treasury reserve: brand-new users get the starting grant, returning users who have spent
+  // below one playable stake get topped back up. Gate on a live on-chain read (never double-fund a holder), a
+  // per-user cooldown, and the treasury floor, so the finite reserve (DUSDC is not mintable, L-008) isn't
+  // recycled. A dry treasury or a failed payout skips quietly here (logged + alerted, never a 500) and the
+  // user picks up chips on a later login once it's refilled.
+  const [wallet, manager] = await Promise.all([
+    getDusdcBalanceRaw(user.address).catch(() => 0n),
+    readUserChipsRaw(user.address, user.predictWrapperId).catch(() => 0n),
+  ]);
+  const chips = fromDusdcRaw(wallet + manager);
+  const cooldownOk = !user.lastFundedAt || Date.now() - user.lastFundedAt.getTime() >= REFILL_COOLDOWN_MS;
+  if (chips < REFILL_THRESHOLD && cooldownOk && (await treasuryAboveFloor())) {
+    try {
+      await transferDusdc(user.address, STARTING_BALANCE); // sends STARTING_BALANCE; throws if the treasury can't pay
+      user = await prismaQuery.user.update({ where: { id: user.id }, data: { dusdcFunded: true, lastFundedAt: new Date() } });
+    } catch (e) {
+      console.error('[auth] chip refill failed (treasury payout):', e instanceof Error ? e.message : e);
+      alert('critical', 'chip refill/grant failed: treasury may need a manual top-up', { userId: user.id });
+    }
   }
 
   return user;
+}
+
+// True only when the treasury holds enough to pay a grant AND stay above its reserve floor. A dry treasury
+// skips the refill (the user sees a 0 balance + a "faucet dry" state) instead of 500ing the login. Never
+// throws: an unconfigured or unreadable treasury reads as dry.
+async function treasuryAboveFloor(): Promise<boolean> {
+  if (!TREASURY_ENABLED) return false;
+  try {
+    const bal = fromDusdcRaw(await getDusdcBalanceRaw(treasuryAddress));
+    return bal >= TREASURY_MIN_DUSDC + STARTING_BALANCE;
+  } catch {
+    return false;
+  }
 }
 
 // Mint the session JWT. Payload matches the existing authMiddleware (reads userId).

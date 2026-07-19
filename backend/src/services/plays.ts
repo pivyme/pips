@@ -6,7 +6,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import type { Play, Prisma, User } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
 import { publishPlay } from '../lib/play-bus.ts';
-import { SETTLE_MAX_REDEEMS_PER_TICK, SETTLE_MAX_PLAYS_PER_TICK, LIVE_MARK_TTL_MS } from '../config/main-config.ts';
+import { SETTLE_MAX_REDEEMS_PER_TICK, SETTLE_MAX_PLAYS_PER_TICK, LIVE_MARK_TTL_MS, SUI_NETWORK } from '../config/main-config.ts';
 import { fromDusdcRaw, multiplier as multiplierOf } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { getMarket } from '../lib/sui/markets.ts';
@@ -171,6 +171,7 @@ function mapRealResolvedToPlay(userId: string, r: ResolvedReal, stakeRaw: bigint
     userId,
     game: r.game,
     status: 'pending',
+    network: SUI_NETWORK, // stamp explicitly so testnet rows are tagged regardless of the column default
     stake: stakeRaw,
     marketKey: '', // real: filled with the u256 order id after mint (settle reads this)
     entryCost: r.amountRaw + rakeRaw, // provisional all-in budget (mint budget + rake); snapped after mint
@@ -601,6 +602,7 @@ export async function toPlayDTO(play: Play, liveMark?: bigint): Promise<PlayDTO>
     id: play.id,
     game: play.game as Game,
     status: play.status as PlayStatus,
+    network: play.network, // devnet | testnet | mainnet, for the history per-row badge + Show Devnet filter
     stake: money(play.stake),
     params: paramsDTO(play),
     market: {
@@ -628,9 +630,15 @@ export async function toPlayDTO(play: Play, liveMark?: bigint): Promise<PlayDTO>
   };
 }
 
-export async function listPlays(userId: string, opts: { status?: string; limit?: number } = {}): Promise<PlayDTO[]> {
+export async function listPlays(
+  userId: string,
+  opts: { status?: string; limit?: number; network?: string } = {},
+): Promise<PlayDTO[]> {
+  // network defaults to all (history shows every play, each badged); a concrete value ('testnet') narrows
+  // to that chain for the "Show Devnet" off state. 'all' is treated as no filter.
+  const networkFilter = opts.network && opts.network !== 'all' ? { network: opts.network } : {};
   const plays = await prismaQuery.play.findMany({
-    where: { userId, ...(opts.status ? { status: opts.status } : {}) },
+    where: { userId, ...(opts.status ? { status: opts.status } : {}), ...networkFilter },
     orderBy: { createdAt: 'desc' },
     take: Math.min(opts.limit ?? 20, 100),
   });

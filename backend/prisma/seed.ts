@@ -9,7 +9,7 @@ import '../dotenv.ts';
 import { prismaQuery } from '../src/lib/prisma.ts';
 import { operatorAddress } from '../src/lib/sui/signer.ts';
 import { ORACLES } from '../src/lib/sui/config.ts';
-import { STARTING_BALANCE } from '../src/config/main-config.ts';
+import { STARTING_BALANCE, SUI_NETWORK } from '../src/config/main-config.ts';
 import { getDusdcBalance, mintDusdc } from '../src/lib/sui/dusdc.ts';
 
 // DUSDC display units -> 6dp base units.
@@ -124,6 +124,7 @@ async function main(): Promise<void> {
         userId: user.id,
         game: p.game,
         status: p.status,
+        network: SUI_NETWORK, // seeded history matches the running network
         asset: p.asset,
         oracleId,
         marketKey: 'seed',

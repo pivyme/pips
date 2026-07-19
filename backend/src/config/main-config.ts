@@ -236,6 +236,19 @@ export const DEMO_LUCKY_DURATION: number = Number(process.env.PIPS_DEMO_LUCKY_DU
 export const MIN_STAKE: number = Number(process.env.PIPS_MIN_STAKE) || 1.5;
 export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || 3;
 
+// Login re-fund (D2/D3). A returning user whose spendable chips fall below THRESHOLD gets topped back up to
+// STARTING_BALANCE so they can keep playing. Play money, but the treasury is finite (L-008), so the refill is
+// gated on threshold + a per-user cooldown + the treasury floor. Defaults respect an explicit 0 (Number('0')
+// is falsy, so `|| default` would wrongly re-arm it), letting THRESHOLD=0 mean the literal balance==0 behavior.
+export const REFILL_THRESHOLD: number =
+  process.env.PIPS_REFILL_THRESHOLD != null && Number.isFinite(Number(process.env.PIPS_REFILL_THRESHOLD))
+    ? Number(process.env.PIPS_REFILL_THRESHOLD)
+    : MIN_STAKE;
+export const REFILL_COOLDOWN_MS: number =
+  process.env.PIPS_REFILL_COOLDOWN_MS != null && Number.isFinite(Number(process.env.PIPS_REFILL_COOLDOWN_MS))
+    ? Number(process.env.PIPS_REFILL_COOLDOWN_MS)
+    : 6 * 60 * 60 * 1000;
+
 // House rake (revenue). A config-driven cut of every real play's stake, folded into position sizing (no fee
 // line item) and collected atomically in the same mint PTB as a DUSDC transfer to the revenue wallet (lib/sui/house.ts). Default 150 bps (1.5%) stays below casino levels since PIPS is replay-heavy; empty REVENUE_WALLET_PK or a 0 edge disables it cleanly.
 const rawHouseEdgeBps: string | undefined = process.env.PIPS_HOUSE_EDGE_BPS;

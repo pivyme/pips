@@ -4,7 +4,7 @@ import { ChevronDown, ExternalLink, Loader2, Share2, X } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
 import { api, type Game, type LuckyParams, type PlayDTO, type RangeParams } from '@/lib/api'
-import { explorerObjectUrl, explorerTxUrl } from '@/lib/sui/config'
+import { explorerObjectUrl, explorerTxUrl, NETWORK } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { Modal, useOverlayState } from '@/ui/Modal'
@@ -28,6 +28,10 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
 // Resolved outcomes only. Open/pending are in-flight (the live screen owns them); error rounds never
 // minted (no result, no tx), so they would just be noise in a results log.
 const SHOWN = new Set(['won', 'lost', 'cashed_out'])
+
+// Per-row network label, independent of the live env network (rows can be devnet from before the cutover).
+const NETWORK_NAMES: Record<string, string> = { devnet: 'Devnet', testnet: 'Testnet', mainnet: 'Mainnet' }
+const networkName = (n?: string): string => (n ? (NETWORK_NAMES[n] ?? n) : '')
 
 const money = (value: string, absolute = false): string =>
   formatExactDecimal(value, { absolute })
@@ -57,7 +61,19 @@ function timeAgo(iso?: string): string {
 
 function HistoryPage() {
   const [filter, setFilter] = useState<Filter>('all')
-  const q = useQuery({ queryKey: ['plays', 'history'], queryFn: () => api.plays({ limit: 50 }) })
+  // "Show devnet" defaults on so a returning player's full pre-cutover history stays visible; off narrows to
+  // the live network. The toggle only surfaces once we've actually seen a devnet row, so a fresh testnet-only
+  // account never sees it. everDevnet latches true and never flips back, so narrowing can't hide the control.
+  const [showDevnet, setShowDevnet] = useState(true)
+  const [everDevnet, setEverDevnet] = useState(false)
+  const q = useQuery({
+    queryKey: ['plays', 'history', showDevnet],
+    queryFn: () => api.plays({ limit: 50, network: showDevnet ? undefined : NETWORK }),
+  })
+
+  useEffect(() => {
+    if (!everDevnet && (q.data?.plays ?? []).some((p) => p.network === 'devnet')) setEverDevnet(true)
+  }, [q.data, everDevnet])
 
   const rows = (q.data?.plays ?? [])
     .filter((p) => SHOWN.has(p.status))
@@ -91,6 +107,23 @@ function HistoryPage() {
             </div>
           ))}
         </div>
+
+        {everDevnet && (
+          <div className="surface-skeuo flex items-center justify-between gap-3 rounded-card px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-[14px] font-bold text-text">Show devnet history</div>
+              <div className="mt-0.5 text-[12px] leading-snug text-text-3">Your older plays from before the testnet move.</div>
+            </div>
+            <Switch
+              label="Show devnet history"
+              isSelected={showDevnet}
+              onChange={(v) => {
+                haptic('selection')
+                setShowDevnet(v)
+              }}
+            />
+          </div>
+        )}
 
         {q.isLoading ? (
           <div className="flex flex-col gap-2.5">
@@ -174,6 +207,11 @@ function HistoryRow({ play }: { play: PlayDTO }) {
             <div className="flex items-center gap-2">
               <span className="text-[15px] font-bold capitalize">{play.game}</span>
               <span className="rounded-full bg-white/[0.06] px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-text-2">{asset}</span>
+              {play.network && play.network !== NETWORK && (
+                <span className="rounded-full bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-text-3">
+                  {networkName(play.network)}
+                </span>
+              )}
             </div>
             <div className="mt-1 flex items-center gap-2 text-[13px] text-text-2">
               <span>{line}</span>

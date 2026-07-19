@@ -37,6 +37,7 @@ model User {
   predictWrapperId String?                     // real (testnet): their derived account::AccountWrapper id (hot-path cache over the derived address; self-heals if gone)
   dusdcFunded      Boolean   @default(false)   // free starting USDC chips minted
   suiGasFunded     Boolean   @default(false)   // free SUI for gas transferred (localnet)
+  lastFundedAt     DateTime?                    // last treasury chip top-up, gates the login refill cooldown
 
   soundEnabled     Boolean   @default(true)
   hapticsEnabled   Boolean   @default(true)
@@ -117,6 +118,7 @@ model Play {
 
   game         String                          // 'lucky' | 'range' | 'moonshot'
   status       String    @default("pending")   // pending|open|won|lost|cashed_out|error
+  network      String    @default("devnet")   // chain this play settled against: devnet | testnet | mainnet. Existing rows backfill to devnet on the one db:push
 
   asset        String                          // 'BTC' | 'ETH' | 'SOL' | 'SUI'
   oracleId     String                          // our oracle object for this market
