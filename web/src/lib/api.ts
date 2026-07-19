@@ -207,6 +207,12 @@ export interface WithdrawInput {
 }
 // POST /wallet/request-dusdc -> the refreshed user, the amount handed out, and the tx digest.
 export type FaucetResult = { user: UserDTO; amount: string; digest: string }
+// POST /wallet/grant -> the refreshed user + the DUSDC just granted (null when skipped: already funded, on
+// cooldown, or a dry treasury). Drives the "here's your starter DUSDC to play with" celebration.
+export type GrantResult = { user: UserDTO; granted: number | null }
+// Login responses carry the same `grant` when a fresh sign-in handed out starting chips, so a brand-new or
+// migrated account gets the welcome celebration on the first login too.
+export type AuthResult = { token: string; user: UserDTO; grant?: number }
 export interface PrivyVerifyInput {
   token: string
   email?: string
@@ -388,10 +394,10 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
 const realApi = {
   // auth. readRef() threads a stashed referral token into every login path; the backend only attributes
   // it on account creation (auth.ts ensureUser/ensureWalletUser), so it's a no-op for a returning user.
-  authDev: () => request<{ token: string; user: UserDTO }>('POST', '/auth/dev', { referralCode: readRef() ?? undefined }),
-  authPrivyVerify: (input: PrivyVerifyInput) => request<{ token: string; user: UserDTO }>('POST', '/auth/privy/verify', input),
+  authDev: () => request<AuthResult>('POST', '/auth/dev', { referralCode: readRef() ?? undefined }),
+  authPrivyVerify: (input: PrivyVerifyInput) => request<AuthResult>('POST', '/auth/privy/verify', input),
   authWalletNonce: (address: string) => request<{ message: string }>('POST', '/auth/wallet/nonce', { address }),
-  authWalletVerify: (input: WalletVerifyInput) => request<{ token: string; user: UserDTO }>('POST', '/auth/wallet/verify', input),
+  authWalletVerify: (input: WalletVerifyInput) => request<AuthResult>('POST', '/auth/wallet/verify', input),
   me: () => request<{ user: UserDTO }>('GET', '/auth/me'),
   // Re-provision a re-armed session in place (new PredictManager + chips), self-healing instead of forcing a full re-login.
   authHeal: () => request<{ user: UserDTO }>('POST', '/auth/heal'),
@@ -428,6 +434,8 @@ const realApi = {
   // wallet
   withdraw: (input: WithdrawInput) => request<WithdrawResult>('POST', '/wallet/withdraw', input),
   requestDusdc: () => request<FaucetResult>('POST', '/wallet/request-dusdc', {}),
+  // Top up a player who can't afford the minimum stake back to the starting grant (guarded server-side).
+  grantChips: () => request<GrantResult>('POST', '/wallet/grant', {}),
 
   // deposit. toAddress is never sent: the server stamps it from the authed user, and supplying one is refused.
   depositOptions: () => request<DepositOptionsDTO>('GET', '/deposit/options'),

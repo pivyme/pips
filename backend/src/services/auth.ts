@@ -59,8 +59,12 @@ export type EnsureUserParams = {
   referralCode?: string | null;
 };
 
+// provisionUser/ensureUser report whether they just handed out starting chips, so the client can pop the
+// "here's your starter DUSDC to play with" celebration. `granted` is the DUSDC amount sent, or null when skipped.
+export type ProvisionResult = { user: User; granted: number | null };
+
 // Idempotent onboarding for the address-keyed modes (dev / privy). Safe to call on every login.
-export async function ensureUser(params: EnsureUserParams): Promise<User> {
+export async function ensureUser(params: EnsureUserParams): Promise<ProvisionResult> {
   const { address, provider, email, privyUserId, suiPublicKey, privyWalletId, twitter, referralCode } = params;
 
   // Only write the privy identity fields when present, so a dev login never nulls them. Unlinking X
@@ -95,7 +99,7 @@ export async function ensureUser(params: EnsureUserParams): Promise<User> {
 
 // Idempotent onboarding for wallet-connect (custodial play-wallet model), keyed by the connected external wallet (walletAuthAddress).
 // First sign-in mints a server-held custodial play wallet whose Sui address becomes user.address; the connected wallet itself never signs a transaction here.
-export async function ensureWalletUser(walletAuthAddress: string, referralCode?: string | null): Promise<User> {
+export async function ensureWalletUser(walletAuthAddress: string, referralCode?: string | null): Promise<ProvisionResult> {
   const authAddr = normalizeSuiAddress(walletAuthAddress);
   let user = await prismaQuery.user.findUnique({ where: { walletAuthAddress: authAddr } });
   if (!user) {
@@ -118,10 +122,10 @@ export async function ensureWalletUser(walletAuthAddress: string, referralCode?:
   return provisionUser(user);
 }
 
-// Shared provisioning, idempotent: empty stats row, referral code, free starting chips once.
+// Shared provisioning, idempotent: empty stats row, referral code, free starting chips.
 // Runs on every login and is also the self-heal for a re-armed session (POST /auth/heal), so it must stay safe to call repeatedly.
 // The per-owner AccountWrapper is derived + created lazily inside the first mint (predict-real), so onboarding does no wrapper work.
-export async function provisionUser(user: User): Promise<User> {
+export async function provisionUser(user: User): Promise<ProvisionResult> {
   // Empty stats row so the menu reads cleanly from the first login.
   await prismaQuery.userStats.upsert({ where: { userId: user.id }, update: {}, create: { userId: user.id } });
 
@@ -137,28 +141,34 @@ export async function provisionUser(user: User): Promise<User> {
     }
   }
 
-  // Chips from the treasury reserve: brand-new users get the starting grant, returning users who have spent
-  // below one playable stake get topped back up. Gate on a live on-chain read (never double-fund a holder), a
-  // per-user cooldown, and the treasury floor, so the finite reserve (DUSDC is not mintable, L-008) isn't
-  // recycled. A dry treasury or a failed payout skips quietly here (logged + alerted, never a 500) and the
-  // user picks up chips on a later login once it's refilled.
+  return grantStarterChips(user, REFILL_COOLDOWN_MS, REFILL_THRESHOLD);
+}
+
+// Guarded starter-chip grant: a below-threshold user gets topped up to the starting grant from the treasury
+// reserve. Returns the DUSDC amount sent (so the client can pop the "here's your starter DUSDC to play with"
+// celebration), or null when skipped. Gated on a live on-chain read (never double-fund a holder), a per-user
+// cooldown, and the treasury floor, so the finite reserve (DUSDC is not mintable, L-008) isn't recycled. Never
+// throws: a dry treasury or a failed payout is logged + alerted and reported as null, so login/heal still
+// succeed and the user picks up chips on a later attempt once it's refilled. `cooldownMs` lets the login path
+// stay conservative (6h) while the explicit "I'm out of chips" grant uses a short window.
+export async function grantStarterChips(user: User, cooldownMs: number, threshold: number): Promise<ProvisionResult> {
   const [wallet, manager] = await Promise.all([
     getDusdcBalanceRaw(user.address).catch(() => 0n),
     readUserChipsRaw(user.address, user.predictWrapperId).catch(() => 0n),
   ]);
   const chips = fromDusdcRaw(wallet + manager);
-  const cooldownOk = !user.lastFundedAt || Date.now() - user.lastFundedAt.getTime() >= REFILL_COOLDOWN_MS;
-  if (chips < REFILL_THRESHOLD && cooldownOk && (await treasuryAboveFloor())) {
-    try {
-      await transferDusdc(user.address, STARTING_BALANCE); // sends STARTING_BALANCE; throws if the treasury can't pay
-      user = await prismaQuery.user.update({ where: { id: user.id }, data: { dusdcFunded: true, lastFundedAt: new Date() } });
-    } catch (e) {
-      console.error('[auth] chip refill failed (treasury payout):', e instanceof Error ? e.message : e);
-      alert('critical', 'chip refill/grant failed: treasury may need a manual top-up', { userId: user.id });
-    }
-  }
+  const cooldownOk = !user.lastFundedAt || Date.now() - user.lastFundedAt.getTime() >= cooldownMs;
+  if (chips >= threshold || !cooldownOk || !(await treasuryAboveFloor())) return { user, granted: null };
 
-  return user;
+  try {
+    await transferDusdc(user.address, STARTING_BALANCE); // sends STARTING_BALANCE; throws if the treasury can't pay
+    const updated = await prismaQuery.user.update({ where: { id: user.id }, data: { dusdcFunded: true, lastFundedAt: new Date() } });
+    return { user: updated, granted: STARTING_BALANCE };
+  } catch (e) {
+    console.error('[auth] chip grant failed (treasury payout):', e instanceof Error ? e.message : e);
+    alert('critical', 'chip refill/grant failed: treasury may need a manual top-up', { userId: user.id });
+    return { user, granted: null };
+  }
 }
 
 // True only when the treasury holds enough to pay a grant AND stay above its reserve floor. A dry treasury

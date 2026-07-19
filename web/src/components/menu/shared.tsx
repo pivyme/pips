@@ -132,14 +132,14 @@ export function ScreenEmpty({
   sub,
   children,
 }: {
-  illo: string
+  illo?: string
   title: string
   sub: string
   children?: ReactNode
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-12 text-center">
-      <Illo name={illo} size={88} />
+      {illo && <Illo name={illo} size={88} />}
       <div>
         <div className="text-lg font-extrabold">{title}</div>
         <div className="mt-1 text-sm text-text-2">{sub}</div>

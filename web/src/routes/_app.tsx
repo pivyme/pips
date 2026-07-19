@@ -11,6 +11,7 @@ import { Route as FlappyPiperRoute } from './_app/games/flappy-piper'
 import { AppFrame } from '@/components/console/AppFrame'
 import { ActivePlayChip } from '@/components/console/ActivePlayChip'
 import { AchievementCelebration } from '@/components/AchievementCelebration'
+import { ChipGrantCelebration } from '@/components/ChipGrantCelebration'
 import { AchievementDetailProvider } from '@/components/menu/AchievementDetail'
 import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '@/components/console/controls'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
@@ -449,6 +450,7 @@ function AppLayout() {
       {/* Shown only while healing a re-armed session in place; never appears on a healthy login. */}
       {recovering && !showLoadingScreen && <RecoveryOverlay />}
       <AchievementCelebration />
+      <ChipGrantCelebration active={phase === 'app'} />
       </ActivePlayProvider>
       </LivePresenceProvider>
       </TourProvider>

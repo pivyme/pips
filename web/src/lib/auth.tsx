@@ -10,6 +10,7 @@ import { connectWallet, signLoginMessage, type SuiWallet } from '@/lib/walletCon
 import { demoUser, isDemo } from '@/lib/demo'
 import { setHapticsEnabled } from '@/lib/haptics'
 import { setSoundEnabled } from '@/lib/sound'
+import { emitChipGrant } from '@/lib/chipGrantBus'
 import { readWalletBalances } from '@/lib/sui/predict'
 import { clearRef, readRef } from '@/lib/referral'
 
@@ -125,8 +126,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [move])
 
   const devLogin = useCallback(async () => {
-    const { token, user: u } = await api.authDev()
+    const { token, user: u, grant } = await api.authDev()
     apply(token, u)
+    // A brand-new account (no handle yet) gets its welcome from onboarding + the tour, and can see its 25
+    // balance; only already-onboarded users get the grant popup, so nothing stacks on the first-run flow.
+    if (grant && u.username) emitChipGrant(grant)
   }, [apply])
 
   const signOut = useCallback(async () => {
@@ -212,8 +216,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const account = await connectWallet(wallet)
     const { message } = await api.authWalletNonce(account.address)
     const signature = await signLoginMessage(wallet, account, message)
-    const { token, user: u } = await api.authWalletVerify({ address: account.address, signature, referralCode: readRef() ?? undefined })
+    const { token, user: u, grant } = await api.authWalletVerify({ address: account.address, signature, referralCode: readRef() ?? undefined })
     apply(token, u)
+    if (grant && u.username) emitChipGrant(grant) // popup only for onboarded users; new accounts get onboarding + the tour
   }, [apply])
 
   // Any call 409ing MANAGER_NOT_READY means this session's manager was re-armed away; heal on the first

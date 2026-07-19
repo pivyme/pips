@@ -10,6 +10,7 @@ import { api, setAuthToken } from '@/lib/api'
 import { isDemo } from '@/lib/demo'
 import { readRef } from '@/lib/referral'
 import { clearStoredSession, isSessionRejected, loadToken, toAuthError, useAuthControl } from '@/lib/auth'
+import { emitChipGrant } from '@/lib/chipGrantBus'
 
 // Privy is active only in privy mode with an app id configured, and never in demo mode.
 export const PRIVY_ENABLED = env.VITE_AUTH_MODE === 'privy' && Boolean(env.VITE_PRIVY_APP_ID) && !isDemo()
@@ -97,13 +98,16 @@ function PrivyBridge() {
 
         // Backend provisions + owns the embedded Sui wallet keyed to this Privy user; client sends only
         // the access token (+ email for display), no client wallet, no session signer.
-        const { token: appToken, user: u } = await api.authPrivyVerify({
+        const { token: appToken, user: u, grant } = await api.authPrivyVerify({
           token,
           email: user?.email?.address,
           referralCode: readRef() ?? undefined,
         })
         authedFor.current = user?.id ?? ''
         control.apply(appToken, u)
+        // New accounts (no handle yet) get their welcome from onboarding + the tour; only already-onboarded
+        // users pop the grant celebration, so it never stacks on the first-run flow.
+        if (grant && u.username) emitChipGrant(grant)
       } catch (e) {
         authedFor.current = null
         clearStoredSession()

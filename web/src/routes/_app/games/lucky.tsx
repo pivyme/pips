@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
@@ -30,6 +30,7 @@ import { api, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from 
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { betLadder } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
+import { useTopUp } from '@/lib/chipGrant'
 import { useAuth } from '@/lib/auth'
 import { useActivePlay } from '@/lib/activePlay'
 import { formatExactDecimal, formatStringToNumericDecimals } from '@/utils/format'
@@ -86,7 +87,6 @@ const sideLabel = (s: Side): string => (s === 'up' ? 'UP' : 'DOWN')
 function LuckyScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
-  const navigate = useNavigate()
   const { track } = useActivePlay()
 
   // One persistent stake shared with the home wheel (same ladder), so it stays put across navigation.
@@ -466,10 +466,13 @@ function LuckyScreen() {
     setPhase('idle')
   }, [])
 
-  const goDeposit = useCallback(() => {
+  // TOP UP: hand the player a starter grant (popup + coin sound), falling back to the deposit drawer when the
+  // grant is on cooldown or the treasury is dry, so a broke player is never a dead-end.
+  const topUp = useTopUp()
+  const goTopUp = useCallback(() => {
     haptic('rigid')
-    void navigate({ to: '/menu/deposit' })
-  }, [navigate])
+    void topUp()
+  }, [topUp])
 
   const toggleHowto = useCallback(() => {
     haptic('selection')
@@ -521,7 +524,7 @@ function LuckyScreen() {
             : phase === 'cashing'
               ? { label: 'CASH OUT', color: 'up', onPress: () => { }, loading: true }
               : cantAfford
-                ? { label: 'TOP UP', color: 'amber', onPress: goDeposit }
+                ? { label: 'TOP UP', color: 'amber', onPress: goTopUp }
                 : confirm.armed
                   ? { label: 'CONFIRM', color: 'amber', onPress: confirm.press } // 2nd press places
                   : {

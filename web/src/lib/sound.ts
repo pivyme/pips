@@ -133,6 +133,46 @@ export function welcomeJingle(): void {
   blip(ac, 2093.0, t + 0.62, 0.25, 0.02) // C7 air
 }
 
+// Chips granted: coins tumbling in, then a bright major bloom, for the "here's your starter DUSDC to play with"
+// popup. Coin-forward and generous, distinct from welcomeJingle (onboarding) and luckyWin (a spin resolve).
+export function chipsGranted(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  ensureRunning(ac)
+  const t = ac.currentTime
+
+  // Three quick coin plinks (a filtered-noise tick under a high bell) tumbling in, each a hair behind the last.
+  const coins = [0, 0.07, 0.14]
+  for (const dt of coins) {
+    const n = ac.createBufferSource()
+    const ng = ac.createGain()
+    const nf = ac.createBiquadFilter()
+    n.buffer = noise(ac)
+    nf.type = 'bandpass'
+    nf.frequency.value = 2600
+    nf.Q.value = 6
+    ng.gain.setValueAtTime(0.0001, t + dt)
+    ng.gain.exponentialRampToValueAtTime(0.05, t + dt + 0.004)
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.08)
+    n.connect(nf).connect(ng).connect(out(ac))
+    n.start(t + dt)
+    n.stop(t + dt + 0.1)
+    bell(ac, 1760 + dt * 900, t + dt, 0.18, 0.03) // a high tick shimmer over each coin
+  }
+
+  // The reward bloom: a bright major triad rolled like a small fanfare, warm and generous.
+  const bloom: Array<[number, number, number]> = [
+    [523.25, 0.2, 0.55], // C5
+    [659.25, 0.27, 0.55], // E5
+    [783.99, 0.34, 0.6], // G5
+    [1046.5, 0.44, 0.8], // C6, the arrival
+  ]
+  for (const [f, dt, dur] of bloom) bell(ac, f, t + dt, dur, 0.07)
+  bell(ac, 261.63, t + 0.2, 0.85, 0.045) // C4 body underneath
+  blip(ac, 2093.0, t + 0.5, 0.22, 0.018) // C7 air on the arrival
+}
+
 // Achievement unlock: a refined fanfare, a deep bass swell under a lush Cmaj9 chord bloomed like a
 // harp roll, topped with one soft shimmer. No arcade sweep. Fires when the unlock overlay appears.
 export function achievementUnlock(): void {

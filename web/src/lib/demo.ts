@@ -1066,6 +1066,18 @@ export const demoApi = {
     return { user: userDTO(), amount: DEMO_FAUCET_AMOUNT.toFixed(2), digest: `demo-faucet-${newId()}` }
   },
 
+  // Starter-chip grant (demo twin): a broke demo player gets topped up so the client's grant + celebration
+  // flow works with no backend. `granted` is null when they already have enough, mirroring the server.
+  grantChips: async (): Promise<{ user: UserDTO; granted: number | null }> => {
+    await delay(140)
+    const MIN = 1.5
+    const GRANT = 100
+    if (state.balance >= MIN) return { user: userDTO(), granted: null }
+    state.balance += GRANT
+    save()
+    return { user: userDTO(), granted: GRANT }
+  },
+
   // Deposit twins. The real drawer quotes LI.FI live even on testnet, so these canned numbers exist ONLY
   // to keep demo mode a complete twin of the client (no backend, no network). They must never leak into
   // the real path: that is what the api.ts proxy seam is for.
@@ -1369,22 +1381,24 @@ interface SeedSpec {
 
 // A played-in record: newest first, hot-but-not-perfect. The three most recent are wins so currentStreak
 // (3) reads true; the loss at 44m ago is what it resets from. Prices track the seed levels above.
+// Spread across the last 7 local days (a couple of plays per day, a mix of wins and losses) so the history
+// list reads like a real week and the 7-day summary strip shows a full heatmap. minsAgo ~= day*1440 + offset.
 const SEED_PLAYS: SeedSpec[] = [
   { game: 'lucky', asset: 'BTC', status: 'won', stake: 25, mult: 3, pnl: 50, minsAgo: 4 },
-  { game: 'lucky', asset: 'SUI', status: 'cashed_out', stake: 10, mult: 5, pnl: 22, minsAgo: 13 },
-  { game: 'range', asset: 'ETH', status: 'won', stake: 25, mult: 2.4, pnl: 35, minsAgo: 26 },
-  { game: 'lucky', asset: 'SOL', status: 'lost', stake: 50, mult: 0, pnl: -50, minsAgo: 44 },
-  { game: 'lucky', asset: 'BTC', status: 'won', stake: 10, mult: 10, pnl: 90, minsAgo: 71 },
-  { game: 'moonshot', asset: 'SOL', status: 'won', stake: 25, mult: 5, pnl: 100, minsAgo: 84 },
-  { game: 'range', asset: 'SUI', status: 'cashed_out', stake: 25, mult: 3.1, pnl: 28, minsAgo: 98 },
-  { game: 'lucky', asset: 'ETH', status: 'won', stake: 5, mult: 2, pnl: 5, minsAgo: 150 },
-  { game: 'range', asset: 'SOL', status: 'lost', stake: 25, mult: 0, pnl: -25, minsAgo: 240 },
-  { game: 'moonshot', asset: 'BTC', status: 'cashed_out', stake: 10, mult: 10, pnl: 34, minsAgo: 300 },
-  { game: 'lucky', asset: 'SUI', status: 'won', stake: 50, mult: 3, pnl: 100, minsAgo: 360 },
-  { game: 'lucky', asset: 'DEEP', status: 'cashed_out', stake: 10, mult: 5, pnl: 18, minsAgo: 520 },
-  { game: 'moonshot', asset: 'ETH', status: 'lost', stake: 25, mult: 25, pnl: -25, minsAgo: 600 },
-  { game: 'range', asset: 'BTC', status: 'won', stake: 25, mult: 4.2, pnl: 80, minsAgo: 760 },
-  { game: 'lucky', asset: 'ETH', status: 'won', stake: 100, mult: 2, pnl: 100, minsAgo: 1700 },
+  { game: 'lucky', asset: 'SUI', status: 'cashed_out', stake: 10, mult: 5, pnl: 22, minsAgo: 60 },
+  { game: 'lucky', asset: 'SOL', status: 'lost', stake: 50, mult: 0, pnl: -50, minsAgo: 1740 },
+  { game: 'lucky', asset: 'ETH', status: 'won', stake: 5, mult: 2, pnl: 5, minsAgo: 2040 },
+  { game: 'range', asset: 'ETH', status: 'won', stake: 25, mult: 2.4, pnl: 35, minsAgo: 3120 },
+  { game: 'range', asset: 'SOL', status: 'lost', stake: 25, mult: 0, pnl: -25, minsAgo: 3540 },
+  { game: 'moonshot', asset: 'ETH', status: 'lost', stake: 25, mult: 25, pnl: -25, minsAgo: 4800 },
+  { game: 'lucky', asset: 'BTC', status: 'won', stake: 10, mult: 10, pnl: 90, minsAgo: 5940 },
+  { game: 'range', asset: 'SUI', status: 'cashed_out', stake: 25, mult: 3.1, pnl: 28, minsAgo: 6480 },
+  { game: 'moonshot', asset: 'BTC', status: 'cashed_out', stake: 10, mult: 10, pnl: 34, minsAgo: 7440 },
+  { game: 'lucky', asset: 'DEEP', status: 'cashed_out', stake: 10, mult: 5, pnl: 18, minsAgo: 7980 },
+  { game: 'moonshot', asset: 'SOL', status: 'won', stake: 25, mult: 5, pnl: 100, minsAgo: 8760 },
+  { game: 'lucky', asset: 'SUI', status: 'won', stake: 50, mult: 3, pnl: 100, minsAgo: 9000 },
+  { game: 'range', asset: 'BTC', status: 'won', stake: 25, mult: 4.2, pnl: 80, minsAgo: 9240 },
+  { game: 'lucky', asset: 'ETH', status: 'won', stake: 100, mult: 2, pnl: 100, minsAgo: 9540 },
 ]
 
 // A believable Sui base58 tx digest for the seed history detail (display only; demo has no chain).

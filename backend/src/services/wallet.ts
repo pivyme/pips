@@ -14,9 +14,9 @@ import {
   resolveWrapper,
 } from '../lib/sui/predict-real.ts';
 import { executeForUser, userContext } from '../lib/sui/execute.ts';
-import { FAUCET_AMOUNT, FAUCET_COOLDOWN_MS } from '../config/main-config.ts';
+import { FAUCET_AMOUNT, FAUCET_COOLDOWN_MS, GRANT_COOLDOWN_MS, MIN_STAKE } from '../config/main-config.ts';
 import { withUserLock, invalidateBal } from './plays.ts';
-import { toUserDTO } from './auth.ts';
+import { toUserDTO, grantStarterChips } from './auth.ts';
 import type { UserDTO } from '../types/api.ts';
 
 export type WalletErrorCode =
@@ -67,6 +67,29 @@ export async function requestDusdc(user: User): Promise<FaucetResult> {
 
   invalidateBal(user.id); // wallet just received chips; the next play gate must re-read
   return { user: await toUserDTO(user), amount: FAUCET_AMOUNT.toFixed(2), digest };
+}
+
+export type GrantResult = { user: UserDTO; granted: number | null };
+
+// In-flight guard: the cooldown lives in the DB (lastFundedAt), written only after the on-chain transfer, so
+// two concurrent grants (the on-load auto top-up racing a manual TOP UP) could both pass the gate before
+// either write lands. This serializes per user so at most one grant fires; the loser reports granted:null.
+const grantingNow = new Set<string>();
+
+// Starter-chip grant: the "TOP UP" / auto top-up path when a player can't afford the minimum stake. Runs the
+// same guarded top-up as the login refill on a short cooldown, so a player at zero is never stuck on testnet.
+// `granted` is the DUSDC amount sent (drives the client celebration), or null if it was skipped (they already
+// have chips, on cooldown, a concurrent grant won, or the treasury is dry). Never throws: a dry treasury reports null, not a 500.
+export async function grantChips(user: User): Promise<GrantResult> {
+  if (grantingNow.has(user.id)) return { user: await toUserDTO(user), granted: null };
+  grantingNow.add(user.id);
+  try {
+    const { user: updated, granted } = await grantStarterChips(user, GRANT_COOLDOWN_MS, MIN_STAKE);
+    if (granted != null) invalidateBal(updated.id); // chips just landed; the next play gate must re-read
+    return { user: await toUserDTO(updated), granted };
+  } finally {
+    grantingNow.delete(user.id);
+  }
 }
 
 // `user.balance` is a 2dp display string, so a "Max" withdraw can land a sub-cent above the true on-chain

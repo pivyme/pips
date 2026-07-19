@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import NumberFlow from '@number-flow/react'
@@ -39,6 +39,7 @@ import { api, type LuckyParams, type MoonshotAim, type PlayDTO, type PlayStatus,
 import { cashOut, placePlay } from '@/lib/sui/predict'
 import { betLadder, netStakeUsd } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
+import { useTopUp } from '@/lib/chipGrant'
 import { useAuth } from '@/lib/auth'
 import { useActivePlay } from '@/lib/activePlay'
 import { cnm } from '@/utils/style'
@@ -108,7 +109,6 @@ const UsdFlow = ({ value }: { value: number }) => (
 function MoonshotScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
-  const navigate = useNavigate()
   const { track } = useActivePlay()
 
   const [stakeIdx, setStakeIdx] = useLocalStorage(STAKE_KEY, 2)
@@ -454,10 +454,13 @@ function MoonshotScreen() {
     setPhase('idle')
   }, [])
 
-  const goDeposit = useCallback(() => {
+  // TOP UP: hand the player a starter grant (popup + coin sound), falling back to the deposit drawer when the
+  // grant is on cooldown or the treasury is dry, so a broke player is never a dead-end.
+  const topUp = useTopUp()
+  const goTopUp = useCallback(() => {
     haptic('rigid')
-    void navigate({ to: '/menu/deposit' })
-  }, [navigate])
+    void topUp()
+  }, [topUp])
 
   // The knob sets the whole call; fire the flip sting only when the side crosses the middle (LONG <-> SHORT), a plain reach step within a side just clicks the knob's own detent.
   const setAim = useCallback(
@@ -549,7 +552,7 @@ function MoonshotScreen() {
                 : phase === 'placing'
                   ? { label: 'FIRING', color: 'amber', onPress: () => {}, loading: true }
                   : cantAfford
-                    ? { label: 'TOP UP', color: 'amber', onPress: goDeposit }
+                    ? { label: 'TOP UP', color: 'amber', onPress: goTopUp }
                     : confirm.armed
                       ? { label: 'CONFIRM', color: 'amber', onPress: confirm.press } // 2nd press places
                       : { label: 'PLAY', color: 'amber', onPress: confirm.press }, // 1st press arms (or places if off)

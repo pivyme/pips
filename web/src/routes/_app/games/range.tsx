@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import NumberFlow from '@number-flow/react'
@@ -21,6 +21,7 @@ import { api } from '@/lib/api'
 import { placePlay } from '@/lib/sui/predict'
 import { betLadder, netStakeUsd } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
+import { useTopUp } from '@/lib/chipGrant'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
 import { formatStringToNumericDecimals } from '@/utils/format'
@@ -157,7 +158,6 @@ const UsdFlow = ({ value }: { value: number }) => (
 function RangeScreen() {
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
-  const navigate = useNavigate()
 
   const [tierIdx, setTierIdx] = useLocalStorage('pips_range_tier', DEFAULT_TIER_IDX) // knob index into the payout-tier ladder, persisted so it survives leaving and returning
   const [stakeIdx, setStakeIdx] = useLocalStorage(STAKE_KEY, 2)
@@ -538,10 +538,13 @@ function RangeScreen() {
     }
   }, [asset, stake, tierView.tier, idleMult, canPlay, playsPaused, cantAfford, nextRound, nudge, quotesRefetch, refresh])
 
-  const goDeposit = useCallback(() => {
+  // TOP UP: hand the player a starter grant (popup + coin sound), falling back to the deposit drawer when the
+  // grant is on cooldown or the treasury is dry, so a broke player is never a dead-end.
+  const topUp = useTopUp()
+  const goTopUp = useCallback(() => {
     haptic('rigid')
-    void navigate({ to: '/menu/deposit' })
-  }, [navigate])
+    void topUp()
+  }, [topUp])
   const cycleAsset = useCallback(() => {
     if (lockedAsset) {
       haptic('error')
@@ -591,7 +594,7 @@ function RangeScreen() {
     main: atMax
       ? { label: 'MAX', color: 'neutral', onPress: () => nudge(`${MAX_POSITIONS} positions at max`) }
       : cantAfford
-        ? { label: 'TOP UP', color: 'amber', onPress: goDeposit }
+        ? { label: 'TOP UP', color: 'amber', onPress: goTopUp }
         : { label: 'PLAY', color: 'amber', onPress: () => void doPlay() },
   })
 

@@ -174,9 +174,9 @@ if (AUTH_MODE === 'privy') {
 export const WALLET_AUTH_ENABLED: boolean = process.env.PIPS_WALLET_AUTH_ENABLED === 'true';
 export const WALLET_ENCRYPTION_KEY: string = process.env.PIPS_WALLET_ENCRYPTION_KEY || '';
 
-// DUSDC starting balance per new user (6dp). Chips come only from a hand-funded treasury (L-008), so new
-// users get just enough for a couple of real plays without draining the finite reserve.
-export const STARTING_BALANCE: number = Number(process.env.PIPS_STARTING_BALANCE) || 3;
+// DUSDC starting balance per new user (6dp). Also the refill + TOP UP target. Chips come only from a
+// hand-funded treasury (L-008, not mintable), so keep the treasury stocked above TREASURY_MIN_DUSDC + this.
+export const STARTING_BALANCE: number = Number(process.env.PIPS_STARTING_BALANCE) || 100;
 
 // Pinned gas budget per play (MIST). Pinning skips tx.build's dryRun round-trip (sponsored build 1.13s -> 0.64s).
 // A real mint's gross gas is ~0.21 SUI (mostly rebated same-tx), so 0.5 SUI covers it with headroom yet caps a pathological tx from draining the finite testnet sponsor.
@@ -222,9 +222,9 @@ export const REVENUE_MIN_SUI: number = Number(process.env.PIPS_REVENUE_MIN_SUI) 
 export const REVENUE_TOPUP_SUI: number = Number(process.env.PIPS_REVENUE_TOPUP_SUI) || 0.5;
 
 // Request DUSDC faucet. Each tap sends FAUCET_AMOUNT DUSDC, rate-limited to one per COOLDOWN_MS per user.
-// Tiny (hand-funded finite treasury: one more play, not a windfall).
-export const FAUCET_AMOUNT: number = Number(process.env.PIPS_FAUCET_AMOUNT) || 2;
-export const FAUCET_COOLDOWN_MS: number = Number(process.env.PIPS_FAUCET_COOLDOWN_MS) || 60_000;
+// Kept modest: the treasury is hand-funded and finite (L-008), a top-up, not a windfall.
+export const FAUCET_AMOUNT: number = Number(process.env.PIPS_FAUCET_AMOUNT) || 20;
+export const FAUCET_COOLDOWN_MS: number = Number(process.env.PIPS_FAUCET_COOLDOWN_MS) || 60 * 60 * 1000;
 
 // Demo override, OFF by default. A valid bucket (2/5/10/25/100) forces I Feel Lucky to that bucket for a
 // rehearsed demo (never demo a 100x lotto live, 08-DEMO-FLOW.md); asset/side stay random. DURATION optionally pins the round.
@@ -248,6 +248,14 @@ export const REFILL_COOLDOWN_MS: number =
   process.env.PIPS_REFILL_COOLDOWN_MS != null && Number.isFinite(Number(process.env.PIPS_REFILL_COOLDOWN_MS))
     ? Number(process.env.PIPS_REFILL_COOLDOWN_MS)
     : 6 * 60 * 60 * 1000;
+
+// Explicit "out of chips" grant (POST /wallet/grant, behind the game TOP UP + the on-load auto top-up).
+// Same guarded top-up as the login refill but on a short cooldown, so a player who spends down to zero is
+// never stuck on testnet. The treasury floor still caps the finite reserve. 0 respected via the finite check.
+export const GRANT_COOLDOWN_MS: number =
+  process.env.PIPS_GRANT_COOLDOWN_MS != null && Number.isFinite(Number(process.env.PIPS_GRANT_COOLDOWN_MS))
+    ? Number(process.env.PIPS_GRANT_COOLDOWN_MS)
+    : 60_000;
 
 // House rake (revenue). A config-driven cut of every real play's stake, folded into position sizing (no fee
 // line item) and collected atomically in the same mint PTB as a DUSDC transfer to the revenue wallet (lib/sui/house.ts). Default 150 bps (1.5%) stays below casino levels since PIPS is replay-heavy; empty REVENUE_WALLET_PK or a 0 edge disables it cleanly.

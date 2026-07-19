@@ -33,8 +33,8 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     if (AUTH_MODE !== 'dev') return handleNotFoundError(reply, 'Route');
     const body = (request.body ?? {}) as { referralCode?: string };
     try {
-      const user = await ensureUser({ address: operatorAddress, provider: 'dev', referralCode: body.referralCode });
-      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user) } });
+      const { user, granted } = await ensureUser({ address: operatorAddress, provider: 'dev', referralCode: body.referralCode });
+      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user), grant: granted ?? undefined } });
     } catch (error) {
       return failSignIn(reply, error, 'AUTH_DEV_FAILED', 'Could not sign in');
     }
@@ -61,7 +61,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
       // returning user's linked X handle fresh). Falls back to the client-sent email so we never regress one we'd otherwise have.
       const identity = await fetchPrivyIdentity(privyUserId);
       const email = identity.email ?? body.email ?? null;
-      const user = await ensureUser({
+      const { user, granted } = await ensureUser({
         address: wallet.address,
         provider: 'privy',
         email,
@@ -71,7 +71,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
         twitter: identity.twitter,
         referralCode: body.referralCode,
       });
-      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user) } });
+      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user), grant: granted ?? undefined } });
     } catch (error) {
       return failSignIn(reply, error, 'AUTH_VERIFY_FAILED', 'Could not finish sign-in');
     }
@@ -101,8 +101,8 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     if (!ok) return handleError(reply, 401, 'Could not verify your wallet signature', 'WALLET_SIG_INVALID');
 
     try {
-      const user = await ensureWalletUser(address, body.referralCode);
-      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user) } });
+      const { user, granted } = await ensureWalletUser(address, body.referralCode);
+      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user), grant: granted ?? undefined } });
     } catch (error) {
       return failSignIn(reply, error, 'AUTH_VERIFY_FAILED', 'Could not finish sign-in');
     }
@@ -123,8 +123,8 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   // re-arms the account if it isn't ready; idempotent, so a no-op once healthy. managerReady on the response tells the client whether the heal worked or it should fall back to the door.
   app.post('/heal', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const healed = await provisionUser(request.user!);
-      return reply.code(200).send({ success: true, error: null, data: { user: await toUserDTO(healed) } });
+      const { user: healed, granted } = await provisionUser(request.user!);
+      return reply.code(200).send({ success: true, error: null, data: { user: await toUserDTO(healed), grant: granted ?? undefined } });
     } catch (error) {
       return failSignIn(reply, error, 'AUTH_HEAL_FAILED', 'Could not finish setting up your account');
     }

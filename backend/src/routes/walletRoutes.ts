@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyReque
 
 import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { handleError } from '../utils/errorHandler.ts';
-import { withdrawDusdc, requestDusdc, WalletError, httpStatusForWalletError } from '../services/wallet.ts';
+import { withdrawDusdc, requestDusdc, grantChips, WalletError, httpStatusForWalletError } from '../services/wallet.ts';
 import { RATE_LIMIT_FAUCET_MAX, RATE_LIMIT_WITHDRAW_MAX, RATE_LIMIT_WINDOW } from '../config/main-config.ts';
 
 export const walletRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
@@ -33,6 +33,18 @@ export const walletRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
     } catch (error) {
       if (error instanceof WalletError) return handleError(reply, httpStatusForWalletError(error.code), error.message, error.code);
       return handleError(reply, 500, 'Could not send test DUSDC', 'FAUCET_FAILED', error as Error);
+    }
+  });
+
+  // Starter-chip grant: tops a player who can't afford the minimum stake back up to the starting grant.
+  // Guarded server-side (cooldown + treasury floor); `granted` is null when skipped, never an error. Shares
+  // the faucet's per-IP limit as a second gate against multi-account draining of the finite treasury.
+  app.post('/grant', { preHandler: [authMiddleware], config: faucetLimit }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const result = await grantChips(request.user!);
+      return reply.code(200).send({ success: true, error: null, data: result });
+    } catch (error) {
+      return handleError(reply, 500, 'Could not top up your chips', 'GRANT_FAILED', error as Error);
     }
   });
 

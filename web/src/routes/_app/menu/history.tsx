@@ -1,17 +1,19 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ExternalLink, Loader2, Share2, X } from 'lucide-react'
+import { motion } from 'motion/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
 import { api, type Game, type LuckyParams, type PlayDTO, type RangeParams } from '@/lib/api'
 import { explorerObjectUrl, explorerTxUrl, NETWORK } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
+import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { Modal, useOverlayState } from '@/ui/Modal'
 import { Switch } from '@/ui/Switch'
 import { renderPlayCard, sharePlayCard } from '@/lib/playCard'
 import { cnm } from '@/utils/style'
-import { formatExactDecimal } from '@/utils/format'
+import { formatCompactMoney, formatExactDecimal } from '@/utils/format'
 
 // Full play history, the canonical record (in-game overlays are just a glance). Tap a row to expand
 // duration, entry/exit, target, cost, payout, oracle, and tx links. Settled rounds only, newest first.
@@ -59,6 +61,159 @@ function timeAgo(iso?: string): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
+// --- Last 7 days summary strip -------------------------------------------------------------------
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
+
+interface DayCell {
+  key: string
+  label: string
+  net: number
+  plays: number
+  wins: number
+  isToday: boolean
+}
+
+const localDayKey = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+// Roll the fetched settled plays into the last 7 local days for the strip. Display-only candy, so a plain
+// float sum of the pnl strings (rounded to cents) is fine, nothing here is a recorded or settled number.
+function buildWeek(plays: PlayDTO[]): {
+  cells: DayCell[]
+  net: number
+  wins: number
+  losses: number
+  total: number
+} {
+  const now = new Date()
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const cells: DayCell[] = []
+  const byKey = new Map<string, DayCell>()
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today0)
+    d.setDate(d.getDate() - i)
+    const cell: DayCell = { key: localDayKey(d), label: WEEKDAYS[d.getDay()], net: 0, plays: 0, wins: 0, isToday: i === 0 }
+    cells.push(cell)
+    byKey.set(cell.key, cell)
+  }
+  for (const p of plays) {
+    const iso = p.settledAt ?? p.openedAt
+    if (!iso) continue
+    const cell = byKey.get(localDayKey(new Date(iso)))
+    if (!cell) continue
+    const pnl = parseFloat(p.pnl ?? '0')
+    cell.net += Number.isFinite(pnl) ? pnl : 0
+    cell.plays += 1
+    if (p.status === 'won' || (p.status === 'cashed_out' && pnl > 0)) cell.wins += 1
+  }
+  let net = 0
+  let wins = 0
+  let total = 0
+  for (const c of cells) {
+    c.net = Math.round(c.net * 100) / 100 // kill float noise so a matched win/loss day reads as flat, not a hair off
+    net += c.net
+    wins += c.wins
+    total += c.plays
+  }
+  return { cells, net: Math.round(net * 100) / 100, wins, losses: total - wins, total }
+}
+
+// Compact magnitude for a tight day cell: 1dp under $100, integer under $1k, k/M suffix above. Cell owns the sign.
+function tileMag(abs: number): string {
+  if (abs >= 1000) return formatCompactMoney(abs.toString())
+  if (abs >= 100) return Math.round(abs).toString()
+  const oneDp = Math.round(abs * 10) / 10
+  return Number.isInteger(oneDp) ? oneDp.toString() : oneDp.toFixed(1)
+}
+
+function WeekStrip({ plays }: { plays: PlayDTO[] }) {
+  const reduced = useReducedMotion()
+  const wk = buildWeek(plays)
+  const netTone = wk.net > 0 ? 'text-up' : wk.net < 0 ? 'text-down' : 'text-text-2'
+  const netSign = wk.net > 0 ? '+' : wk.net < 0 ? '-' : ''
+
+  return (
+    <div
+      className="rounded-card border-[1.5px] border-brand-500 p-4"
+      style={{
+        // Bright raised skeuo plate, boldly framed in amber with a glow, so the hero stat panel pops off the rows.
+        background: 'linear-gradient(180deg,#2a2619 0%,#1c1913 52%,#131110 100%)',
+        boxShadow:
+          'inset 0 1px 0 rgba(255,229,158,0.34), inset 0 -2px 8px rgba(0,0,0,0.5), 0 2px 0 rgba(0,0,0,0.6), 0 0 28px -4px rgba(255,192,22,0.55)',
+      }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-text-3">Last 7 days</div>
+          <div className="mt-1 flex items-center gap-1.5 text-[12px] font-bold">
+            {wk.total > 0 ? (
+              <>
+                <span className="tnum text-up">{wk.wins}W</span>
+                <span className="text-text-3">·</span>
+                <span className="tnum text-down">{wk.losses}L</span>
+              </>
+            ) : (
+              <span className="text-text-3">No plays this week</span>
+            )}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className={cnm('tnum text-[20px] font-extrabold leading-none', netTone)}>
+            {netSign}${formatCompactMoney(Math.abs(wk.net).toString())}
+          </div>
+          <div className="mt-1 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-text-3">Net</div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-7 gap-1.5">
+        {wk.cells.map((c, i) => {
+          const tone = c.plays === 0 || c.net === 0 ? 'flat' : c.net > 0 ? 'up' : 'down'
+          // Tinted win/loss box with matching colored text; today is marked by its amber label, not a border.
+          const fill = tone === 'up' ? 'rgba(52,211,153,0.2)' : tone === 'down' ? 'rgba(255,90,77,0.2)' : 'rgba(255,255,255,0.05)'
+          return (
+            <div key={c.key} className="flex flex-col items-center gap-1">
+              <span
+                className={cnm(
+                  'font-mono text-[9px] font-semibold uppercase tracking-[0.08em]',
+                  c.isToday ? 'text-brand-500' : 'text-text-3',
+                )}
+              >
+                {c.isToday ? 'Today' : c.label}
+              </span>
+              <motion.div
+                initial={reduced ? false : { opacity: 0, y: 6, scale: 0.94 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={reduced ? { duration: 0 } : { delay: i * 0.03, duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+                className={cnm(
+                  'flex h-[54px] w-full items-center justify-center rounded-xl px-0.5',
+                  // No colored border on filled boxes, keep it sleek. Empty days get a faint outline so the slot still reads.
+                  tone === 'flat' && 'border border-white/[0.07]',
+                )}
+                style={{ backgroundColor: fill }}
+              >
+                {c.plays === 0 ? (
+                  <span className="text-[16px] font-bold text-text-3/60">·</span>
+                ) : (
+                  <span
+                    className={cnm(
+                      'tnum text-[15px] font-extrabold leading-none',
+                      tone === 'up' ? 'text-up' : tone === 'down' ? 'text-down' : 'text-text-2',
+                    )}
+                  >
+                    {c.net > 0 ? '+' : c.net < 0 ? '-' : ''}
+                    {tileMag(Math.abs(c.net))}
+                  </span>
+                )}
+              </motion.div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function HistoryPage() {
   const [filter, setFilter] = useState<Filter>('all')
   // "Show devnet" defaults on so a returning player's full pre-cutover history stays visible; off narrows to
@@ -75,13 +230,20 @@ function HistoryPage() {
     if (!everDevnet && (q.data?.plays ?? []).some((p) => p.network === 'devnet')) setEverDevnet(true)
   }, [q.data, everDevnet])
 
-  const rows = (q.data?.plays ?? [])
-    .filter((p) => SHOWN.has(p.status))
-    .filter((p) => filter === 'all' || p.game === filter)
+  // All settled plays feed the 7-day strip (game-filter-independent, it sits above the tabs); the list
+  // below narrows by the active game pill.
+  const allSettled = (q.data?.plays ?? []).filter((p) => SHOWN.has(p.status))
+  const rows = allSettled.filter((p) => filter === 'all' || p.game === filter)
 
   return (
     <MenuScreen title="History">
       <div className="flex flex-col gap-4">
+        {q.isLoading ? (
+          <div className="shimmer h-[150px] w-full rounded-card" />
+        ) : allSettled.length > 0 ? (
+          <WeekStrip plays={allSettled} />
+        ) : null}
+
         <div className="flex gap-2">
           {FILTERS.map((f) => (
             <div key={f.key} className="relative">
@@ -134,7 +296,7 @@ function HistoryPage() {
         ) : q.isError ? (
           <ScreenError message="Could not load your history." onRetry={() => void q.refetch()} />
         ) : rows.length === 0 ? (
-          <ScreenEmpty illo="vault" title="No plays yet" sub="Your settled rounds show up here, with the full detail and a link to each one on-chain." />
+          <ScreenEmpty title="No plays yet" sub="Play your first game and it'll show up here." />
         ) : (
           <div className="flex flex-col gap-2.5">
             {rows.map((p) => (
@@ -239,7 +401,7 @@ function HistoryRow({ play }: { play: PlayDTO }) {
           <div className="relative mb-3">
             <button
               type="button"
-              className="pointer-events-none flex w-full items-center justify-center gap-2 rounded-xl bg-white/[0.06] py-2.5 text-[13px] font-extrabold uppercase tracking-wide text-text transition-colors active:bg-white/[0.1]"
+              className="pointer-events-none flex w-full items-center justify-center gap-2 rounded-xl border border-brand-500/40 bg-gradient-to-b from-brand-500/[0.16] to-brand-500/[0.05] py-2.5 text-[13px] font-extrabold uppercase tracking-wide text-brand-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] transition-colors active:from-brand-500/[0.22] active:to-brand-500/[0.1]"
             >
               <Share2 className="h-[15px] w-[15px]" strokeWidth={2.6} />
               Share P&L card
