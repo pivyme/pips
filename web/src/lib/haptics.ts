@@ -1,8 +1,9 @@
 // Vibration-based haptic feedback: Android via navigator.vibrate, silent elsewhere (desktop, iOS Safari). iOS has no
 // Vibration API and only grants its native switch-toggle haptic to a genuine physical tap, never a scripted one; direct-tap elements get real iOS haptics via <HapticOverlay> instead.
-export type HapticPreset = 'selection' | 'medium' | 'rigid' | 'heavy' | 'success' | 'warning' | 'error'
+export type HapticPreset = 'tick' | 'selection' | 'medium' | 'rigid' | 'heavy' | 'success' | 'warning' | 'error'
 
 const HAPTIC_MS: Record<HapticPreset, number | number[]> = {
+  tick: 4, // the faint detent pulse for scroll/knob steps, deliberately lighter than a button's selection tap
   selection: 8,
   medium: 25,
   rigid: 10,

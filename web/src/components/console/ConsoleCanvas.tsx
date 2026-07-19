@@ -2456,6 +2456,7 @@ export default function ConsoleCanvas({
           -(numberWheelStartPosition + resistedSteps) * NUMBER_LABEL_ANGLE
         numberWheelTarget = numberWheelAngle
         if (steps !== numberWheelLastStep) {
+          haptic('tick') // subtle detent pulse to ride the roller click, once per crossing
           const direction = Math.sign(steps - numberWheelLastStep)
           for (
             let detent = numberWheelLastStep + direction;
@@ -2503,6 +2504,7 @@ export default function ConsoleCanvas({
         const detent = Math.round(knobOffset / kp.snapInterval)
         const steps = knobStartDetent - detent // dragging up advances one value per physical click
         if (steps !== knobLastStep) {
+          haptic('tick') // subtle detent pulse to ride the knob click, once per crossing
           const direction = Math.sign(steps - knobLastStep)
           for (
             let step = knobLastStep + direction;

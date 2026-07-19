@@ -32,7 +32,7 @@ export function Knob({ spec, onChange }: { spec: KnobView; onChange: (v: number)
     const steps = Math.round(dy / PX_PER_STEP)
     const next = clampSnap(drag.current.value + steps * spec.step)
     if (next !== spec.value) {
-      haptic('selection')
+      haptic('tick') // subtle detent, distinct from a button tap
       onChange(next)
     }
   }
