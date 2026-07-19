@@ -53,9 +53,9 @@ export function MenuScreen({
   children: ReactNode
 }) {
   return (
-    <div className="relative min-h-full bg-black px-4 pb-8">
+    <div className="relative flex min-h-full flex-col bg-black px-4 pb-8">
       <MenuHeader title={title} />
-      <div className="relative z-0 -mt-1 pt-5">{children}</div>
+      <div className="relative z-0 -mt-1 flex flex-1 flex-col pt-5">{children}</div>
     </div>
   )
 }

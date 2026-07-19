@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowDownToLine, ArrowUpFromLine, Compass, LogOut, Pencil } from 'lucide-react'
+import { ArrowDownToLine, ArrowUpFromLine, LogOut, Pencil } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
@@ -46,7 +46,10 @@ function MenuHome() {
         <BalanceHero />
         <NavGrid />
         <AchievementsSection />
-        <HowItWorksRow />
+        <div className="flex flex-col gap-1.5">
+          <HowItWorksRow />
+          <AboutRow />
+        </div>
         <div className="relative mt-16 w-full">
           <Button
             variant="danger"
@@ -89,13 +92,48 @@ function HowItWorksRow() {
         type="button"
         className="pointer-events-none surface-skeuo flex w-full items-center gap-3 rounded-card p-4 text-left transition-transform active:scale-[0.99]"
       >
-        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/15 text-brand-400">
-          <Compass className="h-[18px] w-[18px]" strokeWidth={2.2} />
-        </span>
-        <span className="flex-1 text-[15px] font-bold">How it works</span>
-        <span className="text-lg text-text-3">›</span>
+        <img
+          src="/assets/icons/icon-howitworks.webp"
+          alt=""
+          className="h-12 w-12 shrink-0 object-contain"
+          draggable={false}
+        />
+        <span className="flex-1 text-[17px] font-bold">How it works</span>
+        <span className="text-2xl text-text-3">›</span>
       </button>
       <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={run} />
+    </div>
+  )
+}
+
+// About PIPS: credits + links on its own menu sub-page, pushed in with the drawer transition.
+function AboutRow() {
+  const navigate = useNavigate()
+  const go = () => {
+    prepareMenuTransition('forward')
+    void navigate({ to: '/menu/about', viewTransition: true })
+  }
+  return (
+    <div className="relative">
+      <Link
+        to="/menu/about"
+        viewTransition
+        onClick={() => {
+          prepareMenuTransition('forward')
+          haptic('selection')
+        }}
+        className="pointer-events-none surface-skeuo flex w-full items-center gap-3 rounded-card p-4 text-left transition-transform active:scale-[0.99]"
+      >
+        <img
+          src="/assets/icons/icon-about.webp"
+          alt=""
+          className="h-12 w-12 shrink-0 object-contain"
+          draggable={false}
+        />
+        <span className="flex-1 text-[17px] font-bold">About PIPS</span>
+        <span className="text-2xl text-text-3">›</span>
+      </Link>
+      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={go} />
     </div>
   )
 }

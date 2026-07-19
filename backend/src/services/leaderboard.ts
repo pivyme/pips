@@ -52,7 +52,6 @@ export async function globalLeaderboard(userId: string): Promise<GlobalLeaderboa
   const row = (p: (typeof players)[number], i: number): LeaderboardPnlEntryDTO => ({
     rank: i + 1,
     username: byId.get(p.userId)?.username ?? null,
-    displayName: byId.get(p.userId)?.displayName ?? 'Player',
     avatarUrl: effectiveAvatar(byId.get(p.userId) ?? noAvatar),
     netPnl: money(p.pnl),
     gamesPlayed: p.games,
@@ -159,21 +158,10 @@ export async function submitMinigameScore(userId: string, game: Minigame, score:
   return { entries, rank, best, isBest: score > prevBest && rank === 1, prevBest };
 }
 
-// Every board in one round-trip, run in parallel, so the menu leaderboard's tab switching is instant; in-game overlays still call the focused functions above.
+// The menu leaderboard is now PnL-only (Gainers/REKT), so this is just the global board: one groupBy, not
+// six. The in-game overlays still hit gameLeaderboard/minigameLeaderboard directly.
 export async function fullLeaderboard(userId: string): Promise<FullLeaderboardDTO> {
-  const [global, lucky, range, moonshot, lineRider, flappyPiper] = await Promise.all([
-    globalLeaderboard(userId),
-    gameLeaderboard('lucky', userId),
-    gameLeaderboard('range', userId),
-    gameLeaderboard('moonshot', userId),
-    minigameLeaderboard('line-rider', userId),
-    minigameLeaderboard('flappy-piper', userId),
-  ]);
-  return {
-    global,
-    games: { lucky: lucky.entries, range: range.entries, moonshot: moonshot.entries },
-    minigames: { 'line-rider': lineRider, 'flappy-piper': flappyPiper },
-  };
+  return { global: await globalLeaderboard(userId) };
 }
 
 // === Minigame run validation ============================================================

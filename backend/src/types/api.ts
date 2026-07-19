@@ -132,11 +132,11 @@ export interface WithdrawResult {
 
 export type Minigame = 'line-rider' | 'flappy-piper';
 
-// A PnL-ranked row (global Gainers / REKT).
+// A PnL-ranked row (global Gainers / REKT). Identity is the @username only (the board shows "Anon" for a
+// rare null), never displayName, never the wallet address.
 export interface LeaderboardPnlEntryDTO {
   rank: number;
   username: string | null; // user-chosen handle; null until onboarded
-  displayName: string; // generated handle fallback, never the wallet address
   avatarUrl: string | null; // custom uploaded avatar, or null (the client renders the PIPS identicon)
   netPnl: string; // signed DUSDC, e.g. "342.00" or "-128.50"
   gamesPlayed: number;
@@ -201,12 +201,10 @@ export interface MinigameSubmitDTO {
   prevBest: number; // your best before this run
 }
 
-// GET /leaderboard -> every board in one response, so the menu fetches once and switches tabs with
-// no refetch. The in-game overlays still use the focused /game and /minigame endpoints.
+// GET /leaderboard -> the global PnL board (Gainers/REKT + your standing). The menu leaderboard is
+// PnL-only now; per-game and minigame boards live behind their own /game and /minigame endpoints.
 export interface FullLeaderboardDTO {
   global: GlobalLeaderboardDTO;
-  games: Record<Game, LeaderboardGameEntryDTO[]>; // lucky, range, moonshot
-  minigames: Record<Minigame, MinigameLeaderboardDTO>; // line-rider, flappy-piper
 }
 
 // === Referrals ===

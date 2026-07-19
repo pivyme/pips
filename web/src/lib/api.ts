@@ -250,8 +250,7 @@ export type Minigame = 'line-rider' | 'flappy-piper'
 
 export interface LeaderboardPnlEntry {
   rank: number
-  username: string | null
-  displayName: string
+  username: string | null // identity is the @username only; the board shows "Anon" for a rare null
   avatarUrl: string | null
   netPnl: string // signed DUSDC
   gamesPlayed: number
@@ -297,11 +296,10 @@ export interface MinigameSubmit {
   isBest: boolean
   prevBest: number
 }
-// One combined payload for the menu leaderboard, so tab switches are instant (no refetch).
+// The menu leaderboard payload: PnL-only (Gainers/REKT + your standing). Per-game and minigame boards
+// live behind gameLeaderboard()/minigameLeaderboard() for the in-game overlays.
 export interface FullLeaderboard {
   global: GlobalLeaderboard
-  games: Record<Game, LeaderboardGameEntry[]>
-  minigames: Record<Minigame, MinigameLeaderboard>
 }
 
 // === Core ===

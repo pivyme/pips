@@ -817,6 +817,8 @@ const LB_TRADERS: Array<{ username: string; netPnl: number; games: number }> = [
   { username: 'ngmibro', netPnl: -2480, games: 207 },
   { username: 'lunarey', netPnl: -3960, games: 289 },
 ]
+// A few rivals verified on X so the badge is demoable (real mode: username === twitterUsername).
+const DEMO_LB_VERIFIED = new Set(['pivyme', 'kelpin', 'moonlee', 'ngmibro'])
 
 // A believable referral list so /menu/referrals doesn't read empty in demo. Fixed, not tied to
 // state.username (that's the demo account's OWN handle, these are people it referred). `earned` is what
@@ -867,7 +869,7 @@ function globalLeaderboardDTO(): GlobalLeaderboard {
   const all = allTraders()
   const gainers = all.filter((t) => t.netPnl > 0).sort((a, b) => b.netPnl - a.netPnl)
   const rekt = all.filter((t) => t.netPnl < 0).sort((a, b) => a.netPnl - b.netPnl)
-  const entry = (t: Trader, i: number) => ({ rank: i + 1, username: t.username, displayName: t.displayName, avatarUrl: t.isYou ? demoAvatar() : null, netPnl: str(t.netPnl), gamesPlayed: t.games, isYou: t.isYou, twitterVerified: isTwitterVerified(t.username) })
+  const entry = (t: Trader, i: number) => ({ rank: i + 1, username: t.username, avatarUrl: t.isYou ? demoAvatar() : null, netPnl: str(t.netPnl), gamesPlayed: t.games, isYou: t.isYou, twitterVerified: t.isYou ? isTwitterVerified(t.username) : DEMO_LB_VERIFIED.has(t.username ?? '') })
   const youNet = state.counters.netPnl
   const gi = gainers.findIndex((t) => t.isYou)
   const ri = rekt.findIndex((t) => t.isYou)
@@ -909,12 +911,10 @@ function minigameLeaderboardDTO(game: Minigame): MinigameLeaderboard {
   return { entries, best }
 }
 
+// PnL-only now (matches the backend trim); the demo account is mixed into gainers/rekt/you so both
+// toggles render. gameLeaderboardDTO/minigameLeaderboardDTO still feed the in-game overlay endpoints below.
 function fullLeaderboardDTO(): FullLeaderboard {
-  return {
-    global: globalLeaderboardDTO(),
-    games: { lucky: gameLeaderboardDTO('lucky').entries, range: gameLeaderboardDTO('range').entries, moonshot: gameLeaderboardDTO('moonshot').entries },
-    minigames: { 'line-rider': minigameLeaderboardDTO('line-rider'), 'flappy-piper': minigameLeaderboardDTO('flappy-piper') },
-  }
+  return { global: globalLeaderboardDTO() }
 }
 
 export const demoApi = {

@@ -189,6 +189,9 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
   const bandC = useRef(0)
   const bandHalf = useRef(0)
   const bandMode = useRef<'none' | 'idle' | 'locked'>('none')
+  // Range-v2 aim bracket: eased half-width so a knob tier change glides instead of snapping (mirrors the band).
+  const aimHalf = useRef(0)
+  const aimActive = useRef(false)
   const momDir = useRef<'up' | 'down' | 'flat'>('flat') // momentum-arrow state, hysteretic
   const trendUp = useRef(true) // whole-line direction: green up / red down, flips on a real move
   const lastTickP = useRef(0) // last raw tick, to detect momentum swings
@@ -339,6 +342,22 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       return { lower: bandC.current - bandHalf.current, upper: bandC.current + bandHalf.current }
     }
 
+    // Range-v2 aim: the ±pct half-width eased in absolute price units, so a tier change glides the bracket
+    // instead of snapping. Center tracks the live price directly (no lag); only the half-width eases.
+    const resolveAimHalf = (): number | null => {
+      const a = overlaysRef.current?.aim
+      const c = display.current
+      if (!a || !Number.isFinite(c) || c <= 0) {
+        aimActive.current = false
+        return null
+      }
+      const th = (c * a.pct) / 100
+      if (!aimActive.current || reducedRef.current) aimHalf.current = th // first appearance / reduced motion: snap
+      else aimHalf.current += (th - aimHalf.current) * BAND_SMOOTH
+      aimActive.current = true
+      return aimHalf.current
+    }
+
     const paint = (now: number) => {
       const { w, h } = sizeRef.current
       if (w === 0) return
@@ -351,6 +370,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       // Leave room on the right for a forward zone (band, boxes, multiplay lanes, or the aim bracket); else ride near the edge.
       const nowX = hasBoxes || hasBand || hasBands || hasAim ? w * 0.58 : w * 0.92
       const band = resolveBand()
+      const aimHalfEased = resolveAimHalf()
 
       // Vertical content extent: visible points + the live edge + every overlay bound.
       let lo = Infinity
@@ -385,13 +405,10 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
           consider(b.upper)
         }
       }
-      if (ov?.aim) {
+      if (ov?.aim && aimHalfEased != null) {
         const c = display.current
-        if (Number.isFinite(c) && c > 0) {
-          const half = (c * ov.aim.pct) / 100
-          consider(c - half)
-          consider(c + half)
-        }
+        consider(c - aimHalfEased)
+        consider(c + aimHalfEased)
       }
       if (ov?.markers) for (const m of ov.markers) consider(m.p)
 
@@ -474,7 +491,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       }
 
       // Overlays sit under the line.
-      drawOverlays(ctx, ov, band, { w, h, now, nowX, entryReveal: entryReveal.current, targetReveal: targetReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), y, C })
+      drawOverlays(ctx, ov, band, { w, h, now, nowX, entryReveal: entryReveal.current, targetReveal: targetReveal.current, rim: rimRef.current, price: display.current, locked: Boolean(ov?.band?.locked), aimHalf: aimHalfEased, y, C })
 
       // Advance the cosmetic micro-life, applied to the DRAWN leading edge only, continuous mode and non-live feeds only (the real Binance bus already has its own).
       // display.current itself stays untouched, so P/L, header price, win-zone, and frame fit never see this wiggle.
@@ -763,9 +780,9 @@ function drawOverlays(
   ctx: CanvasRenderingContext2D,
   ov: ChartOverlays | undefined,
   band: { lower: number; upper: number } | null,
-  ctxv: { w: number; h: number; now: number; nowX: number; entryReveal: number; targetReveal: number; rim: number; price: number; locked: boolean; y: (p: number) => number; C: Record<string, string> },
+  ctxv: { w: number; h: number; now: number; nowX: number; entryReveal: number; targetReveal: number; rim: number; price: number; locked: boolean; aimHalf: number | null; y: (p: number) => number; C: Record<string, string> },
 ) {
-  const { w, h, now, nowX, entryReveal, targetReveal, rim, price, locked, y, C } = ctxv
+  const { w, h, now, nowX, entryReveal, targetReveal, rim, price, locked, aimHalf, y, C } = ctxv
 
   // TARGET rides the RIGHT edge (the amber hero), ENTRY stays LEFT; opposite corners so they can never stack on a small move.
   const labelX = w - rim - 2
@@ -909,8 +926,8 @@ function drawOverlays(
 
   // Aim preview: where your NEXT band lands, a live ±pct bracket around the price (amber, dashed, with a
   // left spine at the now-dot so it reads as a gate about to drop). Distinct from the open lanes; hidden at MAX.
-  if (ov?.aim && price > 0) {
-    const half = (price * ov.aim.pct) / 100
+  if (ov?.aim && price > 0 && aimHalf != null) {
+    const half = aimHalf
     const top = y(price + half)
     const bot = y(price - half)
     const fx = nowX

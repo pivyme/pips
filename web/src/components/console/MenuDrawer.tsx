@@ -55,10 +55,11 @@ export function MenuDrawer({
   const draggedRef = useRef(false) // distinguishes a real drag from a plain tap on the grabber
   const dragRef = useRef({ active: false, startY: 0, dy: 0, maxDy: 0, lastY: 0, lastT: 0, vel: 0 })
 
-  // Each route owns its scroll viewport (a fresh node per pathname, see key={pathname} below), so it always mounts at scrollTop 0; no saved-position map, nothing to go stale.
+  // Remember each menu route's scroll offset (recorded live below), so popping back from a sub-page lands where you left off. A fresh page has no entry, so it still opens at the top.
+  const scrollMemory = useRef<Record<string, number>>({})
   useLayoutEffect(() => {
     const scrollElement = scrollRef.current
-    if (scrollElement) scrollElement.scrollTop = 0
+    if (scrollElement) scrollElement.scrollTop = scrollMemory.current[pathname] ?? 0
   }, [pathname])
 
   const finishClose = useCallback(() => {
@@ -277,6 +278,9 @@ export function MenuDrawer({
             key={pathname}
             ref={scrollRef}
             data-lenis-prevent
+            onScroll={(e) => {
+              scrollMemory.current[pathname] = e.currentTarget.scrollTop
+            }}
             className="h-full overflow-y-auto overscroll-contain"
           >
             <MenuDrawerContext.Provider value={{ closeTo }}>

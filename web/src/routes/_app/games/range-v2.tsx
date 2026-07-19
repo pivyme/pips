@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import NumberFlow from '@number-flow/react'
 import toast from 'react-hot-toast'
 import type { PlayDTO } from '@/lib/api'
 import type { LivePlaySnapshot } from '@/hooks/useGameRound'
@@ -18,7 +19,7 @@ import { haptic } from '@/lib/haptics'
 import { rangeBuzzer, rangeCross, rangeLose, rangeWin, startRangeBgm, stopRangeBgm } from '@/lib/sound'
 import { api } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
-import { betLadder } from '@/lib/sui/config'
+import { betLadder, netStakeUsd } from '@/lib/sui/config'
 import { toastError } from '@/lib/errors'
 import { useAuth } from '@/lib/auth'
 import { RV2_POSITIONS_KEY } from '@/lib/rangeV2'
@@ -38,7 +39,6 @@ const STAKE_KEY = 'pips_stake_idx' // shared with Lucky + Range so the chip stay
 // exactly the board they left. Restored open plays re-attach their watcher and reconcile to chain truth, so this
 // is persistence, never a fabricated state.
 const POSITIONS_KEY = RV2_POSITIONS_KEY // one source of truth, also read by the hub + Range V1 (lib/rangeV2)
-const SESSION_KEY = 'pips_rv2_session'
 // Payout-tier ladder, identical to Range: the knob picks a payout (bigger pays = tighter, probability-sized band).
 // A fixed %-band knob can't hold in real mode. A short BTC round's achievable half-width is only ~0.02-0.04%, so any
 // wider request clamps down on-chain and the aim preview ends up bigger than what actually mints. Tiers size by target
@@ -91,7 +91,6 @@ type Position = {
   won?: boolean
   resolvedAt?: number
 }
-type Session = { net: number; wins: number; losses: number; best: number; streak: number }
 // `at` is the LAST folded-in resolution (drives the display windows + splash re-pop), `startedAt` is
 // stable per wave (keys the panel so its pop/count-up runs once while merged totals keep chasing).
 type Wave = { pnl: number; wins: number; losses: number; at: number; startedAt: number }
@@ -127,8 +126,13 @@ const setsEqual = (a: Set<string>, b: Set<string>): boolean => {
   return true
 }
 
-// ±% band label with enough decimals to keep tight tiers distinct (0.021 vs 0.032). Mirrors Range.
-const fmtHalfPct = (halfPct: number): string => halfPct.toFixed(halfPct < 0.1 ? 3 : 2)
+// Digit-easing readouts so a knob tier change or mark drift eases the number instead of hard-swapping (mirrors Range).
+const MultFlow = ({ value }: { value: number }) => (
+  <NumberFlow value={value} suffix="x" format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }} />
+)
+const UsdFlow = ({ value }: { value: number }) => (
+  <NumberFlow value={value} prefix="$" format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }} />
+)
 
 function RangeV2Screen() {
   const { refresh, user } = useAuth()
@@ -142,7 +146,6 @@ function RangeV2Screen() {
   const [spot, setSpot] = useState<number | null>(null)
   const [overlay, setOverlay] = useState<Overlay>('none')
   const [inZoneKeys, setInZoneKeys] = useState<Set<string>>(new Set())
-  const [session, setSession] = useLocalStorage<Session>(SESSION_KEY, { net: 0, wins: 0, losses: 0, best: 0, streak: 0 })
   const [wave, setWave] = useState<Wave | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [, setSelfPlaceSignal] = useState(0) // bump to pop a coin for your own play (crowd overlay temporarily disabled)
@@ -376,13 +379,6 @@ function RangeV2Screen() {
             : p,
         ),
       )
-      setSession((s) => ({
-        net: s.net + pnl,
-        wins: s.wins + (won ? 1 : 0),
-        losses: s.losses + (won ? 0 : 1),
-        best: Math.max(s.best, pnl),
-        streak: won ? s.streak + 1 : 0,
-      }))
       // Fold this resolution into the current wave (or start one): one splash + one running total per
       // buzzer batch. The window rolls forward on each merge so staggered settlement stays one beat.
       const now = Date.now()
@@ -600,8 +596,6 @@ function RangeV2Screen() {
   // so the eye can track "chip 3" from fire to result without re-scanning the row.
   const orderedPositions = [...positions].sort((a, b) => a.slot - b.slot)
 
-  const sessionShown = session.wins + session.losses > 0
-  const netStr = `${session.net >= 0 ? '+' : '−'}$${usd(Math.abs(session.net))}`
   // The footer holds the wave's total for the same window the chips flash, so the payoff beat and the
   // strip clear together instead of the readout snapping straight back to the idle preview.
   const waveShown = wave != null && nowMs - wave.at < RESULT_HOLD_MS
@@ -741,22 +735,21 @@ function RangeV2Screen() {
                       {inZoneCount > 0 ? `${inZoneCount}/${openPos.length} in zone` : 'All out'}
                     </span>
                   </div>
-                  {/* Keyed on the zone count so the number pops when a zone lights up or drops, never on mark drift. */}
+                  {/* Rolls as zones light up / marks drift; the color carries the in/out read so it stays smooth. */}
                   <div
-                    key={`${inZoneCount}/${openPos.length}`}
                     className={cnm(
-                      'tnum mt-0.5 origin-left text-[40px] font-extrabold leading-none animate-[zone-pop_200ms_ease-out]',
+                      'tnum mt-0.5 origin-left text-[40px] font-extrabold leading-none',
                       allOut ? 'text-brand-500' : 'text-up',
                     )}
                   >
-                    ${usd(allOut ? cashOutNow : collectNow)}
+                    <UsdFlow value={allOut ? cashOutNow : collectNow} />
                   </div>
                   <div className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-text-3">
                     {allOut ? 'Cash out value now' : 'If the cutoff hit now'}
                   </div>
                   <div className="mt-2.5 grid grid-cols-3 gap-x-3">
-                    <Cell label="Cash all" value={`$${usd(cashOutNow)}`} />
-                    <Cell label="To win" value={`$${usd(totalToWin)}`} />
+                    <Cell label="Cash all" value={<UsdFlow value={cashOutNow} />} />
+                    <Cell label="To win" value={<UsdFlow value={totalToWin} />} />
                     <Cell label="Cutoff" value={settlingWave ? '···' : `${nextSecs ?? 0}s`} />
                   </div>
                 </>
@@ -793,41 +786,26 @@ function RangeV2Screen() {
                     {wave.pnl >= 0 ? 'Banked. Fire the next wave.' : 'Missed. Fire again.'}
                   </div>
                   <div className="mt-2.5 grid grid-cols-2 gap-x-3">
-                    <Cell label="Next pays" value={`${idleMult.toFixed(2)}x`} />
+                    <Cell label="Next pays" value={<MultFlow value={idleMult} />} />
                     <Cell label="Amount" value={`$${stake}`} />
                   </div>
                 </>
               ) : (
                 <>
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Pays</div>
-                  <div className="tnum text-[40px] font-extrabold leading-none text-brand-500">
-                    {idleMult.toFixed(2)}x
-                  </div>
-                  <div className="mt-2.5 grid grid-cols-3 gap-x-3">
-                    <Cell label="Amount" value={`$${stake}`} />
-                    <Cell label="Band" value={`±${fmtHalfPct(aimHalfPct)}%`} />
-                    <Cell label="Odds" value={`~${Math.round(tierView.prob * 100)}%`} />
+                  <div className="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1.5">
+                    <div className="tnum text-[40px] font-extrabold leading-none text-brand-500">
+                      <MultFlow value={idleMult} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-3 pb-0.5">
+                      <Cell label="Amount" value={`$${stake}`} />
+                      <Cell label="Win" value={<UsdFlow value={netStakeUsd(stake) * idleMult} />} />
+                    </div>
                   </div>
                   <div className="mt-2.5 font-mono text-[11px] font-semibold uppercase leading-snug tracking-[0.08em] text-text-2">
                     Stack as many as you like. They all settle at the cutoff.
                   </div>
                 </>
-              )}
-              {sessionShown && (
-                <div className="mt-2.5 flex items-center gap-2 border-t border-line-strong pt-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em]">
-                  <span className="text-text-3">Session</span>
-                  <span className={cnm('tnum', session.net >= 0 ? 'text-up' : 'text-down')}>{netStr}</span>
-                  <span className="text-text-3">·</span>
-                  <span className="tnum text-text-2">
-                    {session.wins}-{session.losses}
-                  </span>
-                  {session.streak >= 2 && (
-                    <>
-                      <span className="text-text-3">·</span>
-                      <span className="tnum text-brand-500">Streak {session.streak}</span>
-                    </>
-                  )}
-                </div>
               )}
             </div>
           </div>

@@ -1,8 +1,8 @@
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import toast from 'react-hot-toast'
 import type { UserDTO } from '@/lib/api'
-import { MenuScreen, prepareMenuTransition } from '@/components/menu/shared'
+import { MenuScreen } from '@/components/menu/shared'
 import { Switch } from '@/ui/Switch'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -29,7 +29,6 @@ const ROWS: Array<{ key: Key; label: string; desc: string }> = [
 
 function SettingsScreen() {
   const { user, refresh } = useAuth()
-  const navigate = useNavigate()
   const [local, setLocal] = useState<Settings>(
     user?.settings ?? { sound: true, haptics: true, reducedMotion: false, confirmTrades: false, theme: 'classic' },
   )
@@ -70,35 +69,6 @@ function SettingsScreen() {
             />
           </div>
         ))}
-
-        <div className="relative">
-          <Link
-            to="/menu/about"
-            viewTransition
-            onClick={() => {
-              prepareMenuTransition('forward')
-              haptic('selection')
-            }}
-            className="pointer-events-none surface-skeuo flex items-center gap-3 rounded-card p-4 transition-transform active:scale-[0.99]"
-          >
-            <div className="min-w-0 flex-1">
-              <div className="text-[15px] font-bold">About PIPS</div>
-              <div className="mt-0.5 text-sm text-text-3">
-                Made by PIVY, powered by DeepBook Predict.
-              </div>
-            </div>
-            <span className="text-lg text-text-3">›</span>
-          </Link>
-          <HapticOverlay
-            className="absolute inset-0 rounded-card"
-            preset="selection"
-            silent
-            onTap={() => {
-              prepareMenuTransition('forward')
-              void navigate({ to: '/menu/about', viewTransition: true })
-            }}
-          />
-        </div>
 
         {isDemo() && (
           <div className="surface-skeuo rounded-card p-4">
