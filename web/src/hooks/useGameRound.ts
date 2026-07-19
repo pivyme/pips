@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
-import { api, streamPlay, type Game, type PlayDTO, type PlayStatus, type PlayTick } from '@/lib/api'
+import { api, ApiError, streamPlay, type Game, type PlayDTO, type PlayStatus, type PlayTick } from '@/lib/api'
 
 export type LivePlaySnapshot = {
   markValue: string
@@ -141,7 +141,13 @@ export function usePlayResolutionWatch({
         onSnapshotRef.current(toSnapshot(play))
         syncOpenBalance(play.status, playId, syncedOpenPlayIdRef, refreshOnOpenRef.current)
         onTerminalRef.current(play.status, playId)
-      } catch {
+      } catch (err) {
+        // A 404 means the watched play no longer exists (e.g. a mid-round DB cutover dropped its row): stop
+        // watching and clear the round to no-position instead of polling a ghost forever. Chips are on-chain, safe.
+        if (err instanceof ApiError && err.status === 404) {
+          if (!stopped && !finalizedRef.current) onTerminalRef.current('error', playId)
+          return
+        }
         // transient; the next arm retries
       }
       if (!stopped && !finalizedRef.current) arm(watchdogMs)
