@@ -17,7 +17,7 @@ const TONE: Record<AlertTone, { fill: string; icon: string }> = {
 
 export function Alert({
   tone = 'warning',
-  size = 26,
+  size = 30,
   className,
   children,
 }: {
@@ -29,16 +29,19 @@ export function Alert({
   return (
     <div
       className={cnm(
-        'flex items-start gap-3 rounded-card p-4 text-[13px] leading-snug text-text-2',
+        'flex items-center gap-3 rounded-card p-4 text-[13px] leading-snug text-text-2',
         TONE[tone].fill,
         className,
       )}
     >
-      {/* The icon box is exactly one line tall (leading-snug = 1.375em), so the glyph centers on the FIRST
-          line and holds there when the copy wraps, instead of drifting with the block's height. */}
-      <span className="flex h-[1.375em] shrink-0 items-center">
-        <img src={TONE[tone].icon} alt="" aria-hidden draggable={false} style={{ width: size, height: size }} />
-      </span>
+      <img
+        src={TONE[tone].icon}
+        alt=""
+        aria-hidden
+        draggable={false}
+        className="shrink-0"
+        style={{ width: size, height: size }}
+      />
       <div className="min-w-0 flex-1">{children}</div>
     </div>
   )
