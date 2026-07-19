@@ -154,7 +154,7 @@ function RangeScreen() {
   const navigate = useNavigate()
   const { track } = useActivePlay()
 
-  const [tierIdx, setTierIdx] = useState(DEFAULT_TIER_IDX) // knob index into the payout-tier ladder
+  const [tierIdx, setTierIdx] = useLocalStorage('pips_range_tier', DEFAULT_TIER_IDX) // knob index into the payout-tier ladder, persisted so it survives leaving and returning
   // One persistent stake shared with Lucky + the home wheel (same ladder), so it stays put across nav.
   const [stakeIdx, setStakeIdx] = useLocalStorage(STAKE_KEY, 2)
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null) // the player's pick, by symbol
@@ -496,7 +496,7 @@ function RangeScreen() {
     },
     [track],
   )
-  useRestoreOpenPlay({
+  const { restorePending } = useRestoreOpenPlay({
     game: 'range',
     active: phase !== 'idle',
     onRestore: restoreOpenPlay,
@@ -514,7 +514,8 @@ function RangeScreen() {
 
   const doPlay = useCallback(async () => {
     // Idle only: a finished round must be dismissed (CONTINUE) before replaying, never straight from the result.
-    if (phase !== 'idle') return
+    // restorePending holds the first tap after a cold refresh until restore resolves, so it never opens a second round.
+    if (phase !== 'idle' || restorePending) return
     if (playsPaused) {
       toast.error('Plays paused while we top up. Back in a moment.', { id: 'paused' })
       return
@@ -575,7 +576,7 @@ function RangeScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, stake, asset, halfLivePct, spot, idleMult, model, tierView.tier, playsPaused, track])
+  }, [phase, canPlay, stake, asset, halfLivePct, spot, idleMult, model, tierView.tier, playsPaused, track, restorePending])
 
   // Trade confirmation (opt-in, off by default): PLAY arms, CONFIRM places; the sheet shows the odds +
   // payout the second press will lock. Off, press() places immediately.

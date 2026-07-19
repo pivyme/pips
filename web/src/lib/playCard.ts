@@ -388,7 +388,8 @@ export async function sharePlayCard(play: PlayDTO, opts?: PlayCardOpts): Promise
   const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean }
   if (typeof nav.share === 'function' && nav.canShare?.({ files: [file] })) {
     try {
-      await nav.share({ files: [file], title: 'My PIPS play' })
+      // Files only, no title: a title alongside files makes iOS/Safari share the image twice.
+      await nav.share({ files: [file] })
       return
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return // user dismissed the sheet

@@ -122,8 +122,9 @@ export default function ConsoleCanvas({
   // Real DOM overlays for the 5 physical buttons, positioned over their projected canvas rects. iOS Safari only grants its native Taptic tick to a genuine tap on a real switch element
   // (never script-triggered, closed in 26.5), and these buttons are raycast-picked canvas pixels with no DOM element under the finger otherwise. See overlayPressRef below + the JSX at the bottom.
   const btnOverlayRefs = useRef<Array<HTMLInputElement | null>>([null, null, null, null, null])
-  // Invisible anchor the tour spotlights the play-amount dial through (the knob is raycast-only, no DOM overlay). Positioned by projectButtonOverlay.
-  const knobAnchorRef = useRef<HTMLDivElement>(null)
+  // Invisible anchors the tour spotlights the two dials through (raycast-only, no DOM overlay). Positioned by projectButtonOverlay.
+  const knobAnchorRef = useRef<HTMLDivElement>(null) // the big game roller
+  const amountAnchorRef = useRef<HTMLDivElement>(null) // the stake drum
   const overlayPressRef = useRef<((bi: number) => void) | null>(null)
 
   // Fresh per render so the scene's input handlers never read a stale binding.
@@ -2099,37 +2100,42 @@ export default function ConsoleCanvas({
         el.style.height = `${maxY - minY}px`
       }
 
-      // Play-amount dial tour anchor: project the knob pocket the same way, so the tour can spotlight it.
-      const kEl = knobAnchorRef.current
-      if (kEl) {
-        const kcx = wx(knobPocket.px)
-        const kcy = wy(knobPocket.py)
-        const khw = knobPocket.w / 2
-        const khh = knobPocket.h / 2
-        const kCorners: Array<[number, number]> = [
-          [kcx - khw, kcy - khh],
-          [kcx + khw, kcy - khh],
-          [kcx + khw, kcy + khh],
-          [kcx - khw, kcy + khh],
+      // Dial tour anchors: project each pocket's front face the same way, so the tour can spotlight them.
+      const projectPocket = (
+        el: HTMLDivElement | null,
+        pk: { px: number; py: number; w: number; h: number },
+      ) => {
+        if (!el) return
+        const cx = wx(pk.px)
+        const cy = wy(pk.py)
+        const hw = pk.w / 2
+        const hh = pk.h / 2
+        const corners: Array<[number, number]> = [
+          [cx - hw, cy - hh],
+          [cx + hw, cy - hh],
+          [cx + hw, cy + hh],
+          [cx - hw, cy + hh],
         ]
-        let kMinX = Infinity,
-          kMinY = Infinity,
-          kMaxX = -Infinity,
-          kMaxY = -Infinity
-        for (const [cxw, cyw] of kCorners) {
+        let minX = Infinity,
+          minY = Infinity,
+          maxX = -Infinity,
+          maxY = -Infinity
+        for (const [cxw, cyw] of corners) {
           const n = screenScratch.set(cxw, cyw, 0.2).applyMatrix4(device.matrixWorld).project(camera)
           const x = (n.x * 0.5 + 0.5) * viewW
           const y = (-n.y * 0.5 + 0.5) * viewH
-          if (x < kMinX) kMinX = x
-          if (x > kMaxX) kMaxX = x
-          if (y < kMinY) kMinY = y
-          if (y > kMaxY) kMaxY = y
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
         }
-        kEl.style.left = `${kMinX}px`
-        kEl.style.top = `${kMinY}px`
-        kEl.style.width = `${kMaxX - kMinX}px`
-        kEl.style.height = `${kMaxY - kMinY}px`
+        el.style.left = `${minX}px`
+        el.style.top = `${minY}px`
+        el.style.width = `${maxX - minX}px`
+        el.style.height = `${maxY - minY}px`
       }
+      projectPocket(knobAnchorRef.current, knobPocket) // the big game roller
+      projectPocket(amountAnchorRef.current, numberWheelPocket) // the stake drum
     }
 
     // Measure the live content's vertical overflow and fold it into screenFitScale so a too-tall screen (the hub stack on a short aperture) shrinks to fit instead of clipping its lower rows. Measured at the width-only scale, then re-applied; cheap and rare, resize + structural changes only.
@@ -3241,6 +3247,12 @@ export default function ConsoleCanvas({
           <div
             ref={knobAnchorRef}
             data-tour-anchor="knob"
+            aria-hidden="true"
+            style={{ position: 'absolute', left: 0, top: 0, width: 0, height: 0, pointerEvents: 'none' }}
+          />
+          <div
+            ref={amountAnchorRef}
+            data-tour-anchor="amount"
             aria-hidden="true"
             style={{ position: 'absolute', left: 0, top: 0, width: 0, height: 0, pointerEvents: 'none' }}
           />

@@ -98,6 +98,8 @@ function LuckyScreen() {
   const [overlay, setOverlay] = useState<Overlay>('none')
   // Entry/target overlays hold off for a beat after the reels lock, so they land on the chart as the payoff, not the instant the round opens.
   const [revealOverlays, setRevealOverlays] = useState(false)
+  // A round rehydrated from the chain (hub return / hard refresh) never spun, so it skips the reel-commit beep and big-wheel morph and lands straight on the dealt strip, matching a settled fresh round.
+  const [restored, setRestored] = useState(false)
   // Exact oracle settlement price at the buzzer; pins the frozen chart onto the true result. Null until the settlement tx lands.
   const [lockPrice, setLockPrice] = useState<string | null>(null)
   // Live on-target read off the 60fps chart line: whether the price currently sits past the target in the dealt direction.
@@ -292,12 +294,14 @@ function LuckyScreen() {
         maxPayout: p.maxPayout,
         status: p.status,
       })
+      setRestored(true)
+      setRevealOverlays(true) // reveal the dealt strip + chart overlays at once; there was no spin to lead into them
       setPhase('open')
       track({ id: p.id, game: 'lucky' })
     },
     [track],
   )
-  useRestoreOpenPlay({ game: 'lucky', active: phase !== 'idle', onRestore: restoreOpenPlay })
+  const { restorePending } = useRestoreOpenPlay({ game: 'lucky', active: phase !== 'idle', onRestore: restoreOpenPlay })
 
   // Bed rides the whole round: fades in as reels deal, out the moment the phase leaves the live window.
   // finishResult also cuts it so the sting lands over silence. Bright + bouncy, the counterpart to Range's tension.
@@ -326,12 +330,14 @@ function LuckyScreen() {
   // TARGET lands on the chart as the payoff. Resets the instant we leave a round so the next spin replays clean.
   useEffect(() => {
     if (showReadouts && lp?.asset) {
+      if (restored) return // rehydrated round: already revealed, no spin to commit
       slotPick() // the slot commits: a short ascending confirm under the lock-in
       const reveal = setTimeout(() => setRevealOverlays(true), LOCKIN_MS)
       return () => clearTimeout(reveal)
     }
     setRevealOverlays(false)
-  }, [showReadouts, lp?.asset])
+    setRestored(false)
+  }, [showReadouts, lp?.asset, restored])
 
   // Live on-target verdict off the 60fps eased chart price (the backend mark is neutral during an open round),
   // so "if it ends now" swings with the line like Range's in/out. Tracks right up to the buzzer (Lucky has no seal
@@ -362,7 +368,8 @@ function LuckyScreen() {
 
   const doPlay = useCallback(async () => {
     // Idle only: a finished round must be dismissed (CONTINUE) before spinning again, never straight from the result.
-    if (phase !== 'idle') return
+    // restorePending holds the first tap after a cold refresh until we know whether a live round is being restored, so it never opens a second.
+    if (phase !== 'idle' || restorePending) return
     if (playsPaused) {
       toast.error('Plays paused while we top up. Back in a moment.', { id: 'paused' })
       return
@@ -411,7 +418,7 @@ function LuckyScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, bet, playsPaused, track])
+  }, [phase, canPlay, bet, playsPaused, track, restorePending])
 
   // Trade confirmation (opt-in, off by default): SPIN arms, CONFIRM places; the reel deals the
   // asset/side/multiplier so the sheet only guards the stake commitment. Off, press() short-circuits straight to doPlay().

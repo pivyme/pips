@@ -307,7 +307,7 @@ function MoonshotScreen() {
     },
     [track],
   )
-  useRestoreOpenPlay({ game: 'moonshot', active: phase !== 'idle', onRestore: restoreOpenPlay })
+  const { restorePending } = useRestoreOpenPlay({ game: 'moonshot', active: phase !== 'idle', onRestore: restoreOpenPlay })
 
   // The bed rides the active window (placing -> open) and cuts the moment it resolves so the sting lands clean. Tense + punchy, the ignition counterpart to Lucky's funk and Range's dark techno.
   const bedPlaying = phase === 'placing' || phase === 'open'
@@ -343,7 +343,8 @@ function MoonshotScreen() {
   }, [liveHold, strike, playSide])
 
   const doPlay = useCallback(async () => {
-    if (phase !== 'idle') return
+    // restorePending holds the first tap after a cold refresh until restore resolves, so it never opens a second round.
+    if (phase !== 'idle' || restorePending) return
     if (playsPaused) {
       toast.error('Plays paused while we top up. Back in a moment.', { id: 'paused' })
       return
@@ -377,7 +378,7 @@ function MoonshotScreen() {
       toastError(e)
       setPhase('idle')
     }
-  }, [phase, canPlay, stake, asset, side, reach, playsPaused, track])
+  }, [phase, canPlay, stake, asset, side, reach, playsPaused, track, restorePending])
 
   // Trade confirmation (opt-in, off by default): when on, PLAY arms first and CONFIRM places (the sheet shows the aimed side/reach); off, press() places immediately.
   const confirm = useTradeConfirm(

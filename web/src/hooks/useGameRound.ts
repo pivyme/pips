@@ -239,6 +239,10 @@ export function useRestoreOpenPlay({
     restoredRef.current = true
     onRestoreRef.current(match)
   }, [plays, active, game])
+
+  // True until the first open-plays fetch settles. On a cold refresh the screen is momentarily idle before
+  // restore lands, so callers gate PLAY on this to avoid opening a second round on top of a live one.
+  return { restorePending: openQ.isLoading && !restoredRef.current }
 }
 
 export function usePhaseElapsed(active: boolean, intervalMs = 100): number {

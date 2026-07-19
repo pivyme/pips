@@ -135,7 +135,7 @@ function RangeV2Screen() {
   const qc = useQueryClient()
   const navigate = useNavigate()
 
-  const [tierIdx, setTierIdx] = useState(DEFAULT_TIER_IDX) // knob index into the payout-tier ladder
+  const [tierIdx, setTierIdx] = useLocalStorage('pips_rv2_tier', DEFAULT_TIER_IDX) // knob index into the payout-tier ladder, persisted so it survives leaving and returning
   const [stakeIdx, setStakeIdx] = useLocalStorage(STAKE_KEY, 2)
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null)
   const [positions, setPositions] = useState<Position[]>([])

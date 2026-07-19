@@ -20,7 +20,7 @@ import { haptic } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 
-type AnchorName = 'screen' | 'play' | 'knob' | 'menu'
+type AnchorName = 'screen' | 'play' | 'amount' | 'knob' | 'menu'
 
 interface Step {
   anchor: AnchorName | null // null = the finale (no spotlight, the device opens up)
@@ -29,40 +29,50 @@ interface Step {
   body: string // one quiet line
   pad: number // spotlight inset around the anchor rect
   radius: number // spotlight corner radius (big = pill for round buttons)
+  growBottom?: number // extra bottom inset, as a fraction of the anchor height (to cover a label under it)
 }
 
 const STEPS: Step[] = [
   {
     anchor: 'screen',
-    tag: 'The display',
-    title: 'This is your table',
-    body: 'Live price, your play, your result. All right here.',
+    tag: 'The screen',
+    title: 'Everything happens here',
+    body: 'Live price, your play, your result. All on this screen.',
     pad: 6,
     radius: 24,
   },
   {
     anchor: 'play',
-    tag: 'Main action',
-    title: 'Hit to fire a play',
-    body: 'One button. That is the whole game.',
+    tag: 'Main button',
+    title: 'This fires your play',
+    body: 'The big one. Tap it to play.',
+    pad: 14,
+    radius: 26,
+  },
+  {
+    anchor: 'amount',
+    tag: 'Play amount',
+    title: 'Set your stake',
+    body: 'Roll this to size how much each play costs.',
     pad: 12,
-    radius: 999,
+    radius: 18,
   },
   {
     anchor: 'knob',
     tag: 'The dial',
-    title: 'Your play amount',
-    body: 'Spin the dial in a game to size each play.',
+    title: 'Your game control',
+    body: 'Leverage, target, zone. It changes per game.',
     pad: 12,
-    radius: 22,
+    radius: 20,
   },
   {
     anchor: 'menu',
-    tag: 'The drawer',
+    tag: 'The menu',
     title: 'Everything else is here',
     body: 'Stats, history, cash out, customize.',
-    pad: 10,
-    radius: 16,
+    pad: 14,
+    radius: 20,
+    growBottom: 1.6, // reach down over the MENU label under the button
   },
   {
     anchor: null,
@@ -235,15 +245,16 @@ function TourOverlay({ onClose }: { onClose: () => void }) {
           x: rect.left - step.pad,
           y: rect.top - step.pad,
           w: rect.width + step.pad * 2,
-          h: rect.height + step.pad * 2,
+          h: rect.height + step.pad * 2 + (step.growBottom ?? 0) * rect.height,
         }
       : { x: vp.w / 2 - 60, y: vp.h / 2 - 60, w: 120, h: 120 }
   const rx = Math.min(step.radius, spot.w / 2, spot.h / 2)
 
   const travel = reduced ? { duration: 0 } : { duration: 0.55, ease: EASE }
-  // Caption lives on the clear half: below the spotlight when it sits high (the display), above it when
-  // it sits low (the controls). Kept in a fixed band so it stays put while the light moves.
-  const placeBelow = spot.y + spot.h / 2 < vp.h * 0.5
+  // Caption hugs the spotlight on whichever side has more clearance, so it stays close to the highlighted
+  // control instead of leaping to a far fixed band. Screen sits high so it lands below; controls sit low
+  // so it lands just above them.
+  const placeBelow = vp.h - (spot.y + spot.h) >= spot.y
 
   return (
     <motion.div
@@ -300,6 +311,7 @@ function TourOverlay({ onClose }: { onClose: () => void }) {
         index={i}
         total={STEPS.length}
         placeBelow={placeBelow}
+        spot={spot}
         finale={finale}
         vp={vp}
         reduced={reduced}
@@ -316,6 +328,7 @@ function Caption({
   index,
   total,
   placeBelow,
+  spot,
   finale,
   vp,
   reduced,
@@ -327,6 +340,7 @@ function Caption({
   index: number
   total: number
   placeBelow: boolean
+  spot: { x: number; y: number; w: number; h: number }
   finale: boolean
   vp: { w: number; h: number }
   reduced: boolean
@@ -343,12 +357,15 @@ function Caption({
   const W = Math.min(360, vp.w - 24)
   const left = (vp.w - W) / 2
   const band = Math.max(20, vp.h * 0.06)
-  // Finale sits centered-low over the fully-revealed device; other beats band opposite the spotlight.
+  const gap = 18
+  // Finale sits centered-low over the fully-revealed device. Otherwise the card sits just off the
+  // spotlight (below it when it's high, above it when it's low), clamped to stay on screen.
   const top = finale
     ? Math.min(vp.h * 0.6, vp.h - h - band)
-    : placeBelow
-      ? vp.h - h - band
-      : band
+    : Math.max(
+        band,
+        Math.min(placeBelow ? spot.y + spot.h + gap : spot.y - h - gap, vp.h - h - band),
+      )
 
   const slot = (n: number) => String(n).padStart(2, '0')
 
