@@ -353,6 +353,9 @@ function HistoryRow({ play }: { play: PlayDTO }) {
   const positive = play.status === 'won' || (play.status === 'cashed_out' && pnl > 0)
   const label = play.status === 'won' ? 'Won' : play.status === 'cashed_out' ? 'Cashed' : 'Lost'
   const { asset, line } = headOf(play)
+  // Headline is total payout (stake + profit), matching the in-game result pops. Fall back to cost + pnl
+  // for any legacy row missing the stored payout.
+  const total = play.payout ?? String(parseFloat(play.entryValue ?? '0') + pnl)
 
   return (
     <div className="surface-skeuo rounded-card">
@@ -384,8 +387,8 @@ function HistoryRow({ play }: { play: PlayDTO }) {
           <div className="flex shrink-0 items-start gap-2">
             <div className="text-right">
               <div className={cnm('text-[11px] font-bold uppercase tracking-wide', positive ? 'text-up' : 'text-down')}>{label}</div>
-              <div className={cnm('tnum text-[17px] font-extrabold leading-tight', pnl >= 0 ? 'text-up' : 'text-down')}>
-                {pnl >= 0 ? '+' : '-'}${money(play.pnl, true)}
+              <div className={cnm('tnum text-[17px] font-extrabold leading-tight', positive ? 'text-up' : 'text-down')}>
+                {positive ? '+' : ''}${money(total, true)}
               </div>
               <div className="mt-0.5 text-[11px] text-text-3">{timeAgo(play.settledAt ?? play.openedAt)}</div>
             </div>
