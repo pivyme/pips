@@ -70,6 +70,9 @@ export const AUTH_MODE: AuthMode = process.env.PIPS_AUTH_MODE === 'privy' ? 'pri
 // re-point of the testnet path: same code, its own deploy record.
 export const SUI_NETWORK: string = process.env.SUI_NETWORK || 'testnet';
 export const SUI_FULLNODE_URL: string = process.env.SUI_FULLNODE_URL || '';
+// PIPS's optional, stateless on-chain attribution package. Empty keeps mint PTBs byte-for-byte
+// unchanged, so deployment and runtime rollout are deliberately separate decisions.
+export const PIPS_LOGGER_PACKAGE_ID: string = process.env.PIPS_LOGGER_PACKAGE_ID?.trim() ?? '';
 // GraphQL endpoint for historical queries (events / tx-history) gRPC v2 can't serve. Override with SUI_GRAPHQL_URL.
 const DEFAULT_GRAPHQL_URL: Record<string, string> = {
   mainnet: 'https://graphql.mainnet.sui.io/graphql',
@@ -358,4 +361,3 @@ export const ERROR_LOG_CLEANUP_INTERVAL: string = '0 * * * *'; // Every hour
 // depends on the table, this is pure housekeeping.
 export const DEPOSIT_CLEANUP_CRON: string = process.env.PIPS_DEPOSIT_CLEANUP_CRON || '17 * * * *'; // hourly, off the 0 slot
 export const DEPOSIT_STALE_HOURS: number = Number(process.env.PIPS_DEPOSIT_STALE_HOURS) || 24;
-

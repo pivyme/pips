@@ -1,0 +1,8 @@
+[package]
+name = "pips_logger"
+edition = "2024.beta"
+
+[dependencies]
+
+[addresses]
+pips_logger = "0x0"

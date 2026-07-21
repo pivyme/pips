@@ -6,6 +6,7 @@ import { bcs } from '@mysten/sui/bcs';
 
 import { suiClient, graphqlClient, grpcErrorText } from './client.ts';
 import { DUSDC_TYPE } from './config.ts';
+import { buildLogPlay, type PlayAttribution } from './logger.ts';
 import {
   REAL_ACCOUNT_PACKAGE,
   REAL_ACCOUNT_REGISTRY_ID,
@@ -381,6 +382,8 @@ export type MintPlayParams = {
   // The deposit tops the wrapper to the full stake and the mint consumes ~net, so >= rake is always left to withdraw; rakeRaw = 0 (or no revenueAddress) is a clean no-op.
   rakeRaw?: bigint;
   revenueAddress?: string;
+  // Optional PIPS activity tag. It has no object inputs and is emitted in this same mint PTB.
+  attribution?: PlayAttribution;
 };
 
 // Assembles the whole mint play into one PTB: [create wrapper] -> [deposit shortfall] -> load Pricer -> mint. A first-ever play threads the freshly new'd wrapper by-ref through deposit + mint and shares it last (a same-PTB shared object can't be re-referenced by id once shared); a returning play passes the existing wrapper by id.
@@ -421,6 +424,8 @@ export function buildMintPlay(tx: Transaction, p: MintPlayParams): void {
     const coin = buildWithdrawFunds(tx, wrapper, buildAuth(tx), p.rakeRaw);
     tx.transferObjects([coin], tx.pure.address(p.revenueAddress));
   }
+
+  if (p.attribution) buildLogPlay(tx, p.attribution);
 
   if (!p.wrapperExists) {
     tx.moveCall({ target: realTarget(REAL_ACCOUNT_PACKAGE, 'account', 'share'), arguments: [wrapper] });

@@ -26,6 +26,7 @@ import {
   resolveWrapper,
 } from '../lib/sui/predict-real.ts';
 import { rakeOf, revenueAddress } from '../lib/sui/house.ts';
+import { LOGGER_ENABLED } from '../lib/sui/logger.ts';
 import { alert } from '../lib/alert.ts';
 import { checkPlayAllowed, recordPlay, clearPlay } from '../lib/sui/play-safety.ts';
 import { executeForUser, executeRealSettle, userContext } from '../lib/sui/execute.ts';
@@ -252,6 +253,8 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
         // House rake: withdrawn from the wrapper after the mint and sent to revenue (no-op at rake 0).
         rakeRaw,
         revenueAddress: rakeRaw > 0n ? revenueAddress : undefined,
+        // v1 deliberately leaves referrerId empty. It is a future opaque tag, never a wallet address.
+        attribution: LOGGER_ENABLED ? { player: acct.address, game: cur.game, playId, market: cur.marketId } : undefined,
       });
 
       try {
