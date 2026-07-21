@@ -1,6 +1,6 @@
 # PIPS Contracts (Sui Move)
 
-> **Status: one live package, four references.** `pips_logger/` is PIPS's small, stateless attribution package, published independently to tag a real Predict mint in the same transaction. The vendored Predict stack below remains reference-only: PIPS trades Mysten's official DeepBook Predict on testnet/mainnet and does not publish or run that stack.
+> **Status: one deployable PIPS package, four references.** `pips_logger/` is PIPS's small, stateless attribution package, published independently to tag a real Predict mint in the same transaction. The vendored Predict stack below remains reference-only: PIPS trades Mysten's official DeepBook Predict on testnet/mainnet and does not publish or run that stack.
 
 On-chain logic for PIPS. This is the third pillar of the monorepo alongside `web/` and `backend/`.
 
@@ -21,8 +21,8 @@ contracts/
 ├── token/      # the deepbook governance token dep
 ├── deepbook/   # vendored DeepBook v3 core (links predict)
 ├── predict/    # our copy of packages/predict (the markets, vault, oracles)
-└── dusdc/      # our own freely-mintable DUSDC (the quote asset / vault seed)
-└── pips_logger/ # live, stateless PIPS attribution event package
+├── dusdc/      # our own freely-mintable DUSDC (the quote asset / vault seed)
+└── pips_logger/ # deployable, stateless PIPS attribution event package
 ```
 
 `predict` links `deepbook` by local path, `deepbook` links `token`. They publish leaf-first (`token` -> `deepbook` -> `predict`) because unpublished deps cannot all share `0x0`. The whole bootstrap is automated, see "How they get deployed" below, you rarely build a package by hand.

@@ -46,7 +46,18 @@ module pips_logger::activity {
     }
 
     #[test]
-    fun record_emits_without_state_or_context() {
+    fun record_emits_one_complete_user_event() {
+        assert!(event::num_events() == 0, 10);
         record(@0xa11ce, b"range".to_string(), b"play_456".to_string(), @0xb0b, b"".to_string());
+        assert!(event::num_events() == 1, 11);
+        let mut emitted = event::events_by_type<Played>();
+        assert!(vector::length(&emitted) == 1, 12);
+        let played = vector::pop_back(&mut emitted);
+        assert!(played.version == VERSION, 13);
+        assert!(played.player == @0xa11ce, 14);
+        assert!(played.game == b"range".to_string(), 15);
+        assert!(played.play_id == b"play_456".to_string(), 16);
+        assert!(played.market == @0xb0b, 17);
+        assert!(played.referrer_id == b"".to_string(), 18);
     }
 }

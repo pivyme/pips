@@ -165,7 +165,7 @@ export function proofCsv(proof: VolumeProof): string {
   return `${header}\n${rows.join('\n')}\n`;
 }
 
-export async function reconcileProofWithDb(proof: VolumeProof): Promise<void> {
+export async function reconcileProofWithDb(proof: VolumeProof, closeClient = false): Promise<void> {
   const { prismaQuery } = await import('../src/lib/prisma.ts');
   try {
     const ids = proof.plays.map((play) => play.playId);
@@ -186,7 +186,7 @@ export async function reconcileProofWithDb(proof: VolumeProof): Promise<void> {
       }
     }
   } finally {
-    await prismaQuery.$disconnect();
+    if (closeClient) await prismaQuery.$disconnect();
   }
 }
 
@@ -216,7 +216,7 @@ if (import.meta.main) {
   const csvArg = process.argv.find((arg) => arg.startsWith('--csv='));
   const reconcile = process.argv.includes('--reconcile-db');
   const proof = await scanPipsVolume();
-  if (reconcile) await reconcileProofWithDb(proof);
+  if (reconcile) await reconcileProofWithDb(proof, true);
   const csvPath = resolve(process.cwd(), csvArg?.slice('--csv='.length) || 'pips-volume-proof.csv');
   mkdirSync(dirname(csvPath), { recursive: true });
   writeFileSync(csvPath, proofCsv(proof));

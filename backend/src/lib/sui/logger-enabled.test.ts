@@ -51,7 +51,9 @@ describe('PIPS logger command composition', () => {
     const shareIndex = commands.findIndex((command) => command.$kind === 'MoveCall' && command.MoveCall.module === 'account' && command.MoveCall.function === 'share');
     expect(loggerIndex).toBeGreaterThan(mintIndex);
     expect(loggerIndex).toBeLessThan(shareIndex);
-    const call = commands[loggerIndex]!.MoveCall;
+    const loggerCommand = commands[loggerIndex];
+    if (!loggerCommand || loggerCommand.$kind !== 'MoveCall') throw new Error('logger command missing');
+    const call = loggerCommand.MoveCall;
     expect(`${call.package}::${call.module}::${call.function}`).toBe(`${normalizeSuiAddress(PACKAGE)}::activity::record`);
   });
 });
