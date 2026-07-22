@@ -390,6 +390,16 @@ function load(): DemoState {
         for (const [from, to] of [['first_play', 'first_try'], ['all_games', 'market_hopper']]) {
           if (parsed.unlocked[from] && !parsed.unlocked[to]) parsed.unlocked[to] = parsed.unlocked[from]
         }
+        // Seeded losses saved before the seed carried real multipliers sit at 1x, which kills the
+        // missed-profit reveal (-100% card). Re-stamp them from the current seed in place.
+        for (const p of parsed.history) {
+          if (p.status !== 'lost' || p.multiplier > 1 || !p.id.startsWith('demo-seed-')) continue
+          const seed = SEED_PLAYS[Number(p.id.slice('demo-seed-'.length))]
+          if (!seed?.mult) continue
+          p.multiplier = seed.mult
+          p.maxPayout = str(parseFloat(p.stake) * seed.mult)
+          if ('multiplier' in p.params) p.params.multiplier = seed.mult
+        }
         hydrateOpen(parsed._open, parsed._ctx) // re-attach any live round left riding at the last save
         delete parsed._open
         delete parsed._ctx
