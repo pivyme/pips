@@ -148,6 +148,17 @@ const setsEqual = (a: Set<string>, b: Set<string>): boolean => {
   return true
 }
 
+// On-chain settle verdict for a range band, from the frozen settlement price (`lockPrice`). Range is 1x, so the
+// result is a pure function of that price: win iff it lands in `(lower, upper]`. Returns null within 1% of a bound,
+// where the display-unit bounds can differ from the on-chain tick boundary by up to a tick, so we hold neutral and
+// let the authoritative terminal frame resolve it instead of risking a green->red flip.
+const settleVerdict = (lock: number, lower: number, upper: number): 'won' | 'lost' | null => {
+  const margin = (upper - lower) * 0.01
+  if (lock > lower + margin && lock <= upper - margin) return 'won'
+  if (lock < lower - margin || lock > upper + margin) return 'lost'
+  return null
+}
+
 // Digit-easing readouts so a knob tier change or mark drift eases the number instead of hard-swapping.
 const MultFlow = ({ value }: { value: number }) => (
   <NumberFlow value={value} suffix="x" format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }} />
@@ -321,14 +332,11 @@ function RangeScreen() {
       if (p > 0) {
         for (const pos of positionsRef.current) {
           if (!pos.band || !(pos.status === 'open' || pos.status === 'pending')) continue
-          if (pos.expiry != null && nowT >= pos.expiry) {
-            // Cutoff passed: the settle price is locked, so FREEZE the in/out verdict at its last live read (keeps the
-            // footer counting a win instead of flashing "all out"), but drop it from `tracked` so no new cross fires.
-            if (prevIn.has(pos.key)) next.add(pos.key)
-          } else {
-            tracked.add(pos.key)
-            if (p > pos.band.lower && p <= pos.band.upper) next.add(pos.key)
-          }
+          // Past the cutoff the verdict comes from the on-chain lock price (the bands + chips read it), never the
+          // display line, so drop the position here rather than freezing a display-derived in/out that can lie.
+          if (pos.expiry != null && nowT >= pos.expiry) continue
+          tracked.add(pos.key)
+          if (p > pos.band.lower && p <= pos.band.upper) next.add(pos.key)
         }
       }
       let entered = false
@@ -404,6 +412,7 @@ function RangeScreen() {
                 payout: final.payout ?? p.payout,
                 maxPayout: final.maxPayout ?? p.maxPayout,
                 multiplier: final.multiplier || p.multiplier,
+                lockPrice: final.settlePrice ?? p.lockPrice, // keep the settle pin alive if the snapshot never landed before resolve
                 band:
                   final.market.lower != null && final.market.upper != null
                     ? { lower: parseFloat(final.market.lower), upper: parseFloat(final.market.upper) }
@@ -610,14 +619,13 @@ function RangeScreen() {
     // lingering on the chart for the result-hold window (the chip + wave splash carry the verdict now).
     .filter((p) => p.band && p.asset === asset && isLive(p) && p.status !== 'placing')
     .map((p) => {
-      // Past the cutoff the settle price is locked and a 1x range is deterministic, so reveal the verdict from the
-      // frozen in-zone read (same source as the footer) instead of a neutral wait; the band then clears at resolution.
+      // Verdict from the on-chain lock price (the exact value the redeem settles against), never the display line,
+      // so a band can't flash green when the oracle actually settled outside it. Until the lock price lands (a beat
+      // after the buzzer) we keep it 'live' so the chart rides its neutral SETTLING phase instead of guessing.
       const cutoffPassed = p.expiry != null && nowMs >= p.expiry
-      const state: 'live' | 'won' | 'lost' = cutoffPassed
-        ? inZoneKeys.has(p.key)
-          ? 'won'
-          : 'lost'
-        : 'live'
+      const lock = p.lockPrice ? parseFloat(p.lockPrice) : null
+      const state: 'live' | 'won' | 'lost' =
+        (cutoffPassed && lock != null ? settleVerdict(lock, p.band!.lower, p.band!.upper) : null) ?? 'live'
       return {
         lower: p.band!.lower,
         upper: p.band!.upper,
@@ -631,12 +639,22 @@ function RangeScreen() {
     .filter((p) => isLive(p) && p.asset === asset && p.entrySpot != null && p.openedAt != null)
     .map((p) => ({ t: p.openedAt!, p: p.entrySpot! }))
   const showAim = canPlay && !atMax && spot != null
+  // Round's over (something buzzed, nothing still counting down): freeze the leading line, then once the chain's
+  // settle price is known ease the tip onto it so the dot lands exactly where it settled, matching the verdict.
+  const buzzed = positions.filter((p) => p.asset === asset && p.expiry != null && nowMs >= p.expiry)
+  const stillCounting = positions.some((p) => isLive(p) && p.expiry != null && nowMs < p.expiry)
+  const roundOver = buzzed.length > 0 && !stillCounting
+  const settleLock = roundOver
+    ? buzzed.filter((p) => p.lockPrice).sort((a, b) => b.expiry! - a.expiry!)[0]?.lockPrice
+    : undefined
+  const settlePx = settleLock ? parseFloat(settleLock) : null
   const overlays =
-    positionBands.length || showAim
+    positionBands.length || showAim || roundOver
       ? {
           bands: positionBands.length ? positionBands : undefined,
           markers: entryMarkers.length ? entryMarkers : undefined,
           aim: showAim ? { pct: aimHalfPct, tag: `NEXT ${fmtMult(idleMult)}` } : undefined,
+          settle: settlePx != null && settlePx > 0 ? settlePx : undefined,
         }
       : undefined
 
@@ -785,6 +803,7 @@ function RangeScreen() {
                   livePriceRef={livePriceRef}
                   geometryRef={geometryRef}
                   onPrice={(p) => setSpot(p)}
+                  frozen={roundOver}
                   className="absolute inset-0"
                 />
                 {/* Social crowd: fake other-players riding the line so the round never reads dead. Cosmetic,
@@ -807,27 +826,30 @@ function RangeScreen() {
                     <span
                       className={cnm(
                         'inline-flex items-center border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.1em]',
-                        inZoneCount > 0 && inZoneCount === openPos.length
-                          ? 'border-up bg-up/20 text-up' // every zone lit: the jackpot-armed state
-                          : inZoneCount > 0
-                            ? 'border-up/60 text-up'
-                            : 'border-down/60 text-down',
+                        settlingWave
+                          ? 'animate-pulse border-line-strong text-text-2' // cutoff hit: settling on chain, no live in/out to show
+                          : inZoneCount > 0 && inZoneCount === openPos.length
+                            ? 'border-up bg-up/20 text-up' // every zone lit: the jackpot-armed state
+                            : inZoneCount > 0
+                              ? 'border-up/60 text-up'
+                              : 'border-down/60 text-down',
                       )}
                     >
-                      {inZoneCount > 0 ? `${inZoneCount}/${openPos.length} in zone` : 'All out'}
+                      {settlingWave ? 'Settling' : inZoneCount > 0 ? `${inZoneCount}/${openPos.length} in zone` : 'All out'}
                     </span>
                   </div>
-                  {/* Settle-if-now: rolls as zones light up. Green when a band is paying, dim at $0 (hold to the cutoff). */}
+                  {/* Settle-if-now: rolls as zones light up. Once the cutoff hits it's out of our hands, so it drops
+                      the live collect for a neutral "settling" readout (the up-to total) rather than a stale number. */}
                   <div
                     className={cnm(
                       'tnum mt-0.5 origin-left text-[40px] font-extrabold leading-none',
-                      collectNow > 0 ? 'text-up' : 'text-text-2',
+                      !settlingWave && collectNow > 0 ? 'text-up' : 'text-text-2',
                     )}
                   >
-                    <UsdFlow value={collectNow} />
+                    <UsdFlow value={settlingWave ? totalToWin : collectNow} />
                   </div>
                   <div className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-text-3">
-                    If the cutoff hit now
+                    {settlingWave ? 'Settling on chain' : 'If the cutoff hit now'}
                   </div>
                   <div className="mt-1.5 grid grid-cols-2 gap-x-3">
                     <Cell label="To win" value={<UsdFlow value={totalToWin} />} />
@@ -992,8 +1014,11 @@ function PositionChip({
   const won = resolved && p.won
   const lost = resolved && !p.won
   const live = isLive(p) && p.status !== 'placing'
-  // Cutoff passed, verdict pending: the settle price is locked, so the chip stops reacting to the line and pulses neutral.
+  // Cutoff passed: the chip stops reacting to the display line and reads the on-chain lock price. null = the settle
+  // price hasn't landed yet, so it pulses neutral instead of guessing a green/red off the drifting line.
   const settling = live && p.expiry != null && nowMs >= p.expiry
+  const lock = settling && p.lockPrice ? parseFloat(p.lockPrice) : null
+  const verdict = lock != null && p.band ? settleVerdict(lock, p.band.lower, p.band.upper) : null
   const payout = num(p.maxPayout) || p.stake * p.multiplier
   const label =
     p.status === 'placing'
@@ -1021,9 +1046,11 @@ function PositionChip({
             : lost
               ? 'border-down text-down opacity-70'
               : settling
-                ? inZone
-                  ? 'animate-pulse border-up bg-up/20 text-up' // cutoff passed, frozen winning: pulse green
-                  : 'animate-pulse border-down bg-down/10 text-down' // frozen losing: pulse red
+                ? verdict == null
+                  ? 'animate-pulse border-line-strong text-text-2' // cutoff passed, awaiting (or too close to call) the chain's settle price: neutral
+                  : verdict === 'won'
+                    ? 'animate-pulse border-up bg-up/20 text-up' // on-chain lock landed inside the band: pulse green
+                    : 'animate-pulse border-down bg-down/10 text-down' // on-chain lock outside: pulse red
                 : inZone
                   ? 'border-up bg-up/20 text-up'
                   : 'border-down/70 text-down',

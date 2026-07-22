@@ -2,7 +2,7 @@
 // Privy's hooks must live inside PrivyProvider, so this file owns the provider and a headless bridge feeding the auth context (lib/auth.tsx) via AuthControlContext.
 
 import { useCallback, useEffect, useRef } from 'react'
-import { PrivyProvider, useLogin, usePrivy } from '@privy-io/react-auth'
+import { PrivyProvider, useLogin, useModalStatus, usePrivy } from '@privy-io/react-auth'
 import { toSolanaWalletConnectors } from '@privy-io/react-auth/solana'
 
 import { env } from '@/env'
@@ -43,6 +43,15 @@ function PrivyBridge() {
     onError: (error) =>
       settleLogin(new Error(error === 'exited_auth_flow' ? 'login_cancelled' : String(error))),
   })
+
+  // If the login modal closes with a request still pending and no session (Privy didn't fire onError,
+  // e.g. an abandoned OAuth hop), settle it as a cancel so the door never hangs on "Starting...".
+  const { isOpen: modalOpen } = useModalStatus()
+  const wasModalOpen = useRef(false)
+  useEffect(() => {
+    if (wasModalOpen.current && !modalOpen && !authenticated) settleLogin(new Error('login_cancelled'))
+    wasModalOpen.current = modalOpen
+  }, [modalOpen, authenticated, settleLogin])
 
   // Expose Privy's login/logout so the auth context's signIn/signOut can drive them.
   useEffect(() => {

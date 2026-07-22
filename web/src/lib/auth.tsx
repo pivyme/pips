@@ -206,7 +206,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // privy: the bridge owns the Privy login modal + the verify handshake.
     if (privyControl.current) {
       move('loading')
-      await privyControl.current.signIn()
+      try {
+        await privyControl.current.signIn()
+      } catch (e) {
+        // Modal dismissed or login failed before a session landed: never strand the door on 'loading'
+        // (the bridge owns the post-auth verify error path). Re-throw so the caller classifies cancel vs real.
+        move('anon')
+        throw e
+      }
     }
   }, [apply, devLogin, move, status])
 
