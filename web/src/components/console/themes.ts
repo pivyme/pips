@@ -195,11 +195,13 @@ export const THEMES: ConsoleTheme[] = [
     cardSub: 'rgba(40,44,52,0.5)',
   },
   {
+    // Pressed-flower art: wisteria vines trailing the top corners into a full bloom cluster bottom-right, recolored onto the tosca mint body.
     id: 'mint',
     code: '224',
     name: 'Wisteria',
     body: '#c2e9d3',
     back: '#a9dcc1',
+    skin: '/assets/wisteria-skin.png',
     knob: '#8587ef',
     main: '#8587ef',
     action: '#5fbcee',
@@ -209,6 +211,7 @@ export const THEMES: ConsoleTheme[] = [
     cardBg: '#c2e9d3',
     cardInk: '#6f72e8',
     cardSub: 'rgba(20,72,50,0.6)',
+    cardImage: '/assets/wisteria-skin.png', // cover-crop lands on a clean petal-tipped corner of the art
   },
   {
     id: 'carbon',
