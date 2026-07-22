@@ -1,11 +1,13 @@
-// Renders a single play to a 16:9 PNG "P&L card" for sharing, offscreen on a canvas, then hands it to the
-// native share sheet (download fallback). The frame is the real template art (pnl-card-template.svg): the amber
-// device body, the recessed black screen, the PIPS logo badge, and the website badge, drawn pixel-for-pixel.
-// All the play's numbers render INSIDE that black screen in the Teenage Engineering instrument language:
-// true black, mono uppercase micro-labels over big bold tabular numbers, one tone accent (green win / red loss).
+// Renders a single play to a 16:9 PNG "PnL card" for sharing, offscreen on a canvas, then hands it to the
+// native share sheet (download fallback). The frame is the real template art (pnl-card-template-{win,lose}.webp,
+// flat rasters so mobile decode is cheap): the amber device body, the recessed black screen, the PIPS logo badge,
+// and the website badge, drawn pixel-for-pixel. All the play's numbers render INSIDE that black screen in the
+// Teenage Engineering instrument language: true black, mono uppercase micro-labels over big bold tabular
+// numbers, one tone accent (green win / red loss).
 import type { LuckyParams, PlayDTO, RangeParams } from '@/lib/api'
+import { loadCardFonts, loadImage } from '@/lib/cardAssets'
 
-// Render options. The dollar P&L is private for a lot of people, so it's opt-in (default off); the ROI %
+// Render options. The dollar PnL is private for a lot of people, so it's opt-in (default off); the ROI %
 // (no absolute amount) always shows.
 export type PlayCardOpts = { showPnl?: boolean }
 
@@ -60,9 +62,10 @@ export interface PlayCardModel {
   positive: boolean // drives the direction arrow (up on a gain, down on a loss)
   result: string // WON | LOST | CASHED OUT
   badge: string // "13x LONG"
-  roi: string // "+1,150%"
+  hero: string // the giant number: ROI ("+1,150%"), or the missed profit on a full loss ("$11.65")
+  heroSub?: string // "MISSED PROFIT" under the giant on a full loss (a -100% ROI says nothing)
   netPnl: string // "+$12.34"
-  showPnl: boolean // render the dollar P&L block
+  showPnl: boolean // render the dollar PnL block
   duration: string // "30S"
   game: string // "LUCKY"
   settled: string // "Jul 18, 2026"
@@ -79,7 +82,7 @@ function price(s?: string): string {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: d })}`
 }
 
-// Signed dollar amount, always 2dp: "+$12.34", "-$4.00". Used for stake, payout, and net P&L.
+// Signed dollar amount, always 2dp: "+$12.34", "-$4.00". Used for stake, payout, and net PnL.
 function usd(s?: string, signed = false): string {
   const n = parseFloat(s ?? '')
   if (!Number.isFinite(n)) return '—'
@@ -131,13 +134,18 @@ export function buildPlayCard(play: PlayDTO, opts?: PlayCardOpts): PlayCardModel
       { label: play.settlePrice ? 'SETTLE' : 'TARGET', value: price(closed) },
     ]
   }
+  // A full loss is always exactly -100%, which says nothing. Lead with the payout that got away.
+  const missed = cost * play.multiplier - cost
+  const lostWithMissed = play.status === 'lost' && Number.isFinite(missed) && missed > 0
+
   return {
     asset,
     tone,
     positive,
     result,
     badge,
-    roi: roiLabel(pnl, cost),
+    hero: lostWithMissed ? usd(String(missed)) : roiLabel(pnl, cost),
+    heroSub: lostWithMissed ? 'MISSED PROFIT' : undefined,
     netPnl: usd(play.pnl, true),
     showPnl: opts?.showPnl ?? false,
     duration: `${play.params.duration}S`,
@@ -145,15 +153,6 @@ export function buildPlayCard(play: PlayDTO, opts?: PlayCardOpts): PlayCardModel
     settled: fmtDate(play.settledAt ?? play.openedAt),
     cells,
   }
-}
-
-function loadImage(src: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => resolve(null)
-    img.src = src
-  })
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -226,25 +225,14 @@ export async function renderPlayCard(play: PlayDTO, opts?: PlayCardOpts): Promis
   const ctx = canvas.getContext('2d')
   if (!ctx) return null
 
-  if (typeof document !== 'undefined' && document.fonts) {
-    try {
-      await Promise.all([
-        document.fonts.load('800 170px "Gabarito Variable"'),
-        document.fonts.load('700 40px "Gabarito Variable"'),
-        document.fonts.load(`700 26px ${MONO}`),
-      ])
-      await document.fonts.ready
-    } catch {
-      // fall through with the system faces
-    }
-  }
+  await loadCardFonts(['800 170px "Gabarito Variable"', '700 40px "Gabarito Variable"', `700 26px ${MONO}`])
 
   const m = buildPlayCard(play, opts)
   const tone = m.tone === 'win' ? C.up : C.down
 
   // ── The frame: the real template art, pixel-for-pixel (amber body + black screen + tone emblem + badges).
   //    Win and loss have their own template, picked by the play's outcome. ──
-  const template = await loadImage(`/assets/pnl-card-template-${m.tone === 'win' ? 'win' : 'lose'}.svg`)
+  const template = await loadImage(`/assets/pnl-card-template-${m.tone === 'win' ? 'win' : 'lose'}.webp`)
   if (template) ctx.drawImage(template, 0, 0, W, H)
   else {
     ctx.fillStyle = '#000'
@@ -319,7 +307,7 @@ export async function renderPlayCard(play: PlayDTO, opts?: PlayCardOpts): Promis
 
   hairline(ctx, RX0, LEFTMAX, 236)
 
-  // ── The hero: result (with the optional net P&L inline) over the giant ROI ──
+  // ── The hero: result (with the optional net PnL inline) over the giant ROI ──
   const resultY = 314
   triangle(ctx, CL + 15, resultY - 8, 15, m.positive, tone)
   ctx.textAlign = 'left'
@@ -341,15 +329,20 @@ export async function renderPlayCard(play: PlayDTO, opts?: PlayCardOpts): Promis
     ctx.fillText(m.netPnl, px, resultY + 3)
   }
 
-  // Giant ROI, shrunk to fit the left column so it never runs into the mascot.
+  // Giant hero (ROI, or missed profit on a loss), shrunk to fit the left column so it never runs into the mascot.
   let roiFont = 168
   ctx.font = `800 ${roiFont}px ${FONT}`
-  while (ctx.measureText(m.roi).width > LEFTMAX - CL && roiFont > 96) {
+  while (ctx.measureText(m.hero).width > LEFTMAX - CL && roiFont > 96) {
     roiFont -= 4
     ctx.font = `800 ${roiFont}px ${FONT}`
   }
   ctx.fillStyle = tone
-  ctx.fillText(m.roi, CL - 4, 486)
+  ctx.fillText(m.hero, CL - 4, 486)
+  if (m.heroSub) {
+    ctx.fillStyle = C.ink3
+    ctx.font = `700 26px ${MONO}`
+    tracked(ctx, m.heroSub, CL, 540, 0.14, 26)
+  }
 
   hairline(ctx, RX0, LEFTMAX, 568)
 

@@ -31,7 +31,7 @@ export function StatsCard({
   avatarUrl?: string | null
   // The linked (server-verified) X account, or null. When set, an X pill sits under the handle.
   twitter?: { username: string } | null
-  // Whether Net P&L is on the card (dollar P&L is private for some). Defaults on.
+  // Whether Net PnL is on the card (dollar PnL is private for some). Defaults on.
   showNetPnl?: boolean
   // The player's global-board standing, drives the rank chip. Omitted/null = no chip.
   rank?: RankStanding | null

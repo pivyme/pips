@@ -42,7 +42,17 @@ function DeadDevice({ code, tone }: { code: string; tone: Tone }) {
           </span>
         </div>
 
-        {/* The trace: a live jagged run that snaps to a dead flatline. */}
+        {/* The fault code, big and watermarked, sits behind the trace. */}
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <span
+            className="tnum font-black leading-none text-white/[0.16]"
+            style={{ fontSize: 'clamp(88px, 30vw, 132px)', textShadow: '0 0 30px rgba(0,0,0,0.55)' }}
+          >
+            {code}
+          </span>
+        </div>
+
+        {/* The trace: a live jagged run that snaps to a dead flatline, drawn full-opacity on top. */}
         <svg
           viewBox="0 0 320 160"
           fill="none"
@@ -71,16 +81,6 @@ function DeadDevice({ code, tone }: { code: string; tone: Tone }) {
           />
           <circle cx={160} cy={92} r={3.5} fill={dead} className="animate-pulse" />
         </svg>
-
-        {/* The fault code, big and watermarked so the trace reads through it. */}
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <span
-            className="tnum font-black leading-none text-white/[0.16]"
-            style={{ fontSize: 'clamp(88px, 30vw, 132px)', textShadow: '0 0 30px rgba(0,0,0,0.55)' }}
-          >
-            {code}
-          </span>
-        </div>
 
         {/* Screen vignette to sell the glass. */}
         <div

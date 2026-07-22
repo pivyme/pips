@@ -57,6 +57,7 @@ export type EnsureUserParams = {
   privyWalletId?: string | null;
   twitter?: { username: string; subject: string; name: string | null } | null;
   referralCode?: string | null;
+  tzOffsetMin?: number | null;
 };
 
 // provisionUser/ensureUser report whether they just handed out starting chips, so the client can pop the
@@ -65,7 +66,9 @@ export type ProvisionResult = { user: User; granted: number | null };
 
 // Idempotent onboarding for the address-keyed modes (dev / privy). Safe to call on every login.
 export async function ensureUser(params: EnsureUserParams): Promise<ProvisionResult> {
-  const { address, provider, email, privyUserId, suiPublicKey, privyWalletId, twitter, referralCode } = params;
+  const { address, provider, email, privyUserId, suiPublicKey, privyWalletId, twitter, referralCode, tzOffsetMin } = params;
+  // Refreshed every login (never nulled when the client omits it); localizes the time-based achievements.
+  const tzField = tzOffsetMin != null ? { tzOffsetMin } : {};
 
   // Only write the privy identity fields when present, so a dev login never nulls them. Unlinking X
   // goes through POST /auth/link/refresh (which writes an explicit null), not here.
@@ -82,7 +85,7 @@ export async function ensureUser(params: EnsureUserParams): Promise<ProvisionRes
 
   const user = await prismaQuery.user.upsert({
     where: { address },
-    update: { provider, lastSignIn: new Date(), ...(email ? { email } : {}), ...privyFields },
+    update: { provider, lastSignIn: new Date(), ...(email ? { email } : {}), ...privyFields, ...tzField },
     create: {
       address,
       provider,
@@ -90,6 +93,7 @@ export async function ensureUser(params: EnsureUserParams): Promise<ProvisionRes
       email: email ?? null,
       lastSignIn: new Date(),
       ...privyFields,
+      ...tzField,
       ...(referrer ? { referredById: referrer.id, referredAt: new Date() } : {}),
     },
   });
@@ -99,8 +103,9 @@ export async function ensureUser(params: EnsureUserParams): Promise<ProvisionRes
 
 // Idempotent onboarding for wallet-connect (custodial play-wallet model), keyed by the connected external wallet (walletAuthAddress).
 // First sign-in mints a server-held custodial play wallet whose Sui address becomes user.address; the connected wallet itself never signs a transaction here.
-export async function ensureWalletUser(walletAuthAddress: string, referralCode?: string | null): Promise<ProvisionResult> {
+export async function ensureWalletUser(walletAuthAddress: string, referralCode?: string | null, tzOffsetMin?: number | null): Promise<ProvisionResult> {
   const authAddr = normalizeSuiAddress(walletAuthAddress);
+  const tzField = tzOffsetMin != null ? { tzOffsetMin } : {};
   let user = await prismaQuery.user.findUnique({ where: { walletAuthAddress: authAddr } });
   if (!user) {
     const wallet = generateCustodialWallet();
@@ -113,11 +118,12 @@ export async function ensureWalletUser(walletAuthAddress: string, referralCode?:
         walletAuthAddress: authAddr,
         playWalletSecret: wallet.encryptedSecret,
         lastSignIn: new Date(),
+        ...tzField,
         ...(referrer ? { referredById: referrer.id, referredAt: new Date() } : {}),
       },
     });
   } else {
-    user = await prismaQuery.user.update({ where: { id: user.id }, data: { lastSignIn: new Date() } });
+    user = await prismaQuery.user.update({ where: { id: user.id }, data: { lastSignIn: new Date(), ...tzField } });
   }
   return provisionUser(user);
 }

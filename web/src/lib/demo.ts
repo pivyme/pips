@@ -126,15 +126,29 @@ const SETTLE_HOLD_MS = 900 // the SETTLING beat: hold at the buzzer ~1s before t
 // snapshots it here too and serves it as lockPrice, the value shown at lock is exactly what settles.
 const LOCK_LEAD_MS = 5000
 
+// Mirrors the canonical catalog (lib/achievements.ts + backend services/achievements.ts): same slugs,
+// same copy, same thresholds, so demo unlocks behave exactly like the real product's.
 const CATALOG = [
-  { slug: 'first_play', name: 'First Play', description: 'Make your first play.', illo: 'bolt', metric: 'games_played', threshold: 1 },
-  { slug: 'first_win', name: "Beginner's Luck", description: 'Win your first play.', illo: 'trophy', metric: 'wins', threshold: 1 },
-  { slug: 'win_streak_5', name: 'On Fire', description: 'Win 5 plays in a row.', illo: 'flame', metric: 'win_streak', threshold: 5 },
-  { slug: 'big_multiplier', name: 'Moonshot', description: 'Cash out a 25x or higher.', illo: 'up', metric: 'big_multiplier', threshold: 25 },
-  { slug: 'volume_1000', name: 'High Roller', description: 'Trade $1,000 in total volume.', illo: 'gem', metric: 'volume', threshold: 1000 },
-  { slug: 'all_games', name: 'Sampler', description: 'Play two different games.', illo: 'dice', metric: 'distinct_games', threshold: 2 },
-  { slug: 'cashout_10', name: 'Quick Hands', description: 'Cash out 10 winning plays.', illo: 'coin', metric: 'cashouts', threshold: 10 },
-  { slug: 'comeback', name: 'Comeback', description: 'Win a play right after a loss.', illo: 'medal', metric: 'comeback', threshold: 1 },
+  { slug: 'first_try', name: 'First Try', description: 'Complete your first play.', illo: 'bolt', metric: 'games_played', threshold: 1 },
+  { slug: 'getting_warm', name: 'Getting Warm', description: 'Play 3 times.', illo: 'flame', metric: 'games_played', threshold: 3 },
+  { slug: 'high_five', name: 'High Five', description: 'Play 5 times.', illo: 'up', metric: 'games_played', threshold: 5 },
+  { slug: 'ten_club', name: 'Ten Club', description: 'Win 10 plays.', illo: 'trophy', metric: 'wins', threshold: 10 },
+  { slug: 'tiny_bet', name: 'Tiny Play', description: 'Make a play of $2 or less.', illo: 'coin', metric: 'tiny_stake', threshold: 1 },
+  { slug: 'back_again', name: 'Back Again', description: 'Play 2 days in a row.', illo: 'medal', metric: 'day_streak', threshold: 2 },
+  { slug: 'daily_play', name: 'Daily Play', description: 'Complete 5 plays in one day.', illo: 'bolt', metric: 'plays_in_day', threshold: 5 },
+  { slug: 'night_shift', name: 'Night Shift', description: 'Play after 10 PM.', illo: 'gem', metric: 'night_plays', threshold: 1 },
+  { slug: 'early_signal', name: 'Early Signal', description: 'Play before 9 AM.', illo: 'up', metric: 'early_plays', threshold: 1 },
+  { slug: 'first_win', name: 'First Win', description: 'Win your first play.', illo: 'trophy', metric: 'wins', threshold: 1 },
+  { slug: 'close_call', name: 'Close Call', description: 'Finish a play with a tiny margin.', illo: 'flame', metric: 'close_call', threshold: 1 },
+  { slug: 'quick_tap', name: 'Quick Tap', description: 'Cash out within 30 seconds of opening a play.', illo: 'coin', metric: 'fast_cashout', threshold: 1 },
+  { slug: 'calm_click', name: 'Calm Click', description: 'Hold 3 plays to the buzzer and win.', illo: 'medal', metric: 'settled_wins', threshold: 3 },
+  { slug: 'double_play', name: 'Double Play', description: 'Complete 2 plays within 10 minutes.', illo: 'dice', metric: 'double_play', threshold: 1 },
+  { slug: 'mini_streak', name: 'Mini Streak', description: 'Win 2 plays in a row.', illo: 'flame', metric: 'win_streak', threshold: 2 },
+  { slug: 'market_hopper', name: 'Sampler', description: 'Play two different games.', illo: 'dice', metric: 'distinct_games', threshold: 2 },
+  { slug: 'dollar_rookie', name: 'Dollar Rookie', description: 'Play a total of $25.', illo: 'gem', metric: 'volume', threshold: 25 },
+  { slug: 'bigger_move', name: 'Bigger Move', description: 'Play a total of $100.', illo: 'gem', metric: 'volume', threshold: 100 },
+  { slug: 'comeback', name: 'Comeback', description: 'Win after your previous play was a loss.', illo: 'medal', metric: 'comeback', threshold: 1 },
+  { slug: 'pips_regular', name: 'PIPS Regular', description: 'Complete 10 total plays.', illo: 'bolt', metric: 'games_played', threshold: 10 },
 ] as const
 
 // === Price engine ===
@@ -247,7 +261,34 @@ interface Counters {
   lastWasLoss: boolean
   firstPlayAt: string
   favoriteGame: Game
+  // Achievement trackers (mirror the backend's evaluateMetrics conditions).
+  settledWins: number // held to the buzzer and won
+  tinyStake: boolean // one play of $2 or less
+  fastCashout: boolean // cashed out within 30s of opening
+  closeCall: boolean // settled within 1bp of the deciding line
+  doublePlay: boolean // two plays opened within 10 minutes
+  nightPlay: boolean // opened 10 PM-5 AM local
+  earlyPlay: boolean // opened 5-9 AM local
+  playsByDay: Record<string, number> // local day key -> plays that day (daily_play + back_again)
+  lastOpenedMs: number
 }
+
+// New-tracker defaults, spread under a saved state in load() so an old demo record backfills additively
+// instead of getting wiped by a version bump.
+const COUNTER_DEFAULTS = {
+  settledWins: 0,
+  tinyStake: false,
+  fastCashout: false,
+  closeCall: false,
+  doublePlay: false,
+  nightPlay: false,
+  earlyPlay: false,
+  playsByDay: {} as Record<string, number>,
+  lastOpenedMs: 0,
+}
+
+// Local calendar-day key; demo runs fully client-side, so the real local clock is the truth.
+const dayKey = (t: number): number => Math.floor((t - new Date(t).getTimezoneOffset() * 60_000) / 86_400_000)
 
 interface DemoState {
   v: number
@@ -290,6 +331,7 @@ const ctx = new Map<string, MarkCtx>()
 
 function freshState(): DemoState {
   const now = nowMs()
+  const today = dayKey(now)
   const counters: Counters = {
     gamesPlayed: 47,
     wins: 29,
@@ -305,6 +347,12 @@ function freshState(): DemoState {
     lastWasLoss: false,
     firstPlayAt: new Date(now - 34 * 86_400_000).toISOString(),
     favoriteGame: 'lucky',
+    ...COUNTER_DEFAULTS,
+    // A played-in record unlocks most of the grid; tiny_bet / close_call / night_shift / early_signal stay locked to chase.
+    settledWins: 18,
+    fastCashout: true,
+    doublePlay: true,
+    playsByDay: { [today - 2]: 6, [today - 1]: 4, [today]: 3 },
   }
   const past = (mins: number): string => new Date(now - mins * 60_000).toISOString()
   const history = SEED_PLAYS.map((s, i) => buildSeedPlay(s, i, past))
@@ -337,6 +385,11 @@ function load(): DemoState {
         // Additive settings backfill: a state saved before a new toggle existed lacks the key, default
         // it in place rather than bumping the version and wiping the demo record.
         if (parsed.settings.confirmTrades == null) parsed.settings.confirmTrades = false
+        parsed.counters = { ...COUNTER_DEFAULTS, ...parsed.counters }
+        // Carry unlocks saved under the retired catalog's slugs onto their identical-condition successors.
+        for (const [from, to] of [['first_play', 'first_try'], ['all_games', 'market_hopper']]) {
+          if (parsed.unlocked[from] && !parsed.unlocked[to]) parsed.unlocked[to] = parsed.unlocked[from]
+        }
         hydrateOpen(parsed._open, parsed._ctx) // re-attach any live round left riding at the last save
         delete parsed._open
         delete parsed._ctx
@@ -468,29 +521,19 @@ const rangeTierHalfPct = (p: number): number => -Math.log(1 - p) * 0.6 * Math.sq
 const rangeTierProb = (tier: number): number =>
   RANGE_TIER_PROBS[Math.max(0, Math.min(RANGE_TIER_PROBS.length - 1, Math.round(tier)))]
 
-function meets(metric: string, threshold: number, c: Counters): boolean {
-  switch (metric) {
-    case 'games_played':
-      return c.gamesPlayed >= threshold
-    case 'wins':
-      return c.wins >= threshold
-    case 'win_streak':
-      return c.maxStreak >= threshold
-    case 'big_multiplier':
-      return c.maxMultiplierCashed >= threshold
-    case 'volume':
-      return c.totalVolume >= threshold
-    case 'distinct_games':
-      return c.distinctGames.length >= threshold
-    case 'cashouts':
-      return c.cashouts >= threshold
-    case 'comeback':
-      return c.comebackDone
-    default:
-      return false
+// Longest run of consecutive local days with at least one play.
+function longestDayStreak(playsByDay: Record<string, number>): number {
+  const days = Object.keys(playsByDay).map(Number).sort((a, b) => a - b)
+  let best = days.length > 0 ? 1 : 0
+  let run = best
+  for (let i = 1; i < days.length; i++) {
+    run = days[i] === days[i - 1] + 1 ? run + 1 : 1
+    if (run > best) best = run
   }
+  return best
 }
 
+// One value per metric key (matches the backend's evaluateMetrics); meets/progress both read it.
 function metricValue(metric: string, c: Counters): number {
   switch (metric) {
     case 'games_played':
@@ -499,19 +542,37 @@ function metricValue(metric: string, c: Counters): number {
       return c.wins
     case 'win_streak':
       return c.maxStreak
-    case 'big_multiplier':
-      return Math.round(c.maxMultiplierCashed)
     case 'volume':
-      return Math.round(c.totalVolume)
+      return Math.floor(c.totalVolume)
     case 'distinct_games':
       return c.distinctGames.length
-    case 'cashouts':
-      return c.cashouts
+    case 'settled_wins':
+      return c.settledWins
+    case 'tiny_stake':
+      return c.tinyStake ? 1 : 0
+    case 'fast_cashout':
+      return c.fastCashout ? 1 : 0
+    case 'close_call':
+      return c.closeCall ? 1 : 0
+    case 'double_play':
+      return c.doublePlay ? 1 : 0
+    case 'night_plays':
+      return c.nightPlay ? 1 : 0
+    case 'early_plays':
+      return c.earlyPlay ? 1 : 0
+    case 'plays_in_day':
+      return Object.values(c.playsByDay).reduce((mx, n) => Math.max(mx, n), 0)
+    case 'day_streak':
+      return longestDayStreak(c.playsByDay)
     case 'comeback':
       return c.comebackDone ? 1 : 0
     default:
       return 0
   }
+}
+
+function meets(metric: string, threshold: number, c: Counters): boolean {
+  return metricValue(metric, c) >= threshold
 }
 
 // Record any freshly-earned achievements; return the slugs that flipped this call (for toasts).
@@ -603,6 +664,15 @@ function closePlay(id: string, mode: 'cashout' | 'settle'): { play: PlayDTO; unl
     k.lastWasLoss = true
   }
 
+  // Achievement trackers (same conditions as the backend's evaluateMetrics).
+  if (status === 'won') k.settledWins += 1
+  if (status === 'cashed_out' && nowMs() - c.openedMs <= 30_000) k.fastCashout = true
+  if (mode === 'settle') {
+    // Close Call: settled within 1bp of the deciding line (binary target, or a range bound).
+    const lines = [c.target, c.lower, c.upper].filter((v): v is number => v != null && v > 0)
+    if (lines.length > 0 && Math.min(...lines.map((l) => Math.abs(settlePx - l))) / settlePx < 1e-4) k.closeCall = true
+  }
+
   state.history.unshift(p)
   if (state.history.length > 40) state.history.length = 40
   const unlocked = evaluateUnlocks()
@@ -618,9 +688,21 @@ function ensureBalance(stake: number): void {
 }
 
 function registerOpen(p: PlayDTO, c: MarkCtx): void {
-  state.counters.gamesPlayed += 1
-  state.counters.totalVolume += c.stake
-  if (!state.counters.distinctGames.includes(c.game)) state.counters.distinctGames.push(c.game)
+  const k = state.counters
+  k.gamesPlayed += 1
+  k.totalVolume += c.stake
+  if (!k.distinctGames.includes(c.game)) k.distinctGames.push(c.game)
+
+  // Achievement trackers (same conditions as the backend's evaluateMetrics).
+  if (c.stake <= 2) k.tinyStake = true
+  if (k.lastOpenedMs > 0 && c.openedMs - k.lastOpenedMs <= 10 * 60_000) k.doublePlay = true
+  k.lastOpenedMs = c.openedMs
+  const hour = new Date(c.openedMs).getHours()
+  if (hour >= 22 || hour < 5) k.nightPlay = true
+  else if (hour < 9) k.earlyPlay = true
+  const d = dayKey(c.openedMs)
+  k.playsByDay[d] = (k.playsByDay[d] ?? 0) + 1
+
   state.balance -= c.stake
   byId.set(p.id, p)
   openList.unshift(p)

@@ -16,6 +16,9 @@ import { ensureUser, ensureWalletUser, provisionUser, mintToken, toUserDTO } fro
 // A Sui address that is shaped right (0x + hex) and valid once normalized.
 const isAddress = (a: string): boolean => /^0x[0-9a-fA-F]+$/.test(a) && isValidSuiAddress(normalizeSuiAddress(a));
 
+// Client-reported getTimezoneOffset() minutes, clamped to real-world offsets (UTC-14..UTC+12); junk -> null.
+const tzOf = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) && Math.abs(v) <= 840 ? v : null);
+
 // One exit for a failed sign-in: classifies a wiped test chain (isChainUnavailableError) into a stable
 // CHAIN_UNAVAILABLE code so the door shows the "refreshing, try demo" sheet; prod strips error details, so the code (not the message) has to carry the meaning. Anything else keeps the caller's own code.
 const failSignIn = (reply: FastifyReply, error: unknown, code: string, message: string): Promise<FastifyReply> =>
@@ -31,9 +34,9 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   // dev mode: auto-login the operator wallet. The backend is the user and signs its plays.
   app.post('/dev', authLimit, async (request: FastifyRequest, reply: FastifyReply) => {
     if (AUTH_MODE !== 'dev') return handleNotFoundError(reply, 'Route');
-    const body = (request.body ?? {}) as { referralCode?: string };
+    const body = (request.body ?? {}) as { referralCode?: string; tz?: number };
     try {
-      const { user, granted } = await ensureUser({ address: operatorAddress, provider: 'dev', referralCode: body.referralCode });
+      const { user, granted } = await ensureUser({ address: operatorAddress, provider: 'dev', referralCode: body.referralCode, tzOffsetMin: tzOf(body.tz) });
       return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user), grant: granted ?? undefined } });
     } catch (error) {
       return failSignIn(reply, error, 'AUTH_DEV_FAILED', 'Could not sign in');
@@ -44,7 +47,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   // server-owned embedded Sui wallet keyed to the Privy user (so the server signs every play with no popup), onboard by that address, and mint our JWT.
   app.post('/privy/verify', authLimit, async (request: FastifyRequest, reply: FastifyReply) => {
     if (AUTH_MODE !== 'privy') return handleNotFoundError(reply, 'Route');
-    const body = (request.body ?? {}) as { token?: string; email?: string; referralCode?: string };
+    const body = (request.body ?? {}) as { token?: string; email?: string; referralCode?: string; tz?: number };
     const valid = await validateRequiredFields(body as Record<string, unknown>, ['token'], reply);
     if (valid !== true) return;
 
@@ -70,6 +73,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
         privyWalletId: wallet.walletId,
         twitter: identity.twitter,
         referralCode: body.referralCode,
+        tzOffsetMin: tzOf(body.tz),
       });
       return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user), grant: granted ?? undefined } });
     } catch (error) {
@@ -91,7 +95,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   // wallet keyed by the connected wallet, onboard, and mint our JWT. The connected wallet is only the login identity; all on-chain play work runs through the custodial wallet.
   app.post('/wallet/verify', authLimit, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!WALLET_AUTH_ENABLED) return handleNotFoundError(reply, 'Route');
-    const body = (request.body ?? {}) as { address?: string; signature?: string; referralCode?: string };
+    const body = (request.body ?? {}) as { address?: string; signature?: string; referralCode?: string; tz?: number };
     const valid = await validateRequiredFields(body as Record<string, unknown>, ['address', 'signature'], reply);
     if (valid !== true) return;
     const address = String(body.address).trim();
@@ -101,7 +105,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     if (!ok) return handleError(reply, 401, 'Could not verify your wallet signature', 'WALLET_SIG_INVALID');
 
     try {
-      const { user, granted } = await ensureWalletUser(address, body.referralCode);
+      const { user, granted } = await ensureWalletUser(address, body.referralCode, tzOf(body.tz));
       return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user), grant: granted ?? undefined } });
     } catch (error) {
       return failSignIn(reply, error, 'AUTH_VERIFY_FAILED', 'Could not finish sign-in');

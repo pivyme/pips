@@ -391,13 +391,16 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
 
 // === Endpoints ===
 
+// getTimezoneOffset() minutes, sent with every login so the backend localizes time-based achievements (Night Shift etc).
+const tzMin = () => new Date().getTimezoneOffset()
+
 const realApi = {
   // auth. readRef() threads a stashed referral token into every login path; the backend only attributes
   // it on account creation (auth.ts ensureUser/ensureWalletUser), so it's a no-op for a returning user.
-  authDev: () => request<AuthResult>('POST', '/auth/dev', { referralCode: readRef() ?? undefined }),
-  authPrivyVerify: (input: PrivyVerifyInput) => request<AuthResult>('POST', '/auth/privy/verify', input),
+  authDev: () => request<AuthResult>('POST', '/auth/dev', { referralCode: readRef() ?? undefined, tz: tzMin() }),
+  authPrivyVerify: (input: PrivyVerifyInput) => request<AuthResult>('POST', '/auth/privy/verify', { ...input, tz: tzMin() }),
   authWalletNonce: (address: string) => request<{ message: string }>('POST', '/auth/wallet/nonce', { address }),
-  authWalletVerify: (input: WalletVerifyInput) => request<AuthResult>('POST', '/auth/wallet/verify', input),
+  authWalletVerify: (input: WalletVerifyInput) => request<AuthResult>('POST', '/auth/wallet/verify', { ...input, tz: tzMin() }),
   me: () => request<{ user: UserDTO }>('GET', '/auth/me'),
   // Re-provision a re-armed session in place (new PredictManager + chips), self-healing instead of forcing a full re-login.
   authHeal: () => request<{ user: UserDTO }>('POST', '/auth/heal'),

@@ -17,7 +17,7 @@ import { displayHandle } from '@/utils/format'
 
 // Share screen: a live preview of the exact card the PNG renders, one Share button, and a single knob.
 // The card auto-builds (best stat featured, your board rank chipped) so there's nothing to configure; the
-// only choice is whether to show your dollar P&L, which is private for some. Persists locally.
+// only choice is whether to show your dollar PnL, which is private for some. Persists locally.
 export const Route = createFileRoute('/_app/menu/share')({ component: ShareScreen })
 
 function ShareScreen() {
@@ -103,14 +103,14 @@ function ShareEditor({
       {/* The preview IS the exported PNG, so what you see is exactly what gets shared. */}
       <CardPreview stats={stats} displayName={displayName} avatarUrl={avatarUrl} twitter={twitter} showNetPnl={showNetPnl} rank={rank} />
 
-      {/* The one knob: dollar P&L is private for a lot of people. */}
+      {/* The one knob: dollar PnL is private for a lot of people. */}
       <div className="surface-skeuo flex items-center gap-3 rounded-card px-4 py-3.5">
         <div className="min-w-0 flex-1">
-          <div className="text-[15px] font-bold text-white">Show my P&L</div>
+          <div className="text-[15px] font-bold text-white">Show my PnL</div>
           <div className="mt-0.5 text-[12px] leading-snug text-text-3">Your net dollar profit on the card.</div>
         </div>
         <Switch
-          label="Show my P&L"
+          label="Show my PnL"
           isSelected={showNetPnl}
           onChange={(v) => {
             haptic('selection')
@@ -140,7 +140,7 @@ function ShareEditor({
 }
 
 // The preview IS the real exported PNG (the canvas in shareCard.ts), so it's pixel-identical to what gets
-// shared. Re-renders whenever an input changes (e.g. the P&L toggle).
+// shared. Re-renders whenever an input changes (e.g. the PnL toggle).
 function CardPreview({
   stats,
   displayName,

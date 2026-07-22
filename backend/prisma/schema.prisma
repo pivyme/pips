@@ -54,6 +54,8 @@ model User {
   referredBy       User?     @relation("Referrals", fields: [referredById], references: [id])
   referrals        User[]    @relation("Referrals")
 
+  tzOffsetMin      Int?                        // JS getTimezoneOffset() at last login; localizes time-based achievements (null = UTC)
+
   lastSignIn       DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt

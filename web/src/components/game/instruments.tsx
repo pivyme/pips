@@ -764,7 +764,7 @@ export function StatusBadge({
   )
 }
 
-export function PnlReadout({ hue = 'up', className, value = '+$18.42', label = 'LIVE P&L' }: VizProps & { value?: string; label?: string }) {
+export function PnlReadout({ hue = 'up', className, value = '+$18.42', label = 'LIVE PnL' }: VizProps & { value?: string; label?: string }) {
   return (
     <Svg className={className} fill>
       <Tag x={16} y={36}>
@@ -817,12 +817,12 @@ export function StatusStrip({ frozen, className }: VizProps) {
 }
 
 export function StatGrid({ className }: VizProps) {
-  // Four stats in the colored-numeral style: win rate, volume, leverage, P&L.
+  // Four stats in the colored-numeral style: win rate, volume, leverage, PnL.
   const cells: Array<{ n: string; hue: Hue; l: string }> = [
     { n: '62', hue: 'info', l: 'WIN %' },
     { n: '34', hue: 'up', l: 'VOL' },
     { n: '25', hue: 'white', l: 'LEV' },
-    { n: '18', hue: 'down', l: 'P&L' },
+    { n: '18', hue: 'down', l: 'PnL' },
   ]
   return (
     <Svg className={className} fill>
@@ -845,7 +845,7 @@ export function StatGrid({ className }: VizProps) {
 }
 
 export function OrderTicket({ hue = 'up', frozen, className }: VizProps) {
-  // The position at a glance: side, asset, leverage, entry, liquidation, live P&L.
+  // The position at a glance: side, asset, leverage, entry, liquidation, live PnL.
   const c = HUE[hue]
   return (
     <Svg className={className} fill>
@@ -874,7 +874,7 @@ export function OrderTicket({ hue = 'up', frozen, className }: VizProps) {
       </text>
       <line x1={14} y1={100} x2={226} y2={100} className="stroke-viz-line" strokeWidth={1} />
       <Tag x={14} y={134} hue="dim">
-        LIVE P&L
+        LIVE PnL
       </Tag>
       <text x={226} y={138} fontSize={26} textAnchor="end" className={frozen ? undefined : 'viz-pulse'} style={{ fill: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
         +$18.42

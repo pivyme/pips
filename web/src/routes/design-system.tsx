@@ -386,7 +386,7 @@ function DesignSystemPage() {
                 <Divider />
                 <StatRow
                   icon={CircleDollarSign}
-                  label="Net P&L"
+                  label="Net PnL"
                   value="+$184.20"
                   tone="up"
                 />
@@ -1105,11 +1105,11 @@ const LAB: Array<LabItem> = [
   { id: 'badge-flat', name: 'Status · flat', hint: 'No position, waiting.', cat: 'status', render: (f) => <StatusBadge state="flat" frozen={f} /> },
   { id: 'badge-placing', name: 'Status · placing', hint: 'Order going on-chain.', cat: 'status', render: (f) => <StatusBadge state="placing" frozen={f} /> },
   { id: 'badge-armed', name: 'Status · armed', hint: 'Ready to fire, amber.', cat: 'status', render: (f) => <StatusBadge state="armed" frozen={f} /> },
-  { id: 'pnl-up', name: 'P&L readout', hint: 'Giant live P&L with payout line.', cat: 'status', render: () => <PnlReadout hue="up" value="+$18.42" label="LIVE P&L" /> },
-  { id: 'pnl-down', name: 'P&L · loss', hint: 'Negative mark.', cat: 'status', render: () => <PnlReadout hue="down" value="-$6.10" label="LIVE P&L" /> },
-  { id: 'ticket', name: 'Order ticket', hint: 'Position at a glance: side, entry, liq, P&L.', cat: 'status', render: (f) => <OrderTicket hue="up" frozen={f} /> },
+  { id: 'pnl-up', name: 'PnL readout', hint: 'Giant live PnL with payout line.', cat: 'status', render: () => <PnlReadout hue="up" value="+$18.42" label="LIVE PnL" /> },
+  { id: 'pnl-down', name: 'PnL · loss', hint: 'Negative mark.', cat: 'status', render: () => <PnlReadout hue="down" value="-$6.10" label="LIVE PnL" /> },
+  { id: 'ticket', name: 'Order ticket', hint: 'Position at a glance: side, entry, liq, PnL.', cat: 'status', render: (f) => <OrderTicket hue="up" frozen={f} /> },
   { id: 'strip', name: 'Status strip', hint: 'Console sensor bar: network, balance, battery.', cat: 'status', render: (f) => <StatusStrip frozen={f} /> },
-  { id: 'statrow', name: 'Stat row', hint: 'Four colored stats: win, vol, lev, P&L.', cat: 'status', render: () => <StatGrid /> },
+  { id: 'statrow', name: 'Stat row', hint: 'Four colored stats: win, vol, lev, PnL.', cat: 'status', render: () => <StatGrid /> },
 
   // Schematic
   { id: 'flow', name: 'Play flow', hint: 'You → open → settle. Marching dashes.', cat: 'schematic', render: (f) => <PlayFlow hue="cyan" frozen={f} /> },

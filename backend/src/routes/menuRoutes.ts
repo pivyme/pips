@@ -48,11 +48,12 @@ export const menuRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
         prismaQuery.play.findMany({ where: { userId } }),
       ]);
       const unlockedAt = new Map(unlocked.map((u) => [u.achievementSlug, u.unlockedAt]));
-      const metrics = evaluateMetrics(await computeLedgerStats(userId, plays), plays);
+      const metrics = evaluateMetrics(await computeLedgerStats(userId, plays), plays, request.user!.tzOffsetMin);
 
       const achievements: AchievementDTO[] = catalog.map((a) => {
         const at = unlockedAt.get(a.slug);
-        const current = Math.min(metrics[a.metric] ?? 0, a.threshold);
+        // Floor so a fractional metric (volume) never renders as "13.77 / 25" in the progress bar.
+        const current = Math.min(Math.floor(metrics[a.metric] ?? 0), a.threshold);
         return {
           slug: a.slug,
           name: a.name,

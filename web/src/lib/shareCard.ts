@@ -4,8 +4,9 @@ import type { UserStatsDTO } from '@/lib/api'
 import type { CardTone, RankStanding } from '@/lib/playerCard'
 import { buildCardModel } from '@/lib/playerCard'
 import { avatarColor, avatarInitial } from '@/lib/avatar'
+import { loadCardFonts, loadImage, loadImageCors } from '@/lib/cardAssets'
 
-// Share render options: hide dollar P&L, and the leaderboard standing that drives the rank chip.
+// Share render options: hide dollar PnL, and the leaderboard standing that drives the rank chip.
 export type CardOpts = { showNetPnl?: boolean; rank?: RankStanding | null }
 // Who the card is for: handle, optional custom avatar, and the linked X account (drives the X pill).
 export type CardUser = { displayName: string; avatarUrl?: string | null; twitter?: { username: string } | null }
@@ -23,7 +24,7 @@ function drawXLogo(ctx: CanvasRenderingContext2D, x: number, y: number, size: nu
 }
 
 // 16:9 full-bleed share card, laid out like the DOM StatsCard: a thin amber bezel, a header strip (logo +
-// PLAYER CARD), then a recessed dark screen holding name/avatar, the hero + Net P&L, and the stats readout bar.
+// PLAYER CARD), then a recessed dark screen holding name/avatar, the hero + Net PnL, and the stats readout bar.
 const W = 1600
 const H = 900
 const FONT = '"Gabarito Variable", ui-sans-serif, system-ui, sans-serif'
@@ -46,15 +47,6 @@ const C = {
 // Mirror of toneText in StatsCard.tsx: gold featured, up/down signed, white neutral.
 const toneColor = (t: CardTone): string =>
   t === 'gold' ? C.brand400 : t === 'up' ? C.up : t === 'down' ? C.down : C.white
-
-function loadImage(src: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => resolve(null)
-    img.src = src
-  })
-}
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   ctx.beginPath()
@@ -92,19 +84,6 @@ function drawCover(
   ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h)
 }
 
-// Load a possibly cross-origin avatar so it can paint into the canvas without tainting it (toBlob would
-// throw on a tainted canvas). crossOrigin='anonymous' means a non-CORS host just fails the load instead
-// of tainting, so we cleanly fall back to the identicon.
-function loadImageCors(src: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => resolve(img)
-    img.onerror = () => resolve(null)
-    img.src = src
-  })
-}
-
 // Tracked uppercase micro-label (mirrors the DOM's uppercase tracking on labels).
 function tracked(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, em: number, size: number): void {
   ctx.letterSpacing = `${em * size}px`
@@ -121,17 +100,7 @@ export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: Car
 
   // Force the exact faces the canvas draws (handle = Gabarito, identicon = Open Runde) so nothing
   // renders in a system fallback at the wrong size.
-  if (typeof document !== 'undefined' && document.fonts) {
-    try {
-      await Promise.all([
-        document.fonts.load(`800 150px "Gabarito Variable"`),
-        document.fonts.load(`700 60px 'Open Runde'`),
-      ])
-      await document.fonts.ready
-    } catch {
-      // render with the fallback font
-    }
-  }
+  await loadCardFonts([`800 150px "Gabarito Variable"`, `700 60px 'Open Runde'`])
 
   ctx.textBaseline = 'alphabetic'
 
@@ -353,8 +322,8 @@ export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: Car
     ctx.textBaseline = 'alphabetic'
   }
 
-  // Middle: the hero (left) + Net P&L (right, when shown). Both values sit on ONE bottom line (like the DOM's
-  // items-end), and each label is tucked just above its OWN value, so a smaller Net P&L doesn't float.
+  // Middle: the hero (left) + Net PnL (right, when shown). Both values sit on ONE bottom line (like the DOM's
+  // items-end), and each label is tucked just above its OWN value, so a smaller Net PnL doesn't float.
   const nameBottom = user.twitter ? pillBottom : avCY + avR
   const bandTop = nameBottom
   const bandBottom = hasGrid ? rowY : sy + sh - 50

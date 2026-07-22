@@ -16,25 +16,29 @@ export type DisplayAchievement = CatalogAchievement & {
   progress?: AchievementDTO['progress']
 }
 
+// Copy here MUST match the backend catalog (backend/src/services/achievements.ts) word for word: the
+// sticker's promise is exactly the condition the server checks, never a softer paraphrase of a harder rule.
+// legacySlug is kept only where the old backend condition was identical, so a not-yet-migrated backend
+// can't show new copy over an old, different threshold.
 export const ACHIEVEMENTS: Array<CatalogAchievement> = [
   { slug: 'first_try', legacySlug: 'first_play', name: 'First Try', description: 'Complete your first play.' },
   { slug: 'getting_warm', name: 'Getting Warm', description: 'Play 3 times.' },
   { slug: 'high_five', name: 'High Five', description: 'Play 5 times.' },
-  { slug: 'ten_club', name: 'Ten Club', description: 'Make one play above $10.' },
-  { slug: 'tiny_bet', name: 'Tiny Play', description: 'Make one play under $5.' },
-  { slug: 'back_again', name: 'Back Again', description: 'Open the app 2 days in a row.' },
-  { slug: 'daily_play', name: 'Daily Play', description: 'Complete one play in a day.' },
+  { slug: 'ten_club', name: 'Ten Club', description: 'Win 10 plays.' },
+  { slug: 'tiny_bet', name: 'Tiny Play', description: 'Make a play of $2 or less.' },
+  { slug: 'back_again', name: 'Back Again', description: 'Play 2 days in a row.' },
+  { slug: 'daily_play', name: 'Daily Play', description: 'Complete 5 plays in one day.' },
   { slug: 'night_shift', name: 'Night Shift', description: 'Play after 10 PM.' },
   { slug: 'early_signal', name: 'Early Signal', description: 'Play before 9 AM.' },
   { slug: 'first_win', name: 'First Win', description: 'Win your first play.' },
   { slug: 'close_call', name: 'Close Call', description: 'Finish a play with a tiny margin.' },
-  { slug: 'quick_tap', legacySlug: 'cashout_10', name: 'Quick Tap', description: 'Complete a play in under 30 seconds.' },
-  { slug: 'calm_click', name: 'Calm Click', description: 'Submit a play without changing your choice.' },
-  { slug: 'double_play', name: 'Double Play', description: 'Complete 2 plays in one session.' },
-  { slug: 'mini_streak', legacySlug: 'win_streak_5', name: 'Mini Streak', description: 'Win 2 plays in a row.' },
+  { slug: 'quick_tap', name: 'Quick Tap', description: 'Cash out within 30 seconds of opening a play.' },
+  { slug: 'calm_click', name: 'Calm Click', description: 'Hold 3 plays to the buzzer and win.' },
+  { slug: 'double_play', name: 'Double Play', description: 'Complete 2 plays within 10 minutes.' },
+  { slug: 'mini_streak', name: 'Mini Streak', description: 'Win 2 plays in a row.' },
   { slug: 'market_hopper', legacySlug: 'all_games', name: 'Sampler', description: 'Play two different games.' },
-  { slug: 'dollar_rookie', legacySlug: 'volume_1000', name: 'Dollar Rookie', description: 'Play a total of $25.' },
-  { slug: 'bigger_move', legacySlug: 'big_multiplier', name: 'Bigger Move', description: 'Make one play above $25.' },
+  { slug: 'dollar_rookie', name: 'Dollar Rookie', description: 'Play a total of $25.' },
+  { slug: 'bigger_move', name: 'Bigger Move', description: 'Play a total of $100.' },
   { slug: 'comeback', name: 'Comeback', description: 'Win after your previous play was a loss.' },
   { slug: 'pips_regular', name: 'PIPS Regular', description: 'Complete 10 total plays.' },
 ]

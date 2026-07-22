@@ -13,11 +13,13 @@ import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { Modal, useOverlayState } from '@/ui/Modal'
 import { Switch } from '@/ui/Switch'
 import { renderPlayCard, sharePlayCard } from '@/lib/playCard'
+import { preloadPlayCardAssets } from '@/lib/cardAssets'
 import { cnm } from '@/utils/style'
 import { formatCompactMoney, formatExactDecimal } from '@/utils/format'
 
-// Full play history, the canonical record (in-game overlays are just a glance). Tap a row to expand
-// duration, entry/exit, target, cost, payout, oracle, and tx links. Settled rounds only, newest first.
+// Full play history, the canonical record (in-game overlays are just a glance). Rows stay dead simple:
+// tap one for a detail modal (hero PnL, share CTA, technical readout collapsed underneath), and the
+// share button is always one tap away on the row itself. Settled rounds only, newest first.
 export const Route = createFileRoute('/_app/menu/history')({ component: HistoryPage })
 
 type Filter = 'all' | Game
@@ -50,6 +52,17 @@ const fmtPrice = (s?: string): string => {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: d })}`
 }
 const fmtTime = (iso?: string): string => (iso ? new Date(iso).toLocaleString() : '—')
+
+// Compact timestamp for the modal context line: "Jul 22, 5:27 AM".
+const fmtWhen = (iso?: string): string =>
+  iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
+
+// What a losing ticket would have paid above cost: cost × multiplier − cost. FOMO beats an obvious -100%.
+const missedProfit = (p: PlayDTO): number => {
+  const cost = parseFloat(p.entryValue ?? '0')
+  const missed = cost * p.multiplier - cost
+  return Number.isFinite(missed) && missed > 0 ? missed : 0
+}
 
 function timeAgo(iso?: string): string {
   if (!iso) return ''
@@ -224,6 +237,9 @@ function HistoryPage() {
   const [everDevnet, setEverDevnet] = useState(false)
   const q = useQuery(historyQuery(showDevnet))
 
+  // Warm the share-card template art now so the share sheet's first open renders instantly.
+  useEffect(() => preloadPlayCardAssets(), [])
+
   useEffect(() => {
     if (!everDevnet && (q.data?.plays ?? []).some((p) => p.network === 'devnet')) setEverDevnet(true)
   }, [q.data, everDevnet])
@@ -335,7 +351,7 @@ function detailRows(play: PlayDTO): Array<[string, ReactNode]> {
     ['Actual cost', `$${money(play.entryValue)}`],
     ['Payout', play.payout ? `$${money(play.payout)}` : '—'],
     [
-      'Realized P&L',
+      'Realized PnL',
       `${parseFloat(play.pnl) >= 0 ? '+' : '-'}$${money(play.pnl, true)}`,
     ],
     ['Opened', fmtTime(play.openedAt)],
@@ -345,26 +361,24 @@ function detailRows(play: PlayDTO): Array<[string, ReactNode]> {
 }
 
 function HistoryRow({ play }: { play: PlayDTO }) {
-  const [open, setOpen] = useState(false)
+  const detail = useOverlayState()
   const share = useOverlayState()
   const pnl = parseFloat(play.pnl ?? '0')
   const positive = play.status === 'won' || (play.status === 'cashed_out' && pnl > 0)
   const label = play.status === 'won' ? 'Won' : play.status === 'cashed_out' ? 'Cashed' : 'Lost'
   const { asset, line } = headOf(play)
-  // Headline is total payout (stake + profit), matching the in-game result pops. Fall back to cost + pnl
-  // for any legacy row missing the stored payout.
+  // Headline: wins show total payout (stake + profit), matching the in-game result pops; losses show the
+  // cost that burned, a red $0.00 payout reads like a bug. Fall back to cost + pnl for legacy rows.
   const total = play.payout ?? String(parseFloat(play.entryValue ?? '0') + pnl)
+  const headline = play.status === 'lost' ? `-$${money(play.entryValue, true)}` : `${positive ? '+' : ''}$${money(total, true)}`
 
   return (
-    <div className="surface-skeuo rounded-card">
-      <div className="relative">
+    <div className="surface-skeuo flex items-stretch overflow-hidden rounded-card">
+      {/* The row body opens the detail modal; the technical readout lives there now, not an accordion. */}
+      <div className="relative min-w-0 flex-1">
         <button
           type="button"
-          onClick={() => {
-            haptic('selection')
-            setOpen((o) => !o)
-          }}
-          className="pointer-events-none flex w-full items-start justify-between gap-3 p-4 text-left transition-transform active:scale-[0.99]"
+          className="pointer-events-none flex w-full items-center justify-between gap-3 p-4 text-left transition-transform active:scale-[0.99]"
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
@@ -379,61 +393,184 @@ function HistoryRow({ play }: { play: PlayDTO }) {
             <div className="mt-1 flex items-center gap-2 text-[13px] text-text-2">
               <span>{line}</span>
               <span className="text-text-3">·</span>
-              <span>Cost ${money(play.entryValue)}</span>
+              <span className="text-text-3">{timeAgo(play.settledAt ?? play.openedAt)}</span>
             </div>
           </div>
-          <div className="flex shrink-0 items-start gap-2">
-            <div className="text-right">
-              <div className={cnm('text-[11px] font-bold uppercase tracking-wide', positive ? 'text-up' : 'text-down')}>{label}</div>
-              <div className={cnm('tnum text-[17px] font-extrabold leading-tight', positive ? 'text-up' : 'text-down')}>
-                {positive ? '+' : ''}${money(total, true)}
-              </div>
-              <div className="mt-0.5 text-[11px] text-text-3">{timeAgo(play.settledAt ?? play.openedAt)}</div>
-            </div>
-            <ChevronDown className={cnm('mt-0.5 h-5 w-5 shrink-0 text-text-3 transition-transform', open && 'rotate-180')} strokeWidth={2.4} />
+          <div className="shrink-0 text-right">
+            <div className={cnm('text-[11px] font-bold uppercase tracking-wide', positive ? 'text-up' : 'text-down')}>{label}</div>
+            <div className={cnm('tnum text-[17px] font-extrabold leading-tight', positive ? 'text-up' : 'text-down')}>{headline}</div>
           </div>
         </button>
-        <HapticOverlay className="absolute inset-0" preset="selection" silent onTap={() => setOpen((o) => !o)} />
+        <HapticOverlay className="absolute inset-0" preset="selection" silent onTap={() => detail.open()} />
       </div>
 
-      {open && (
-        <div className="border-t border-white/[0.06] px-4 pb-4 pt-3">
-          {/* Turn any settled round into a shareable 16:9 P&L card. */}
-          <div className="relative mb-3">
-            <button
-              type="button"
-              className="pointer-events-none flex w-full items-center justify-center gap-2 rounded-xl border border-brand-500/40 bg-gradient-to-b from-brand-500/[0.16] to-brand-500/[0.05] py-2.5 text-[13px] font-extrabold uppercase tracking-wide text-brand-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] transition-colors active:from-brand-500/[0.22] active:to-brand-500/[0.1]"
-            >
-              <Share2 className="h-[15px] w-[15px]" strokeWidth={2.6} />
-              Share P&L card
-            </button>
-            <HapticOverlay className="absolute inset-0 rounded-xl" preset="medium" silent onTap={() => share.open()} />
-          </div>
+      {/* Share is always one tap away, never buried in the detail view. */}
+      <div className="relative flex items-center border-l border-white/[0.06] px-3">
+        <button
+          type="button"
+          aria-label="Share this play"
+          className="btn-primary pointer-events-none flex h-10 w-10 items-center justify-center rounded-full"
+        >
+          <Share2 className="h-[17px] w-[17px]" strokeWidth={2.6} />
+        </button>
+        <HapticOverlay className="absolute inset-0" preset="medium" silent onTap={() => share.open()} />
+      </div>
 
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-            {detailRows(play).map(([k, v]) => (
-              <div key={k} className="flex items-baseline justify-between gap-2">
-                <span className="font-mono text-[11px] uppercase tracking-wide text-text-3">{k}</span>
-                <span className="tnum truncate text-right text-[13px] font-semibold text-text-2">{v}</span>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 flex flex-col gap-2 border-t border-white/[0.06] pt-3">
-            {play.txMint && <LinkRow label="Mint tx" id={play.txMint} href={explorerTxUrl(play.txMint)} />}
-            {/* The tx that froze the settlement price this round resolved against. Falls back to the
-                oracle object when this play settled on a chain push we didn't author (follower mode). */}
-            {play.txSettle ? (
-              <LinkRow label="Settle tx" id={play.txSettle} href={explorerTxUrl(play.txSettle)} />
-            ) : (
-              play.market.oracleId && <LinkRow label="Oracle" id={play.market.oracleId} href={explorerObjectUrl(play.market.oracleId)} />
-            )}
-            {play.txRedeem && <LinkRow label="Redeem tx" id={play.txRedeem} href={explorerTxUrl(play.txRedeem)} />}
-          </div>
-        </div>
-      )}
-
+      <PlayDetailModal
+        play={play}
+        isOpen={detail.isOpen}
+        onOpenChange={detail.setOpen}
+        onShare={() => {
+          detail.close()
+          share.open()
+        }}
+      />
       <PlayShareModal play={play} isOpen={share.isOpen} onOpenChange={share.setOpen} />
     </div>
+  )
+}
+
+// One stat cell in the modal hero: big number over a mono micro-label, recessed into the lighter plate.
+function HeroStat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="rounded-xl bg-black/[0.22] px-2 py-2.5 text-center shadow-[inset_0_1px_3px_rgba(0,0,0,0.35)]">
+      <div className={cnm('tnum text-[15px] font-extrabold leading-none', tone ?? 'text-white')}>{value}</div>
+      <div className="mt-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-white/40">{label}</div>
+    </div>
+  )
+}
+
+// The play detail sheet: hero PnL up top, one share CTA, and the full technical readout tucked
+// behind a collapsed "Trade details" section so the default view stays dead simple.
+function PlayDetailModal({
+  play,
+  isOpen,
+  onOpenChange,
+  onShare,
+}: {
+  play: PlayDTO
+  isOpen: boolean
+  onOpenChange: (open: boolean) => void
+  onShare: () => void
+}) {
+  const [showDetails, setShowDetails] = useState(false)
+  const pnl = parseFloat(play.pnl ?? '0')
+  const positive = play.status === 'won' || (play.status === 'cashed_out' && pnl > 0)
+  const entry = parseFloat(play.entryValue ?? '0')
+  const roi = entry > 0 ? (pnl / entry) * 100 : 0
+  const tone = positive ? 'text-up' : 'text-down'
+  const title = play.status === 'cashed_out' ? 'Cashed out' : positive ? 'Profit' : 'Rekt'
+  const { asset } = headOf(play)
+
+  // A fresh open always starts collapsed.
+  useEffect(() => {
+    if (isOpen) setShowDetails(false)
+  }, [isOpen])
+
+  return (
+    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="md" placement="center" className="border border-line bg-[#161615]">
+      <button
+        type="button"
+        onClick={() => onOpenChange(false)}
+        aria-label="Close"
+        className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.06] text-white/70 transition-transform active:scale-90"
+      >
+        <X className="h-[18px] w-[18px]" strokeWidth={2.6} />
+      </button>
+      <h2 className="pr-10 font-sans text-[22px] font-black uppercase leading-none text-white">{title}</h2>
+
+      <div className="mt-4 flex flex-col gap-3 pb-1">
+        {/* Hero: the play at a glance, on a skeuo plate tinted by the outcome (neon green win, red loss),
+            echoing the week strip's amber treatment. */}
+        <div
+          className="rounded-card px-4 py-5 text-center"
+          style={
+            positive
+              ? {
+                  background: 'linear-gradient(180deg,#1b4032 0%,#132e24 52%,#0d211a 100%)',
+                  border: '1.5px solid rgba(52,211,153,0.55)',
+                  boxShadow:
+                    'inset 0 1px 0 rgba(167,243,208,0.28), inset 0 -2px 8px rgba(0,0,0,0.4), 0 2px 0 rgba(0,0,0,0.6), 0 0 28px -4px rgba(52,211,153,0.45)',
+                }
+              : {
+                  background: 'linear-gradient(180deg,#44201c 0%,#311814 52%,#221110 100%)',
+                  border: '1.5px solid rgba(255,90,77,0.5)',
+                  boxShadow:
+                    'inset 0 1px 0 rgba(255,178,168,0.25), inset 0 -2px 8px rgba(0,0,0,0.4), 0 2px 0 rgba(0,0,0,0.6), 0 0 28px -4px rgba(255,90,77,0.4)',
+                }
+          }
+        >
+          <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-white/50">
+            <span className="capitalize">{play.game}</span> · {asset} · {fmtWhen(play.settledAt ?? play.openedAt)}
+          </div>
+          <div className={cnm('tnum mt-2.5 text-[40px] font-black leading-none', tone)}>
+            {pnl >= 0 ? '+' : '-'}${money(play.pnl, true)}
+          </div>
+          <div className="mt-5 grid grid-cols-3 gap-2">
+            <HeroStat label="Amount" value={`$${money(play.entryValue)}`} />
+            <HeroStat label="Multiplier" value={fmtMult(play.multiplier)} />
+            {/* A full loss is always -100%, useless. Show the payout that got away instead. */}
+            {play.status === 'lost' && missedProfit(play) > 0 ? (
+              <HeroStat label="Missed profit" value={`$${missedProfit(play).toFixed(2)}`} tone="text-brand-300" />
+            ) : (
+              <HeroStat label="PnL" value={`${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%`} tone={tone} />
+            )}
+          </div>
+        </div>
+
+        {/* Share CTA: turn the round into a card. */}
+        <div className="surface-skeuo flex items-center justify-between gap-3 rounded-card px-4 py-3.5">
+          <div className="min-w-0">
+            <div className="text-[15px] font-bold text-white">{positive ? 'Share your gain' : 'Share your rekt'}</div>
+            <div className="mt-0.5 text-[12px] leading-snug text-text-3">Turn this play into a card.</div>
+          </div>
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              className="btn-primary pointer-events-none flex items-center gap-2 rounded-full px-5 py-2.5 text-[13px] font-extrabold uppercase tracking-wide"
+            >
+              <Share2 className="h-[15px] w-[15px]" strokeWidth={2.6} />
+              Share
+            </button>
+            <HapticOverlay className="absolute inset-0 rounded-full" preset="medium" silent onTap={onShare} />
+          </div>
+        </div>
+
+        {/* The technical record, collapsed by default. */}
+        <div className="surface-skeuo rounded-card">
+          <div className="relative">
+            <button type="button" className="pointer-events-none flex w-full items-center justify-between px-4 py-3.5 text-left">
+              <span className="text-[14px] font-bold text-text">Trade details</span>
+              <ChevronDown className={cnm('h-5 w-5 text-text-3 transition-transform', showDetails && 'rotate-180')} strokeWidth={2.4} />
+            </button>
+            <HapticOverlay className="absolute inset-0" preset="selection" silent onTap={() => setShowDetails((s) => !s)} />
+          </div>
+          {showDetails && (
+            <div className="border-t border-white/[0.06] px-4 pb-4 pt-3">
+              <div className="flex flex-col gap-y-2">
+                {detailRows(play).map(([k, v]) => (
+                  <div key={k} className="flex items-baseline justify-between gap-2">
+                    <span className="font-mono text-[11px] uppercase tracking-wide text-text-3">{k}</span>
+                    <span className="tnum truncate text-right text-[13px] font-semibold text-text-2">{v}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-col gap-2 border-t border-white/[0.06] pt-3">
+                {play.txMint && <LinkRow label="Mint tx" id={play.txMint} href={explorerTxUrl(play.txMint)} />}
+                {/* The tx that froze the settlement price this round resolved against. Falls back to the
+                    oracle object when this play settled on a chain push we didn't author (follower mode). */}
+                {play.txSettle ? (
+                  <LinkRow label="Settle tx" id={play.txSettle} href={explorerTxUrl(play.txSettle)} />
+                ) : (
+                  play.market.oracleId && <LinkRow label="Oracle" id={play.market.oracleId} href={explorerObjectUrl(play.market.oracleId)} />
+                )}
+                {play.txRedeem && <LinkRow label="Redeem tx" id={play.txRedeem} href={explorerTxUrl(play.txRedeem)} />}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
   )
 }
 
@@ -441,7 +578,7 @@ function HistoryRow({ play }: { play: PlayDTO }) {
 function PlayShareModal({ play, isOpen, onOpenChange }: { play: PlayDTO; isOpen: boolean; onOpenChange: (open: boolean) => void }) {
   const [url, setUrl] = useState<string | null>(null)
   const [sharing, setSharing] = useState(false)
-  // Dollar P&L is private for a lot of people, so it's opt-in. The ROI % always shows.
+  // Dollar PnL is private for a lot of people, so it's opt-in. The ROI % always shows.
   const [showPnl, setShowPnl] = useState(false)
   const urlRef = useRef<string | null>(null)
 
@@ -488,7 +625,7 @@ function PlayShareModal({ play, isOpen, onOpenChange }: { play: PlayDTO; isOpen:
       >
         <X className="h-[18px] w-[18px]" strokeWidth={2.6} />
       </button>
-      <h2 className="pr-10 font-sans text-[22px] font-black leading-none text-white">Share P&L</h2>
+      <h2 className="pr-10 font-sans text-[22px] font-black leading-none text-white">Share PnL</h2>
       <p className="mt-2 text-[14px] leading-snug text-text-3">Turn this play into a card to share.</p>
 
       <div className="mt-5 flex flex-col gap-4 pb-1">
@@ -502,14 +639,14 @@ function PlayShareModal({ play, isOpen, onOpenChange }: { play: PlayDTO; isOpen:
           )}
         </div>
 
-        {/* The one knob: the dollar P&L is private for a lot of people. ROI % stays on either way. */}
+        {/* The one knob: the dollar PnL is private for a lot of people. ROI % stays on either way. */}
         <div className="surface-skeuo flex items-center gap-3 rounded-card px-4 py-3">
           <div className="min-w-0 flex-1">
-            <div className="text-[14px] font-bold text-white">Show P&L value</div>
+            <div className="text-[14px] font-bold text-white">Show PnL value</div>
             <div className="mt-0.5 text-[12px] leading-snug text-text-3">Your net dollar profit on the card.</div>
           </div>
           <Switch
-            label="Show P&L value"
+            label="Show PnL value"
             isSelected={showPnl}
             onChange={(v) => {
               haptic('selection')

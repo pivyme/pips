@@ -225,7 +225,8 @@ function MoonshotScreen() {
     roundOverlayOn && lp
       ? {
           ...(entryVal != null ? { entry: entryVal } : {}),
-          ...(strike != null ? { target: { price: strike, side: lp.side } } : {}),
+          // Sealed at the buzzer: the target's live in/out glow goes neutral while settling, so the frozen display line can't imply a verdict.
+          ...(strike != null ? { target: { price: strike, side: lp.side, sealed: settling } } : {}),
           ...(settleLine != null ? { settle: settleLine } : {}),
         }
       : (phase === 'idle' || phase === 'placing') && previewTarget != null

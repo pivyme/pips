@@ -2,7 +2,7 @@
 // weak; instead the card auto-features the player's most impressive stat as the hero. One source of truth for
 // both StatsCard and shareCard so they can never drift.
 //
-// The card auto-builds, no picker. The only knob is showNetPnl (dollar P&L is private for some). The one
+// The card auto-builds, no picker. The only knob is showNetPnl (dollar PnL is private for some). The one
 // bit of flavor is the rank chip: your standing on the global board, "#4 TOP REKT" or "#2 TOP GAINER".
 
 import type { UserStatsDTO } from '@/lib/api'
@@ -10,7 +10,7 @@ import { formatCompactCount, formatCompactMoney } from '@/utils/format'
 
 export type CardTone = 'gold' | 'up' | 'down' | 'neutral'
 
-// Every stat the card can show. Net P&L is its own toggleable slot (not a Kind), so it can never be the hero
+// Every stat the card can show. Net PnL is its own toggleable slot (not a Kind), so it can never be the hero
 // and never double up in the grid.
 export type Kind = 'bestHit' | 'roi' | 'bestStreak' | 'plays' | 'volume' | 'winRate'
 
@@ -19,7 +19,7 @@ export interface CardStat {
   label: string
   value: string
   tone: CardTone
-  icon?: string // the small grid cells carry a skeuo icon; the hero and Net P&L don't
+  icon?: string // the small grid cells carry a skeuo icon; the hero and Net PnL don't
 }
 
 // The player's global-board standing (mirror of GlobalLeaderboard.you). At most one rank is set: net-positive
@@ -91,14 +91,14 @@ function statOf(kind: Kind, s: UserStatsDTO): CardStat {
 function netPnlStat(s: UserStatsDTO): CardStat {
   const net = parseFloat(s.netPnl) || 0
   return {
-    kind: 'roi', // unused for Net P&L; kept structural
-    label: 'Net P&L',
+    kind: 'roi', // unused for Net PnL; kept structural
+    label: 'Net PnL',
     value: `${net >= 0 ? '+' : '-'}$${formatCompactMoney(s.netPnl)}`,
     tone: net >= 0 ? 'up' : 'down',
   }
 }
 
-// Picks the single most impressive stat to feature (never Net P&L); degrades gracefully so even a brand-new or net-down account still shows a real number.
+// Picks the single most impressive stat to feature (never Net PnL); degrades gracefully so even a brand-new or net-down account still shows a real number.
 function pickHeroKind(s: UserStatsDTO): Kind {
   if (s.bestMultiplier >= 3) return 'bestHit'
   if (roiOf(s) >= 0.15) return 'roi'

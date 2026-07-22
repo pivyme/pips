@@ -43,8 +43,9 @@ export interface ChartOverlays {
   // Entry: a clean reference line at the price you got in, faded in when a round opens.
   entry?: number
   // Target (Lucky): the strike that must be crossed to win; drawn as a bold amber line with the
-  // winning half shaded green (brighter when the live price is inside).
-  target?: { price: number; side: 'up' | 'down' }
+  // winning half shaded green (brighter when the live price is inside). `sealed` suppresses that live
+  // in/out lighting during the settling window (the price is locked on-chain, the display line must not imply a verdict).
+  target?: { price: number; side: 'up' | 'down'; sealed?: boolean }
   band?: BandOverlay
   // Range-v2 multiplay: each locked band anchored in TIME from its entry (t0) to its cutoff/expiry (t1), so it
   // scrolls left with the line while the now-dot rides from the band's left edge toward its right. Edges light
@@ -1076,7 +1077,8 @@ function drawOverlays(
     // Front-loaded ease so the line "slams" across, then settles; the cubic saturates near full width well before targetReveal does.
     const wipe = w * (1 - Math.pow(1 - Math.min(1, targetReveal), 3))
     const winUp = side === 'up'
-    const inWin = winUp ? price > tp : price < tp
+    // Sealed (settling): hold the dim neutral look, the frozen display line must not glow a verdict the chain hasn't given.
+    const inWin = !ov.target.sealed && (winUp ? price > tp : price < tp)
     const grad = ctx.createLinearGradient(0, ys, 0, winUp ? 0 : h)
     grad.addColorStop(0, withAlpha(C.up, (inWin ? 0.2 : 0.08) * a))
     grad.addColorStop(1, withAlpha(C.up, 0))
@@ -1122,9 +1124,14 @@ function drawOverlays(
   }
 
   // RESULT line: the exact oracle settlement_price after settlement lands; green inside the band, red outside.
+  // With a directional target (Lucky/Moonshot) it colors by which side of the strike it landed, so the line never reads green on a loss.
   if (ov?.settle != null && Number.isFinite(ov.settle)) {
     const ys = y(ov.settle)
-    const inWin = band ? ov.settle > band.lower && ov.settle <= band.upper : true
+    const inWin = band
+      ? ov.settle > band.lower && ov.settle <= band.upper
+      : ov?.target
+        ? (ov.target.side === 'up' ? ov.settle > ov.target.price : ov.settle < ov.target.price)
+        : true
     const col = inWin ? C.up : C.down
     ctx.save()
     ctx.strokeStyle = col

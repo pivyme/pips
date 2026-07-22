@@ -5,6 +5,7 @@ import { toPng } from 'html-to-image'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { THEMES } from '@/components/console/themes'
 import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '@/components/console/controls'
+import { ActivePlayProvider } from '@/lib/activePlay'
 import { Route as GamesRoute } from './_app/games/index'
 import { Route as LuckyRoute } from './_app/games/lucky'
 import { Route as RangeRoute } from './_app/games/range'
@@ -295,9 +296,11 @@ function LiveDevice({ theme, Comp, gameKey }: { theme: (typeof THEMES)[number]; 
   const { view, handlers } = useConsoleView()
   return (
     <ConsoleCanvas view={view} handlers={handlers} theme={theme} stage="app" instant screenContentVisible onNav={() => {}}>
-      <DeviceSettledProvider settled>
-        <Comp key={gameKey} />
-      </DeviceSettledProvider>
+      <ActivePlayProvider>
+        <DeviceSettledProvider settled>
+          <Comp key={gameKey} />
+        </DeviceSettledProvider>
+      </ActivePlayProvider>
     </ConsoleCanvas>
   )
 }
