@@ -1895,20 +1895,32 @@ export default function ConsoleCanvas({
 
     // Accelerometer-reactive gold: tilting the phone sweeps the studio env across metallic skins
     // (envMapRotation, not the mesh itself, so it never fights the float/orbit rotation above).
-    // Calibrates its own neutral pose from wherever the phone happens to be held when it first fires.
-    const TILT_MAX = 0.5 // rad clamp so a hard tilt can't spin the reflection past a believable angle
-    const TILT_GAIN = THREE.MathUtils.degToRad(1.4) // rad of env sweep per degree of phone tilt
-    let tiltBaseline: { beta: number; gamma: number } | null = null
+    // "Neutral" is a slow-chasing baseline, not a one-time snapshot: it eases toward whatever pose
+    // the phone currently rests in, so the sweep reacts the same whether you're holding it flat,
+    // upright, or anywhere between, and a big posture change just becomes the new neutral instead
+    // of pinning the reflection at the clamp forever.
+    const TILT_MAX = 0.85 // rad clamp (~49°), generous headroom so a real tilt reads as a real sweep
+    const TILT_GAIN = THREE.MathUtils.degToRad(3.2) // rad of env sweep per degree of tilt off neutral
+    const TILT_RECENTER = 0.02 // per-event ease of neutral toward the live reading (~1s to settle)
+    let baseBeta = 0
+    let baseGamma = 0
+    let tiltPrimed = false
     let tiltTargetX = 0
     let tiltTargetY = 0
     let tiltX = 0
     let tiltY = 0
     const onDeviceOrientation = (e: DeviceOrientationEvent) => {
       if (e.beta == null || e.gamma == null) return
-      if (!tiltBaseline) tiltBaseline = { beta: e.beta, gamma: e.gamma }
+      if (!tiltPrimed) {
+        baseBeta = e.beta
+        baseGamma = e.gamma
+        tiltPrimed = true
+      }
+      baseBeta += (e.beta - baseBeta) * TILT_RECENTER
+      baseGamma += (e.gamma - baseGamma) * TILT_RECENTER
       const clamp = (v: number) => Math.max(-TILT_MAX, Math.min(TILT_MAX, v))
-      tiltTargetX = clamp((e.beta - tiltBaseline.beta) * TILT_GAIN)
-      tiltTargetY = clamp((e.gamma - tiltBaseline.gamma) * TILT_GAIN)
+      tiltTargetX = clamp((e.beta - baseBeta) * TILT_GAIN)
+      tiltTargetY = clamp((e.gamma - baseGamma) * TILT_GAIN)
     }
     window.addEventListener('deviceorientation', onDeviceOrientation)
     let introT = customize ? 0 : 1 // 0 → start, 1 → settled
@@ -2866,8 +2878,8 @@ export default function ConsoleCanvas({
       // Accelerometer-reactive gold: only the metallic skin (Aurum) sets metalness, so this is a
       // no-op cost on every other skin. Wakes the render-on-demand loop when it actually moves.
       if (matBody.metalness > 0) {
-        tiltX += (tiltTargetX - tiltX) * Math.min(1, dt * 4)
-        tiltY += (tiltTargetY - tiltY) * Math.min(1, dt * 4)
+        tiltX += (tiltTargetX - tiltX) * Math.min(1, dt * 14)
+        tiltY += (tiltTargetY - tiltY) * Math.min(1, dt * 14)
         if (
           Math.abs(tiltX - matBody.envMapRotation.x) > 0.0005 ||
           Math.abs(tiltY - matBody.envMapRotation.y) > 0.0005
