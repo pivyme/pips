@@ -1468,10 +1468,10 @@ interface SeedSpec {
 const SEED_PLAYS: SeedSpec[] = [
   { game: 'lucky', asset: 'BTC', status: 'won', stake: 25, mult: 3, pnl: 50, minsAgo: 4 },
   { game: 'lucky', asset: 'SUI', status: 'cashed_out', stake: 10, mult: 5, pnl: 22, minsAgo: 60 },
-  { game: 'lucky', asset: 'SOL', status: 'lost', stake: 50, mult: 0, pnl: -50, minsAgo: 1740 },
+  { game: 'lucky', asset: 'SOL', status: 'lost', stake: 50, mult: 3, pnl: -50, minsAgo: 1740 },
   { game: 'lucky', asset: 'ETH', status: 'won', stake: 5, mult: 2, pnl: 5, minsAgo: 2040 },
   { game: 'range', asset: 'ETH', status: 'won', stake: 25, mult: 2.4, pnl: 35, minsAgo: 3120 },
-  { game: 'range', asset: 'SOL', status: 'lost', stake: 25, mult: 0, pnl: -25, minsAgo: 3540 },
+  { game: 'range', asset: 'SOL', status: 'lost', stake: 25, mult: 2.6, pnl: -25, minsAgo: 3540 },
   { game: 'moonshot', asset: 'ETH', status: 'lost', stake: 25, mult: 25, pnl: -25, minsAgo: 4800 },
   { game: 'lucky', asset: 'BTC', status: 'won', stake: 10, mult: 10, pnl: 90, minsAgo: 5940 },
   { game: 'range', asset: 'SUI', status: 'cashed_out', stake: 25, mult: 3.1, pnl: 28, minsAgo: 6480 },

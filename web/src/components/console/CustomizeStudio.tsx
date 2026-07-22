@@ -8,6 +8,7 @@ import ConsoleCanvas from './ConsoleCanvas'
 import { THEMES, THEME_BY_ID } from './themes'
 import type { ConsoleTheme } from './themes'
 import { haptic } from '@/lib/haptics'
+import { requestDeviceTiltPermission } from '@/lib/deviceTilt'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
@@ -54,11 +55,15 @@ export function CustomizeStudio({
     if (exiting || id === selectedId) return
     haptic('selection')
     setSelectedId(id)
+    // iOS gates motion access behind a tap; this tap is as good as any, and it's what makes the
+    // gold's reflection sweep react to the phone in hand instead of sitting static.
+    if (THEME_BY_ID[id]?.metallic) void requestDeviceTiltPermission()
   }
 
   const commit = () => {
     if (exiting) return
     haptic('success')
+    if (theme.metallic) void requestDeviceTiltPermission() // covers Done without re-tapping the card
     setReady(true) // make sure the canvas is mounted so the outro can play + report completion
     setExiting(true)
     onCommit(selectedId)

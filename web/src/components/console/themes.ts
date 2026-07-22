@@ -13,6 +13,7 @@ export interface ConsoleTheme {
   ambient?: string // the page/surround color the device floats on; defaults to a deep tint of `body`
   skin?: string // optional SVG wrapped across the front body (overlays `body`); back stays flat
   clear?: boolean // transparent case: both shells go translucent and the internals (board, coil, glyph) show
+  metallic?: boolean // real PBR metal: shells + knob go metalness 1 with env reflections, skin tints the metal
   knob: string
   main: string // big PLAY button
   action: string // the two action buttons
@@ -121,11 +122,32 @@ export const THEMES: ConsoleTheme[] = [
     cardImage: '/assets/pivy-theme-card.png',
   },
   {
+    // The high-roller flex: 24-karat two-finish body (polished middle, sandblasted collar + foot), onyx dial hardware, champagne PLAY.
+    id: 'aurum',
+    code: '24K',
+    name: 'Aurum',
+    badge: 'High Roller',
+    metallic: true,
+    body: '#c9a227', // under-skin fallback while the SVG loads
+    back: '#b8922a',
+    ambient: '#0e0a03', // dark vault so the gold reads lit, not flat
+    skin: '/assets/aurum-skin.svg',
+    knob: '#191309', // onyx knob against the gold case, the black-dial contrast
+    main: '#f0cf5c',
+    action: '#221a0d',
+    pills: '#241c0e',
+    label: '#4a3708',
+    logo: '#f6e185',
+    cardBg: '#d4ab2f',
+    cardInk: '#2d2104',
+    cardSub: 'rgba(45,33,4,0.66)',
+    cardImage: '/assets/aurum-skin.svg', // cover-crop lands on the hidden guilloche medallion
+  },
+  {
     // The Nothing-style see-through case: front shell goes frosted acrylic, guts show (PCB, coil, battery, RF shields, ribbon, glyph strips); back is white frosted.
     id: 'clear',
     code: '000',
     name: 'Clear',
-    badge: 'NEW',
     clear: true,
     body: '#d7dade', // smoke tint (the front shell rides its attenuation, not this, when clear)
     back: '#eef1f3', // solid white frosted back (the white edition); also the backplate behind the guts

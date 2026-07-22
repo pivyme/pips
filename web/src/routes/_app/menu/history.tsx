@@ -409,7 +409,7 @@ function HistoryRow({ play }: { play: PlayDTO }) {
         <button
           type="button"
           aria-label="Share this play"
-          className="btn-primary pointer-events-none flex h-10 w-10 items-center justify-center rounded-full"
+          className="pointer-events-none flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.05] text-brand-300 transition-transform active:scale-90"
         >
           <Share2 className="h-[17px] w-[17px]" strokeWidth={2.6} />
         </button>
@@ -480,23 +480,19 @@ function PlayDetailModal({
       <h2 className="pr-10 font-sans text-[22px] font-black uppercase leading-none text-white">{title}</h2>
 
       <div className="mt-4 flex flex-col gap-3 pb-1">
-        {/* Hero: the play at a glance, on a skeuo plate tinted by the outcome (neon green win, red loss),
-            echoing the week strip's amber treatment. */}
+        {/* Hero: the play at a glance, on a quiet outcome-tinted skeuo plate (deep green win, deep red loss).
+            Inner shadows only, no border, no glow, keeps it modern. */}
         <div
           className="rounded-card px-4 py-5 text-center"
           style={
             positive
               ? {
-                  background: 'linear-gradient(180deg,#1b4032 0%,#132e24 52%,#0d211a 100%)',
-                  border: '1.5px solid rgba(52,211,153,0.55)',
-                  boxShadow:
-                    'inset 0 1px 0 rgba(167,243,208,0.28), inset 0 -2px 8px rgba(0,0,0,0.4), 0 2px 0 rgba(0,0,0,0.6), 0 0 28px -4px rgba(52,211,153,0.45)',
+                  background: 'linear-gradient(180deg,#17352a 0%,#102a20 52%,#0b1f18 100%)',
+                  boxShadow: 'inset 0 1px 0 rgba(148,233,192,0.14), inset 0 -2px 8px rgba(0,0,0,0.45), 0 1px 0 rgba(0,0,0,0.6)',
                 }
               : {
-                  background: 'linear-gradient(180deg,#44201c 0%,#311814 52%,#221110 100%)',
-                  border: '1.5px solid rgba(255,90,77,0.5)',
-                  boxShadow:
-                    'inset 0 1px 0 rgba(255,178,168,0.25), inset 0 -2px 8px rgba(0,0,0,0.4), 0 2px 0 rgba(0,0,0,0.6), 0 0 28px -4px rgba(255,90,77,0.4)',
+                  background: 'linear-gradient(180deg,#3a1d19 0%,#2b1512 52%,#1f100e 100%)',
+                  boxShadow: 'inset 0 1px 0 rgba(255,170,160,0.12), inset 0 -2px 8px rgba(0,0,0,0.45), 0 1px 0 rgba(0,0,0,0.6)',
                 }
           }
         >
@@ -643,7 +639,7 @@ function PlayShareModal({ play, isOpen, onOpenChange }: { play: PlayDTO; isOpen:
         <div className="surface-skeuo flex items-center gap-3 rounded-card px-4 py-3">
           <div className="min-w-0 flex-1">
             <div className="text-[14px] font-bold text-white">Show PnL value</div>
-            <div className="mt-0.5 text-[12px] leading-snug text-text-3">Your net dollar profit on the card.</div>
+            <div className="mt-0.5 text-[12px] leading-snug text-text-3">Your net dollar PnL on the card.</div>
           </div>
           <Switch
             label="Show PnL value"

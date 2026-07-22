@@ -107,7 +107,7 @@ function ShareEditor({
       <div className="surface-skeuo flex items-center gap-3 rounded-card px-4 py-3.5">
         <div className="min-w-0 flex-1">
           <div className="text-[15px] font-bold text-white">Show my PnL</div>
-          <div className="mt-0.5 text-[12px] leading-snug text-text-3">Your net dollar profit on the card.</div>
+          <div className="mt-0.5 text-[12px] leading-snug text-text-3">Your net dollar PnL on the card.</div>
         </div>
         <Switch
           label="Show my PnL"

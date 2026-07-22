@@ -1449,7 +1449,7 @@ export default function ConsoleCanvas({
       step: 1,
       value: 5,
       label: '',
-      format: (value: number) => String(value),
+      format: (value: number) => `$${value}`,
     }
     const idleNumberWheel = {
       min: 0,
@@ -1707,6 +1707,41 @@ export default function ConsoleCanvas({
       )
     }
 
+    // Environment for metallic skins: metals reflect their surroundings and this scene has none. A
+    // hand-built softbox studio (not RoomEnvironment, whose HDR ceiling light clips gold to white
+    // under our NoToneMapping renderer): tame panels keep the highlights gold, dark surround keeps
+    // the contrast. Built once on the first metallic theme, shared.
+    let envTex: THREE.Texture | null = null
+    function ensureEnv() {
+      if (!envTex) {
+        const pmrem = new THREE.PMREMGenerator(renderer)
+        const studio = new THREE.Scene()
+        studio.background = new THREE.Color(0x0d0a06)
+        const panel = (w: number, h: number, rgb: [number, number, number], x: number, y: number, z: number) => {
+          const m = new THREE.Mesh(
+            new THREE.PlaneGeometry(w, h),
+            new THREE.MeshBasicMaterial({ color: new THREE.Color(...rgb), side: THREE.DoubleSide }),
+          )
+          m.position.set(x, y, z)
+          m.lookAt(0, 0, 0)
+          studio.add(m)
+        }
+        panel(10, 10, [1.3, 1.24, 1.05], 0, 1.5, 7) // big frontal fill: the face reads lit, not sooty
+        panel(7, 4, [3.0, 2.9, 2.4], -4, 5, 4) // key softbox, upper left: the diagonal blade
+        panel(2, 7, [1.8, 1.7, 1.4], 5, 1, 2) // rim strip, right
+        panel(8, 8, [0.55, 0.42, 0.2], 0, -6, 2) // warm floor bounce
+        envTex = pmrem.fromScene(studio, 0.04).texture
+        pmrem.dispose()
+        studio.traverse((o) => {
+          if (o instanceof THREE.Mesh) {
+            o.geometry.dispose()
+            ;(o.material as THREE.Material).dispose()
+          }
+        })
+      }
+      return envTex
+    }
+
     // Repaint the device to a skin. Colors only, no geometry touched, so it's cheap enough to run on
     // every card tap in the studio. emissive tracks the color so the press glow stays in-palette.
     function applyTheme(t?: ConsoleTheme) {
@@ -1714,14 +1749,22 @@ export default function ConsoleCanvas({
       // Transparent "Clear" skin: FRONT shell is real frosted acrylic via transmission (not a flat alpha film, which just read as a white overlay), so the guts read as diffused frosted plastic under a clearcoat.
       // The smoke tint rides the attenuation so transmitted internals keep their color; non-clear skins reset every prop back to the molded look.
       const clear = !!t.clear
+      // Metallic skins (Aurum): real PBR metal, the skin texture tints the reflections; every prop resets so other skins render untouched.
+      const metal = !!t.metallic && !clear
+      const env = metal ? ensureEnv() : null
       matBody.transparent = clear
       matBody.transmission = clear ? 1 : 0
       matBody.opacity = 1
-      matBody.roughness = clear ? 0.28 : 0.82 // the frost: light enough to still read the guts
+      matBody.roughness = clear ? 0.28 : metal ? 0.3 : 0.82 // the frost: light enough to still read the guts
       matBody.thickness = clear ? 0.5 : 0
       matBody.ior = clear ? 1.47 : 1.5
-      matBody.clearcoat = clear ? 1 : 0
-      matBody.clearcoatRoughness = clear ? 0.18 : 0
+      matBody.metalness = metal ? 1 : 0
+      matBody.envMap = env
+      matBody.envMapIntensity = 1
+      // Metal keeps clearcoat near zero: the coat's reflection is achromatic, so any real amount
+      // blows the highlights to white instead of gold.
+      matBody.clearcoat = clear ? 1 : metal ? 0.12 : 0
+      matBody.clearcoatRoughness = clear ? 0.18 : metal ? 0.3 : 0
       matBody.attenuationColor.set(clear ? '#cdd4db' : '#ffffff') // smoke, not milk
       matBody.attenuationDistance = clear ? 1.8 : Infinity
       matBody.needsUpdate = true
@@ -1730,10 +1773,26 @@ export default function ConsoleCanvas({
       matBack.transmission = 0
       matBack.transparent = false
       matBack.opacity = 1
-      matBack.roughness = clear ? 0.55 : 0.88
-      matBack.clearcoat = clear ? 0.5 : 0
-      matBack.clearcoatRoughness = clear ? 0.25 : 0
+      matBack.roughness = clear ? 0.55 : metal ? 0.34 : 0.88
+      matBack.metalness = metal ? 1 : 0
+      matBack.envMap = env
+      matBack.envMapIntensity = 1
+      matBack.clearcoat = clear ? 0.5 : metal ? 0.12 : 0
+      matBack.clearcoatRoughness = clear ? 0.25 : metal ? 0.3 : 0
       matBack.needsUpdate = true
+      // The knob rides along: polished dark metal on a metallic skin, molded plastic everywhere else.
+      // Its near-black tint kills most reflection energy, so it gets its own hotter env to keep the
+      // ribs catching bright glints instead of reading sooty.
+      matKnob.metalness = metal ? 0.85 : 0
+      matKnob.roughness = metal ? 0.3 : 0.55
+      matKnob.envMap = env
+      matKnob.envMapIntensity = metal ? 2.6 : 1
+      matKnob.needsUpdate = true
+      matKnobSlab.metalness = metal ? 0.85 : 0
+      matKnobSlab.roughness = metal ? 0.38 : 0.88 // slab keeps its ribbed grain either way
+      matKnobSlab.envMap = env
+      matKnobSlab.envMapIntensity = metal ? 2.6 : 1
+      matKnobSlab.needsUpdate = true
       internals.group.visible = clear
       // Body color is the flat skin and the pre-load tint; setBodySkin overlays the SVG when present.
       // Clear keeps it near-white so transmission shows the guts true (the tint is the attenuation).
@@ -1833,6 +1892,25 @@ export default function ConsoleCanvas({
     // tiltX/tiltZ = pitch/roll sway (radians). Set any to 0 to drop that axis.
     const FLOAT = { speed: 1.5, bob: 0.15, tiltX: 0.07, tiltZ: 0.05 }
     let floatPhase = 0 // drives the studio idle float
+
+    // Accelerometer-reactive gold: tilting the phone sweeps the studio env across metallic skins
+    // (envMapRotation, not the mesh itself, so it never fights the float/orbit rotation above).
+    // Calibrates its own neutral pose from wherever the phone happens to be held when it first fires.
+    const TILT_MAX = 0.5 // rad clamp so a hard tilt can't spin the reflection past a believable angle
+    const TILT_GAIN = THREE.MathUtils.degToRad(1.4) // rad of env sweep per degree of phone tilt
+    let tiltBaseline: { beta: number; gamma: number } | null = null
+    let tiltTargetX = 0
+    let tiltTargetY = 0
+    let tiltX = 0
+    let tiltY = 0
+    const onDeviceOrientation = (e: DeviceOrientationEvent) => {
+      if (e.beta == null || e.gamma == null) return
+      if (!tiltBaseline) tiltBaseline = { beta: e.beta, gamma: e.gamma }
+      const clamp = (v: number) => Math.max(-TILT_MAX, Math.min(TILT_MAX, v))
+      tiltTargetX = clamp((e.beta - tiltBaseline.beta) * TILT_GAIN)
+      tiltTargetY = clamp((e.gamma - tiltBaseline.gamma) * TILT_GAIN)
+    }
+    window.addEventListener('deviceorientation', onDeviceOrientation)
     let introT = customize ? 0 : 1 // 0 → start, 1 → settled
     let orbitYaw = 0 // persists, so you can park it facing back
     let orbitPitch = 0 // eases back to level on release
@@ -2785,10 +2863,36 @@ export default function ConsoleCanvas({
       const dt = Math.min(timer.getDelta(), 0.05)
       let animating = false
 
+      // Accelerometer-reactive gold: only the metallic skin (Aurum) sets metalness, so this is a
+      // no-op cost on every other skin. Wakes the render-on-demand loop when it actually moves.
+      if (matBody.metalness > 0) {
+        tiltX += (tiltTargetX - tiltX) * Math.min(1, dt * 4)
+        tiltY += (tiltTargetY - tiltY) * Math.min(1, dt * 4)
+        if (
+          Math.abs(tiltX - matBody.envMapRotation.x) > 0.0005 ||
+          Math.abs(tiltY - matBody.envMapRotation.y) > 0.0005
+        ) {
+          matBody.envMapRotation.set(tiltX, tiltY, 0)
+          matBack.envMapRotation.set(tiltX, tiltY, 0)
+          matKnob.envMapRotation.set(tiltX, tiltY, 0)
+          matKnobSlab.envMapRotation.set(tiltX, tiltY, 0)
+          dirty = true
+        }
+      }
+
       if (customize) {
         if (exportMode) {
           // No float, no orbit. The pose is whatever the sliders say; render every frame so a slider
           // drag updates live and the preserved buffer is always current for capture.
+          // Still settle the number wheel onto its target rotation: the main loop below (which does
+          // this for every other view) never runs here, so without it the drum stays unrotated and
+          // shows whichever digit's raw angle happens to wrap nearest zero, not the bound value.
+          if (!numberWheelDrag) {
+            numberWheelAngle += (numberWheelTarget - numberWheelAngle) * Math.min(1, dt * 12)
+            if (Math.abs(numberWheelTarget - numberWheelAngle) < 0.001) numberWheelAngle = numberWheelTarget
+          }
+          numberWheelRoll.rotation.x = numberWheelAngle
+          updateNumberWheelLighting()
           placeExportCamera()
           renderer.shadowMap.needsUpdate = true
           renderer.render(scene, camera)
@@ -3064,6 +3168,7 @@ export default function ConsoleCanvas({
       window.removeEventListener('pointerup', release)
       window.removeEventListener('pointercancel', release)
       window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('deviceorientation', onDeviceOrientation)
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('focus', onVisible)
       window.removeEventListener('pageshow', onVisible)
@@ -3087,6 +3192,7 @@ export default function ConsoleCanvas({
       for (const tokenScreen of tokenScreens) tokenScreen.dispose()
       logoGeo.forEach((g) => g.dispose())
       skinCache.forEach((t) => t.dispose())
+      envTex?.dispose()
       matLogoDark.dispose()
       matLogoWhite.dispose()
       screenTex?.dispose()

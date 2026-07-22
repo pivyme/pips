@@ -62,7 +62,7 @@ export interface PlayCardModel {
   positive: boolean // drives the direction arrow (up on a gain, down on a loss)
   result: string // WON | LOST | CASHED OUT
   badge: string // "13x LONG"
-  hero: string // the giant number: ROI ("+1,150%"), or the missed profit on a full loss ("$11.65")
+  hero: string // the giant number: ROI ("+1,150%"), or the missed profit % on a full loss ("+738%")
   heroSub?: string // "MISSED PROFIT" under the giant on a full loss (a -100% ROI says nothing)
   netPnl: string // "+$12.34"
   showPnl: boolean // render the dollar PnL block
@@ -144,7 +144,7 @@ export function buildPlayCard(play: PlayDTO, opts?: PlayCardOpts): PlayCardModel
     positive,
     result,
     badge,
-    hero: lostWithMissed ? usd(String(missed)) : roiLabel(pnl, cost),
+    hero: lostWithMissed ? roiLabel(missed, cost) : roiLabel(pnl, cost),
     heroSub: lostWithMissed ? 'MISSED PROFIT' : undefined,
     netPnl: usd(play.pnl, true),
     showPnl: opts?.showPnl ?? false,

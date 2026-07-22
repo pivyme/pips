@@ -89,9 +89,13 @@ function ExportPage() {
   }, [])
 
   // Snapshot the live screen (the projected HTML layer) to a PNG, feeding the export device's mesh
-  // texture and the screen-only PNG. The surface sits at a non-zero left/top; html-to-image keeps that offset and shoves content bottom-right, so pin it to 0,0 with no transform for the capture only.
+  // texture and the screen-only PNG. Target .console-screen-content, not the outer .console-screen-surface:
+  // the outer box is shrunk to fit the squeezed export aperture via a CSS transform: scale() on this inner
+  // node (styles.css), and html-to-image doesn't reliably honor that scale-down mid-capture, so it painted
+  // the content at its full pre-scale size, overflowing past the outer box's right/bottom edge. Capturing
+  // this node directly at its own natural (unscaled) size sidesteps the transform entirely.
   async function takeSnapshot(): Promise<string | null> {
-    const node = liveRef.current?.querySelector('.console-screen-surface') as HTMLElement | null
+    const node = liveRef.current?.querySelector('.console-screen-content') as HTMLElement | null
     if (!node) return null
     try {
       const url = await toPng(node, {
