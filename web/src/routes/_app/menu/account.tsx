@@ -1,13 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import toast from 'react-hot-toast'
-import { AtSign } from 'lucide-react'
+import { AtSign, LogOut } from 'lucide-react'
 import { useLinkAccount, usePrivy } from '@privy-io/react-auth'
 import type { ReactNode } from 'react'
 import type { HapticPreset } from '@/lib/haptics'
 import { MenuScreen } from '@/components/menu/shared'
 import { GoogleGlyph, XGlyph } from '@/components/menu/BrandGlyphs'
 import { HapticOverlay } from '@/components/HapticOverlay'
+import { Button } from '@/ui/Button'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { PRIVY_ENABLED } from '@/lib/privy'
@@ -19,9 +20,20 @@ import { cnm } from '@/utils/style'
 export const Route = createFileRoute('/_app/menu/account')({ component: AccountScreen })
 
 function AccountScreen() {
+  const { signOut } = useAuth()
   return (
     <MenuScreen title="Account Settings">
       {PRIVY_ENABLED ? <LiveLinkedAccounts /> : <StaticLinkedAccounts />}
+      {/* Log out lives here too (not just the hub's foot): this page is where people look for it first. */}
+      <div className="mt-auto pt-10">
+        <div className="relative">
+          <Button variant="danger" className="pointer-events-none h-14 w-full rounded-card text-sm">
+            <LogOut className="h-5 w-5" strokeWidth={2.4} />
+            Log out
+          </Button>
+          <HapticOverlay className="absolute inset-0 rounded-card" preset="rigid" silent onTap={signOut} />
+        </div>
+      </div>
     </MenuScreen>
   )
 }

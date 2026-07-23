@@ -18,6 +18,8 @@ export interface ConsoleTheme {
   main: string // big PLAY button
   action: string // the two action buttons
   pills: string // MENU / GAMES nav pills
+  wheel?: string // number-wheel drum (+ housing derived darker); absent = fixed dark hardware
+  glow?: string // idle action-screen glow; absent = falls through to `action` (today's rule)
   label?: string // MENU / GAMES caption text under the pills (defaults to a muted grey)
   logo?: string // embossed back logo letters (defaults to the accent); picked per skin for contrast
   logoEyes?: string // the logo's eye marks (defaults to `logo`); Classic keeps the red/blue original

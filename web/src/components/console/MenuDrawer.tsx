@@ -57,10 +57,27 @@ export function MenuDrawer({
 
   // Remember each menu route's scroll offset (recorded live below), so popping back from a sub-page lands where you left off. A fresh page has no entry, so it still opens at the top.
   const scrollMemory = useRef<Record<string, number>>({})
+
+  // Bottom fade: hints there's content clipped below the fold, gone once fully scrolled. Styled straight on the node, no per-scroll re-render.
+  const fadeRef = useRef<HTMLDivElement>(null)
+  const updateFade = useCallback(() => {
+    const el = scrollRef.current
+    const fade = fadeRef.current
+    if (!el || !fade) return
+    fade.style.opacity = el.scrollHeight - el.scrollTop - el.clientHeight > 24 ? '1' : '0'
+  }, [])
+
   useLayoutEffect(() => {
     const scrollElement = scrollRef.current
     if (scrollElement) scrollElement.scrollTop = scrollMemory.current[pathname] ?? 0
-  }, [pathname])
+    updateFade()
+    // Page height lands async (queries, images), so watch the boxes too, not just scroll events.
+    if (!scrollElement) return
+    const ro = new ResizeObserver(updateFade)
+    ro.observe(scrollElement)
+    if (scrollElement.firstElementChild) ro.observe(scrollElement.firstElementChild)
+    return () => ro.disconnect()
+  }, [pathname, updateFade])
 
   const finishClose = useCallback(() => {
     const to = closeTargetRef.current
@@ -273,13 +290,14 @@ export function MenuDrawer({
         </button>
 
         {/* This named surface is snapshotted by the browser during menu route changes, preserving the outgoing page while the next slides over it. */}
-        <div className="menu-page-transition min-h-0 flex-1 overflow-hidden bg-black">
+        <div className="menu-page-transition relative min-h-0 flex-1 overflow-hidden bg-black">
           <div
             key={pathname}
             ref={scrollRef}
             data-lenis-prevent
             onScroll={(e) => {
               scrollMemory.current[pathname] = e.currentTarget.scrollTop
+              updateFade()
             }}
             className="h-full overflow-y-auto overscroll-contain"
           >
@@ -287,6 +305,12 @@ export function MenuDrawer({
               {children}
             </MenuDrawerContext.Provider>
           </div>
+          {/* Inside the named surface on purpose, so it snapshots with the page during route transitions. */}
+          <div
+            ref={fadeRef}
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black to-transparent opacity-0 transition-opacity duration-300"
+          />
         </div>
       </div>
     </div>

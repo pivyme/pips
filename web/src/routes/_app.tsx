@@ -21,7 +21,8 @@ import { LandingOverlay, AttractScreen } from '@/components/console/LandingOverl
 import { InstallGate } from '@/components/InstallGate'
 import { UsernameScreen, ThemePicker, WelcomeScreen } from '@/components/console/Onboarding'
 import { TourProvider } from '@/components/console/tour'
-import { DEFAULT_THEME_ID, THEME_BY_ID, themeBackdrop, useConsoleTheme } from '@/components/console/themes'
+import { DEFAULT_THEME_ID, THEME_BY_ID, themeBackdrop } from '@/components/console/themes'
+import { useConsoleCustom } from '@/components/console/customize'
 import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
 import { api } from '@/lib/api'
@@ -99,12 +100,12 @@ function AppLayout() {
   const on3D = Boolean(matchRoute({ to: '/games', fuzzy: true }))
   // Customize takes over the device (drawer slides away, workshop studio drops in) on the same persistent 3D branch, so WebGL stays warm.
   const onCustomize = Boolean(matchRoute({ to: '/menu/customize' }))
-  // The saved skin. Feeds the live games device; the studio + onboarding seed from it and write back.
-  const savedTheme = useConsoleTheme()
+  // The saved skin (+ per-part overrides). Feeds the live games device; the studio + onboarding seed from it and write back.
+  const saved = useConsoleCustom()
   // Theme syncs from the server on first authenticated frame per account, but only adopts a NON-default server pick, so a pre-sync local choice (or the shared demo user) is never clobbered back to Classic.
-  // setId is unstable (closes over the stored value), so it's read through a ref.
-  const savedThemeRef = useRef(savedTheme)
-  savedThemeRef.current = savedTheme
+  // set is unstable (closes over the stored value), so it's read through a ref.
+  const savedRef = useRef(saved)
+  savedRef.current = saved
   const themeHydratedFor = useRef<string | null>(null)
   // Adopts the live deploy ids (the DUSDC coin type) from the backend on boot, so a backend re-deploy never needs a frontend rebuild.
   // Demo has no backend, so it keeps the compile-time value.
