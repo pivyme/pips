@@ -9,16 +9,16 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SoundsRouteImport } from './routes/sounds'
-import { Route as PitchRouteImport } from './routes/pitch'
-import { Route as ExportRouteImport } from './routes/export'
-import { Route as DesignSystemRouteImport } from './routes/design-system'
-import { Route as ConsoleTransparentRouteImport } from './routes/console-transparent'
-import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AtChar123handleChar125RouteImport } from './routes/@{$handle}'
+import { Route as DevIndexRouteImport } from './routes/dev/index'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as RCodeRouteImport } from './routes/r.$code'
+import { Route as DevSoundsRouteImport } from './routes/dev/sounds'
+import { Route as DevExportRouteImport } from './routes/dev/export'
+import { Route as DevDesignSystemRouteImport } from './routes/dev/design-system'
+import { Route as DevConsoleTransparentRouteImport } from './routes/dev/console-transparent'
+import { Route as DevConsoleRouteImport } from './routes/dev/console'
 import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
 import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
 import { Route as AppMenuWithdrawRouteImport } from './routes/_app/menu/withdraw'
@@ -39,36 +39,6 @@ import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
 import { Route as AppGamesLineRiderRouteImport } from './routes/_app/games/line-rider'
 import { Route as AppGamesFlappyPiperRouteImport } from './routes/_app/games/flappy-piper'
 
-const SoundsRoute = SoundsRouteImport.update({
-  id: '/sounds',
-  path: '/sounds',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PitchRoute = PitchRouteImport.update({
-  id: '/pitch',
-  path: '/pitch',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ExportRoute = ExportRouteImport.update({
-  id: '/export',
-  path: '/export',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DesignSystemRoute = DesignSystemRouteImport.update({
-  id: '/design-system',
-  path: '/design-system',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ConsoleTransparentRoute = ConsoleTransparentRouteImport.update({
-  id: '/console-transparent',
-  path: '/console-transparent',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ConsoleRoute = ConsoleRouteImport.update({
-  id: '/console',
-  path: '/console',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AppRoute = AppRouteImport.update({
   id: '/_app',
   getParentRoute: () => rootRouteImport,
@@ -76,6 +46,11 @@ const AppRoute = AppRouteImport.update({
 const AtChar123handleChar125Route = AtChar123handleChar125RouteImport.update({
   id: '/@{$handle}',
   path: '/@{$handle}',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevIndexRoute = DevIndexRouteImport.update({
+  id: '/dev/',
+  path: '/dev/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppIndexRoute = AppIndexRouteImport.update({
@@ -86,6 +61,31 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const RCodeRoute = RCodeRouteImport.update({
   id: '/r/$code',
   path: '/r/$code',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevSoundsRoute = DevSoundsRouteImport.update({
+  id: '/dev/sounds',
+  path: '/dev/sounds',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevExportRoute = DevExportRouteImport.update({
+  id: '/dev/export',
+  path: '/dev/export',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevDesignSystemRoute = DevDesignSystemRouteImport.update({
+  id: '/dev/design-system',
+  path: '/dev/design-system',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevConsoleTransparentRoute = DevConsoleTransparentRouteImport.update({
+  id: '/dev/console-transparent',
+  path: '/dev/console-transparent',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevConsoleRoute = DevConsoleRouteImport.update({
+  id: '/dev/console',
+  path: '/dev/console',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppMenuIndexRoute = AppMenuIndexRouteImport.update({
@@ -187,13 +187,13 @@ const AppGamesFlappyPiperRoute = AppGamesFlappyPiperRouteImport.update({
 export interface FileRoutesByFullPath {
   '/@{$handle}': typeof AtChar123handleChar125Route
   '/': typeof AppIndexRoute
-  '/console': typeof ConsoleRoute
-  '/console-transparent': typeof ConsoleTransparentRoute
-  '/design-system': typeof DesignSystemRoute
-  '/export': typeof ExportRoute
-  '/pitch': typeof PitchRoute
-  '/sounds': typeof SoundsRoute
+  '/dev/console': typeof DevConsoleRoute
+  '/dev/console-transparent': typeof DevConsoleTransparentRoute
+  '/dev/design-system': typeof DevDesignSystemRoute
+  '/dev/export': typeof DevExportRoute
+  '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
+  '/dev/': typeof DevIndexRoute
   '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
@@ -216,14 +216,14 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/@{$handle}': typeof AtChar123handleChar125Route
-  '/console': typeof ConsoleRoute
-  '/console-transparent': typeof ConsoleTransparentRoute
-  '/design-system': typeof DesignSystemRoute
-  '/export': typeof ExportRoute
-  '/pitch': typeof PitchRoute
-  '/sounds': typeof SoundsRoute
+  '/dev/console': typeof DevConsoleRoute
+  '/dev/console-transparent': typeof DevConsoleTransparentRoute
+  '/dev/design-system': typeof DevDesignSystemRoute
+  '/dev/export': typeof DevExportRoute
+  '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
   '/': typeof AppIndexRoute
+  '/dev': typeof DevIndexRoute
   '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
@@ -248,14 +248,14 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/@{$handle}': typeof AtChar123handleChar125Route
   '/_app': typeof AppRouteWithChildren
-  '/console': typeof ConsoleRoute
-  '/console-transparent': typeof ConsoleTransparentRoute
-  '/design-system': typeof DesignSystemRoute
-  '/export': typeof ExportRoute
-  '/pitch': typeof PitchRoute
-  '/sounds': typeof SoundsRoute
+  '/dev/console': typeof DevConsoleRoute
+  '/dev/console-transparent': typeof DevConsoleTransparentRoute
+  '/dev/design-system': typeof DevDesignSystemRoute
+  '/dev/export': typeof DevExportRoute
+  '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
   '/_app/': typeof AppIndexRoute
+  '/dev/': typeof DevIndexRoute
   '/_app/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/_app/games/line-rider': typeof AppGamesLineRiderRoute
   '/_app/games/lucky': typeof AppGamesLuckyRoute
@@ -281,13 +281,13 @@ export interface FileRouteTypes {
   fullPaths:
     | '/@{$handle}'
     | '/'
-    | '/console'
-    | '/console-transparent'
-    | '/design-system'
-    | '/export'
-    | '/pitch'
-    | '/sounds'
+    | '/dev/console'
+    | '/dev/console-transparent'
+    | '/dev/design-system'
+    | '/dev/export'
+    | '/dev/sounds'
     | '/r/$code'
+    | '/dev/'
     | '/games/flappy-piper'
     | '/games/line-rider'
     | '/games/lucky'
@@ -310,14 +310,14 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/@{$handle}'
-    | '/console'
-    | '/console-transparent'
-    | '/design-system'
-    | '/export'
-    | '/pitch'
-    | '/sounds'
+    | '/dev/console'
+    | '/dev/console-transparent'
+    | '/dev/design-system'
+    | '/dev/export'
+    | '/dev/sounds'
     | '/r/$code'
     | '/'
+    | '/dev'
     | '/games/flappy-piper'
     | '/games/line-rider'
     | '/games/lucky'
@@ -341,14 +341,14 @@ export interface FileRouteTypes {
     | '__root__'
     | '/@{$handle}'
     | '/_app'
-    | '/console'
-    | '/console-transparent'
-    | '/design-system'
-    | '/export'
-    | '/pitch'
-    | '/sounds'
+    | '/dev/console'
+    | '/dev/console-transparent'
+    | '/dev/design-system'
+    | '/dev/export'
+    | '/dev/sounds'
     | '/r/$code'
     | '/_app/'
+    | '/dev/'
     | '/_app/games/flappy-piper'
     | '/_app/games/line-rider'
     | '/_app/games/lucky'
@@ -373,59 +373,17 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AtChar123handleChar125Route: typeof AtChar123handleChar125Route
   AppRoute: typeof AppRouteWithChildren
-  ConsoleRoute: typeof ConsoleRoute
-  ConsoleTransparentRoute: typeof ConsoleTransparentRoute
-  DesignSystemRoute: typeof DesignSystemRoute
-  ExportRoute: typeof ExportRoute
-  PitchRoute: typeof PitchRoute
-  SoundsRoute: typeof SoundsRoute
+  DevConsoleRoute: typeof DevConsoleRoute
+  DevConsoleTransparentRoute: typeof DevConsoleTransparentRoute
+  DevDesignSystemRoute: typeof DevDesignSystemRoute
+  DevExportRoute: typeof DevExportRoute
+  DevSoundsRoute: typeof DevSoundsRoute
   RCodeRoute: typeof RCodeRoute
+  DevIndexRoute: typeof DevIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/sounds': {
-      id: '/sounds'
-      path: '/sounds'
-      fullPath: '/sounds'
-      preLoaderRoute: typeof SoundsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/pitch': {
-      id: '/pitch'
-      path: '/pitch'
-      fullPath: '/pitch'
-      preLoaderRoute: typeof PitchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/export': {
-      id: '/export'
-      path: '/export'
-      fullPath: '/export'
-      preLoaderRoute: typeof ExportRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/design-system': {
-      id: '/design-system'
-      path: '/design-system'
-      fullPath: '/design-system'
-      preLoaderRoute: typeof DesignSystemRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/console-transparent': {
-      id: '/console-transparent'
-      path: '/console-transparent'
-      fullPath: '/console-transparent'
-      preLoaderRoute: typeof ConsoleTransparentRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/console': {
-      id: '/console'
-      path: '/console'
-      fullPath: '/console'
-      preLoaderRoute: typeof ConsoleRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/_app': {
       id: '/_app'
       path: ''
@@ -440,6 +398,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AtChar123handleChar125RouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dev/': {
+      id: '/dev/'
+      path: '/dev'
+      fullPath: '/dev/'
+      preLoaderRoute: typeof DevIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/': {
       id: '/_app/'
       path: '/'
@@ -452,6 +417,41 @@ declare module '@tanstack/react-router' {
       path: '/r/$code'
       fullPath: '/r/$code'
       preLoaderRoute: typeof RCodeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dev/sounds': {
+      id: '/dev/sounds'
+      path: '/dev/sounds'
+      fullPath: '/dev/sounds'
+      preLoaderRoute: typeof DevSoundsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dev/export': {
+      id: '/dev/export'
+      path: '/dev/export'
+      fullPath: '/dev/export'
+      preLoaderRoute: typeof DevExportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dev/design-system': {
+      id: '/dev/design-system'
+      path: '/dev/design-system'
+      fullPath: '/dev/design-system'
+      preLoaderRoute: typeof DevDesignSystemRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dev/console-transparent': {
+      id: '/dev/console-transparent'
+      path: '/dev/console-transparent'
+      fullPath: '/dev/console-transparent'
+      preLoaderRoute: typeof DevConsoleTransparentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dev/console': {
+      id: '/dev/console'
+      path: '/dev/console'
+      fullPath: '/dev/console'
+      preLoaderRoute: typeof DevConsoleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app/menu/': {
@@ -641,13 +641,13 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AtChar123handleChar125Route: AtChar123handleChar125Route,
   AppRoute: AppRouteWithChildren,
-  ConsoleRoute: ConsoleRoute,
-  ConsoleTransparentRoute: ConsoleTransparentRoute,
-  DesignSystemRoute: DesignSystemRoute,
-  ExportRoute: ExportRoute,
-  PitchRoute: PitchRoute,
-  SoundsRoute: SoundsRoute,
+  DevConsoleRoute: DevConsoleRoute,
+  DevConsoleTransparentRoute: DevConsoleTransparentRoute,
+  DevDesignSystemRoute: DevDesignSystemRoute,
+  DevExportRoute: DevExportRoute,
+  DevSoundsRoute: DevSoundsRoute,
   RCodeRoute: RCodeRoute,
+  DevIndexRoute: DevIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

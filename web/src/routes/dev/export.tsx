@@ -6,17 +6,17 @@ import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { THEMES } from '@/components/console/themes'
 import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '@/components/console/controls'
 import { ActivePlayProvider } from '@/lib/activePlay'
-import { Route as GamesRoute } from './_app/games/index'
-import { Route as LuckyRoute } from './_app/games/lucky'
-import { Route as RangeRoute } from './_app/games/range'
-import { Route as MoonshotRoute } from './_app/games/moonshot'
-import { Route as LineRiderRoute } from './_app/games/line-rider'
-import { Route as FlappyPiperRoute } from './_app/games/flappy-piper'
+import { Route as GamesRoute } from '../_app/games/index'
+import { Route as LuckyRoute } from '../_app/games/lucky'
+import { Route as RangeRoute } from '../_app/games/range'
+import { Route as MoonshotRoute } from '../_app/games/moonshot'
+import { Route as LineRiderRoute } from '../_app/games/line-rider'
+import { Route as FlappyPiperRoute } from '../_app/games/flappy-piper'
 import { isDemo } from '@/lib/demo'
 
 // Dev-only asset dump (personal tooling, not shipped). "Bare device" spins the screen-off handheld
 // per skin; "Game screens" pairs a live playable device with a 3D export twin that snapshots its screen, plus a screen-only PNG. Forces demo mode so the games have live content with no backend.
-export const Route = createFileRoute('/export')({ component: ExportPage })
+export const Route = createFileRoute('/dev/export')({ component: ExportPage })
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 

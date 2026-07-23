@@ -18,7 +18,6 @@ export interface ConsoleTheme {
   main: string // big PLAY button
   action: string // the two action buttons
   pills: string // MENU / GAMES nav pills
-  wheel?: string // number-wheel drum (+ housing derived darker); absent = fixed dark hardware
   glow?: string // idle action-screen glow; absent = falls through to `action` (today's rule)
   label?: string // MENU / GAMES caption text under the pills (defaults to a muted grey)
   logo?: string // embossed back logo letters (defaults to the accent); picked per skin for contrast
@@ -197,11 +196,13 @@ export const THEMES: ConsoleTheme[] = [
     cardSub: 'rgba(40,44,52,0.5)',
   },
   {
+    // Pressed-flower art: wisteria vines trailing the top corners into a full bloom cluster bottom-right, recolored onto the tosca mint body.
     id: 'mint',
     code: '224',
     name: 'Wisteria',
     body: '#c2e9d3',
     back: '#a9dcc1',
+    skin: '/assets/wisteria-skin.png',
     knob: '#8587ef',
     main: '#8587ef',
     action: '#5fbcee',
@@ -211,6 +212,7 @@ export const THEMES: ConsoleTheme[] = [
     cardBg: '#c2e9d3',
     cardInk: '#6f72e8',
     cardSub: 'rgba(20,72,50,0.6)',
+    cardImage: '/assets/wisteria-skin.png', // cover-crop lands on a clean petal-tipped corner of the art
   },
   {
     id: 'carbon',

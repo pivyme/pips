@@ -235,6 +235,7 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
       reducedMotion: user.reducedMotion,
       confirmTrades: user.confirmTrades,
       theme: user.theme,
+      themeConfig: user.themeConfig ?? null,
     },
   };
 }

@@ -44,6 +44,7 @@ model User {
   reducedMotion    Boolean   @default(false)
   confirmTrades    Boolean   @default(false)   // double-tap to place a staked play (opt-in fat-finger guard)
   theme            String    @default("classic")   // selected device skin id, synced cross-device
+  themeConfig      Json?                            // per-part customizer rig { preset, parts }; theme stays the preset id for legacy readers
 
   avatarUrl        String?                     // custom uploaded avatar (Spaces webp); null = render the PIPS identicon
 

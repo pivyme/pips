@@ -4,6 +4,7 @@
 import { env } from '@/env'
 import { isDemo, demoApi, demoStreamPrices, demoStreamPlay, demoStreamLive, demoStreamMarkets } from './demo'
 import { readRef } from './referral'
+import type { ConsoleCustom } from '@/components/console/customize'
 
 const BASE = env.VITE_API_URL
 
@@ -27,7 +28,7 @@ export interface UserDTO {
   customAvatar: boolean // a custom upload is set (drives the remove-X in the profile editor)
   balance: string
   managerReady: boolean
-  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string }
+  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string; themeConfig?: ConsoleCustom | null }
 }
 
 export interface MarketDTO {

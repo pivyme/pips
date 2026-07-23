@@ -1,11 +1,18 @@
 // Renders a single play to a 16:9 PNG "PnL card" for sharing, offscreen on a canvas, then hands it to the
-// native share sheet (download fallback). The frame is the real template art (pnl-card-template-{win,lose}.webp,
-// flat rasters so mobile decode is cheap): the amber device body, the recessed black screen, the PIPS logo badge,
-// and the website badge, drawn pixel-for-pixel. All the play's numbers render INSIDE that black screen in the
-// Teenage Engineering instrument language: true black, mono uppercase micro-labels over big bold tabular
-// numbers, one tone accent (green win / red loss).
+// native share sheet (download fallback). The frame is a 3-layer composite of the template art (flat WebP
+// rasters so mobile decode is cheap): under-{tone} (amber body, black screen, arrows, the mascot), then the
+// user's OWN customized console rendered live by consoleShot at the template's exact pose, then over-{tone}
+// (the mascot's edge back over the console + the badges). All the play's numbers render INSIDE the black
+// screen in the Teenage Engineering instrument language: true black, mono uppercase micro-labels over big
+// bold tabular numbers, one tone accent (green win / red loss). The pre-revamp single-template card survives
+// verbatim as renderPlayCardLegacy behind the PNL_CARD_V2 kill switch and as the runtime fallback.
 import type { LuckyParams, PlayDTO, RangeParams } from '@/lib/api'
 import { loadCardFonts, loadImage } from '@/lib/cardAssets'
+import { getConsoleShot } from '@/lib/consoleShot'
+
+// Kill switch: false renders the exact pre-revamp card again (legacy path + legacy templates, both still
+// shipped), one line, no asset changes.
+const PNL_CARD_V2 = true
 
 // Render options. The dollar PnL is private for a lot of people, so it's opt-in (default off); the ROI %
 // (no absolute amount) always shows.
@@ -20,6 +27,9 @@ const MONO = 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace'
 const SCREEN = { x: 20, y: 19, w: 1561, h: 809, r: 54 }
 // The template's logo + website badges sit at the very bottom of the screen; keep content clear of them.
 const BADGE_TOP = 732
+// The console layer's placement from the template SVGs (rect origin + rotation about it), identical in
+// both tones. The shot draws 1:1 into this box (calibration proved no fit correction is needed).
+const CONSOLE_BOX = { x: 1098.34, y: -94.0938, w: 571.74, h: 1020.38, rot: (6.55034 * Math.PI) / 180 }
 
 // Screen ink tokens (docs/SCREEN.md). Brighter than the App Surface greys, they read on true black.
 const C = {
@@ -219,6 +229,182 @@ function hairline(ctx: CanvasRenderingContext2D, x0: number, x1: number, y: numb
 }
 
 export async function renderPlayCard(play: PlayDTO, opts?: PlayCardOpts): Promise<Blob | null> {
+  if (!PNL_CARD_V2 || typeof document === 'undefined') return renderPlayCardLegacy(play, opts)
+
+  const m = buildPlayCard(play, opts)
+  const t = m.tone === 'win' ? 'win' : 'lose'
+  const screen = m.tone === 'win' ? 'win' : 'rekt' // the console's on-screen art tracks the outcome
+  // The console shot is the long pole on a cold rig; kick it in parallel with the layer + font loads.
+  const [under, over, shot] = await Promise.all([
+    loadImage(`/assets/pnl-card/under-${t}.webp`),
+    loadImage(`/assets/pnl-card/over-${t}.webp`),
+    getConsoleShot(screen),
+    loadCardFonts(['800 170px "Gabarito Variable"', '700 40px "Gabarito Variable"', `700 26px ${MONO}`]),
+  ])
+  // Fallback ladder: no live shot -> the baked classic console for the tone (wrong-but-beautiful beats
+  // a hole); any layer still missing -> the legacy card. A broken v2 can never produce a broken card.
+  const console3 = shot ?? (await loadImage(`/assets/pnl-card/console-classic-${screen}.webp`))
+  if (!under || !over || !console3) return renderPlayCardLegacy(play, opts)
+
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+
+  const tone = m.tone === 'win' ? C.up : C.down
+
+  // ── The frame: under layer (amber body + black screen + arrows + mascot), then the user's console
+  //    clipped into the screen at the template's exact transform, then the over layer (the mascot's
+  //    edge back over the console + the badges). ──
+  ctx.drawImage(under, 0, 0, W, H)
+  ctx.save()
+  roundRect(ctx, SCREEN.x, SCREEN.y, SCREEN.w, SCREEN.h, SCREEN.r)
+  ctx.clip()
+  ctx.translate(CONSOLE_BOX.x, CONSOLE_BOX.y)
+  ctx.rotate(CONSOLE_BOX.rot)
+  ctx.drawImage(console3, 0, 0, CONSOLE_BOX.w, CONSOLE_BOX.h)
+  ctx.restore()
+  ctx.drawImage(over, 0, 0, W, H)
+
+  // Everything from here renders inside the black screen; clip so nothing spills onto the amber bezel.
+  ctx.save()
+  roundRect(ctx, SCREEN.x, SCREEN.y, SCREEN.w, SCREEN.h, SCREEN.r)
+  ctx.clip()
+
+  // The right ~half of the screen is the tone mascot art, so ALL info stays in the left column.
+  const CL = 92 // content left, inset off the rounded screen bezel
+  const LEFTMAX = 782 // right bound: keep text and rules clear of the mascot
+  const RX0 = 44 // hairline rule left, tucked under the left rim
+
+  // ── Eyebrow: game icon + name (bigger, like the /games home), then duration · date trailing, mono ──
+  const gy = 76
+  let ex = CL
+  const gameGlyph = GAME_ICON[play.game] ? await loadImage(lucideDataUri(GAME_ICON[play.game], C.ink2)) : null
+  if (gameGlyph) {
+    ctx.drawImage(gameGlyph, ex, gy - 16, 32, 32)
+    ex += 32 + 13
+  }
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = C.ink2
+  ctx.font = `700 31px ${MONO}`
+  ctx.letterSpacing = `${0.06 * 31}px`
+  ctx.fillText(m.game, ex, gy + 1)
+  ex += ctx.measureText(m.game).width + 0.06 * 31 + 20
+  ctx.letterSpacing = '0px'
+  const trail = [m.duration, m.settled.toUpperCase()].filter(Boolean).join('  ·  ')
+  if (trail) {
+    ctx.fillStyle = C.ink3
+    ctx.font = `500 24px ${MONO}`
+    tracked(ctx, `·  ${trail}`, ex, gy + 1, 0.06, 24)
+  }
+
+  // ── Identity: token chip · TICKER · direction/mult pill ──
+  const cy1 = 168
+  const chipR = 38
+  const chipCX = CL + chipR
+  const coin = await loadImage(`/assets/images/coins/${m.asset.toLowerCase()}-logo.png`)
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(chipCX, cy1, chipR, 0, Math.PI * 2)
+  ctx.closePath()
+  if (coin) {
+    ctx.clip()
+    const scale = Math.max((chipR * 2) / coin.width, (chipR * 2) / coin.height)
+    ctx.drawImage(coin, chipCX - (coin.width * scale) / 2, cy1 - (coin.height * scale) / 2, coin.width * scale, coin.height * scale)
+  } else {
+    ctx.fillStyle = ASSET[m.asset.toUpperCase()] ?? '#5b6472'
+    ctx.fill()
+    ctx.fillStyle = C.ink
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.font = `800 40px ${FONT}`
+    ctx.fillText(m.asset.charAt(0).toUpperCase(), chipCX, cy1 + 2)
+  }
+  ctx.restore()
+
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = C.ink
+  ctx.font = `800 60px ${FONT}`
+  const tickerX = chipCX + chipR + 26
+  ctx.fillText(m.asset.toUpperCase(), tickerX, cy1 + 1)
+  const badgeX = tickerX + ctx.measureText(m.asset.toUpperCase()).width + 26
+  pill(ctx, m.badge, badgeX, cy1, tone, 26)
+
+  hairline(ctx, RX0, LEFTMAX, 236)
+
+  // ── The hero: result (with the optional net PnL inline) over the giant ROI ──
+  const resultY = 314
+  triangle(ctx, CL + 15, resultY - 8, 15, m.positive, tone)
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = tone
+  ctx.font = `800 34px ${MONO}`
+  tracked(ctx, m.result, CL + 44, resultY, 0.14, 34)
+  if (m.showPnl) {
+    ctx.letterSpacing = `${0.14 * 34}px`
+    const resultW = ctx.measureText(m.result).width + 0.14 * 34
+    ctx.letterSpacing = '0px'
+    let px = CL + 44 + resultW + 26
+    ctx.fillStyle = C.ink3
+    ctx.font = `700 30px ${FONT}`
+    ctx.fillText('·', px, resultY - 1)
+    px += ctx.measureText('·').width + 22
+    ctx.fillStyle = tone
+    ctx.font = `800 40px ${FONT}`
+    ctx.fillText(m.netPnl, px, resultY + 3)
+  }
+
+  // Giant hero (ROI, or missed profit on a loss), shrunk to fit the left column so it never runs into the mascot.
+  let roiFont = 168
+  ctx.font = `800 ${roiFont}px ${FONT}`
+  while (ctx.measureText(m.hero).width > LEFTMAX - CL && roiFont > 96) {
+    roiFont -= 4
+    ctx.font = `800 ${roiFont}px ${FONT}`
+  }
+  ctx.fillStyle = tone
+  ctx.fillText(m.hero, CL - 4, 486)
+  if (m.heroSub) {
+    ctx.fillStyle = C.ink3
+    ctx.font = `700 26px ${MONO}`
+    tracked(ctx, m.heroSub, CL, 540, 0.14, 26)
+  }
+
+  hairline(ctx, RX0, LEFTMAX, 568)
+
+  // ── Cells band: the two price levels, hairline-split, docked in the left column above the badges ──
+  const segW = (LEFTMAX - CL) / 2
+  m.cells.forEach((c, i) => {
+    const x = CL + i * segW
+    if (i > 0) {
+      ctx.strokeStyle = C.rule
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.moveTo(x - 26, 600)
+      ctx.lineTo(x - 26, BADGE_TOP - 20)
+      ctx.stroke()
+    }
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillStyle = C.ink3
+    ctx.font = `700 26px ${MONO}`
+    tracked(ctx, c.label, x, 620, 0.12, 26)
+    ctx.fillStyle = C.ink
+    ctx.font = `800 52px ${FONT}`
+    ctx.fillText(c.value, x, 680)
+  })
+
+  ctx.restore()
+
+  return new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'))
+}
+
+// The pre-revamp card, byte-identical to what shipped before the console composite: the flat
+// pnl-card/template-{win,lose}.webp frame + the same text pass. Kept verbatim (not refactored) as the
+// PNL_CARD_V2 kill-switch target and the runtime fallback when a v2 layer fails to load.
+async function renderPlayCardLegacy(play: PlayDTO, opts?: PlayCardOpts): Promise<Blob | null> {
   const canvas = document.createElement('canvas')
   canvas.width = W
   canvas.height = H
@@ -232,7 +418,7 @@ export async function renderPlayCard(play: PlayDTO, opts?: PlayCardOpts): Promis
 
   // ── The frame: the real template art, pixel-for-pixel (amber body + black screen + tone emblem + badges).
   //    Win and loss have their own template, picked by the play's outcome. ──
-  const template = await loadImage(`/assets/pnl-card-template-${m.tone === 'win' ? 'win' : 'lose'}.webp`)
+  const template = await loadImage(`/assets/pnl-card/template-${m.tone === 'win' ? 'win' : 'lose'}.webp`)
   if (template) ctx.drawImage(template, 0, 0, W, H)
   else {
     ctx.fillStyle = '#000'

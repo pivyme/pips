@@ -25,6 +25,7 @@ import { haptic } from '@/lib/haptics'
 import type { HapticPreset } from '@/lib/haptics'
 import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
 import { themeBackdrop, type ConsoleTheme } from './themes'
+import type { PartId } from './customize'
 import { betLadder } from '@/lib/sui/config'
 
 // Main / Action1 / Action2 / MenuTab / HomeTab, matching ConsoleShell's DOM equivalents.
@@ -91,6 +92,8 @@ interface ConsoleCanvasProps {
   // Hold the resting app pose with no hero -> app settle. A returning session sets this so a refresh
   // never replays the entry zoom (that animation is for a real login only).
   instant?: boolean
+  // Customize studio only: eases the camera onto a framing pose for the given part tab (null = studio rest pose).
+  focusPart?: PartId | null
 }
 
 export default function ConsoleCanvas({
@@ -114,6 +117,7 @@ export default function ConsoleCanvas({
   onWelcomeArrived,
   reducedMotion = false,
   instant = false,
+  focusPart = null,
 }: ConsoleCanvasProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -156,11 +160,14 @@ export default function ConsoleCanvas({
   const applyActiveRef = useRef<(on: boolean) => void>(() => {})
   // LIVE landing/onboarding arc: the [stage] effect drives hero / app / welcome poses.
   const applyStageRef = useRef<(s: 'hero' | 'app' | 'welcome') => void>(() => {})
+  // Customize only: the [focusPart] effect eases the studio camera onto the tabbed part.
+  const applyFocusRef = useRef<(p: PartId | null) => void>(() => {})
 
   useEffect(() => {
     const canvas = canvasRef.current
     const hint = hintRef.current
     if (!canvas || !hint) return
+    if (customize) console.log('[dbg] scene BUILD (customize)')
 
     const CREAM = 0xe9dbbf,
       RED = 0xd63a2e,
@@ -1528,7 +1535,7 @@ export default function ConsoleCanvas({
         const light = Math.pow(facing, 2.2)
         label.mat.opacity = facing > 0 ? 0.12 + 0.88 * light : 0
         const brightness = 0.32 + 0.68 * Math.pow(facing, 1.6)
-        label.mat.color.setRGB(brightness, brightness, brightness)
+        label.mat.color.setRGB(wheelInk.r * brightness, wheelInk.g * brightness, wheelInk.b * brightness)
       }
     }
 
@@ -1744,6 +1751,8 @@ export default function ConsoleCanvas({
 
     // Repaint the device to a skin. Colors only, no geometry touched, so it's cheap enough to run on
     // every card tap in the studio. emissive tracks the color so the press glow stays in-palette.
+    // Number-wheel digit ink: fixed white, the drum is always the factory dark hardware.
+    const wheelInk = new THREE.Color('#ffffff')
     function applyTheme(t?: ConsoleTheme) {
       if (!t) return
       // Transparent "Clear" skin: FRONT shell is real frosted acrylic via transmission (not a flat alpha film, which just read as a white overlay), so the guts read as diffused frosted plastic under a clearcoat.
@@ -1821,8 +1830,9 @@ export default function ConsoleCanvas({
       // Raised P tracks the button: a shade darker than the face, its open counter reads as the eye.
       matMainGlyph.color.set(t.main).multiplyScalar(0.7)
       // The action caps are screens, not flat buttons: the theme tone is just their dim idle glow; a
-      // bound game overrides it with the live up/down color (relightActionScreens).
-      actionThemeColor = t.action
+      // bound game overrides it with the live up/down color (relightActionScreens). `glow` only owns
+      // this neutral/idle state, SCREEN_COLORS up/down/amber during play always win.
+      actionThemeColor = t.glow ?? t.action
       relightActionScreens()
       paint(bm[3], t.pills)
       paint(bm[4], t.pills)
@@ -1831,6 +1841,7 @@ export default function ConsoleCanvas({
       menuLbl.recolor(labelColor)
       gamesLbl.recolor(labelColor)
       backMark.recolor(labelColor)
+      // Number wheel stays the factory dark hardware on every skin (wheel customization is retired).
       dirty = true
     }
     applyThemeRef.current = applyTheme
@@ -1892,6 +1903,28 @@ export default function ConsoleCanvas({
     // tiltX/tiltZ = pitch/roll sway (radians). Set any to 0 to drop that axis.
     const FLOAT = { speed: 1.5, bob: 0.15, tiltX: 0.07, tiltZ: 0.05 }
     let floatPhase = 0 // drives the studio idle float
+
+    // Part-focus poses for the customizer: lookX/lookY/camZ frame the part, yaw/pitch angle the deck.
+    // Derived from each control's real wx/wy (BTN_PX / knobPocket / numberWheelPocket above), then
+    // hand-verified on-device: Knob and Wheel sit close together, so each needs to clearly dominate
+    // its own frame rather than showing both at similar weight.
+    const FOCUS: Record<PartId, { x: number; y: number; z: number; yaw: number; pitch: number }> = {
+      // Body barely moves off the studio rest pose (camZ 40 / yaw -0.5): no zoom lunge, just a slight
+      // turn toward the front so the shell color reads.
+      body: { x: 0, y: -3.2, z: 39, yaw: -0.28, pitch: -0.15 },
+      // Play pulls back + swings right so the body's bottom edge clears the tab strip below the canvas.
+      play: { x: 1.2, y: -4.05, z: 24, yaw: -0.5, pitch: -0.08 },
+      buttons: { x: -1.2, y: -6.4, z: 21, yaw: 0.16, pitch: -0.08 },
+      knob: { x: 1.45, y: -5.1, z: 16, yaw: -0.35, pitch: -0.05 },
+      wheel: { x: 0.2, y: -6.5, z: 12, yaw: -0.15, pitch: 0 },
+      glow: { x: -1.2, y: -6.4, z: 25, yaw: 0, pitch: -0.06 },
+    }
+    let focusPart: PartId | null = null
+    // Eased-per-frame pose blend: handles pose->pose and pose->rest without tracking tween state.
+    const focusCur = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, mix: 0 }
+    applyFocusRef.current = (p) => {
+      focusPart = p
+    }
 
     // Accelerometer-reactive gold: tilting the phone sweeps the studio env across metallic skins
     // (envMapRotation, not the mesh itself, so it never fights the float/orbit rotation above).
@@ -2001,6 +2034,16 @@ export default function ConsoleCanvas({
         yaw = lerp(CUST.yaw[0], CUST.yaw[1], e) + orbitYaw * e
         pitch = lerp(CUST.pitch[0], CUST.pitch[1], e) + orbitPitch * e
       }
+      let lookX = 0
+      if (focusCur.mix > 0.001) {
+        // Part-focus tab: blend toward the framed pose; orbit stays live so a drag still nudges the focused view.
+        const f = focusCur.mix
+        lookX = lerp(0, focusCur.x, f)
+        lookY = lerp(lookY, focusCur.y, f)
+        camZ = lerp(camZ, focusCur.z, f)
+        yaw = lerp(yaw, focusCur.yaw + orbitYaw, f)
+        pitch = lerp(pitch, focusCur.pitch + orbitPitch, f)
+      }
       if (outroActive) {
         // Land on the exact pose the games view computes for this aspect (same cy/d math as the resize handler), so the studio hand-off to the live game device has no jump.
         // The device was stretched to that height when the outro armed.
@@ -2013,13 +2056,14 @@ export default function ConsoleCanvas({
           (ext > 0
             ? (6.2 * 0.5) / (tanHalf * aspect)
             : (11.95 * 0.5) / tanHalf) + DEVICE_Z
+        lookX = lerp(lookX, 0, o)
         lookY = lerp(lookY, cy, o)
         camZ = lerp(camZ, frontZ, o)
         yaw = lerp(yaw, 0, o)
         pitch = lerp(pitch, 0, o)
       }
-      camera.position.set(0, lookY, camZ)
-      camera.lookAt(0, lookY, 0)
+      camera.position.set(lookX, lookY, camZ)
+      camera.lookAt(lookX, lookY, 0)
       deck.rotation.set(pitch, yaw, 0)
       // Keep the solid back on through the whole spin and only drop it once we're basically front-on,
       // so it doesn't pop while the device is still angled. By then it's occluded anyway.
@@ -2327,6 +2371,7 @@ export default function ConsoleCanvas({
     }
 
     applyOutroRef.current = (on: boolean) => {
+      if (customize) console.log('[dbg] arm outro', on)
       if (on) {
         introT = 1 // settle instantly so the outro starts from the rest pose
         // Stretch the device to the live game height up front so the screen we zoom into is exactly
@@ -2857,8 +2902,11 @@ export default function ConsoleCanvas({
     // Visually identical here, and stops the full-scene render stealing the game's frames, this is what made flappy stutter with the device repainting at 30fps under it.
     const LIGHTSHOW_FRAME = 1 / 15
 
+    let dbgFrames = 0
     function loop(time?: number) {
       rafId = requestAnimationFrame(loop)
+      if (customize && ++dbgFrames % 10 === 0)
+        console.log('[dbg] hb f', dbgFrames, 't', Math.round(performance.now()), 'active', activeRef.current, 'outroActive', outroActive, 'outroT', outroT.toFixed(2))
       timer.update(time)
       const dt = Math.min(timer.getDelta(), 0.05)
       let animating = false
@@ -2920,6 +2968,7 @@ export default function ConsoleCanvas({
           animating = true
         }
         if (outroActive) {
+          if (Math.round(outroT * 100) % 25 === 0) console.log('[dbg] outroT', outroT.toFixed(2), 'fade', outroFade.toFixed(2))
           // Screen stays off through the whole snap, so the device lands in the exact black
           // "game loading" state. The fade-in belongs to the game, not the studio.
           setScreenPower(0)
@@ -2933,6 +2982,7 @@ export default function ConsoleCanvas({
             if (outroFade < 1) animating = true
             else if (!outroFired) {
               outroFired = true
+              console.log('[dbg] canvas outro fired, cb?', !!propsRef.current.onOutroComplete)
               propsRef.current.onOutroComplete?.()
             }
           }
@@ -2941,6 +2991,17 @@ export default function ConsoleCanvas({
         } else if (Math.abs(orbitPitch) > 0.0006) {
           orbitPitch += (0 - orbitPitch) * Math.min(1, dt * 5) // level out the tilt on release
           animating = true
+        }
+        // Part-focus blend: eases toward the tabbed part's pose, or back to 0 (rest) when cleared.
+        const focusTgt = focusPart ? FOCUS[focusPart] : null
+        const focusK = reducedMotionRef.current ? 1 : Math.min(1, dt * 5)
+        focusCur.mix += ((focusTgt ? 1 : 0) - focusCur.mix) * focusK
+        if (focusTgt) {
+          focusCur.x += (focusTgt.x - focusCur.x) * focusK
+          focusCur.y += (focusTgt.y - focusCur.y) * focusK
+          focusCur.z += (focusTgt.z - focusCur.z) * focusK
+          focusCur.yaw += (focusTgt.yaw - focusCur.yaw) * focusK
+          focusCur.pitch += (focusTgt.pitch - focusCur.pitch) * focusK
         }
         if (animating) placeCustomizeCamera()
       } else if (!debug) {
@@ -3159,6 +3220,7 @@ export default function ConsoleCanvas({
     loop()
 
     return () => {
+      if (customize) console.log('[dbg] scene DISPOSE (customize)')
       cancelAnimationFrame(rafId)
       timer.dispose()
       canvas.removeEventListener('pointerdown', onPointerDown)
@@ -3182,6 +3244,7 @@ export default function ConsoleCanvas({
       applyActiveRef.current = () => {}
       overlayPressRef.current = null
       applyStageRef.current = () => {}
+      applyFocusRef.current = () => {}
       gui?.destroy()
       disposeActionScreens()
       backDetails.dispose()
@@ -3220,6 +3283,7 @@ export default function ConsoleCanvas({
 
   // Arm / disarm the Done outro.
   useEffect(() => {
+    if (customize) console.log('[dbg] outro prop ->', outro)
     applyOutroRef.current(outro)
   }, [outro])
 
@@ -3227,6 +3291,11 @@ export default function ConsoleCanvas({
   useEffect(() => {
     applyStageRef.current(stage)
   }, [stage])
+
+  // Customize only: ease the studio camera onto the tabbed part (or back to rest).
+  useEffect(() => {
+    applyFocusRef.current(focusPart)
+  }, [focusPart])
 
   useEffect(() => {
     applyActiveRef.current(active)

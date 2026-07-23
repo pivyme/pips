@@ -44,7 +44,7 @@ import {
 } from '@/lib/sound'
 import { cnm } from '@/utils/style'
 
-export const Route = createFileRoute('/sounds')({ component: SoundLab })
+export const Route = createFileRoute('/dev/sounds')({ component: SoundLab })
 
 // The whole synth catalog in one manifest, so every game's music + SFX is trackable here as we revamp it.
 // `sound.ts` stays the engine; this page is the index + audition bench. Add a voice there, list it here.

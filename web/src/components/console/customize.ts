@@ -4,6 +4,8 @@ import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { DEFAULT_THEME, DEFAULT_THEME_ID, THEME_BY_ID } from './themes'
 import type { ConsoleTheme } from './themes'
 
+// 'wheel' is retired (the drum is fixed dark hardware) but stays a valid key so saved rigs that
+// carry a wheel index keep their other overrides instead of failing validation wholesale.
 export type PartId = 'body' | 'play' | 'buttons' | 'knob' | 'wheel' | 'glow'
 export const PART_IDS: PartId[] = ['body', 'play', 'buttons', 'knob', 'wheel', 'glow']
 
@@ -29,6 +31,24 @@ export const PALETTE = [
   { name: 'Black', hex: '#1a1b1e' }, // 11, not pure black so form still reads
 ] as const
 
+// Glow-only swatches: the action screens are emissive and carry dark ink (black text later), so every
+// entry sits above the 0.58 luminance flip in actionInk/contrastInk. APPEND-ONLY, indices mirror PALETTE;
+// slot 11 swaps Black for Lime because a dark screen can't hold black text.
+export const GLOW_PALETTE = [
+  { name: 'Cream', hex: '#f2e4c2' }, // 0
+  { name: 'Coral', hex: '#ff8577' }, // 1
+  { name: 'Orange', hex: '#ffa24d' }, // 2
+  { name: 'Gold', hex: '#f7cd4f' }, // 3
+  { name: 'Mint', hex: '#4ee88a' }, // 4
+  { name: 'Teal', hex: '#45dee2' }, // 5
+  { name: 'Sky', hex: '#6cb2ff' }, // 6
+  { name: 'Lavender', hex: '#b39dff' }, // 7
+  { name: 'Pink', hex: '#ff9dc4' }, // 8
+  { name: 'White', hex: '#f4f4f0' }, // 9
+  { name: 'Silver', hex: '#c9ccd2' }, // 10
+  { name: 'Lime', hex: '#cfe84e' }, // 11
+] as const
+
 // Same perceived-luminance rule as the canvas's actionInk (ConsoleCanvas ~784), CSS-side.
 export function contrastInk(hex: string, dark = '#373737', light = '#e8e6df'): string {
   const h = hex.replace('#', '')
@@ -40,7 +60,8 @@ export function contrastInk(hex: string, dark = '#373737', light = '#e8e6df'): s
 }
 
 export function hasOverrides(c: ConsoleCustom): boolean {
-  return !!c.parts && Object.values(c.parts).some((v) => v !== undefined)
+  // A legacy wheel index alone isn't a custom rig anymore, it renders identical to the preset.
+  return !!c.parts && Object.entries(c.parts).some(([k, v]) => k !== 'wheel' && v !== undefined)
 }
 
 // Shape guard for anything coming off the wire (server themeConfig). Mirrors the backend validator.
@@ -88,9 +109,8 @@ export function resolveTheme(custom: ConsoleCustom): ConsoleTheme {
   }
   const knob = hex(p.knob)
   if (knob) t.knob = knob
-  const wheel = hex(p.wheel)
-  if (wheel) t.wheel = wheel
-  const glow = hex(p.glow)
+  // p.wheel is deliberately ignored: the drum stays fixed dark hardware.
+  const glow = p.glow === undefined ? undefined : GLOW_PALETTE[p.glow]?.hex
   if (glow) t.glow = glow
 
   // Card fields feed the "Custom" chip in the presets rail.
@@ -112,6 +132,20 @@ function readLegacyPreset(): string {
   } catch {
     return DEFAULT_THEME_ID
   }
+}
+
+// Non-hook rig read for offscreen tools (the PnL card's console shot): same resolution order as
+// useConsoleCustom, guarded custom first, then the legacy preset key.
+export function readStoredConsoleCustom(): ConsoleCustom {
+  if (typeof window === 'undefined') return { preset: DEFAULT_THEME_ID }
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_KEY)
+    const parsed: unknown = raw != null ? JSON.parse(raw) : null
+    if (parsed && isValidConsoleCustom(parsed)) return parsed
+  } catch {
+    /* fall through to the legacy preset */
+  }
+  return { preset: readLegacyPreset() }
 }
 
 // Replaces useConsoleTheme() as _app's source of truth. Mirrors the preset back into the legacy key so

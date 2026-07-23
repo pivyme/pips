@@ -221,9 +221,10 @@ export function createNumberWheel(
 
   const numberWheelHousingShape = roundedRect(numberWheelPocket.w, numberWheelPocket.h, numberWheelPocket.r)
   numberWheelHousingShape.holes.push(roundedRectPath(0, 0, 0.78, 0.74, 0.085))
+  const matWheelHousing = new THREE.MeshStandardMaterial({ color: 0x080808, roughness: 0.58, metalness: 0.08 })
   const numberWheelHousing = new THREE.Mesh(
     frontZeroed(numberWheelHousingShape, 0.24, 0.025),
-    new THREE.MeshStandardMaterial({ color: 0x080808, roughness: 0.58, metalness: 0.08 }),
+    matWheelHousing,
   )
   numberWheelHousing.position.set(wx(numberWheelPocket.px), wy(numberWheelPocket.py), 0.12)
   numberWheelHousing.castShadow = true
@@ -234,9 +235,10 @@ export function createNumberWheel(
   numberWheelRoll.position.set(wx(numberWheelPocket.px), wy(numberWheelPocket.py), -0.14)
   device.add(numberWheelRoll)
 
+  const matWheelDrum = new THREE.MeshStandardMaterial({ color: 0x171717, roughness: 0.42, metalness: 0.18 })
   const numberWheelDrum = new THREE.Mesh(
     new THREE.CylinderGeometry(0.37, 0.37, 0.76, 64, 1, false),
-    new THREE.MeshStandardMaterial({ color: 0x171717, roughness: 0.42, metalness: 0.18 }),
+    matWheelDrum,
   )
   numberWheelDrum.rotation.z = Math.PI / 2
   numberWheelDrum.castShadow = true
@@ -245,7 +247,7 @@ export function createNumberWheel(
   numberWheelRoll.add(numberWheelDrum)
   interactive.push(numberWheelDrum)
 
-  return { numberWheelHousing, numberWheelRoll, numberWheelDrum }
+  return { numberWheelHousing, numberWheelRoll, numberWheelDrum, matWheelHousing, matWheelDrum }
 }
 
 // Turns the flat action caps into framed mini-screens: a metal bezel, the cap recessed as the lit LCD,

@@ -3,7 +3,7 @@ import { useEffect } from 'react'
 import { stashRef } from '@/lib/referral'
 import { LoadingIcon } from '@/ui/LoadingIcon'
 
-// Referral capture (playpips.fun/@kelvin), sibling of pitch.tsx, outside _app's phase machine so the click
+// Referral capture (playpips.fun/@kelvin), a standalone root route outside _app's phase machine so the click
 // can't bounce away first (REFERRALS.md #2). A component, not a beforeLoad redirect, since beforeLoad runs server-side and would skip the client-only write (#3).
 export const Route = createFileRoute('/@{$handle}')({ component: CaptureHandle })
 

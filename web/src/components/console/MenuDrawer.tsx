@@ -294,7 +294,6 @@ export function MenuDrawer({
           <div
             key={pathname}
             ref={scrollRef}
-            data-lenis-prevent
             onScroll={(e) => {
               scrollMemory.current[pathname] = e.currentTarget.scrollTop
               updateFade()

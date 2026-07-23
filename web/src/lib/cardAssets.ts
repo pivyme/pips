@@ -46,8 +46,16 @@ export function loadCardFonts(specs: Array<string>, timeoutMs = 2000): Promise<u
   return Promise.race([all, new Promise((r) => setTimeout(r, timeoutMs))])
 }
 
-// Warm the heavy card art ahead of the share sheet so the first open renders instantly.
+// Warm the heavy card art ahead of the share sheet so the first open renders instantly: the four
+// composite layers + the baked classic consoles (the stock-rig fast path and the WebGL-dead
+// fallback), plus the user's own console shots (usually an IndexedDB hit; WebGL only on a cold rig).
+// Dynamic import keeps the cardAssets<->consoleShot dependency one-way at module load.
 export function preloadPlayCardAssets(): void {
-  void loadImage('/assets/pnl-card-template-win.webp')
-  void loadImage('/assets/pnl-card-template-lose.webp')
+  void loadImage('/assets/pnl-card/under-win.webp')
+  void loadImage('/assets/pnl-card/under-lose.webp')
+  void loadImage('/assets/pnl-card/over-win.webp')
+  void loadImage('/assets/pnl-card/over-lose.webp')
+  void loadImage('/assets/pnl-card/console-classic-win.webp')
+  void loadImage('/assets/pnl-card/console-classic-rekt.webp')
+  void import('@/lib/consoleShot').then((m) => m.warmConsoleShot())
 }

@@ -22,7 +22,8 @@ import { InstallGate } from '@/components/InstallGate'
 import { UsernameScreen, ThemePicker, WelcomeScreen } from '@/components/console/Onboarding'
 import { TourProvider } from '@/components/console/tour'
 import { DEFAULT_THEME_ID, THEME_BY_ID, themeBackdrop } from '@/components/console/themes'
-import { useConsoleCustom } from '@/components/console/customize'
+import { hasOverrides, isValidConsoleCustom, useConsoleCustom } from '@/components/console/customize'
+import { warmConsoleShot } from '@/lib/consoleShot'
 import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
 import { api } from '@/lib/api'
@@ -86,7 +87,6 @@ function AppLayout() {
   const [showLoadingScreen, setShowLoadingScreen] = useState(true)
   const [loadingScreenLeaving, setLoadingScreenLeaving] = useState(false)
   const [customizePrepared, setCustomizePrepared] = useState(false)
-  const [customizeOpening, setCustomizeOpening] = useState(false)
   const [customizeHandoff, setCustomizeHandoff] = useState(false)
   const navigate = useNavigate()
   const matchRoute = useMatchRoute()
@@ -119,16 +119,24 @@ function AppLayout() {
     }
     if (themeHydratedFor.current === user.id) return
     themeHydratedFor.current = user.id
-    const serverTheme = user.settings.theme
-    const st = savedThemeRef.current
-    // Own-property check: the server theme is free-form, so reject anything outside the catalog (blocks a prototype key like "constructor" from slipping through).
-    const known = serverTheme ? Object.prototype.hasOwnProperty.call(THEME_BY_ID, serverTheme) : false
-    if (known && serverTheme !== DEFAULT_THEME_ID && serverTheme !== st.id) {
-      st.setId(serverTheme)
+    const server = user.settings
+    const local = savedRef.current
+    const cfg = server.themeConfig
+    // Stale-config guard: an old client PATCHes theme only, leaving themeConfig behind. theme is truth.
+    const valid = cfg != null && isValidConsoleCustom(cfg) && cfg.preset === server.theme
+    if (valid && (cfg.preset !== DEFAULT_THEME_ID || hasOverrides(cfg))) {
+      if (JSON.stringify(cfg) !== JSON.stringify(local.custom)) local.set(cfg)
+    } else {
+      // Legacy server row (preset only, or no themeConfig yet). Own-property check: the server theme
+      // is free-form, so reject anything outside the catalog (blocks a prototype key like "constructor").
+      const known = server.theme ? Object.prototype.hasOwnProperty.call(THEME_BY_ID, server.theme) : false
+      if (known && server.theme !== DEFAULT_THEME_ID && server.theme !== local.custom.preset) {
+        local.set({ preset: server.theme })
+      }
     }
   }, [user])
   // The ambient the frame floats on, derived from the skin. Paints html + body (body shows under iOS Safari's safe-area status bar) and retints the theme-color meta that Safari uses for the notch/status strip.
-  const backdrop = themeBackdrop(savedTheme.theme)
+  const backdrop = themeBackdrop(saved.resolved)
   useEffect(() => {
     const root = document.documentElement
     root.style.background = backdrop
@@ -295,12 +303,21 @@ function AppLayout() {
     }
   }, [status])
 
+  // Boot warm for the share card's console shot: once the app settles, prime the (usually IDB-cached)
+  // shot while idle. Skipped when the session lands mid-game (a cold-rig render mounts a second WebGL
+  // canvas, which must never compete with a live game); the history screen's preload catches those.
   useEffect(() => {
-    if (onCustomize) setCustomizeOpening(false)
-  }, [onCustomize])
+    if (phase !== 'app') return
+    const t = window.setTimeout(() => {
+      const p = window.location.pathname
+      if (p === '/games' || p.startsWith('/menu')) warmConsoleShot(0)
+    }, 2500)
+    return () => window.clearTimeout(t)
+  }, [phase])
 
   // No Customize pre-warm on menu open: building the studio is a second 3D device (~0.9s synchronous Three.js) that froze scroll/close if built while the drawer was open.
-  // It builds only when actually opened (onLaunchStart sets customizePrepared on the Customize tap), so the menu does zero 3D work.
+  // The Customize tap mounts it HIDDEN instead (customizePrepared): the WebGL build runs behind the drawer's compositor-driven fall while the studio holds the exact live app pose (introFromApp).
+  // Reveal waits for the route to land (drawer gone), so the live device appears to zoom back out into the workshop, the mirror of the Done outro.
 
   useEffect(() => {
     if (!onMenu && !onCustomize && !customizeHandoff) {
@@ -308,7 +325,7 @@ function AppLayout() {
     }
   }, [customizeHandoff, onCustomize, onMenu])
 
-  const showCustomizeStudio = onCustomize || customizeOpening || customizeHandoff
+  const showCustomizeStudio = onCustomize || customizeHandoff
   const mountCustomizeStudio = showCustomizeStudio || customizePrepared
 
   // Which pose the device holds and whether its screen content shows. A returning session holds the settled app pose from frame one (canvas inits heroT=0, no hero, no settle).
@@ -383,16 +400,20 @@ function AppLayout() {
       <AppFrame bg={backdrop} dimmed={phase === 'landing' && !restoring}>
         {mountConsole && (
         <ConsoleControlsProvider>
-          <Console3DRoute
-            theme={savedTheme.theme}
-            stage={canvasStage}
-            reducedMotion={reduced}
-            instant={restoring}
-            screenContentVisible={screenVisible}
-            onNav={handleTab}
-          >
-            <DeviceSettledProvider settled={deviceSettled}>{deviceChild}</DeviceSettledProvider>
-          </Console3DRoute>
+          {/* Hidden (not unmounted) while the studio owns the frame: its device starts at the identical
+              app pose, so the swap is invisible, and no duplicate ghosts under the workshop fade-in. */}
+          <div style={{ visibility: showCustomizeStudio ? 'hidden' : undefined }}>
+            <Console3DRoute
+              theme={saved.resolved}
+              stage={canvasStage}
+              reducedMotion={reduced}
+              instant={restoring}
+              screenContentVisible={screenVisible}
+              onNav={handleTab}
+            >
+              <DeviceSettledProvider settled={deviceSettled}>{deviceChild}</DeviceSettledProvider>
+            </Console3DRoute>
+          </div>
 
           {phase === 'landing' && !restoring && <LandingOverlay onEnter={enterApp} />}
 
@@ -400,12 +421,12 @@ function AppLayout() {
               Pre-warming kills the old ~500ms build stall at hand-off. */}
           {phase === 'onboarding' && (step === 'username' || step === 'customize') && (
             <ThemePicker
-              selectedId={savedTheme.id}
-              onSelect={savedTheme.setId}
+              selectedId={saved.custom.preset}
+              onSelect={(id) => saved.set({ preset: id })}
               active={step === 'customize'}
               onDone={() => {
                 // onSelect already previewed the pick locally; persist the final one to the server.
-                void api.patchSettings({ theme: savedTheme.id }).catch(() => {})
+                void api.patchSettings({ theme: saved.custom.preset, themeConfig: saved.custom }).catch(() => {})
                 setWelcomeRevealed(false)
                 setStep('welcome')
               }}
@@ -414,29 +435,37 @@ function AppLayout() {
 
           {phase === 'app' && mountCustomizeStudio && (
             <CustomizeStudio
-              initialThemeId={savedTheme.id}
+              initialCustom={saved.custom}
               visible={showCustomizeStudio}
               active={onCustomize || customizeHandoff}
-              onCommit={(id) => {
+              onCommit={(next) => {
                 setCustomizeHandoff(true)
-                savedTheme.setId(id)
+                saved.set(next)
                 // Persist the pick so it follows the user to any device. Fire-and-forget, local wins.
-                void api.patchSettings({ theme: id }).catch(() => {})
+                void api.patchSettings({ theme: next.preset, themeConfig: next }).catch(() => {})
                 void navigate({ to: '/games' })
               }}
-              onOutroComplete={() => setCustomizeHandoff(false)}
-              onCancel={() => void navigate({ to: '/menu' })}
+              onOutroComplete={() => {
+                console.log('[dbg] app outro complete')
+                setCustomizeHandoff(false)
+                // The rig may have just changed: re-render the share card's console shot while idle.
+                // A cancel lands on the cached shot, so this only mounts WebGL after a real change.
+                warmConsoleShot()
+              }}
+              onCancel={() => {
+                // Drop the prepared canvas so the next open rebuilds fresh and replays the zoom-out intro
+                // (a kept instance would sit at the settled studio pose and reveal as a hard cut).
+                setCustomizePrepared(false)
+                void navigate({ to: '/menu' })
+              }}
             />
           )}
-          {/* The drawer slides itself away (closeTo) when Customize is tapped, revealing the device settling into the workshop. */}
+          {/* The drawer slides itself away (closeTo) when Customize is tapped; the studio builds hidden behind the fall and reveals once the route lands. */}
           {phase === 'app' && onMenu && !onCustomize && (
             <MenuDrawer
               returnTo={last3DPath.current}
               onLaunchStart={(to) => {
-                if (to === '/menu/customize') {
-                  setCustomizePrepared(true)
-                  setCustomizeOpening(true)
-                }
+                if (to === '/menu/customize') setCustomizePrepared(true)
               }}
             >
               <Outlet />

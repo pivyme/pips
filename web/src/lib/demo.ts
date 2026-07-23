@@ -38,6 +38,7 @@ import type {
   UserDTO,
   UserStatsDTO,
 } from './api'
+import type { ConsoleCustom } from '@/components/console/customize'
 
 // === Flag ===
 
@@ -295,7 +296,7 @@ interface DemoState {
   balance: number
   username: string | null // null = first run, show onboarding (mirrors the live user.username signal)
   avatarUrl: string | null // custom uploaded avatar (data URL); null = use the demo default
-  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string }
+  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string; themeConfig: ConsoleCustom | null }
   counters: Counters
   unlocked: Record<string, string> // slug -> unlockedAt ISO
   history: PlayDTO[] // settled plays only, newest first
@@ -366,7 +367,7 @@ function freshState(): DemoState {
     balance: 2847.5,
     username: 'pips',
     avatarUrl: null,
-    settings: { sound: true, haptics: true, reducedMotion: false, confirmTrades: false, theme: 'classic' },
+    settings: { sound: true, haptics: true, reducedMotion: false, confirmTrades: false, theme: 'classic', themeConfig: null },
     counters,
     unlocked,
     history,

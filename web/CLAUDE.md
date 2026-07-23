@@ -105,7 +105,7 @@ All game sound is **hand-built WebAudio, zero asset files**. Two files, two jobs
 - **State/Data**: TanStack Query for server state
 - **Styling**: Tailwind CSS 4 + HeroUI v3 component library
 - **3D console**: Three.js (the WebGL handheld, `components/console/ConsoleCanvas.tsx`)
-- **Animation**: Motion (Motion One, the `motion` package) + GSAP; Lenis smooth scroll on the landing page
+- **Animation**: Motion (Motion One, the `motion` package) + GSAP. Native scroll everywhere, no smooth-scroll library
 - **Icons / toasts**: lucide-react, react-hot-toast
 - **Build**: Vite 8 + Nitro
 - **Language**: TypeScript (strict mode)
@@ -118,10 +118,13 @@ src/
 ├── routes/                   # File-based routes (TanStack Router)
 │   ├── __root.tsx            # Root providers, meta, query client
 │   ├── index.tsx             # Landing / sign-in door (outside the console shell)
-│   ├── console.tsx           # Standalone 3D console route
-│   ├── design-system.tsx     # Living UI-kit reference (/design-system)
-│   ├── pitch.tsx             # Standalone pitch deck (/pitch), outside the shell
-│   ├── export.tsx            # Dev-only PNG dump of the device per skin (personal tooling)
+│   ├── dev/                  # ALL internal tooling/playground pages live here, hub at /dev
+│   │   ├── index.tsx         # The /dev hub: grid of every dev page. New dev page => add a card here
+│   │   ├── console.tsx       # 3D device playground with lil-gui (/dev/console)
+│   │   ├── console-transparent.tsx # "Clear" skin showcase (/dev/console-transparent)
+│   │   ├── design-system.tsx # Living UI-kit reference (/dev/design-system)
+│   │   ├── export.tsx        # PNG asset dump of device/screens (/dev/export)
+│   │   └── sounds.tsx        # Sound lab: every bed + SFX audition bench (/dev/sounds)
 │   └── _app/                 # Pathless layout: everything "inside the device"
 │       ├── games/            # index, lucky, range, line-rider, candle-hop
 │       └── menu/             # index, stats, achievements, customize, settings
@@ -154,7 +157,6 @@ src/
 ├── hooks/                    # useLocalStorage, useReducedMotion
 ├── utils/                    # style.ts (cnm), format.ts, motion.ts
 ├── integrations/             # tanstack-query root provider
-├── providers/                # LenisSmoothScrollProvider
 └── config.ts, env.ts, router.tsx, styles.css
 ```
 
@@ -309,7 +311,7 @@ bun test       # Run Vitest tests
 
 - **Motion** (Motion One, the `motion` package) for component animations
 - **GSAP** for complex/timeline animations where needed
-- **Lenis** smooth scrolling on the landing page
+- **Native scroll everywhere.** Lenis was removed, do not re-add a smooth-scroll library
 - `AnimateComponent` (in `components/elements/`) is leftover starter and currently unused, it is not the house pattern
 
 ## Code Style
@@ -323,6 +325,7 @@ bun test       # Run Vitest tests
 ## Adding New Features
 
 1. **New route**: Create file in `src/routes/` (e.g., `about.tsx` for `/about`)
+   - **Dev-only / experiment pages go under `src/routes/dev/`** (UI experiments, playgrounds, internal tooling). Never at the routes root. Add a card for it in `routes/dev/index.tsx` so it shows on the `/dev` hub grid.
 2. **New component**: Add to `src/components/` (or `elements/` if generic)
 3. **New utility**: Add to `src/utils/`
 4. **New hook**: Add to `src/hooks/`
@@ -373,6 +376,5 @@ function MyComponent() {
 - This uses **TanStack Start** (SSR-capable), not plain Vite React
 - HeroUI v3 requires no provider wrapper, CSS handled via `@import "@heroui/styles"` in styles.css
 - GSAP is the free version (not Shockingly) - all features available
-- Lenis smooth scroll is initialized globally in root layout
 - Part of a monorepo. Sibling `backend/` is a Bun + Fastify API on :3780. Wire calls via `VITE_API_URL` from `src/env.ts`. Backend CORS is locked to `ALLOWED_ORIGIN` in production.
 - Animation lib `motion` is Motion One (rebranded successor to Framer Motion). Existing Framer Motion docs mostly apply.

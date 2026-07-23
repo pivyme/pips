@@ -18,7 +18,7 @@ export interface UserDTO {
   customAvatar: boolean; // a custom upload is set (drives the remove-X in the profile editor)
   balance: string; // available DUSDC (wallet + manager cash), 2dp display, e.g. "983.50"
   managerReady: boolean; // PredictManager exists
-  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string };
+  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string; themeConfig: unknown | null };
 }
 
 export interface MarketDTO {
