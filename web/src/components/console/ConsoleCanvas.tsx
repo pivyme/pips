@@ -167,7 +167,8 @@ export default function ConsoleCanvas({
     const canvas = canvasRef.current
     const hint = hintRef.current
     if (!canvas || !hint) return
-    if (customize) console.log('[dbg] scene BUILD (customize)')
+    const BT0 = performance.now()
+    const mark = (label: string) => { if (customize) console.log('[bld]', label, Math.round(performance.now() - BT0)) }
 
     const CREAM = 0xe9dbbf,
       RED = 0xd63a2e,
@@ -192,6 +193,7 @@ export default function ConsoleCanvas({
     renderer.shadowMap.autoUpdate = false
     renderer.outputColorSpace = THREE.SRGBColorSpace
     const MAXANISO = renderer.capabilities.getMaxAnisotropy()
+    mark('renderer')
 
     // Render-on-demand gate: set true whenever the device changes (label/view update, resize) so the
     // loop paints once; live animation (press/knob) drives its own frames. Idle = no GPU work.
@@ -504,12 +506,14 @@ export default function ConsoleCanvas({
     )
     backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
     backDetails.rebuildSeam(screenExt, wy(1130) + screenExt / 2)
+    mark('body+back+details')
 
     // Exposed guts for the transparent "Clear" skin (PCB, copper coil, battery, ribbon, glyph light strips) between the two shells. Built once and hidden; applyTheme reveals it, riding the body center so it tracks the screen-stretch like the body does.
     // Full guts (incl. the top-frame band) only in showcase contexts; the live game screen can grow into that band, so a played clear skin keeps just the always-safe bottom + side internals.
     const fullInternals = debug || customize || exportMode
     const internals = createInternals(device, '#e5322b', fullInternals)
     internals.group.position.set(wx(585), wy(1130) + screenExt / 2, 0)
+    mark('internals')
 
     const SVG_W = 1539,
       SVG_H = 629
@@ -759,6 +763,7 @@ export default function ConsoleCanvas({
       wy,
     )
     const bmOrigin = bm.map((m) => ({ x: m.position.x, y: m.position.y }))
+    mark('buttons')
 
     // Frame the two action caps as mini LCD screens: a machined metal bezel + a glossy acrylic window
     // over each. The cap stays bm[i] (the raycast + press target); we just drive its color like a panel.
@@ -768,6 +773,7 @@ export default function ConsoleCanvas({
     const spinView = customize || exportMode
     const { dispose: disposeActionScreens, glow: actionGlow } =
       createActionScreens(device, bm, ACTION_IDX, buttons, BTN_PX, wx, wy, spinView)
+    mark('actionScreens')
 
     // A binding's color lights the screen (LONG → green, SHORT → red); everything else falls through to actionHex below. The loop adds the press flash onto baseEmissive.
     // Hues stay pure-ish so the screen's own emissive glow keeps the color true instead of washing toward white on self-light.
@@ -2371,7 +2377,6 @@ export default function ConsoleCanvas({
     }
 
     applyOutroRef.current = (on: boolean) => {
-      if (customize) console.log('[dbg] arm outro', on)
       if (on) {
         introT = 1 // settle instantly so the outro starts from the rest pose
         // Stretch the device to the live game height up front so the screen we zoom into is exactly
@@ -2420,7 +2425,23 @@ export default function ConsoleCanvas({
           },
         })
       : null
-    applyActiveRef.current = () => {
+    // A kept-warm studio parks at the intro start pose whenever it deactivates, so the next reveal's
+    // first frame is already the live app pose and the zoom-out replays like a fresh open, no rebuild.
+    let wasActive = false
+    applyActiveRef.current = (on: boolean) => {
+      if (customize && !on && wasActive) {
+        introT = 0
+        orbitYaw = 0
+        orbitPitch = 0
+        floatPhase = 0
+        focusPart = null
+        focusCur.mix = 0
+        device.position.y = 0
+        device.rotation.set(0, 0, 0)
+        relayout(responsiveScreenExt())
+        placeCustomizeCamera()
+      }
+      wasActive = on
       dirty = true
     }
     applyActiveRef.current(activeRef.current)
@@ -2902,11 +2923,8 @@ export default function ConsoleCanvas({
     // Visually identical here, and stops the full-scene render stealing the game's frames, this is what made flappy stutter with the device repainting at 30fps under it.
     const LIGHTSHOW_FRAME = 1 / 15
 
-    let dbgFrames = 0
     function loop(time?: number) {
       rafId = requestAnimationFrame(loop)
-      if (customize && ++dbgFrames % 10 === 0)
-        console.log('[dbg] hb f', dbgFrames, 't', Math.round(performance.now()), 'active', activeRef.current, 'outroActive', outroActive, 'outroT', outroT.toFixed(2))
       timer.update(time)
       const dt = Math.min(timer.getDelta(), 0.05)
       let animating = false
@@ -2968,7 +2986,6 @@ export default function ConsoleCanvas({
           animating = true
         }
         if (outroActive) {
-          if (Math.round(outroT * 100) % 25 === 0) console.log('[dbg] outroT', outroT.toFixed(2), 'fade', outroFade.toFixed(2))
           // Screen stays off through the whole snap, so the device lands in the exact black
           // "game loading" state. The fade-in belongs to the game, not the studio.
           setScreenPower(0)
@@ -2982,7 +2999,6 @@ export default function ConsoleCanvas({
             if (outroFade < 1) animating = true
             else if (!outroFired) {
               outroFired = true
-              console.log('[dbg] canvas outro fired, cb?', !!propsRef.current.onOutroComplete)
               propsRef.current.onOutroComplete?.()
             }
           }
@@ -3220,7 +3236,6 @@ export default function ConsoleCanvas({
     loop()
 
     return () => {
-      if (customize) console.log('[dbg] scene DISPOSE (customize)')
       cancelAnimationFrame(rafId)
       timer.dispose()
       canvas.removeEventListener('pointerdown', onPointerDown)
@@ -3283,7 +3298,6 @@ export default function ConsoleCanvas({
 
   // Arm / disarm the Done outro.
   useEffect(() => {
-    if (customize) console.log('[dbg] outro prop ->', outro)
     applyOutroRef.current(outro)
   }, [outro])
 

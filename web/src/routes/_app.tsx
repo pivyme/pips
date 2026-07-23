@@ -315,15 +315,32 @@ function AppLayout() {
     return () => window.clearTimeout(t)
   }, [phase])
 
-  // No Customize pre-warm on menu open: building the studio is a second 3D device (~0.9s synchronous Three.js) that froze scroll/close if built while the drawer was open.
-  // The Customize tap mounts it HIDDEN instead (customizePrepared): the WebGL build runs behind the drawer's compositor-driven fall while the studio holds the exact live app pose (introFromApp).
-  // Reveal waits for the route to land (drawer gone), so the live device appears to zoom back out into the workshop, the mirror of the Done outro.
-
+  // The Customize studio is a second 3D device (~1s synchronous Three.js build), so it's built ONCE per
+  // session and kept mounted, parked hidden at 0fps (render-on-demand no-ops while inactive), making every
+  // Customize open an instant reveal. The warm is idle-scheduled a beat after the menu first settles, so
+  // the one-time block lands while the user reads the menu, never during the drawer rise or the tap.
+  // Reveal still waits for the route to land (drawer gone): the studio holds the exact live app pose
+  // (introFromApp) and zooms back out into the workshop, the mirror of the Done outro.
   useEffect(() => {
-    if (!onMenu && !onCustomize && !customizeHandoff) {
-      setCustomizePrepared(false)
+    if (!onMenu || customizePrepared) return
+    let idle = 0
+    const t = window.setTimeout(() => {
+      const w = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }
+      if (w.requestIdleCallback) idle = w.requestIdleCallback(() => setCustomizePrepared(true), { timeout: 2500 })
+      else setCustomizePrepared(true)
+    }, 700)
+    return () => {
+      window.clearTimeout(t)
+      const w = window as Window & { cancelIdleCallback?: (id: number) => void }
+      if (idle) w.cancelIdleCallback?.(idle)
     }
-  }, [customizeHandoff, onCustomize, onMenu])
+  }, [onMenu, customizePrepared])
+
+  // Leaving the app (sign-out, onboarding detour) drops the warm studio; the JSX below unmounts it with
+  // the phase, so the flag must reset too or re-entry would build it at login, mid walk-in.
+  useEffect(() => {
+    if (phase !== 'app') setCustomizePrepared(false)
+  }, [phase])
 
   const showCustomizeStudio = onCustomize || customizeHandoff
   const mountCustomizeStudio = showCustomizeStudio || customizePrepared
@@ -446,18 +463,14 @@ function AppLayout() {
                 void navigate({ to: '/games' })
               }}
               onOutroComplete={() => {
-                console.log('[dbg] app outro complete')
                 setCustomizeHandoff(false)
                 // The rig may have just changed: re-render the share card's console shot while idle.
                 // A cancel lands on the cached shot, so this only mounts WebGL after a real change.
                 warmConsoleShot()
               }}
-              onCancel={() => {
-                // Drop the prepared canvas so the next open rebuilds fresh and replays the zoom-out intro
-                // (a kept instance would sit at the settled studio pose and reveal as a hard cut).
-                setCustomizePrepared(false)
-                void navigate({ to: '/menu' })
-              }}
+              // The studio stays warm across opens; deactivation parks the canvas back at the intro
+              // start pose, so the next reveal replays the zoom-out without a rebuild.
+              onCancel={() => void navigate({ to: '/menu' })}
             />
           )}
           {/* The drawer slides itself away (closeTo) when Customize is tapped; the studio builds hidden behind the fall and reveals once the route lands. */}

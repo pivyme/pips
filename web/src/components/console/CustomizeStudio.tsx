@@ -42,13 +42,6 @@ export function CustomizeStudio({
   onCancel: () => void
 }) {
   const reduced = useReducedMotion()
-  useEffect(() => {
-    console.log('[dbg] studio MOUNT')
-    return () => console.log('[dbg] studio UNMOUNT')
-  }, [])
-  useEffect(() => {
-    console.log('[dbg] studio visible', visible, 'active', active)
-  }, [visible, active])
   // Local draft: nothing touches the saved rig until Done. Cancel needs no snapshot.
   const [draft, setDraft] = useState<ConsoleCustom>(initialCustom)
   const [tab, setTab] = useState<TabId>('presets')
@@ -64,6 +57,21 @@ export function CustomizeStudio({
     const t = setTimeout(() => setReady(true), 90)
     return () => clearTimeout(t)
   }, [reduced])
+
+  // The studio stays mounted between opens (the canvas parks hidden at 0fps), so on the hide edge
+  // rewind to a fresh state: draft back to the saved rig, tab home, outro disarmed. The canvas does
+  // its own park (ConsoleCanvas applyActiveRef), so the next reveal replays the whole zoom-out.
+  const initialRef = useRef(initialCustom)
+  initialRef.current = initialCustom
+  const wasVisible = useRef(visible)
+  useEffect(() => {
+    if (wasVisible.current && !visible) {
+      setDraft(initialRef.current)
+      setTab('presets')
+      setExiting(false)
+    }
+    wasVisible.current = visible
+  }, [visible])
 
   // Esc cancels, same as the X.
   useEffect(() => {
