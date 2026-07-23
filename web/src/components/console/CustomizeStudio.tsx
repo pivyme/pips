@@ -2,7 +2,7 @@
 // floating as a hero shot, free to spin. A rail of preset cards reskins it live; X discards, Done saves, Share is a teaser.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import { Share2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import ConsoleCanvas from './ConsoleCanvas'
@@ -25,6 +25,14 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'knob', label: 'Knob' },
   { id: 'glow', label: 'Glow' },
 ]
+
+// Presets <-> part-tabs cross a picker boundary (rail vs swatch grid), so that swap slides; part->part
+// stays an in-place palette update. Direction follows the tab strip: forward into parts, back to presets.
+const pickerVariants = {
+  enter: (d: number) => ({ opacity: 0, x: 26 * d }),
+  center: { opacity: 1, x: 0 },
+  exit: (d: number) => ({ opacity: 0, x: -26 * d }),
+}
 
 export function CustomizeStudio({
   initialCustom,
@@ -51,6 +59,8 @@ export function CustomizeStudio({
   // on the compositor before the synchronous Three.js build lands on the main thread.
   const [ready, setReady] = useState(reduced)
   const resolved = useMemo(() => resolveTheme(draft), [draft])
+  // +1 sliding into a part tab, -1 sliding back home to presets.
+  const pickerDir = tab === 'presets' ? -1 : 1
 
   useEffect(() => {
     if (reduced) return
@@ -113,10 +123,14 @@ export function CustomizeStudio({
       aria-hidden={!visible}
     >
       {/* Workshop fades in around the device as it zooms out (same recipe as onboarding's ThemePicker),
-          so the hand-off from the live console reads as one device pulling back into the bench. */}
+          so the hand-off from the live console reads as one device pulling back into the bench. On the
+          way out it fades WITH the Done outro (not after): the outro is ~740ms and this is 600ms, so the
+          backdrop is already gone by onOutroComplete, when the real console reappears underneath. Waiting
+          for `visible` there would leave the (opaque) backdrop sitting above the just-revealed console for
+          another 600ms, a flash of workshop background before the console shows through. */}
       <div
         className="absolute inset-0 transition-opacity duration-[600ms] ease-out"
-        style={{ opacity: visible ? 1 : 0 }}
+        style={{ opacity: visible && !exiting ? 1 : 0 }}
       >
         <WorkshopBackdrop />
       </div>
@@ -156,24 +170,29 @@ export function CustomizeStudio({
         >
           <TabStrip tab={tab} onSelect={setTab} />
 
-          <div className="min-h-[160px]">
-            {tab === 'presets' ? (
-              <ThemeRail
-                selectedId={hasOverrides(draft) ? '__custom' : draft.preset}
-                onSelect={pickPreset}
-                leading={
-                  hasOverrides(draft) ? (
-                    <ThemeCard
-                      theme={{ ...resolved, id: '__custom', code: 'YOU', name: 'Custom', badge: undefined }}
-                      selected
-                      onPress={() => {}}
-                    />
-                  ) : undefined
-                }
-              />
-            ) : (
-              <SwatchGrid part={tab} draft={draft} onPick={(i) => pickSwatch(tab, i)} />
-            )}
+          <div className="relative min-h-[160px]">
+            <AnimatePresence mode="popLayout" initial={false} custom={pickerDir}>
+              <motion.div
+                key={tab === 'presets' ? 'presets' : 'swatches'}
+                custom={pickerDir}
+                variants={pickerVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={reduced ? { duration: 0 } : { duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+              >
+                {tab === 'presets' ? (
+                  // A custom mix (overrides on top of a preset) matches no card, so nothing lights up
+                  // rather than inventing a synthetic "Custom" card in the rail.
+                  <ThemeRail
+                    selectedId={hasOverrides(draft) ? '__custom' : draft.preset}
+                    onSelect={pickPreset}
+                  />
+                ) : (
+                  <SwatchGrid part={tab} draft={draft} onPick={(i) => pickSwatch(tab, i)} />
+                )}
+              </motion.div>
+            </AnimatePresence>
           </div>
 
           <div className="mt-5 flex items-center justify-between gap-3">
@@ -196,7 +215,7 @@ export function CustomizeStudio({
               label="Share"
               onPress={() => {
                 haptic('selection')
-                toast('Sharing your rig is coming soon', { id: 'share-rig' })
+                toast('For now, show off your rig with your PnL card', { id: 'share-rig' })
               }}
             >
               <Share2 className="h-[22px] w-[22px]" strokeWidth={2.4} />
@@ -442,7 +461,7 @@ function TabStrip({ tab, onSelect }: { tab: TabId; onSelect: (t: TabId) => void 
             onSelect(t.id)
           }}
           className={cnm(
-            'shrink-0 whitespace-nowrap text-[26px] font-black leading-none tracking-tight transition-colors',
+            'shrink-0 whitespace-nowrap text-[26px] font-extrabold leading-none tracking-tight transition-colors',
             t.id === tab ? 'text-white' : 'text-white/35',
           )}
         >

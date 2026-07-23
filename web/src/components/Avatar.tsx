@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { cnm } from '@/utils/style'
-import { avatarColor, avatarInitial } from '@/lib/avatar'
+import { avatarColor, avatarInitial, AVATAR_GLYPH_RATIO } from '@/lib/avatar'
 
 // One avatar component every surface uses. Falls back to the PIPS identicon (a deterministic disc with
 // the handle's initial) on a load error or missing src, so a broken URL or no photo never breaks the avatar.
@@ -43,7 +43,7 @@ export function Avatar({
           style={{
             backgroundColor: bg,
             color: ink,
-            fontSize: Math.round(size * 0.52),
+            fontSize: Math.round(size * AVATAR_GLYPH_RATIO),
             fontFamily: "'Open Runde', var(--font-sans)",
             fontWeight: 700,
           }}

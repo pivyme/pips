@@ -96,7 +96,7 @@ const PYTH_IDS: Record<string, string> = {
 }
 const HERMES_STREAM = 'https://hermes.pyth.network/v2/updates/price/stream'
 const DURATIONS = [10, 30, 60]
-const RANGE_ROUND_SEC = 30 // Range is one real settled round; the client no longer picks a duration
+const RANGE_ROUND_SEC = 30 // legacy widthPct quote only; the tier path sizes off the shared round clock (rangeRoundExpiry)
 
 // === Lucky: the slot-weighted multiplier reel (LUCKY.md §4-5) ===
 // Reel deals one tier per spin, weighted for fun not win odds; each tier settles at its own honest 1/mult odds.
@@ -518,6 +518,27 @@ function normCdf(x: number): number {
   return x >= 0 ? 1 - upper : upper
 }
 
+// Inverse standard normal CDF (Acklam's approximation), ported verbatim from the backend's probit() (games-real.ts):
+// the real RANGE solver sizes a tier's band as probit((1+p)/2) * sigma, so the demo band shape matches exactly.
+function probit(p: number): number {
+  const a = [-3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.38357751867269e2, -3.066479806614716e1, 2.506628277459239]
+  const b = [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1]
+  const c = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783]
+  const d = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416]
+  const lo = 0.02425
+  if (p < lo) {
+    const q = Math.sqrt(-2 * Math.log(p))
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+  }
+  if (p <= 1 - lo) {
+    const q = p - 0.5
+    const r = q * q
+    return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+  }
+  const q = Math.sqrt(-2 * Math.log(1 - p))
+  return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+}
+
 // Same shape as the Range screen's client estimate, so the locked multiple feels consistent.
 function estimateMultiplier(halfPct: number, durationSec: number): number {
   const sigma = 0.6 * Math.sqrt(durationSec / 30)
@@ -525,10 +546,35 @@ function estimateMultiplier(halfPct: number, durationSec: number): number {
   return Math.max(1.05, Math.min(0.97 / Math.max(prob, 0.03), 99))
 }
 
-// RANGE payout tiers, mirroring the backend ladder (main-config RANGE_TIER_PROBS); band width inverts
-// demo's own win-prob model so a tier's quote and its locked multiple always agree.
+// RANGE round clock: a real Range mint routes into a live on-chain minute market (isMinuteExpiry,
+// backend market-sync.ts), so every position opened before that market's cutoff shares the exact same
+// expiry, and a tap too close to the buzzer routes into the next one (RANGE_MIN_ORACLE_LIFE_MS). Demo
+// mirrors both with a shared wall-clock cadence standing in for the chain's minute markets: concurrent
+// positions land on the identical expiry (their strip bars deplete in lockstep, the chart draws one
+// cutoff line), and a tap inside the min-life window rolls forward, same as the client's own "Round
+// closing, next one up" guard (range.tsx `nextRound`).
+const RANGE_ROUND_CADENCE_MS = 60_000 // mirrors the chain's 1-minute market cadence
+const RANGE_MIN_ROUND_MS = 20_000 // mirrors RANGE_MIN_ORACLE_LIFE_MS
+function rangeRoundExpiry(): number {
+  const t = nowMs()
+  let expiry = Math.floor(t / RANGE_ROUND_CADENCE_MS) * RANGE_ROUND_CADENCE_MS + RANGE_ROUND_CADENCE_MS
+  if (expiry - t < RANGE_MIN_ROUND_MS) expiry += RANGE_ROUND_CADENCE_MS
+  return expiry
+}
+
+// RANGE payout tiers, mirroring the backend ladder (main-config RANGE_TIER_PROBS). Band half-width uses the
+// same probit(p) * sigma(secondsLeft) shape as the real solver (games-real.ts quoteRangeTiersReal), so it
+// breathes with the round clock exactly like range.tsx's own aimHalfPct math. RANGE_DEMO_ANNUAL_VOL is tuned
+// to demo's own exaggerated price walk, not real BTC vol (the chain-implied vol is ~100x smaller, see
+// REAL_BTC_ANNUAL_VOL); the payout multiple only depends on the tier's probability, so it matches real mode
+// exactly regardless of that tuning.
 const RANGE_TIER_PROBS = [0.85, 0.65, 0.45, 0.3, 0.18, 0.11, 0.065]
-const rangeTierHalfPct = (p: number): number => -Math.log(1 - p) * 0.6 * Math.sqrt(RANGE_ROUND_SEC / 30)
+const RANGE_DEMO_ANNUAL_VOL = 8.1
+const RANGE_QUOTE_HAIRCUT = 0.04
+const SECONDS_PER_YEAR = 365.25 * 24 * 3600
+const rangeSigmaFrac = (seconds: number): number => RANGE_DEMO_ANNUAL_VOL * Math.sqrt(Math.max(1, seconds) / SECONDS_PER_YEAR)
+const rangeHalfFrac = (p: number, seconds: number): number => probit((1 + p) / 2) * rangeSigmaFrac(seconds)
+const tierMultOf = (p: number): number => Math.max(1.01, (1 / p) * (1 - RANGE_QUOTE_HAIRCUT))
 const rangeTierProb = (tier: number): number =>
   RANGE_TIER_PROBS[Math.max(0, Math.min(RANGE_TIER_PROBS.length - 1, Math.round(tier)))]
 
@@ -763,23 +809,25 @@ function createRange(body: Record<string, unknown>): PlayDTO {
   const stake = Number(body.stake ?? 10)
   ensureBalance(stake)
   const asset = String(body.asset ?? ASSETS[0])
-  const duration = RANGE_ROUND_SEC // one real settled round; matches the backend's oracle-expiry round
-  // Tier play (the payout knob): band width derives from the tier's target odds; legacy widthPct kept for compat.
-  const halfPct = body.tier != null ? rangeTierHalfPct(rangeTierProb(Number(body.tier))) : Number(body.widthPct ?? 2) / 2
+  const openedMs = nowMs()
+  const expiryMs = rangeRoundExpiry() // shared wall-clock cutoff: every position opened before it rides the same buzzer
+  const seconds = Math.max(1, (expiryMs - openedMs) / 1000)
+  // Tier play (the payout knob): band half-width sizes off the tier's target win prob against the live round
+  // clock, same shape as the real solver; legacy widthPct keeps a flat band for the compat endpoint.
+  const tierP = body.tier != null ? rangeTierProb(Number(body.tier)) : null
+  const halfPct = tierP != null ? rangeHalfFrac(tierP, seconds) * 100 : Number(body.widthPct ?? 2) / 2
   const widthPct = halfPct * 2
   const entry = currentPrice(asset)
   const lower = entry * (1 - halfPct / 100)
   const upper = entry * (1 + halfPct / 100)
-  const lockedMult = estimateMultiplier(halfPct, duration)
-  const openedMs = nowMs()
-  const expiryMs = openedMs + duration * 1000
+  const lockedMult = tierP != null ? tierMultOf(tierP) : estimateMultiplier(halfPct, seconds)
   const id = newId()
   const p: PlayDTO = {
     id,
     game: 'range',
     status: 'pending', // mint "lands" ~1s later (the OPENING beat); the demo stream flips it to 'open'
     stake: str(stake),
-    params: { asset, lower: str(lower), upper: str(upper), widthPct, duration },
+    params: { asset, lower: str(lower), upper: str(upper), widthPct, duration: Math.max(1, Math.round(seconds)) },
     market: { asset, oracleId: `demo-oracle-${asset}`, expiry: expiryMs, lower: String(lower), upper: String(upper) },
     entryValue: str(stake),
     markValue: str(stake),
@@ -1089,27 +1137,30 @@ export const demoApi = {
     return { quotes }
   },
 
-  // Payout-tier twin. Demo rounds start at the tap (no shared wall-clock buzzer), so model stays null:
-  // the client shows the static width and no round clock, which is the demo truth.
+  // Payout-tier twin: shares the same wall-clock round clock as createRange, so the aim preview's expiry
+  // and breathing band width equal what actually mints (games-real.ts quoteRangeTiersReal, mirrored 1:1).
   rangeTierQuotes: async (asset: string): Promise<{ quotes: RangeTierQuote[]; model: RangeQuoteModel | null }> => {
     await delay(80)
     const entry = currentPrice(asset)
+    const expiryMs = rangeRoundExpiry()
+    const seconds = Math.max(1, (expiryMs - nowMs()) / 1000)
     const quotes = RANGE_TIER_PROBS.map((p, tier) => {
-      const halfPct = rangeTierHalfPct(p)
+      const halfFrac = rangeHalfFrac(p, seconds)
+      const half = entry * halfFrac
       return {
         tier,
         prob: p,
-        multiplier: Math.max(1.05, 0.97 / p),
-        sigmaMult: -Math.log(1 - p),
-        halfPct,
-        lower: str(entry * (1 - halfPct / 100)),
-        upper: str(entry * (1 + halfPct / 100)),
+        multiplier: tierMultOf(p),
+        sigmaMult: probit((1 + p) / 2),
+        halfPct: halfFrac * 100,
+        lower: str(entry - half),
+        upper: str(entry + half),
         entrySpot: str(entry),
-        duration: RANGE_ROUND_SEC,
-        expiryMs: nowMs() + RANGE_ROUND_SEC * 1000,
+        duration: Math.max(1, Math.round(seconds)),
+        expiryMs,
       }
     })
-    return { quotes, model: null }
+    return { quotes, model: { annualVol: RANGE_DEMO_ANNUAL_VOL, minRoundMs: RANGE_MIN_ROUND_MS } }
   },
 
   // MOONSHOT aim twin: the same offset createMoonshot places the TARGET at, so the preview equals the round.
