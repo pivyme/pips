@@ -162,13 +162,24 @@ export default function ConsoleCanvas({
   const applyStageRef = useRef<(s: 'hero' | 'app' | 'welcome') => void>(() => {})
   // Customize only: the [focusPart] effect eases the studio camera onto the tabbed part.
   const applyFocusRef = useRef<(p: PartId | null) => void>(() => {})
+  // Studio only: finishes an in-flight chunked build synchronously (a Customize tap mid-warm).
+  const flushBuildRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     const canvas = canvasRef.current
     const hint = hintRef.current
     if (!canvas || !hint) return
-    const BT0 = performance.now()
-    const mark = (label: string) => { if (customize) console.log('[bld]', label, Math.round(performance.now() - BT0)) }
+
+    // The whole scene build lives in a generator: the live shell drains it synchronously (identical to
+    // the old inline build), while the hidden Customize studio pumps one chunk per idle callback so
+    // warming it never freezes the menu. Body indentation left untouched to keep the diff reviewable.
+    let buildStarted = false
+    let buildDisposed = false
+    let buildIdleId = 0
+    let disposeScene: (() => void) | null = null
+
+    // Expression, not a hoisted declaration, so the post-guard non-null narrowing of canvas/hint holds inside.
+    const buildSteps = function* () {
 
     const CREAM = 0xe9dbbf,
       RED = 0xd63a2e,
@@ -193,7 +204,6 @@ export default function ConsoleCanvas({
     renderer.shadowMap.autoUpdate = false
     renderer.outputColorSpace = THREE.SRGBColorSpace
     const MAXANISO = renderer.capabilities.getMaxAnisotropy()
-    mark('renderer')
 
     // Render-on-demand gate: set true whenever the device changes (label/view update, resize) so the
     // loop paints once; live animation (press/knob) drives its own frames. Idle = no GPU work.
@@ -438,6 +448,7 @@ export default function ConsoleCanvas({
     const device = new THREE.Group()
     device.position.z = DEVICE_Z
     deck.add(device)
+    yield // chunk: renderer + lights + scene scaffolding
 
     /* body */
     const body = new THREE.Mesh(
@@ -448,6 +459,7 @@ export default function ConsoleCanvas({
     body.receiveShadow = true
     body.castShadow = true
     device.add(body)
+    yield // chunk: body shell extrusion (the single heaviest geometry)
 
     /* back panel — solid cream shell behind the body, covering the open back (button + knob undersides) when flipped; deep enough to swallow the deepest button and the knob.
        Same outline as the body so it never peeks past the front silhouette. Grows with screenExt. */
@@ -475,6 +487,7 @@ export default function ConsoleCanvas({
     // carved back logo
     backPanel.geometry.computeBoundingBox()
     let backFaceLocalZ = backPanel.geometry.boundingBox!.min.z
+    yield // chunk: body + back shells extruded
 
     // Back + side dress: parting seam, gunmetal corner screws, speaker grille, vent, spec label, strap eyelet. Seam + recesses are darker shades of the shell, recolored per theme in applyTheme.
     // Half-extents grow with the screen stretch, so place() re-seats on relayout.
@@ -506,14 +519,14 @@ export default function ConsoleCanvas({
     )
     backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
     backDetails.rebuildSeam(screenExt, wy(1130) + screenExt / 2)
-    mark('body+back+details')
+    yield // chunk: back dress details
 
     // Exposed guts for the transparent "Clear" skin (PCB, copper coil, battery, ribbon, glyph light strips) between the two shells. Built once and hidden; applyTheme reveals it, riding the body center so it tracks the screen-stretch like the body does.
     // Full guts (incl. the top-frame band) only in showcase contexts; the live game screen can grow into that band, so a played clear skin keeps just the always-safe bottom + side internals.
     const fullInternals = debug || customize || exportMode
     const internals = createInternals(device, '#e5322b', fullInternals)
     internals.group.position.set(wx(585), wy(1130) + screenExt / 2, 0)
-    mark('internals')
+    yield // chunk: clear-skin internals
 
     const SVG_W = 1539,
       SVG_H = 629
@@ -763,7 +776,7 @@ export default function ConsoleCanvas({
       wy,
     )
     const bmOrigin = bm.map((m) => ({ x: m.position.x, y: m.position.y }))
-    mark('buttons')
+    yield // chunk: screen mesh + logo + buttons
 
     // Frame the two action caps as mini LCD screens: a machined metal bezel + a glossy acrylic window
     // over each. The cap stays bm[i] (the raycast + press target); we just drive its color like a panel.
@@ -773,7 +786,7 @@ export default function ConsoleCanvas({
     const spinView = customize || exportMode
     const { dispose: disposeActionScreens, glow: actionGlow } =
       createActionScreens(device, bm, ACTION_IDX, buttons, BTN_PX, wx, wy, spinView)
-    mark('actionScreens')
+    yield // chunk: action cap screens
 
     // A binding's color lights the screen (LONG → green, SHORT → red); everything else falls through to actionHex below. The loop adds the press flash onto baseEmissive.
     // Hues stay pure-ish so the screen's own emissive glow keeps the color true instead of washing toward white on self-light.
@@ -1654,6 +1667,7 @@ export default function ConsoleCanvas({
         wy,
         body.position.z,
       )
+    yield // chunk: number wheel + knob
 
     // Body skin: some themes wrap an SVG across the front body instead of a flat color. Loaded once (cached), projected onto the body front as a normalized planar map, cover-fit so squares stay square at any frame height.
     // Texture transform does the cover crop, so a relayout never needs to touch the loaded image.
@@ -1930,6 +1944,12 @@ export default function ConsoleCanvas({
     const focusCur = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, mix: 0 }
     applyFocusRef.current = (p) => {
       focusPart = p
+      // A parked spin (device left facing the back) would ride into the part pose via orbitYaw and
+      // frame the wrong side, so a tab tap re-squares the orbit; a fresh drag cancels the settle.
+      if (p) {
+        orbitYaw -= Math.round(orbitYaw / (Math.PI * 2)) * Math.PI * 2 // shortest path home
+        orbitSettle = true
+      }
     }
 
     // Accelerometer-reactive gold: tilting the phone sweeps the studio env across metallic skins
@@ -1953,6 +1973,7 @@ export default function ConsoleCanvas({
     let introT = customize ? 0 : 1 // 0 → start, 1 → settled
     let orbitYaw = 0 // persists, so you can park it facing back
     let orbitPitch = 0 // eases back to level on release
+    let orbitSettle = false // armed by a part-tab tap: eases a parked spin back to front
     let orbitDrag = false
     let orbitStartX = 0,
       orbitStartY = 0,
@@ -2433,6 +2454,7 @@ export default function ConsoleCanvas({
         introT = 0
         orbitYaw = 0
         orbitPitch = 0
+        orbitSettle = false
         floatPhase = 0
         focusPart = null
         focusCur.mix = 0
@@ -2487,6 +2509,7 @@ export default function ConsoleCanvas({
         if (outroActive) return
         canvas.setPointerCapture(e.pointerId)
         orbitDrag = true
+        orbitSettle = false // the user grabbed the device, their spin wins over the tab re-square
         orbitStartX = e.clientX
         orbitStartY = e.clientY
         orbitBaseYaw = orbitYaw
@@ -2885,6 +2908,7 @@ export default function ConsoleCanvas({
     }
     const ro = new ResizeObserver(() => resize())
     if (rootRef.current) ro.observe(rootRef.current)
+    yield // chunk: input handlers + gui wiring
     resize()
     applyView(viewRef.current)
 
@@ -3004,9 +3028,21 @@ export default function ConsoleCanvas({
           }
         } else if (orbitDrag) {
           animating = true
-        } else if (Math.abs(orbitPitch) > 0.0006) {
-          orbitPitch += (0 - orbitPitch) * Math.min(1, dt * 5) // level out the tilt on release
-          animating = true
+        } else {
+          if (Math.abs(orbitPitch) > 0.0006) {
+            orbitPitch += (0 - orbitPitch) * Math.min(1, dt * 5) // level out the tilt on release
+            animating = true
+          }
+          // Tab-armed re-square: ease a parked spin back to front so the part pose frames the part.
+          if (orbitSettle) {
+            if (Math.abs(orbitYaw) > 0.0006) {
+              orbitYaw += (0 - orbitYaw) * Math.min(1, dt * 5)
+              animating = true
+            } else {
+              orbitYaw = 0
+              orbitSettle = false
+            }
+          }
         }
         // Part-focus blend: eases toward the tabbed part's pose, or back to 0 (rest) when cleared.
         const focusTgt = focusPart ? FOCUS[focusPart] : null
@@ -3235,7 +3271,7 @@ export default function ConsoleCanvas({
     }
     loop()
 
-    return () => {
+    disposeScene = () => {
       cancelAnimationFrame(rafId)
       timer.dispose()
       canvas.removeEventListener('pointerdown', onPointerDown)
@@ -3277,6 +3313,55 @@ export default function ConsoleCanvas({
       renderer.dispose()
       audio.dispose()
     }
+    } // end buildSteps expression
+
+    const it = buildSteps()
+    const finishNow = () => {
+      buildStarted = true
+      let r = it.next()
+      while (!r.done) r = it.next()
+    }
+
+    if (!customize) {
+      // Live shell (and debug/export): drain in one go, exactly the old synchronous build.
+      finishNow()
+    } else {
+      // Studio warm: one chunk per idle callback so the menu stays responsive; the timeout still
+      // forces progress under load. A Customize tap mid-warm flushes the remainder inline.
+      const w = window as Window & {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+        cancelIdleCallback?: (id: number) => void
+      }
+      const schedule = (cb: () => void) =>
+        w.requestIdleCallback ? w.requestIdleCallback(cb, { timeout: 500 }) : window.setTimeout(cb, 40)
+      const cancelScheduled = (id: number) =>
+        w.cancelIdleCallback ? w.cancelIdleCallback(id) : window.clearTimeout(id)
+      const pump = () => {
+        if (buildDisposed) return
+        buildStarted = true
+        if (!it.next().done) buildIdleId = schedule(pump)
+      }
+      buildIdleId = schedule(pump)
+      flushBuildRef.current = () => {
+        if (buildDisposed || disposeScene) return
+        cancelScheduled(buildIdleId)
+        finishNow()
+      }
+    }
+
+    return () => {
+      buildDisposed = true
+      flushBuildRef.current = () => {}
+      if (buildIdleId) {
+        const w = window as Window & { cancelIdleCallback?: (id: number) => void }
+        if (w.cancelIdleCallback) w.cancelIdleCallback(buildIdleId)
+        else window.clearTimeout(buildIdleId)
+      }
+      // StrictMode's probe unmount lands before the first chunk (nothing to free). A real teardown
+      // mid-build finishes the remaining steps so every GPU resource exists, then disposes them all.
+      if (buildStarted && !disposeScene) finishNow()
+      disposeScene?.()
+    }
     // Scene is built once per mode; live bindings flow through refs + the effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debug, customize, exportMode])
@@ -3298,6 +3383,7 @@ export default function ConsoleCanvas({
 
   // Arm / disarm the Done outro.
   useEffect(() => {
+    if (outro) flushBuildRef.current()
     applyOutroRef.current(outro)
   }, [outro])
 
@@ -3312,6 +3398,8 @@ export default function ConsoleCanvas({
   }, [focusPart])
 
   useEffect(() => {
+    // A reveal mid-warm can't wait for idle chunks: finish the build inline, then activate.
+    if (active) flushBuildRef.current()
     applyActiveRef.current(active)
   }, [active])
 
