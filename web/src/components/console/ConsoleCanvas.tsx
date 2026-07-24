@@ -1923,7 +1923,7 @@ export default function ConsoleCanvas({
       backMark.recolor(labelColor)
       // Bezel audio cluster: molded out of the body like the rest of the shell, accented with the
       // skin's PLAY colour on the note glyph, the level bar and the press glow.
-      bezelAudio.recolor(t.body, t.main, metal, env)
+      bezelAudio.recolor(t.body, t.bezelInk ?? t.main, metal, env)
       // Number wheel stays the factory dark hardware on every skin (wheel customization is retired).
       dirty = true
     }
