@@ -38,6 +38,35 @@ export function loadImageCors(src: string): Promise<HTMLImageElement | null> {
   return cached(src, true)
 }
 
+const tintCache = new Map<string, Promise<HTMLCanvasElement | null>>()
+
+// Rasterizes a single-color SVG (fill="white") and recolors it via source-in compositing, so a canvas
+// card can tint the same public icon assets the DOM masks to currentColor, no second copy of the art.
+export function loadTintedIcon(src: string, color: string, size: number): Promise<HTMLCanvasElement | null> {
+  const key = `${src}|${color}|${size}`
+  let p = tintCache.get(key)
+  if (!p) {
+    p = loadImage(src).then((img) => {
+      if (!img) return null
+      const canvas = document.createElement('canvas')
+      canvas.width = size
+      canvas.height = size
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return null
+      ctx.drawImage(img, 0, 0, size, size)
+      ctx.globalCompositeOperation = 'source-in'
+      ctx.fillStyle = color
+      ctx.fillRect(0, 0, size, size)
+      return canvas
+    })
+    void p.then((canvas) => {
+      if (!canvas) tintCache.delete(key)
+    })
+    tintCache.set(key, p)
+  }
+  return p
+}
+
 // Load just the faces a card draws. Never document.fonts.ready (it waits for every font on the page); the
 // race caps a stalled font fetch so the card can always render with fallback faces.
 export function loadCardFonts(specs: Array<string>, timeoutMs = 2000): Promise<unknown> {

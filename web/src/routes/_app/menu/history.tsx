@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ExternalLink, Loader2, Share2, X } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { GameIcon } from '@/components/GameIcon'
 import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
 import { type Game, type LuckyParams, type PlayDTO, type RangeParams } from '@/lib/api'
 import { historyQuery } from '@/lib/menuQueries'
@@ -268,10 +269,11 @@ function HistoryPage() {
                   setFilter(f.key)
                 }}
                 className={cnm(
-                  'pointer-events-none rounded-full px-4 py-2 text-xs font-extrabold uppercase tracking-wide transition-colors',
+                  'pointer-events-none flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-extrabold uppercase tracking-wide transition-colors',
                   filter === f.key ? 'bg-white/[0.92] text-black' : 'surface-skeuo text-text-2',
                 )}
               >
+                {f.key !== 'all' && <GameIcon game={f.key} size={13} />}
                 {f.label}
               </button>
               <HapticOverlay
@@ -382,6 +384,7 @@ function HistoryRow({ play }: { play: PlayDTO }) {
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
+              <GameIcon game={play.game} size={15} className="text-text-2" />
               <span className="text-[15px] font-bold capitalize">{play.game}</span>
               <span className="rounded-full bg-white/[0.06] px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-text-2">{asset}</span>
               {play.network && play.network !== NETWORK && (
@@ -496,7 +499,8 @@ function PlayDetailModal({
                 }
           }
         >
-          <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-white/50">
+          <div className="flex items-center justify-center gap-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-white/50">
+            <GameIcon game={play.game} size={12} />
             <span className="capitalize">{play.game}</span> · {asset} · {fmtWhen(play.settledAt ?? play.openedAt)}
           </div>
           <div className={cnm('tnum mt-2.5 text-[40px] font-black leading-none', tone)}>

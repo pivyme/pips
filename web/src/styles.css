@@ -1003,6 +1003,35 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   }
 }
 
+/* Games list tag line: when it overflows its row, bounce left to reveal the rest then back, instead of
+   ellipsizing. Pure CSS so a parent re-render (row selection, ticking stats) never restarts the loop. */
+.marquee-bounce {
+  animation: marquee-bounce var(--marquee-duration, 3s) ease-in-out infinite;
+}
+@keyframes marquee-bounce {
+  0%,
+  10% {
+    transform: translateX(0);
+  }
+  50%,
+  60% {
+    transform: translateX(var(--marquee-distance, 0px));
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .marquee-bounce {
+    animation: none;
+  }
+}
+/* Fades the clipped edges to black instead of a hard crop. */
+.marquee-fade {
+  mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent);
+}
+
 /* ── Game-screen instrument viz (teenage-engineering line graphics) ──────
    Crisp vivid SVG line instruments rendered inside the console screen. The
    motion lives here as cheap GPU transforms so the components stay pure. Each

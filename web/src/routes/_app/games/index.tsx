@@ -2,9 +2,10 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { Activity, CandlestickChart } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { motion } from 'motion/react'
+import type { CSSProperties } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useConsoleControls } from '@/components/console/controls'
+import { GameIcon } from '@/components/GameIcon'
 import { GameScreen } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { api } from '@/lib/api'
@@ -31,11 +32,12 @@ const RIM_B = 'pb-[var(--screen-rim,24px)]'
 
 type GameDef = { to: string; icon: LucideIcon | string; name: string; tag: string }
 
-// Real plays. Every one settles a DeepBook Predict position with actual funds.
+// Real plays. Every one settles a DeepBook Predict position with actual funds. icon is the play's `game`
+// key, resolved to art by the shared GameIcon.
 const GAMES: ReadonlyArray<GameDef> = [
-  { to: '/games/range', icon: '/assets/games/icon-range.svg', name: 'Range', tag: 'Call the zone. Tighter pays more.' },
-  { to: '/games/lucky', icon: '/assets/games/icon-lucky.svg', name: 'I Feel Lucky', tag: 'Spin. Win. Cash out.' },
-  { to: '/games/moonshot', icon: '/assets/games/icon-moonshot.svg', name: 'Moonshot', tag: 'Long or short. Reach further, win bigger.' },
+  { to: '/games/range', icon: 'range', name: 'Range', tag: 'Call the zone. Tighter pays more.' },
+  { to: '/games/lucky', icon: 'lucky', name: 'I Feel Lucky', tag: 'Spin. Win. Cash out.' },
+  { to: '/games/moonshot', icon: 'moonshot', name: 'Moonshot', tag: 'Long or short. Reach further, win bigger.' },
 ]
 
 // Minigames. Pure local arcade, no chain, no funds. A totally separate, just-for-fun lane.
@@ -237,10 +239,10 @@ function GameRow({
       {/* left edge bar marks the selected cartridge, instrument-panel style */}
       {selected && <span className="absolute inset-y-0 left-0 w-1 bg-brand-500" />}
       <span className={cnm('tnum w-5 font-mono text-[14px] font-bold', selected ? 'text-brand-500' : 'text-text-2')}>{pad2(index)}</span>
-      <GameIcon icon={game.icon} size={34} className={selected ? 'text-brand-500' : 'text-text-2'} />
+      <RowIcon icon={game.icon} size={34} className={selected ? 'text-brand-500' : 'text-text-2'} />
       <div className="min-w-0 flex-1">
         <div className={cnm('text-[18px] font-extrabold uppercase leading-tight tracking-[0.02em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</div>
-        <MarqueeText text={game.tag} className="font-mono text-[11px] uppercase tracking-[0.08em] text-text-3" />
+        <MarqueeText text={game.tag} active={selected} className="font-mono text-[11px] uppercase tracking-[0.08em] text-text-3" />
       </div>
       {/* live positions still riding: a green status pill, sharp-cornered like the in-play chips per SCREEN.md */}
       {inPlay && (
@@ -276,45 +278,36 @@ function MiniRow({
       )}
     >
       {selected && <span className="absolute inset-y-0 left-0 w-0.5 bg-brand-500" />}
-      <GameIcon icon={game.icon} size={18} className={selected ? 'text-brand-500' : 'text-text-3'} />
+      <RowIcon icon={game.icon} size={18} className={selected ? 'text-brand-500' : 'text-text-3'} />
       <span className={cnm('shrink-0 text-[15px] font-bold uppercase tracking-[0.04em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</span>
-      <MarqueeText text={game.tag} className="min-w-0 flex-1 font-mono text-[11px] uppercase tracking-[0.06em] text-text-3" />
+      <MarqueeText text={game.tag} active={selected} className="min-w-0 flex-1 font-mono text-[11px] uppercase tracking-[0.06em] text-text-3" />
       {selected && <span className="font-mono text-sm text-brand-500">▶</span>}
     </button>
   )
 }
 
-// Renders a lucide icon or, for the three real plays, a custom cartridge glyph (assets/games/*.svg) masked
-// to the current text color so it tints with the selected/unselected state like the lucide icons do.
-function GameIcon({ icon, size, className }: { icon: LucideIcon | string; size: number; className: string }) {
+// Renders a lucide icon (minigames) or, for the three real plays, their cartridge glyph via the shared
+// GameIcon (the same art used on the history list and the PnL card).
+function RowIcon({ icon, size, className }: { icon: LucideIcon | string; size: number; className: string }) {
   if (typeof icon !== 'string') {
     const Icon = icon
     return <Icon size={size} strokeWidth={2} className={className} />
   }
-  return (
-    <span
-      aria-hidden
-      className={cnm('inline-block shrink-0 bg-current', className)}
-      style={{
-        width: size,
-        height: size,
-        maskImage: `url(${icon})`,
-        WebkitMaskImage: `url(${icon})`,
-        maskSize: 'contain',
-        WebkitMaskSize: 'contain',
-        maskRepeat: 'no-repeat',
-        WebkitMaskRepeat: 'no-repeat',
-        maskPosition: 'center',
-        WebkitMaskPosition: 'center',
-      }}
-    />
-  )
+  return <GameIcon game={icon} size={size} className={className} />
 }
 
 // A tag line that overflows its row bounces left to reveal the rest, then back, instead of ellipsizing.
-// Measures scrollWidth vs the row's available width, only animates when it's actually clipped.
-function MarqueeText({ text, className }: { text: string; className: string }) {
+// Only the selected row's tag moves; everyone else stays a quiet, static ellipsis truncate.
+function MarqueeText({ text, className, active }: { text: string; className: string; active: boolean }) {
   const reduced = useReducedMotion()
+  if (reduced || !active) return <div className={cnm('truncate', className)}>{text}</div>
+  return <MarqueeTextActive text={text} className={className} />
+}
+
+// CSS-driven (not React-state-driven): once armed, the loop runs off the stylesheet's own clock, so a
+// parent re-render (row selection, ticking stats) never restarts it mid-cycle. Fades the clipped edges
+// to black instead of a hard crop.
+function MarqueeTextActive({ text, className }: { text: string; className: string }) {
   const outerRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLSpanElement>(null)
   const [overflow, setOverflow] = useState(0)
@@ -330,24 +323,23 @@ function MarqueeText({ text, className }: { text: string; className: string }) {
     return () => ro.disconnect()
   }, [text])
 
-  const scrolls = overflow > 0 && !reduced
+  const scrolls = overflow > 0
   // Speed scales with distance so a longer tag doesn't fly past, plus a hold at each end to actually read it.
   const duration = 1.6 + overflow / 30
 
   return (
-    <div ref={outerRef} className={cnm('overflow-hidden', className)}>
-      <motion.span
+    <div ref={outerRef} className={cnm('overflow-hidden', scrolls && 'marquee-fade', className)}>
+      <span
         ref={innerRef}
-        className="inline-block whitespace-nowrap"
-        animate={scrolls ? { x: [0, 0, -overflow, -overflow, 0] } : { x: 0 }}
-        transition={
+        className={cnm('inline-block whitespace-nowrap', scrolls && 'marquee-bounce')}
+        style={
           scrolls
-            ? { duration, times: [0, 0.15, 0.5, 0.65, 1], ease: 'easeInOut', repeat: Infinity, repeatDelay: 0.6 }
-            : { duration: 0 }
+            ? ({ '--marquee-distance': `-${overflow}px`, '--marquee-duration': `${duration}s` } as CSSProperties)
+            : undefined
         }
       >
         {text}
-      </motion.span>
+      </span>
     </div>
   )
 }

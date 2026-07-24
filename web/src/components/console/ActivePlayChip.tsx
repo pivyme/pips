@@ -2,6 +2,7 @@ import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
 import type { Game, PlayStatus } from '@/lib/api'
+import { GameIcon } from '@/components/GameIcon'
 import { PLAY_TERMINAL, useActivePlay } from '@/lib/activePlay'
 import { haptic } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
@@ -66,6 +67,7 @@ export function ActivePlayChip() {
           terminal ? (pnl != null && pnl < 0 ? 'bg-down' : 'bg-up') : 'bg-brand-500',
         )}
       />
+      <GameIcon game={active.game} size={13} className="text-text" />
       <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-text">{label}</span>
       <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2">{statusLabel}</span>
       {pnl != null && (

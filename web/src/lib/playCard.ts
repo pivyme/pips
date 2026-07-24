@@ -7,8 +7,9 @@
 // bold tabular numbers, one tone accent (green win / red loss). The pre-revamp single-template card survives
 // verbatim as renderPlayCardLegacy behind the PNL_CARD_V2 kill switch and as the runtime fallback.
 import type { LuckyParams, PlayDTO, RangeParams } from '@/lib/api'
-import { loadCardFonts, loadImage } from '@/lib/cardAssets'
+import { loadCardFonts, loadImage, loadTintedIcon } from '@/lib/cardAssets'
 import { getConsoleShot } from '@/lib/consoleShot'
+import { GAME_ICON_SRC } from '@/lib/gameIcons'
 
 // Kill switch: false renders the exact pre-revamp card again (legacy path + legacy templates, both still
 // shipped), one line, no asset changes.
@@ -45,21 +46,6 @@ const C = {
 // Token chip: the real coin art at /assets/images/coins/<ticker>-logo.png; assets without art fall back to a
 // filled circle in this color with the ticker's first letter.
 const ASSET: Record<string, string> = { BTC: '#f7931a', ETH: '#627eea', SOL: '#14f195', SUI: '#4da2ff' }
-
-// The per-game line glyphs, same lucide icons the /games home uses (lucky=Dices, range=Target, moonshot=Rocket).
-const GAME_ICON: Record<string, string> = {
-  lucky:
-    '<rect width="12" height="12" x="2" y="10" rx="2" ry="2"/><path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6"/><path d="M6 18h.01"/><path d="M10 14h.01"/><path d="M15 6h.01"/><path d="M18 9h.01"/>',
-  range: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
-  moonshot:
-    '<path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09"/><path d="M9 12a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.4 22.4 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 .05 5 .05"/>',
-}
-
-// Wrap a lucide icon's children in an SVG with the stroke color baked in, as a data URI drawable on canvas.
-function lucideDataUri(children: string, color: string): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${children}</svg>`
-  return `data:image/svg+xml,${encodeURIComponent(svg)}`
-}
 
 type Tone = 'win' | 'loss'
 interface Cell {
@@ -280,7 +266,7 @@ export async function renderPlayCard(play: PlayDTO, opts?: PlayCardOpts): Promis
   // ── Eyebrow: game icon + name (bigger, like the /games home), then duration · date trailing, mono ──
   const gy = 76
   let ex = CL
-  const gameGlyph = GAME_ICON[play.game] ? await loadImage(lucideDataUri(GAME_ICON[play.game], C.ink2)) : null
+  const gameGlyph = GAME_ICON_SRC[play.game] ? await loadTintedIcon(GAME_ICON_SRC[play.game], C.ink2, 64) : null
   if (gameGlyph) {
     ctx.drawImage(gameGlyph, ex, gy - 16, 32, 32)
     ex += 32 + 13
@@ -438,7 +424,7 @@ async function renderPlayCardLegacy(play: PlayDTO, opts?: PlayCardOpts): Promise
   // ── Eyebrow: game icon + name (bigger, like the /games home), then duration · date trailing, mono ──
   const gy = 76
   let ex = CL
-  const gameGlyph = GAME_ICON[play.game] ? await loadImage(lucideDataUri(GAME_ICON[play.game], C.ink2)) : null
+  const gameGlyph = GAME_ICON_SRC[play.game] ? await loadTintedIcon(GAME_ICON_SRC[play.game], C.ink2, 64) : null
   if (gameGlyph) {
     ctx.drawImage(gameGlyph, ex, gy - 16, 32, 32)
     ex += 32 + 13
