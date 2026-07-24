@@ -1,11 +1,10 @@
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, Share2 } from 'lucide-react'
 import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
 import { StatsCardSkeleton } from '@/components/menu/StatsCard'
-import { Switch } from '@/ui/Switch'
-import { HapticOverlay } from '@/components/HapticOverlay'
+import { Hw3DButton, Hw3DToggle } from '@/ui/Hardware3D'
 import type { UserStatsDTO } from '@/lib/api'
 import { leaderboardQuery, statsQuery } from '@/lib/menuQueries'
 import type { RankStanding } from '@/lib/playerCard'
@@ -37,21 +36,9 @@ function ShareScreen() {
         <ScreenError message="Could not load stats" onRetry={() => void q.refetch()} />
       ) : !stats || stats.gamesPlayed === 0 || !user ? (
         <ScreenEmpty illo="vault" title="No plays yet" sub="Make your first play to get a card to share.">
-          <div className="relative inline-block">
-            <Link
-              to="/games"
-              onClick={() => haptic('medium')}
-              className="pointer-events-none btn-primary flex rounded-full px-5 py-2.5 text-sm font-extrabold uppercase tracking-wide"
-            >
-              Play now
-            </Link>
-            <HapticOverlay
-              className="absolute inset-0 rounded-full"
-              preset="medium"
-              silent
-              onTap={() => void navigate({ to: '/games' })}
-            />
-          </div>
+          <Hw3DButton variant="primary" haptic="medium" onPress={() => void navigate({ to: '/games' })}>
+            Play now
+          </Hw3DButton>
         </ScreenEmpty>
       ) : (
         <ShareEditor
@@ -109,32 +96,24 @@ function ShareEditor({
           <div className="text-[15px] font-bold text-white">Show my PnL</div>
           <div className="mt-0.5 text-[12px] leading-snug text-text-3">Your net dollar PnL on the card.</div>
         </div>
-        <Switch
+        <Hw3DToggle
           label="Show my PnL"
           isSelected={showNetPnl}
-          onChange={(v) => {
-            haptic('selection')
-            setHidePnl(!v)
-          }}
+          onChange={(v) => setHidePnl(!v)}
         />
       </div>
 
       {/* Share. */}
-      <div className="relative">
-        <button
-          type="button"
-          disabled={sharing}
-          className="btn-primary pointer-events-none flex w-full items-center justify-center gap-2 rounded-md py-3.5 text-[15px] font-extrabold uppercase tracking-wide disabled:opacity-70"
-        >
-          {sharing ? (
-            <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={2.6} />
-          ) : (
-            <Share2 className="h-[18px] w-[18px]" strokeWidth={2.6} />
-          )}
-          {sharing ? 'Making your card' : 'Share card'}
-        </button>
-        <HapticOverlay className="absolute inset-0 rounded-md" preset="medium" disabled={sharing} silent onTap={() => void doShare()} />
-      </div>
+      <Hw3DButton
+        variant="primary"
+        wide
+        loading={sharing}
+        icon={Share2}
+        haptic="medium"
+        onPress={() => void doShare()}
+      >
+        {sharing ? 'Making your card' : 'Share card'}
+      </Hw3DButton>
     </div>
   )
 }

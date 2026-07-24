@@ -18,7 +18,7 @@ export interface UserDTO {
   customAvatar: boolean; // a custom upload is set (drives the remove-X in the profile editor)
   balance: string; // available DUSDC (wallet + manager cash), 2dp display, e.g. "983.50"
   managerReady: boolean; // PredictManager exists
-  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string };
+  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string; themeConfig: unknown | null };
 }
 
 export interface MarketDTO {
@@ -26,6 +26,14 @@ export interface MarketDTO {
   spot: string; // current spot, display units
   durations: number[]; // round durations available, seconds
   live: boolean; // oracle fresh + tradeable right now
+}
+
+// The chart's shared pre-roll: the recorded display feed, oldest first. Ages are measured against `now`
+// (the server clock), so a device with a skewed clock still lands the history at the right offset.
+export interface PriceHistoryDTO {
+  asset: string;
+  now: number;
+  points: Array<{ t: number; p: number }>;
 }
 
 export interface LuckyParams {
@@ -134,6 +142,39 @@ export interface AchievementDTO {
 export interface WithdrawResult {
   user: UserDTO;
   digest: string;
+}
+
+// One coin the wallet holds, resolved + priced, for the send picker + balance list. amount/amountRaw are the
+// token's own decimals; usdValue/priceUsd are null when the price is unknown (never shown as $0 or $NaN).
+export interface WalletCoinDTO {
+  coinType: string;
+  symbol: string;
+  name: string | null;
+  decimals: number;
+  logo: string | null;
+  amount: string; // display units
+  amountRaw: string; // base units
+  priceUsd: string | null;
+  usdValue: string | null;
+  isChip: boolean; // true for DUSDC (the balance headline)
+}
+
+// One row in the wallet activity feed. Direction + kind drive the glyph/title; explorerUrl opens the tx.
+export interface WalletTxDTO {
+  id: string;
+  direction: 'in' | 'out';
+  kind: 'receive' | 'send' | 'faucet' | 'grant' | 'bridge';
+  coinType: string;
+  symbol: string | null;
+  logo: string | null;
+  amount: string; // display units, decimals-aware
+  decimals: number;
+  counterparty: string | null;
+  digest: string;
+  chain: string; // source chain label ('sui', or a bridge origin)
+  status: 'confirmed' | 'pending';
+  timestampMs: string; // ms, string so a BigInt never loses precision on the wire
+  explorerUrl: string;
 }
 
 // === Leaderboards ===

@@ -2,10 +2,12 @@
 // Auto-reconnects with backoff and falls back to per-connection SSE if the WS can't establish; display-only (L-015), nothing truthful reads this feed.
 
 import { env } from '@/env'
-import { getAuthToken, streamPrices, type PriceTick } from './api'
+import { api, getAuthToken, streamPrices, type PriceTick } from './api'
 import { demoStreamPrices, isDemo } from './demo'
 
 type Cb = (t: PriceTick) => void
+// The chart pre-roll, ages already resolved against the server clock: ageMs back from "now" at fetch time.
+export type PricePast = { asset: string; fetchedAt: number; points: Array<{ ageMs: number; p: number }> }
 
 const WS_ENABLED = env.VITE_PRICE_WS_ENABLED !== 'false'
 const WS_OPEN_TIMEOUT_MS = 4000 // no OPEN within this -> treat the attempt as failed
@@ -180,4 +182,47 @@ export function subscribe(asset: string, cb: Cb, onError?: () => void): () => vo
   }
 }
 
-export const priceBus = { subscribe }
+// === Shared chart pre-roll ===
+// The line behind the leading edge is the server's recorded window, not a local random walk, so two devices
+// opening the same game draw the same past. Ages are server-relative (not epoch), so a skewed device clock
+// can't shift the history sideways. Cached briefly and deduped in flight: Lucky's stacked charts and a
+// remount inside a round all ride one request.
+
+const PAST_TTL_MS = 2000
+const pastCache = new Map<string, PricePast>()
+const pastInflight = new Map<string, Promise<PricePast | null>>()
+
+const isFresh = (past: PricePast): boolean => performance.now() - past.fetchedAt < PAST_TTL_MS
+
+// The pre-roll if it's already in hand, else null. Synchronous so a chart can seed its first paint from real
+// history with no swap when something prefetched it.
+export function cachedPast(asset: string): PricePast | null {
+  const hit = pastCache.get(asset)
+  return hit && isFresh(hit) ? hit : null
+}
+
+export function fetchPast(asset: string): Promise<PricePast | null> {
+  const hit = cachedPast(asset)
+  if (hit) return Promise.resolve(hit)
+  const running = pastInflight.get(asset)
+  if (running) return running
+  const req = api
+    .priceHistory(asset)
+    .then((res) => {
+      const points = res.points
+        .map((pt) => ({ ageMs: res.now - pt.t, p: pt.p }))
+        .filter((pt) => Number.isFinite(pt.ageMs) && pt.ageMs >= 0 && pt.p > 0)
+      if (points.length === 0) return null
+      const past: PricePast = { asset, fetchedAt: performance.now(), points }
+      pastCache.set(asset, past)
+      return past
+    })
+    .catch(() => null) // no history is not an error, the chart falls back to its own warm-up seed
+    .finally(() => {
+      pastInflight.delete(asset)
+    })
+  pastInflight.set(asset, req)
+  return req
+}
+
+export const priceBus = { subscribe, cachedPast, fetchPast }

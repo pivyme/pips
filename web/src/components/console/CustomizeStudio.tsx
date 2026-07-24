@@ -1,46 +1,91 @@
 // The Customize studio: launched from the menu, drops the device into a black-and-white workshop,
 // floating as a hero shot, free to spin. A rail of preset cards reskins it live; X discards, Done saves, Share is a teaser.
-import { useEffect, useRef, useState } from 'react'
-import { motion } from 'motion/react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
 import { Share2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import ConsoleCanvas from './ConsoleCanvas'
 import { THEMES, THEME_BY_ID } from './themes'
 import type { ConsoleTheme } from './themes'
+import { GLOW_PALETTE, PALETTE, hasOverrides, resolveTheme } from './customize'
+import type { ConsoleCustom, PartId } from './customize'
 import { haptic } from '@/lib/haptics'
 import { requestDeviceTiltPermission } from '@/lib/deviceTilt'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 
+type TabId = 'presets' | PartId
+const TABS: { id: TabId; label: string }[] = [
+  { id: 'presets', label: 'Presets' },
+  { id: 'body', label: 'Body' },
+  { id: 'play', label: 'Play' },
+  { id: 'buttons', label: 'Buttons' },
+  { id: 'knob', label: 'Knob' },
+  { id: 'glow', label: 'Glow' },
+]
+
+// Presets <-> part-tabs cross a picker boundary (rail vs swatch grid), so that swap slides; part->part
+// stays an in-place palette update. Direction follows the tab strip: forward into parts, back to presets.
+const pickerVariants = {
+  enter: (d: number) => ({ opacity: 0, x: 26 * d }),
+  center: { opacity: 1, x: 0 },
+  exit: (d: number) => ({ opacity: 0, x: -26 * d }),
+}
+
 export function CustomizeStudio({
-  initialThemeId,
+  initialCustom,
   visible = true,
   active = true,
+  coldOpen = false,
   onCommit,
   onOutroComplete,
   onCancel,
 }: {
-  initialThemeId: string
+  initialCustom: ConsoleCustom
   visible?: boolean
   active?: boolean
-  onCommit: (themeId: string) => void
+  // A direct/refreshed load straight onto Customize: no live device was ever visible to hand off
+  // from, so the intro opens pre-settled at the studio rest pose instead of flashing full-size first.
+  coldOpen?: boolean
+  onCommit: (custom: ConsoleCustom) => void
   onOutroComplete: () => void
   onCancel: () => void
 }) {
   const reduced = useReducedMotion()
-  const [selectedId, setSelectedId] = useState(initialThemeId)
+  // Local draft: nothing touches the saved rig until Done. Cancel needs no snapshot.
+  const [draft, setDraft] = useState<ConsoleCustom>(initialCustom)
+  const [tab, setTab] = useState<TabId>('presets')
   // Once Done is tapped the device plays its snap-to-screen + power-on; chrome bows out and taps lock until the canvas reports the outro finished.
   const [exiting, setExiting] = useState(false)
-  // Let the workshop paint one beat before the prepared WebGL view mounts.
+  // Delay the heavy WebGL build one beat past mount, so the closing drawer's fall is already gliding
+  // on the compositor before the synchronous Three.js build lands on the main thread.
   const [ready, setReady] = useState(reduced)
-  const theme = THEME_BY_ID[selectedId] ?? THEMES[0]
+  const resolved = useMemo(() => resolveTheme(draft), [draft])
+  // +1 sliding into a part tab, -1 sliding back home to presets.
+  const pickerDir = tab === 'presets' ? -1 : 1
 
   useEffect(() => {
     if (reduced) return
     const t = setTimeout(() => setReady(true), 90)
     return () => clearTimeout(t)
   }, [reduced])
+
+  // The studio stays mounted between opens (the canvas parks hidden at 0fps), so on the hide edge
+  // rewind to a fresh state: draft back to the saved rig, tab home, outro disarmed. The canvas does
+  // its own park (ConsoleCanvas applyActiveRef), so the next reveal replays the whole zoom-out.
+  const initialRef = useRef(initialCustom)
+  initialRef.current = initialCustom
+  const wasVisible = useRef(visible)
+  useEffect(() => {
+    if (wasVisible.current && !visible) {
+      setDraft(initialRef.current)
+      setTab('presets')
+      setExiting(false)
+    }
+    wasVisible.current = visible
+  }, [visible])
 
   // Esc cancels, same as the X.
   useEffect(() => {
@@ -51,45 +96,64 @@ export function CustomizeStudio({
     return () => window.removeEventListener('keydown', onKey)
   }, [onCancel, exiting])
 
-  const select = (id: string) => {
-    if (exiting || id === selectedId) return
+  const pickPreset = (id: string) => {
+    if (exiting) return
     haptic('selection')
-    setSelectedId(id)
+    setDraft({ preset: id }) // preset tap resets all overrides
     // iOS gates motion access behind a tap; this tap is as good as any, and it's what makes the
     // gold's reflection sweep react to the phone in hand instead of sitting static.
     if (THEME_BY_ID[id]?.metallic) void requestDeviceTiltPermission()
   }
 
+  const pickSwatch = (part: PartId, i: number) => {
+    if (exiting) return
+    haptic('selection')
+    setDraft((d) => ({ ...d, parts: { ...d.parts, [part]: i } }))
+  }
+
   const commit = () => {
     if (exiting) return
     haptic('success')
-    if (theme.metallic) void requestDeviceTiltPermission() // covers Done without re-tapping the card
+    if (resolved.metallic) void requestDeviceTiltPermission() // covers Done without re-tapping the card
     setReady(true) // make sure the canvas is mounted so the outro can play + report completion
     setExiting(true)
-    onCommit(selectedId)
+    onCommit(draft)
   }
 
   return (
     <div
       className="absolute inset-0 z-20 overflow-hidden"
-      style={{
-        opacity: visible ? 1 : 0,
-        pointerEvents: visible ? undefined : 'none',
-      }}
+      style={{ pointerEvents: visible ? undefined : 'none' }}
       aria-hidden={!visible}
     >
-      <WorkshopBackdrop />
+      {/* Workshop fades in around the device as it zooms out (same recipe as onboarding's ThemePicker),
+          so the hand-off from the live console reads as one device pulling back into the bench. On the
+          way out it fades WITH the Done outro (not after): the outro is ~740ms and this is 600ms, so the
+          backdrop is already gone by onOutroComplete, when the real console reappears underneath. Waiting
+          for `visible` there would leave the (opaque) backdrop sitting above the just-revealed console for
+          another 600ms, a flash of workshop background before the console shows through. */}
+      <div
+        className="absolute inset-0 transition-opacity duration-[600ms] ease-out"
+        style={{ opacity: visible && !exiting ? 1 : 0 }}
+      >
+        <WorkshopBackdrop />
+      </div>
 
-      {/* The floating device on a transparent canvas, workshop shows around it. Mounted a beat late so
-          the drawer slides off cleanly before the device flies into the empty bench. */}
+      {/* The floating device on a transparent canvas. Built hidden while the drawer slides off, holding
+          the exact live app pose (introFromApp), then revealed in place and eased out into the studio. */}
       {ready && (
-        <ConsoleCanvas
-          customize
-          active={active}
-          theme={theme}
-          outro={exiting}
-          onOutroComplete={onOutroComplete}
-        />
+        <div className="absolute inset-0" style={{ opacity: visible ? 1 : 0 }}>
+          <ConsoleCanvas
+            customize
+            introFromApp
+            active={active}
+            instant={coldOpen}
+            theme={resolved}
+            focusPart={tab === 'presets' ? null : tab}
+            outro={exiting}
+            onOutroComplete={onOutroComplete}
+          />
+        </div>
       )}
 
       {/* Chrome on top. The device area stays click-through so drags spin it; only the controls grab. */}
@@ -98,7 +162,7 @@ export function CustomizeStudio({
 
         <motion.div
           initial={{ opacity: 0, y: 36 }}
-          animate={exiting ? { opacity: 0, y: 26 } : { opacity: 1, y: 0 }}
+          animate={!visible ? { opacity: 0, y: 36 } : exiting ? { opacity: 0, y: 26 } : { opacity: 1, y: 0 }}
           transition={
             exiting
               ? { duration: 0.26, ease: 'easeIn' }
@@ -106,18 +170,35 @@ export function CustomizeStudio({
           }
           className={cnm(
             'px-4 pb-[max(30px,calc(env(safe-area-inset-bottom)+20px))]',
-            exiting ? 'pointer-events-none' : 'pointer-events-auto',
+            visible && !exiting ? 'pointer-events-auto' : 'pointer-events-none',
           )}
         >
-          <div className="mb-1 flex items-center gap-2 px-1">
-            <DeckGlyph />
-            <span className="text-[26px] font-black leading-none tracking-tight text-white">Body</span>
-            <span className="ml-1 translate-y-[1px] text-[13px] font-semibold text-white/35">
-              {THEMES.length} skins
-            </span>
-          </div>
+          <TabStrip tab={tab} onSelect={setTab} />
 
-          <ThemeRail selectedId={selectedId} onSelect={select} />
+          <div className="relative min-h-[160px]">
+            <AnimatePresence mode="popLayout" initial={false} custom={pickerDir}>
+              <motion.div
+                key={tab === 'presets' ? 'presets' : 'swatches'}
+                custom={pickerDir}
+                variants={pickerVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={reduced ? { duration: 0 } : { duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+              >
+                {tab === 'presets' ? (
+                  // A custom mix (overrides on top of a preset) matches no card, so nothing lights up
+                  // rather than inventing a synthetic "Custom" card in the rail.
+                  <ThemeRail
+                    selectedId={hasOverrides(draft) ? '__custom' : draft.preset}
+                    onSelect={pickPreset}
+                  />
+                ) : (
+                  <SwatchGrid part={tab} draft={draft} onPick={(i) => pickSwatch(tab, i)} />
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </div>
 
           <div className="mt-5 flex items-center justify-between gap-3">
             <CircleButton label="Cancel" onPress={onCancel}>
@@ -139,7 +220,7 @@ export function CustomizeStudio({
               label="Share"
               onPress={() => {
                 haptic('selection')
-                toast('Sharing your rig is coming soon', { id: 'share-rig' })
+                toast('For now, show off your rig with your PnL card', { id: 'share-rig' })
               }}
             >
               <Share2 className="h-[22px] w-[22px]" strokeWidth={2.4} />
@@ -154,9 +235,11 @@ export function CustomizeStudio({
 export function ThemeRail({
   selectedId,
   onSelect,
+  leading,
 }: {
   selectedId: string
   onSelect: (id: string) => void
+  leading?: ReactNode
 }) {
   const railRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef({
@@ -230,6 +313,7 @@ export function ThemeRail({
       // pt/pb leave room for the selected card to lift + tilt; overflow-x forces overflow-y, so without the padding the raised card clips.
       className="-mx-4 flex cursor-grab touch-pan-x select-none gap-3 overflow-x-auto px-5 pb-4 pt-7 active:cursor-grabbing [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
+      {leading}
       {THEMES.map((t) => (
         <ThemeCard
           key={t.id}
@@ -350,14 +434,86 @@ function CircleButton({
   )
 }
 
-// The stacked-cards glyph next to the category label (echoes the reference).
-function DeckGlyph() {
+// Horizontal tab strip (Presets | Body | Play | Buttons | Knob | Glow). Keeps the active tab
+// centered the same way ThemeRail centers its selected card.
+function TabStrip({ tab, onSelect }: { tab: TabId; onSelect: (t: TabId) => void }) {
+  const railRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const rail = railRef.current
+    const el = rail?.querySelector<HTMLElement>(`[data-id="${tab}"]`)
+    if (!rail || !el) return
+    const railRect = rail.getBoundingClientRect()
+    const elRect = el.getBoundingClientRect()
+    const delta = elRect.left + elRect.width / 2 - (railRect.left + railRect.width / 2)
+    rail.scrollTo({ left: rail.scrollLeft + delta, behavior: 'smooth' })
+  }, [tab])
+
   return (
-    <svg width="34" height="30" viewBox="0 0 34 30" fill="none" aria-hidden>
-      <rect x="9" y="2" width="18" height="13" rx="3.4" fill="white" fillOpacity="0.34" transform="rotate(-9 18 8.5)" />
-      <rect x="6" y="7" width="20" height="14" rx="3.6" fill="white" fillOpacity="0.62" transform="rotate(-4 16 14)" />
-      <rect x="4" y="13" width="22" height="15" rx="3.8" fill="white" />
-    </svg>
+    <div
+      ref={railRef}
+      className="-mx-4 mb-2 flex gap-5 overflow-x-auto px-5 pb-1 pt-1 [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
+      {TABS.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          data-id={t.id}
+          aria-pressed={t.id === tab}
+          onClick={() => {
+            if (t.id === tab) return
+            haptic('selection')
+            onSelect(t.id)
+          }}
+          className={cnm(
+            'shrink-0 whitespace-nowrap text-[26px] font-extrabold leading-none tracking-tight transition-colors',
+            t.id === tab ? 'text-white' : 'text-white/35',
+          )}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// One row of 12 fixed swatches for the active part tab. No override on the part = no ring lit (it's
+// wearing the preset), first tap creates the override.
+function SwatchGrid({
+  part,
+  draft,
+  onPick,
+}: {
+  part: PartId
+  draft: ConsoleCustom
+  onPick: (i: number) => void
+}) {
+  const selected = draft.parts?.[part]
+  // Glow gets its own luminous swatches: the screen is emissive with dark ink, dark picks can't work there.
+  const colors = part === 'glow' ? GLOW_PALETTE : PALETTE
+  return (
+    <div className="grid grid-cols-6 justify-items-center gap-y-4 px-1 py-2">
+      {colors.map((c, i) => (
+        <motion.button
+          key={c.name}
+          type="button"
+          aria-label={c.name}
+          aria-pressed={selected === i}
+          onClick={() => onPick(i)}
+          animate={{ scale: selected === i ? 1.12 : 1 }}
+          transition={{ type: 'spring', stiffness: 460, damping: 26 }}
+          className="h-[46px] w-[46px] rounded-full"
+          style={{
+            // Sphere shading like the reference: a top-left highlight over the flat hex + a seating shadow.
+            background: `radial-gradient(circle at 32% 28%, rgba(255,255,255,0.5), rgba(255,255,255,0) 42%), ${c.hex}`,
+            boxShadow:
+              selected === i
+                ? `0 0 0 2.5px #0a0a0b, 0 0 0 5px #ffffff, 0 8px 18px -8px rgba(0,0,0,0.8)`
+                : `inset 0 -6px 10px -6px rgba(0,0,0,0.45), 0 8px 18px -8px rgba(0,0,0,0.8)`,
+          }}
+        />
+      ))}
+    </div>
   )
 }
 

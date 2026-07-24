@@ -1,27 +1,33 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import toast from 'react-hot-toast'
-import { AtSign } from 'lucide-react'
+import { AtSign, LogOut } from 'lucide-react'
 import { useLinkAccount, usePrivy } from '@privy-io/react-auth'
 import type { ReactNode } from 'react'
 import type { HapticPreset } from '@/lib/haptics'
 import { MenuScreen } from '@/components/menu/shared'
 import { GoogleGlyph, XGlyph } from '@/components/menu/BrandGlyphs'
-import { HapticOverlay } from '@/components/HapticOverlay'
+import { Hw3DButton } from '@/ui/Hardware3D'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { PRIVY_ENABLED } from '@/lib/privy'
 import { haptic } from '@/lib/haptics'
-import { cnm } from '@/utils/style'
 
 // Linked Accounts: Google, Email, X, driven live off the Privy session (link/unlink), with X singled
 // out (promo card + verified leaderboard badge). Read-only in dev/demo where no Privy provider is mounted (see StaticLinkedAccounts).
 export const Route = createFileRoute('/_app/menu/account')({ component: AccountScreen })
 
 function AccountScreen() {
+  const { signOut } = useAuth()
   return (
     <MenuScreen title="Account Settings">
       {PRIVY_ENABLED ? <LiveLinkedAccounts /> : <StaticLinkedAccounts />}
+      {/* Log out lives here too (not just the hub's foot): this page is where people look for it first. */}
+      <div className="mt-auto pt-10">
+        <Hw3DButton variant="danger" wide icon={LogOut} haptic="rigid" onPress={signOut}>
+          Log out
+        </Hw3DButton>
+      </div>
     </MenuScreen>
   )
 }
@@ -131,7 +137,7 @@ function LiveLinkedAccounts() {
             label="Link X"
             busy={busy === 'twitter'}
             onTap={() => startLink('twitter')}
-            className="mt-3 h-10 w-fit px-5 text-sm"
+            className="mt-3"
           />
         </div>
       )}
@@ -203,20 +209,15 @@ function TapButton({
   className?: string
 }) {
   return (
-    <div className="relative inline-block shrink-0">
-      <button
-        type="button"
-        disabled={busy}
-        onClick={onTap}
-        className={cnm(
-          'pointer-events-none flex items-center justify-center whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide transition-transform active:scale-95 disabled:opacity-40',
-          variant === 'primary' ? 'btn-primary' : 'border border-line bg-white/[0.05] text-text-2',
-          className,
-        )}
-      >
-        {busy ? '…' : label}
-      </button>
-      {!busy && <HapticOverlay className="absolute inset-0 rounded-full" preset={preset} silent onTap={onTap} />}
-    </div>
+    <Hw3DButton
+      size="sm"
+      variant={variant === 'primary' ? 'primary' : 'neutral'}
+      loading={busy}
+      haptic={preset}
+      onPress={onTap}
+      className={className}
+    >
+      {label}
+    </Hw3DButton>
   )
 }

@@ -1,9 +1,11 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Activity, CandlestickChart, Dices, Rocket, Target } from 'lucide-react'
+import { Activity, CandlestickChart } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useCallback } from 'react'
+import type { CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useConsoleControls } from '@/components/console/controls'
+import { GameIcon } from '@/components/GameIcon'
 import { GameScreen } from '@/components/game/screen'
 import { Stat } from '@/components/Stat'
 import { api } from '@/lib/api'
@@ -14,6 +16,7 @@ import { NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
+import { roundEndAt } from '@/hooks/useGameRound'
 import { cnm } from '@/utils/style'
 import { displayHandle } from '@/utils/format'
 
@@ -27,14 +30,17 @@ const RIM = 'px-[var(--screen-rim,24px)]'
 // A little breathing room up top so the status strip doesn't kiss the bevel, kept small so the last minigame clears the bottom-right body.
 const RIM_T = 'pt-[calc(var(--screen-rim,24px)_+_6px)]'
 const RIM_B = 'pb-[var(--screen-rim,24px)]'
+// Round length assumed when an open play has no minted expiry yet (the sub-second pending window); the longest game round.
+const ROUND_FALLBACK_SEC = 60
 
-type GameDef = { to: string; icon: LucideIcon; name: string; tag: string }
+type GameDef = { to: string; icon: LucideIcon | string; name: string; tag: string }
 
-// Real plays. Every one settles a DeepBook Predict position with actual funds.
+// Real plays. Every one settles a DeepBook Predict position with actual funds. icon is the play's `game`
+// key, resolved to art by the shared GameIcon.
 const GAMES: ReadonlyArray<GameDef> = [
-  { to: '/games/range', icon: Target, name: 'Range', tag: 'Call the zone. Tighter pays more.' },
-  { to: '/games/lucky', icon: Dices, name: 'I Feel Lucky', tag: 'Spin. Win. Cash out.' },
-  { to: '/games/moonshot', icon: Rocket, name: 'Moonshot', tag: 'Long or short. Reach further, win bigger.' },
+  { to: '/games/range', icon: 'range', name: 'Range', tag: 'Call the zone. Tighter pays more.' },
+  { to: '/games/lucky', icon: 'lucky', name: 'I Feel Lucky', tag: 'Spin. Win. Cash out.' },
+  { to: '/games/moonshot', icon: 'moonshot', name: 'Moonshot', tag: 'Long or short. Reach further, win bigger.' },
 ]
 
 // Minigames. Pure local arcade, no chain, no funds. A totally separate, just-for-fun lane.
@@ -68,7 +74,9 @@ function GamesConsole() {
     staleTime: 3000,
     retry: false,
   })
-  const openPlays = openPlaysQ.data?.plays ?? []
+  // Past its buzzer the round is over even while the row still reads 'open' (settlement lands a beat later), and
+  // the game screens no longer restore one, so the flag would promise a live board that isn't there.
+  const openPlays = (openPlaysQ.data?.plays ?? []).filter((p) => roundEndAt(p, ROUND_FALLBACK_SEC) > Date.now())
   const inPlayFor = (to: string): boolean =>
     to === '/games/lucky'
       ? openPlays.some((p) => p.game === 'lucky')
@@ -215,12 +223,11 @@ function GameRow({
   onLaunch,
 }: {
   index: number
-  game: { icon: LucideIcon; name: string; tag: string }
+  game: { icon: LucideIcon | string; name: string; tag: string }
   selected: boolean
   inPlay: boolean
   onLaunch: () => void
 }) {
-  const Icon = game.icon
   // The screen renders behind the 3D device and taps land on the WebGL canvas, not this DOM: data-console-tap
   // opts this button into ConsoleCanvas's screen-tap-forward hit test, which clicks it directly. Knob still scrubs selection, PLAY still launches the lit row.
   return (
@@ -237,10 +244,10 @@ function GameRow({
       {/* left edge bar marks the selected cartridge, instrument-panel style */}
       {selected && <span className="absolute inset-y-0 left-0 w-1 bg-brand-500" />}
       <span className={cnm('tnum w-5 font-mono text-[14px] font-bold', selected ? 'text-brand-500' : 'text-text-2')}>{pad2(index)}</span>
-      <Icon size={23} strokeWidth={2} className={selected ? 'text-brand-500' : 'text-text-2'} />
+      <RowIcon icon={game.icon} size={34} className={selected ? 'text-brand-500' : 'text-text-2'} />
       <div className="min-w-0 flex-1">
         <div className={cnm('text-[18px] font-extrabold uppercase leading-tight tracking-[0.02em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</div>
-        <div className="truncate font-mono text-[11px] uppercase tracking-[0.08em] text-text-3">{game.tag}</div>
+        <MarqueeText text={game.tag} active={selected} className="font-mono text-[11px] uppercase tracking-[0.08em] text-text-3" />
       </div>
       {/* live positions still riding: a green status pill, sharp-cornered like the in-play chips per SCREEN.md */}
       {inPlay && (
@@ -264,7 +271,6 @@ function MiniRow({
   selected: boolean
   onLaunch: () => void
 }) {
-  const Icon = game.icon
   return (
     <button
       type="button"
@@ -277,11 +283,83 @@ function MiniRow({
       )}
     >
       {selected && <span className="absolute inset-y-0 left-0 w-0.5 bg-brand-500" />}
-      <Icon size={18} strokeWidth={2} className={selected ? 'text-brand-500' : 'text-text-3'} />
-      <span className={cnm('text-[15px] font-bold uppercase tracking-[0.04em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</span>
-      <span className="min-w-0 flex-1 truncate font-mono text-[11px] uppercase tracking-[0.06em] text-text-3">{game.tag}</span>
+      <RowIcon icon={game.icon} size={18} className={selected ? 'text-brand-500' : 'text-text-3'} />
+      <span className={cnm('shrink-0 text-[15px] font-bold uppercase tracking-[0.04em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</span>
+      <MarqueeText text={game.tag} active={selected} className="min-w-0 flex-1 font-mono text-[11px] uppercase tracking-[0.06em] text-text-3" />
       {selected && <span className="font-mono text-sm text-brand-500">▶</span>}
     </button>
+  )
+}
+
+// Renders a lucide icon (minigames) or, for the three real plays, their cartridge glyph via the shared
+// GameIcon (the same art used on the history list and the PnL card).
+function RowIcon({ icon, size, className }: { icon: LucideIcon | string; size: number; className: string }) {
+  if (typeof icon !== 'string') {
+    const Icon = icon
+    return <Icon size={size} strokeWidth={2} className={className} />
+  }
+  return <GameIcon game={icon} size={size} className={className} />
+}
+
+// A tag line that overflows its row bounces left to reveal the rest, then back, instead of ellipsizing.
+// Only the selected row's tag moves; everyone else stays a quiet, static ellipsis truncate.
+function MarqueeText({ text, className, active }: { text: string; className: string; active: boolean }) {
+  const reduced = useReducedMotion()
+  if (reduced || !active) return <div className={cnm('truncate', className)}>{text}</div>
+  return <MarqueeTextActive text={text} className={className} />
+}
+
+// CSS-driven (not React-state-driven): once armed, the loop runs off the stylesheet's own clock, so a
+// parent re-render (row selection, ticking stats) never restarts it mid-cycle. Fades the clipped edges
+// to black instead of a hard crop.
+function MarqueeTextActive({ text, className }: { text: string; className: string }) {
+  const outerRef = useRef<HTMLDivElement>(null)
+  const innerRef = useRef<HTMLSpanElement>(null)
+  const [overflow, setOverflow] = useState(0)
+
+  useEffect(() => {
+    const outer = outerRef.current
+    const inner = innerRef.current
+    if (!outer || !inner) return
+    const measure = () => setOverflow(Math.max(0, inner.scrollWidth - outer.clientWidth))
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(outer)
+    return () => ro.disconnect()
+  }, [text])
+
+  const scrolls = overflow > 0
+  // Speed scales with distance so a longer tag doesn't fly past, plus a hold at each end to actually read it.
+  const duration = 1.6 + overflow / 30
+
+  // The fade eases in (via the --marquee-fade-w transition in styles.css) once the text is actually
+  // moving: hold off through the keyframe's opening pause (0-10% of duration) so a freshly-selected row
+  // reads its full tag edge-to-edge first, then the fade grows in rather than popping in.
+  const [moving, setMoving] = useState(false)
+  useEffect(() => {
+    if (!scrolls) {
+      setMoving(false)
+      return
+    }
+    setMoving(false)
+    const t = setTimeout(() => setMoving(true), duration * 1000 * 0.1)
+    return () => clearTimeout(t)
+  }, [scrolls, duration])
+
+  return (
+    <div ref={outerRef} className={cnm('overflow-hidden', scrolls && 'marquee-mask', moving && 'marquee-fade', className)}>
+      <span
+        ref={innerRef}
+        className={cnm('inline-block whitespace-nowrap', scrolls && 'marquee-bounce')}
+        style={
+          scrolls
+            ? ({ '--marquee-distance': `-${overflow}px`, '--marquee-duration': `${duration}s` } as CSSProperties)
+            : undefined
+        }
+      >
+        {text}
+      </span>
+    </div>
   )
 }
 

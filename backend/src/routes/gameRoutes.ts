@@ -6,6 +6,8 @@ import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyReque
 import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { buildMarketsPayload } from '../lib/markets-feed.ts';
+import { spotHistory } from '../lib/price-history.ts';
+import { PYTH_FEED_IDS } from '../lib/pyth.ts';
 import { PlayError, httpStatusForPlayError, quoteMoonshotAimReal, quoteRangeBatchReal, quoteRangeTiersReal } from '../services/games.ts';
 import {
   createPlay,
@@ -43,6 +45,19 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     } catch (error) {
       return handleError(reply, 500, 'Could not load markets', 'MARKETS_FAILED', error as Error);
     }
+  });
+
+  // The chart's pre-roll: the last window of the display feed, recorded server-side so every device seeds
+  // the same past line. `now` is the server clock the ages are measured against, so a skewed device still
+  // lands the history at the right offset. Display-only (L-015).
+  app.get('/prices/history', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const asset = ((request.query as { asset?: string }).asset ?? '').toUpperCase();
+    if (!asset || !PYTH_FEED_IDS[asset]) return handleError(reply, 400, 'Unknown asset', 'VALIDATION_ERROR');
+    return reply.code(200).send({
+      success: true,
+      error: null,
+      data: { asset, now: Date.now(), points: spotHistory(asset) },
+    });
   });
 
   // Pre-mint Range price previews for the whole band ladder off the live Predict ask, so the UI shows

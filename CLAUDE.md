@@ -48,7 +48,7 @@ Working in a pillar:
 
 ## Tech stack
 
-**Frontend (`web/`)** TanStack Start (React 19, SSR capable), TanStack Router (file based) + Query, Vite, Tailwind CSS 4, HeroUI v3, GSAP, Lenis, Motion. Package manager **bun**, runs on the **Bun** runtime.
+**Frontend (`web/`)** TanStack Start (React 19, SSR capable), TanStack Router (file based) + Query, Vite, Tailwind CSS 4, HeroUI v3, GSAP, Motion. Package manager **bun**, runs on the **Bun** runtime.
 
 **Backend (`backend/`)** Bun + Fastify 5, Prisma 7 (PostgreSQL, pg adapter), JWT auth, node-cron workers. Centralized config and error handling. Runs on the **Bun** runtime.
 

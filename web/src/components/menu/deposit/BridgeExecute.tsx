@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useConnectWallet, useWallets } from '@privy-io/react-auth'
 import { useWallets as useSolanaWallets } from '@privy-io/react-auth/solana'
-import { Check, Loader2, Wallet } from 'lucide-react'
+import { Check, Wallet } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import type { DepositOptionsDTO } from '@/lib/api'
 import { executeBridge } from '@/lib/deposit/lifi'
 import type { BridgeProgress } from '@/lib/deposit/lifi'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
+import { Hw3DButton } from '@/ui/Hardware3D'
 
 const shortenAddress = (a: string): string => (a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a)
 
@@ -108,23 +109,17 @@ export function BridgeExecute({
         </div>
       )}
 
-      <button
-        onClick={() => {
-          haptic('selection')
-          cta.onClick()
-        }}
+      <Hw3DButton
+        variant="primary"
+        wide
+        icon={landed ? Check : Wallet}
         disabled={cta.disabled}
-        className="btn-primary flex h-14 w-full items-center justify-center gap-2 rounded-card text-[15px] font-bold disabled:opacity-60"
+        loading={busy}
+        onPress={cta.onClick}
+        className="h-14 text-[15px]"
       >
-        {busy ? (
-          <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={2.6} />
-        ) : landed ? (
-          <Check className="h-[18px] w-[18px]" strokeWidth={2.8} />
-        ) : (
-          <Wallet className="h-[18px] w-[18px]" strokeWidth={2.6} />
-        )}
         {cta.label}
-      </button>
+      </Hw3DButton>
 
       {progress?.sourceTxHash && !landed && (
         <p className="tnum px-1 text-[12px] leading-snug text-text-3">Source tx {shortenAddress(progress.sourceTxHash)} sent, bridging…</p>

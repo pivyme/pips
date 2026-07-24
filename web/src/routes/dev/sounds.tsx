@@ -3,7 +3,9 @@ import { Play, Square, Volume2, VolumeX } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import {
   achievementUnlock,
+  chipsGranted,
   crowdPlace,
+  depositLanded,
   hopLose,
   hopResetCombo,
   hopScore,
@@ -44,7 +46,7 @@ import {
 } from '@/lib/sound'
 import { cnm } from '@/utils/style'
 
-export const Route = createFileRoute('/sounds')({ component: SoundLab })
+export const Route = createFileRoute('/dev/sounds')({ component: SoundLab })
 
 // The whole synth catalog in one manifest, so every game's music + SFX is trackable here as we revamp it.
 // `sound.ts` stays the engine; this page is the index + audition bench. Add a voice there, list it here.
@@ -62,6 +64,8 @@ const GROUPS: Group[] = [
     sfx: [
       { id: 'welcome', label: 'Welcome', desc: 'C-major sparkle', tone: 'amber', play: welcomeJingle },
       { id: 'achieve', label: 'Achievement', desc: 'Cmaj9 fanfare', tone: 'amber', play: achievementUnlock },
+      { id: 'chips', label: 'Chips granted', desc: 'coin plinks + bloom', tone: 'amber', play: chipsGranted },
+      { id: 'deposit', label: 'Deposit landed', desc: 'F-major vault resolve', tone: 'up', play: depositLanded },
       { id: 'win', label: 'Win', desc: 'rising third', tone: 'up', play: () => sound('win') },
       { id: 'lose', label: 'Lose', desc: 'downward step', tone: 'down', play: () => sound('lose') },
     ],

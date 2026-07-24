@@ -3,7 +3,7 @@ import { useState } from 'react'
 import toast from 'react-hot-toast'
 import type { UserDTO } from '@/lib/api'
 import { MenuScreen } from '@/components/menu/shared'
-import { Switch } from '@/ui/Switch'
+import { Hw3DToggle } from '@/ui/Hardware3D'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { isDemo, resetDemo } from '@/lib/demo'
@@ -61,7 +61,7 @@ function SettingsScreen() {
               <div className="text-[15px] font-bold">{row.label}</div>
               <div className="text-sm text-text-3">{row.desc}</div>
             </div>
-            <Switch
+            <Hw3DToggle
               label={row.label}
               isSelected={local[row.key]}
               isDisabled={busy === row.key}

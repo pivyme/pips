@@ -3,7 +3,7 @@
 import type { UserStatsDTO } from '@/lib/api'
 import type { CardTone, RankStanding } from '@/lib/playerCard'
 import { buildCardModel } from '@/lib/playerCard'
-import { avatarColor, avatarInitial } from '@/lib/avatar'
+import { avatarColor, avatarInitial, AVATAR_GLYPH_RATIO, AVATAR_CANVAS_FONT } from '@/lib/avatar'
 import { loadCardFonts, loadImage, loadImageCors } from '@/lib/cardAssets'
 
 // Share render options: hide dollar PnL, and the leaderboard standing that drives the rank chip.
@@ -28,7 +28,6 @@ function drawXLogo(ctx: CanvasRenderingContext2D, x: number, y: number, size: nu
 const W = 1600
 const H = 900
 const FONT = '"Gabarito Variable", ui-sans-serif, system-ui, sans-serif'
-const AVATAR_FONT = "'Open Runde', var(--font-sans), ui-sans-serif, sans-serif"
 
 // Mirror of the trader-card tokens in styles.css / StatsCard.tsx. Canvas can't read CSS vars.
 const C = {
@@ -228,7 +227,7 @@ export async function renderCard(stats: UserStatsDTO, user: CardUser, opts?: Car
     ctx.fillStyle = avInk
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.font = `700 ${Math.round(avR * 2 * 0.52)}px ${AVATAR_FONT}` // match <Avatar>: 0.52 of the diameter
+    ctx.font = `700 ${Math.round(avR * 2 * AVATAR_GLYPH_RATIO)}px ${AVATAR_CANVAS_FONT}`
     ctx.fillText(avatarInitial(user.displayName), avCX, avCY + 2)
     ctx.textBaseline = 'alphabetic'
   }

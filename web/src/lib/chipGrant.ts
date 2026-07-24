@@ -2,11 +2,11 @@
 // to avoid an import cycle with auth); this adds the hook that games + the auto-watcher call to fetch a grant.
 
 import { useCallback, useRef } from 'react'
-import { useNavigate } from '@tanstack/react-router'
 import { api } from './api'
 import { useAuth } from './auth'
 import { isDemo } from './demo'
 import { emitChipGrant } from './chipGrantBus'
+import { openMoneyModal } from './moneyModalBus'
 
 export { emitChipGrant, subscribeChipGrant } from './chipGrantBus'
 
@@ -17,14 +17,13 @@ export { emitChipGrant, subscribeChipGrant } from './chipGrantBus'
 // fallbackToDeposit:false so a browsing player is never yanked to a drawer they didn't ask for.
 export function useTopUp(): (opts?: { fallbackToDeposit?: boolean }) => Promise<void> {
   const { refresh } = useAuth()
-  const navigate = useNavigate()
   const busy = useRef(false)
   return useCallback(
     async ({ fallbackToDeposit = true }: { fallbackToDeposit?: boolean } = {}) => {
       if (busy.current) return
       busy.current = true
       const toDeposit = () => {
-        if (fallbackToDeposit && !isDemo()) void navigate({ to: '/menu/deposit' })
+        if (fallbackToDeposit && !isDemo()) openMoneyModal('deposit')
       }
       try {
         const { granted } = await api.grantChips()
@@ -40,6 +39,6 @@ export function useTopUp(): (opts?: { fallbackToDeposit?: boolean }) => Promise<
         busy.current = false
       }
     },
-    [refresh, navigate],
+    [refresh],
   )
 }

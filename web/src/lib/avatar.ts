@@ -10,6 +10,14 @@ const IDENTICON_COLORS = [
 ] as const
 const IDENTICON_INK = '#ffffff'
 
+// Glyph size as a fraction of the disc diameter. One constant, shared by <Avatar> (DOM) and the
+// canvas share-card renderer, so the letter-to-circle ratio can never drift between the two.
+export const AVATAR_GLYPH_RATIO = 0.52
+
+// Canvas ctx.font does not resolve CSS custom properties (var(--font-sans)), unlike a real DOM
+// stylesheet cascade. Keep a var()-free stack for canvas use; <Avatar> uses var(--font-sans) directly.
+export const AVATAR_CANVAS_FONT = "'Open Runde', 'Gabarito Variable', ui-sans-serif, sans-serif"
+
 function djb2(s: string): number {
   let h = 5381
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
