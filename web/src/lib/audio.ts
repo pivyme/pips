@@ -14,7 +14,7 @@
 // skip or a loop never waits on the network.
 
 import { useSyncExternalStore } from 'react'
-import { setSynthSfxVolume } from './sound'
+import { setSynthSfxVolume, sharedAudioContext } from './sound'
 
 const BGM_SRC = '/sounds/PIPS_BGM.mp3'
 
@@ -100,9 +100,65 @@ export function subscribeAudio(cb: () => void): () => void {
   }
 }
 
-// musicVolume is the fader position (0..1); the element only ever hears it through the ceiling.
+// iOS makes HTMLMediaElement.volume read-only, so the fader moved and nothing happened on a phone.
+// When the element refuses a volume write we hand it to a WebAudio gain node, which does respond.
+// Desktop keeps the plain element volume and never builds a graph.
+let elVolumeWorks = true
+let musicSrc: MediaElementAudioSourceNode | null = null
+let musicGain: GainNode | null = null
+let graphCtx: AudioContext | null = null
+
+// musicVolume is the fader position (0..1); the output only ever hears it through the ceiling.
 function applyVolume(): void {
-  if (el) el.volume = musicVolume * MUSIC_CEILING
+  const level = musicVolume * MUSIC_CEILING
+  if (el && elVolumeWorks) el.volume = level
+  if (musicGain && graphCtx) musicGain.gain.setTargetAtTime(level, graphCtx.currentTime, 0.015)
+}
+
+// An element can only ever be handed to one MediaElementAudioSourceNode, so this runs once, on the
+// first play, which is inside a gesture and therefore when iOS lets the context start.
+function ensureGraph(a: HTMLAudioElement): void {
+  if (elVolumeWorks || musicSrc) return
+  const ac = sharedAudioContext()
+  if (!ac) return
+  try {
+    musicSrc = ac.createMediaElementSource(a)
+  } catch {
+    elVolumeWorks = true // no graph to be had; leave the element playing rather than muting it
+    return
+  }
+  musicGain = ac.createGain()
+  musicGain.gain.value = musicVolume * MUSIC_CEILING
+  musicSrc.connect(musicGain).connect(ac.destination)
+  graphCtx = ac
+}
+
+// A backgrounded iOS PWA can close the shared context for good, and the element is welded to that
+// dead graph. Rebuild both and resume where it left off.
+function recoverGraph(): void {
+  if (!graphCtx || graphCtx.state !== 'closed' || !el) return
+  const at = el.currentTime
+  const wasPlaying = !el.paused
+  el.pause()
+  el = null
+  musicSrc = null
+  musicGain = null
+  graphCtx = null
+  const a = ensureEl()
+  if (!a) return
+  const seek = () => {
+    try {
+      a.currentTime = at
+    } catch {
+      // metadata is not in yet; playback just restarts from the top
+    }
+  }
+  if (a.readyState >= 1) seek()
+  else a.addEventListener('loadedmetadata', seek, { once: true })
+  if (wasPlaying) {
+    ensureGraph(a)
+    void a.play().catch(() => {})
+  }
 }
 
 function partAt(t: number): number {
@@ -143,7 +199,11 @@ function ensureEl(): HTMLAudioElement | null {
   const a = new Audio()
   a.preload = 'auto'
   a.loop = true // the end runs straight back to the top
-  a.volume = musicVolume * MUSIC_CEILING
+  // Probe rather than sniff the UA: a browser that keeps `volume` read-only reads back its own value.
+  const probe = 0.37
+  a.volume = probe
+  elVolumeWorks = Math.abs(a.volume - probe) < 0.01
+  a.volume = elVolumeWorks ? musicVolume * MUSIC_CEILING : 1 // the gain node is the fader otherwise
   // play/pause events (not our own calls) drive the flag, so an OS interrupt stays in sync
   a.addEventListener('play', () => {
     if (!playing) {
@@ -199,10 +259,14 @@ export function resetVolumes(): void {
 }
 
 export function togglePlay(): void {
+  recoverGraph()
   const a = ensureEl()
   if (!a) return
   if (playing) a.pause()
-  else void a.play().catch(() => {}) // blocked autoplay just leaves the transport paused
+  else {
+    ensureGraph(a) // still inside the tap, which is the only moment iOS starts a context
+    void a.play().catch(() => {}) // blocked autoplay just leaves the transport paused
+  }
 }
 
 function seekPart(idx: number): void {
@@ -215,7 +279,10 @@ function seekPart(idx: number): void {
   }
   partIndex = idx
   emit()
-  if (playing) void a.play().catch(() => {})
+  if (playing) {
+    ensureGraph(a)
+    void a.play().catch(() => {})
+  }
 }
 
 export function next(): void {
@@ -235,6 +302,16 @@ export function useAudioState(): AudioSnapshot {
 // Seed the sting bus with the persisted volume at import time (before its gain node exists, the
 // setter just stashes the scale and applies it when the node is first created).
 setSynthSfxVolume(sfxVolume)
+
+// Same foreground re-arm sound.ts does for the synth bus: if the shared context died while we were
+// backgrounded, the music graph goes with it, so rebuild before the next tap finds it silent.
+if (typeof document !== 'undefined') {
+  const onForeground = () => {
+    if (document.visibilityState === 'visible') recoverGraph()
+  }
+  document.addEventListener('visibilitychange', onForeground)
+  window.addEventListener('pageshow', onForeground)
+}
 
 // Fetch the track once the boot is out of the way, so ~1.8MB never competes with the first paint or
 // the 3D scene. Pressing play earlier still works, it just streams from the url that first time.

@@ -839,16 +839,73 @@ export function createInternals(device: THREE.Group, accent: string, full: boole
   return { group, setExt, dispose }
 }
 
-// Shading helpers for skin-derived parts. Both work in sRGB lightness, not the linear working space:
+// Shading helper for skin-derived parts. Works in sRGB lightness, not the linear working space:
 // a linear lerp lifts a near-black shell straight to mid grey while barely touching a cream one.
 const _hsl = { h: 0, s: 0, l: 0 }
 function shade(base: THREE.Color, dl: number, out: THREE.Color): THREE.Color {
   base.getHSL(_hsl, THREE.SRGBColorSpace)
   return out.setHSL(_hsl.h, _hsl.s, Math.min(0.97, Math.max(0.03, _hsl.l + dl)), THREE.SRGBColorSpace)
 }
-function tone(c: THREE.Color): { h: number; l: number } {
-  c.getHSL(_hsl, THREE.SRGBColorSpace)
-  return { h: _hsl.h, l: _hsl.l }
+// Relative luminance. THREE keeps colors in the linear working space, which is exactly what the
+// WCAG coefficients expect, so no de-gamma pass here.
+function luminance(c: THREE.Color): number {
+  return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+}
+
+// A bold glyph on a solid cap, not body text. Set at the level that rescues the collisions (a black
+// PLAY on a dark skin sits at ~1.2) without repainting the presets that were already tuned by hand.
+const MIN_INK_RATIO = 2.0
+function contrast(a: number, b: number): number {
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+}
+
+// Mix toward white or black in gamma space, the way you'd tint paint. Deliberately not shade()'s HSL
+// walk: a near-white accent carries a huge nominal saturation, so darkening its lightness swings it
+// to a vivid hue instead of grey.
+function mixInk(c: THREE.Color, toWhite: boolean, t: number): void {
+  const hex = c.getHex(THREE.SRGBColorSpace)
+  const mix = (ch: number) => Math.round(ch + ((toWhite ? 255 : 0) - ch) * t)
+  c.setHex((mix((hex >> 16) & 255) << 16) | (mix((hex >> 8) & 255) << 8) | mix(hex & 255), THREE.SRGBColorSpace)
+}
+
+// Keep an accent readable on whatever part it is printed on, so a black PLAY pick still reads
+// black-ish, just visible. The old hue-distance guard missed the achromatic picks (black on a
+// charcoal cap has no hue to be far in), which is how the note glyph vanished on a dark skin.
+function legibleInk(ink: THREE.Color, backdrop: THREE.Color): void {
+  const back = luminance(backdrop)
+  if (contrast(luminance(ink), back) >= MIN_INK_RATIO) return
+  // Move away from the backdrop on the side the accent already leans to, so a bright skin colour
+  // stays bright; take the other side only when that one runs out of headroom.
+  const walk = (toWhite: boolean) => {
+    const c = ink.clone()
+    for (let i = 0; i < 20 && contrast(luminance(c), back) < MIN_INK_RATIO; i++) mixInk(c, toWhite, 0.1)
+    return c
+  }
+  const up = luminance(ink) >= back
+  const lead = walk(up)
+  ink.copy(contrast(luminance(lead), back) >= MIN_INK_RATIO ? lead : walk(!up))
+}
+
+// The raised P on the PLAY cap, exported because ConsoleCanvas owns that mesh. It reads purely as a
+// tone step off the button, and the old flat multiply died at both ends of the range: a near-black
+// button had nothing left to darken, and a white one clipped to the same white as the cap under the
+// key light. Stepping a fraction in gamma space scales the step with the cap's brightness, which is
+// what beats the clipping. Measured on-device across every skin and palette pick.
+const EMBOSS_STEP = 0.22
+// A near-black cap has no room to darken, so the P lifts instead. Smaller, because a lift off a dark
+// surface reads far louder than the same step down off a bright one.
+const EMBOSS_LIFT = 0.13
+const MIN_EMBOSS_RATIO = 1.35 // below this the darkened P is mud on mud, take the lift instead
+const _capTone = new THREE.Color()
+const _down = new THREE.Color()
+export function embossTone(cap: string, out: THREE.Color): void {
+  _capTone.set(cap)
+  mixInk(_down.copy(_capTone), false, EMBOSS_STEP)
+  if (contrast(luminance(_down), luminance(_capTone)) >= MIN_EMBOSS_RATIO) {
+    out.copy(_down)
+    return
+  }
+  mixInk(out.copy(_capTone), true, EMBOSS_LIFT)
 }
 
 // A beamed eighth-note glyph on a transparent canvas, for the audio button cap face. Drawn white so
@@ -1024,18 +1081,15 @@ export function createBezelAudio(
     dress(matShell, 0.78)
     dress(matCap, 0.42)
     dress(matBtn, 0.55)
-    // The accent has to read against the cap it sits on. A far-off hue already separates the two
-    // (Cyberpunk's teal on magenta), so only a same-hue collision gets pushed apart in lightness.
-    const ink = new THREE.Color(accent)
-    const cap = tone(matCap.color)
-    const acc = tone(ink)
-    const dh = Math.abs(acc.h - cap.h)
-    if (Math.abs(acc.l - cap.l) < 0.3 && Math.min(dh, 1 - dh) < 0.12) {
-      shade(ink, cap.l > 0.5 ? -0.32 : 0.32, ink)
-    }
-    matNote.color.copy(ink)
-    matFill.color.copy(ink)
-    matBtn.emissive.copy(ink)
+    // The accent lands on two different surfaces, so each gets its own contrast pass: the note sits on
+    // the proud cap, the level bar on the recessed slot floor a couple of stops darker.
+    const noteInk = new THREE.Color(accent)
+    legibleInk(noteInk, matCap.color)
+    const fillInk = new THREE.Color(accent)
+    legibleInk(fillInk, matSlot.color)
+    matNote.color.copy(noteInk)
+    matFill.color.copy(fillInk)
+    matBtn.emissive.copy(noteInk)
   }
 
   // The share-card shot mounts and tears down a whole scene per render, so the cluster owns its trash

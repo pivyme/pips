@@ -22,6 +22,7 @@ import {
   achievementsQuery,
   leaderboardQuery,
   prefetchMenuData,
+  prefetchRoutes,
   statsQuery,
 } from '@/lib/menuQueries'
 import { useAuth } from '@/lib/auth'
@@ -37,12 +38,14 @@ export const Route = createFileRoute('/_app/menu/')({ component: MenuHome })
 function MenuHome() {
   const { signOut } = useAuth()
   const qc = useQueryClient()
+  const router = useRouter()
 
-  // Warm every sub-screen's data the moment the hub is visible, so the first tap in lands on cache
-  // instead of a cold fetch. The drawer rise is compositor-animated, so this never janks the open.
+  // Warm every sub-screen's data AND its chunk the moment the hub is visible, so the first tap in lands
+  // on cache instead of a cold fetch. The drawer rise is compositor-animated, so this never janks the open.
   useEffect(() => {
     prefetchMenuData(qc)
-  }, [qc])
+    prefetchRoutes(router)
+  }, [qc, router])
 
   return (
     <div className="relative min-h-full bg-black px-4 pb-8">

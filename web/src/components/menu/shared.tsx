@@ -5,11 +5,15 @@ import { Illo } from '@/ui/Illo'
 import { Button } from '@/ui/Button'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
+import { parkDevice } from '@/components/console/controls'
 import { cnm } from '@/utils/style'
 
+// Runs before every menu nav: sets the slide direction, and parks the render loops hidden behind the
+// drawer so the snapshot + commit + slide get the frame to themselves. 420ms slide plus a little slack.
 export function prepareMenuTransition(direction: 'forward' | 'back') {
   if (typeof document === 'undefined') return
   document.documentElement.dataset.menuTransition = direction
+  parkDevice(600)
 }
 
 // The DUSDC token mark: the coin logo, optionally with the ticker. Menu surfaces only (balance,

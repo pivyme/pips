@@ -19,12 +19,14 @@ import {
   createBackDetails,
   createInternals,
   createBezelAudio,
+  embossTone,
 } from './consoleElements'
 import { createAudio } from './consoleAudio'
 import { unlockAudio } from '@/lib/sound'
 import { haptic } from '@/lib/haptics'
 import type { HapticPreset } from '@/lib/haptics'
 import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
+import { isDeviceParked } from './controls'
 import { themeBackdrop, type ConsoleTheme } from './themes'
 import type { PartId } from './customize'
 import { betLadder } from '@/lib/sui/config'
@@ -1905,8 +1907,8 @@ export default function ConsoleCanvas({
         mat.emissive.set(c)
       }
       paint(bm[0], t.main)
-      // Raised P tracks the button: a shade darker than the face, its open counter reads as the eye.
-      matMainGlyph.color.set(t.main).multiplyScalar(0.7)
+      // Raised P tracks the button: a tone step off the face, its open counter reads as the eye.
+      embossTone(t.main, matMainGlyph.color)
       // The action caps are screens, not flat buttons: the theme tone is just their dim idle glow; a
       // bound game overrides it with the live up/down color (relightActionScreens). `glow` only owns
       // this neutral/idle state, SCREEN_COLORS up/down/amber during play always win.
@@ -2569,11 +2571,27 @@ export default function ConsoleCanvas({
     let faderDrag = false
 
     // Raycast the wide fader hit target, map the world hit to the fader's local x, and set the volume.
-    function setFaderFromPointer() {
+    // Once the grab is latched the ray meets the fader's PLANE instead of its strip, so a finger that
+    // wanders off the bezel keeps sliding, like every other slider.
+    const faderPlane = new THREE.Plane()
+    const faderNormal = new THREE.Vector3()
+    const faderOrigin = new THREE.Vector3()
+    const faderQuat = new THREE.Quaternion()
+    const faderPoint = new THREE.Vector3()
+    function setFaderFromPointer(latched: boolean) {
       raycaster.setFromCamera(ndc, camera)
-      const h = raycaster.intersectObject(bezelAudio.faderHit, false)
-      if (!h.length) return
-      const local = device.worldToLocal(h[0].point.clone())
+      if (latched) {
+        const strip = bezelAudio.faderHit
+        strip.getWorldPosition(faderOrigin)
+        faderNormal.set(0, 0, 1).applyQuaternion(strip.getWorldQuaternion(faderQuat)).normalize()
+        faderPlane.setFromNormalAndCoplanarPoint(faderNormal, faderOrigin)
+        if (!raycaster.ray.intersectPlane(faderPlane, faderPoint)) return
+      } else {
+        const h = raycaster.intersectObject(bezelAudio.faderHit, false)
+        if (!h.length) return
+        faderPoint.copy(h[0].point)
+      }
+      const local = device.worldToLocal(faderPoint.clone())
       const v = bezelAudio.pickVolume(local.x)
       bezelAudio.setVolume(v)
       setMusicVolume(v) // fader is the music-volume control; the drawer slider mirrors it
@@ -2669,7 +2687,7 @@ export default function ConsoleCanvas({
         canvas.setPointerCapture(e.pointerId)
         faderDrag = true
         haptic('selection')
-        setFaderFromPointer()
+        setFaderFromPointer(false)
         return
       }
       if (obj.userData.kind === 'audioBtn') {
@@ -2803,7 +2821,7 @@ export default function ConsoleCanvas({
         return
       }
       if (faderDrag) {
-        setFaderFromPointer()
+        setFaderFromPointer(true)
         return
       }
       const target = pick()
@@ -3070,6 +3088,13 @@ export default function ConsoleCanvas({
     function loop(time?: number) {
       rafId = requestAnimationFrame(loop)
       timer.update(time)
+      // Parked through a menu page transition: the device is behind the drawer's blur, so skip the frame
+      // entirely (per-frame easing included) and hand the budget to the snapshot + slide. dirty on wake so
+      // whatever moved while parked still lands. Export mode is a capture rig, never park it.
+      if (!exportMode && isDeviceParked()) {
+        dirty = true
+        return
+      }
       const dt = Math.min(timer.getDelta(), 0.05)
       let animating = false
 

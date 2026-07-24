@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute, useMatchRoute, useNavigate } from '@tanstack/react-router'
+import { Outlet, createFileRoute, useMatchRoute, useNavigate, useRouter } from '@tanstack/react-router'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import type { ConsoleTheme } from '@/components/console/themes'
@@ -15,7 +15,7 @@ import { ChipGrantCelebration } from '@/components/ChipGrantCelebration'
 import { DepositLanded } from '@/components/DepositLanded'
 import { MoneyModalHost } from '@/components/menu/MoneyModal'
 import { AchievementDetailProvider } from '@/components/menu/AchievementDetail'
-import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '@/components/console/controls'
+import { ConsoleControlsProvider, DeviceSettledProvider, deviceParkRemaining, useConsoleView } from '@/components/console/controls'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import { MenuDrawer } from '@/components/console/MenuDrawer'
 import { CustomizeStudio } from '@/components/console/CustomizeStudio'
@@ -26,6 +26,7 @@ import { TourProvider } from '@/components/console/tour'
 import { DEFAULT_THEME_ID, THEME_BY_ID, themeBackdrop } from '@/components/console/themes'
 import { hasOverrides, isValidConsoleCustom, useConsoleCustom } from '@/components/console/customize'
 import { warmConsoleShot } from '@/lib/consoleShot'
+import { GAME_ROUTES, MENU_ROUTES, prefetchRoutes } from '@/lib/menuQueries'
 import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
 import { api } from '@/lib/api'
@@ -91,6 +92,7 @@ function AppLayout() {
   const [customizePrepared, setCustomizePrepared] = useState(false)
   const [customizeHandoff, setCustomizeHandoff] = useState(false)
   const navigate = useNavigate()
+  const router = useRouter()
   const matchRoute = useMatchRoute()
   // The menu is a drawer over the device, not a screen inside it; the shell stays mounted behind it for the blur layer.
   const onMenu = Boolean(matchRoute({ to: '/menu', fuzzy: true }))
@@ -305,6 +307,14 @@ function AppLayout() {
     }
   }, [status])
 
+  // Warm the route chunks the shell navigates into (the menu drawer, the games) while idle, so a tap
+  // never waits on a round trip for its JS. Cold-chunk latency is invisible on localhost and is the
+  // whole reason prod navigation felt like it stalled before moving.
+  useEffect(() => {
+    if (phase !== 'app') return
+    prefetchRoutes(router, [...MENU_ROUTES, ...GAME_ROUTES])
+  }, [phase, router])
+
   // Boot warm for the share card's console shot: once the app settles, prime the (usually IDB-cached)
   // shot while idle. Skipped when the session lands mid-game (a cold-rig render mounts a second WebGL
   // canvas, which must never compete with a live game); the history screen's preload catches those.
@@ -312,7 +322,7 @@ function AppLayout() {
     if (phase !== 'app') return
     const t = window.setTimeout(() => {
       const p = window.location.pathname
-      if (p === '/games' || p.startsWith('/menu')) warmConsoleShot(0)
+      if (p === '/games' || p.startsWith('/menu')) warmConsoleShot(deviceParkRemaining())
     }, 2500)
     return () => window.clearTimeout(t)
   }, [phase])
@@ -326,11 +336,13 @@ function AppLayout() {
   useEffect(() => {
     if (!onMenu || customizePrepared) return
     let idle = 0
+    // Pushed past any in-flight page transition too: requestIdleCallback's timeout force-runs the build
+    // on a busy thread, and this one blocks for ~1s.
     const t = window.setTimeout(() => {
       const w = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }
       if (w.requestIdleCallback) idle = w.requestIdleCallback(() => setCustomizePrepared(true), { timeout: 2500 })
       else setCustomizePrepared(true)
-    }, 700)
+    }, 700 + deviceParkRemaining())
     return () => {
       window.clearTimeout(t)
       const w = window as Window & { cancelIdleCallback?: (id: number) => void }
