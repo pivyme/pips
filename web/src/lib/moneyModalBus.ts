@@ -1,8 +1,8 @@
-// The money-modal controller: which money surface (activity / deposit / send) is open as a centered modal.
+// The money-modal controller: which money surface (deposit / send) is open as a centered modal.
 // Dependency-free (like chipGrantBus / depositBus) so the balance card + the chip-grant fallback can open it
 // without pulling the modal's heavy body imports into their chunks. The host component subscribes + renders.
 
-export type MoneyView = 'activity' | 'deposit' | 'send'
+export type MoneyView = 'deposit' | 'send'
 
 let current: MoneyView | null = null
 const listeners = new Set<() => void>()

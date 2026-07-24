@@ -1,7 +1,7 @@
-// The money surfaces (Activity / Add funds / Send) as a centered pop-up modal over the menu, instead of
-// drawer sub-pages. One app-level host renders the right body by view; the balance card + the chip-grant
-// fallback drive it through the dependency-free bus. Closes on navigation (e.g. the deposit "Let's play"
-// jump to /games) so it never lingers over another screen.
+// The money surfaces (Add funds / Send) as a centered pop-up modal over the menu, instead of drawer
+// sub-pages. One app-level host renders the right body by view; the balance card + the chip-grant fallback
+// drive it through the dependency-free bus. Closes on navigation (e.g. the deposit "Let's play" jump to
+// /games) so it never lingers over another screen. Wallet Activity is its own menu page, not a modal view.
 
 import { useEffect, useSyncExternalStore } from 'react'
 import { useRouterState } from '@tanstack/react-router'
@@ -15,11 +15,10 @@ import {
   subscribeMoneyModal,
   type MoneyView,
 } from '@/lib/moneyModalBus'
-import { ActivityFeed } from '@/routes/_app/menu/transactions'
 import { DepositContent } from '@/routes/_app/menu/deposit'
 import { SendForm } from '@/routes/_app/menu/withdraw'
 
-const TITLES: Record<MoneyView, string> = { activity: 'Activity', deposit: 'Add funds', send: 'Send' }
+const TITLES: Record<MoneyView, string> = { deposit: 'Add funds', send: 'Send' }
 
 export function MoneyModalHost() {
   const view = useSyncExternalStore(subscribeMoneyModal, getMoneyModalView, () => null)
@@ -70,7 +69,6 @@ export function MoneyModalHost() {
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 pt-1">
-              {view === 'activity' && <ActivityFeed />}
               {view === 'deposit' && <DepositContent />}
               {view === 'send' && <SendForm onClose={close} />}
             </div>

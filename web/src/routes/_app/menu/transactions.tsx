@@ -1,26 +1,25 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
-import { AnimatePresence, motion } from 'motion/react'
-import { ArrowDownLeft, ArrowUpRight, ChevronRight, Copy, ExternalLink } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, ChevronRight, Copy, ExternalLink, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
 import { CoinLogo } from '@/components/menu/deposit/CoinLogo'
+import { HapticOverlay } from '@/components/HapticOverlay'
+import { Modal, useOverlayState } from '@/ui/Modal'
 import { api } from '@/lib/api'
 import type { WalletTxDTO } from '@/lib/api'
 import { walletTransactionsQuery } from '@/lib/menuQueries'
 import { haptic } from '@/lib/haptics'
-import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 import { NETWORK } from '@/lib/sui/config'
 
 // The wallet activity feed: deposits, sends, faucet/grant top-ups, and bridge landings, grouped by day.
 // App Surface language (rounded skeuo rows), NOT the in-device screen language. Polls while open so a fresh
-// receive appears on its own; a row opens a detail sheet (amount, hash, explorer link), not the raw scanner.
+// receive appears on its own; a row opens a centered detail modal (amount, hash, explorer link), not the scanner.
 export const Route = createFileRoute('/_app/menu/transactions')({
   component: () => (
-    <MenuScreen title="Activity">
+    <MenuScreen title="Wallet Activity">
       <ActivityFeed />
     </MenuScreen>
   ),
@@ -49,14 +48,13 @@ const kindTitle = (r: WalletTxDTO): string => {
   }
 }
 
-// The feed body, rendered both as the /menu/transactions page and inside the Activity money modal.
-export function ActivityFeed() {
+// The feed body for the Wallet Activity page.
+function ActivityFeed() {
   const q = useQuery({ ...walletTransactionsQuery(), refetchInterval: 8000 })
   // Page 1 is the reactive (polled) query; older pages are loaded once and appended locally.
   const [more, setMore] = useState<WalletTxDTO[]>([])
   const [moreCursor, setMoreCursor] = useState<string | null | undefined>(undefined) // undefined = not paged yet
   const [loadingMore, setLoadingMore] = useState(false)
-  const [detail, setDetail] = useState<WalletTxDTO | null>(null)
 
   const nextCursor = moreCursor === undefined ? (q.data?.nextCursor ?? null) : moreCursor
 
@@ -89,113 +87,101 @@ export function ActivityFeed() {
     }
   }
 
-  return (
-    <>
-      {q.isLoading ? (
-        <FeedSkeleton />
-      ) : q.isError ? (
-        <ScreenError message="Could not load your activity." onRetry={() => void q.refetch()} />
-      ) : all.length === 0 ? (
-        <ScreenEmpty title="No activity yet" sub="Deposits and sends show up here." />
-      ) : (
-        <div className="flex flex-col gap-6 pb-4">
-          {groups.map((g) => (
-            <section key={g.label} className="flex flex-col gap-2">
-              <div className="px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">{g.label}</div>
-              <div className="flex flex-col gap-2">
-                {g.rows.map((r) => (
-                  <ActivityRow key={r.id} row={r} onOpen={setDetail} />
-                ))}
-              </div>
-            </section>
-          ))}
-          {nextCursor && (
-            <button
-              onClick={loadMore}
-              disabled={loadingMore}
-              className="surface-skeuo mx-auto mt-1 rounded-full px-5 py-2.5 text-[13px] font-bold text-text-2 transition-transform active:scale-95 disabled:opacity-60"
-            >
-              {loadingMore ? 'Loading…' : 'Load more'}
-            </button>
-          )}
-        </div>
+  return q.isLoading ? (
+    <FeedSkeleton />
+  ) : q.isError ? (
+    <ScreenError message="Could not load your activity." onRetry={() => void q.refetch()} />
+  ) : all.length === 0 ? (
+    <ScreenEmpty title="No activity yet" sub="Deposits and sends show up here." />
+  ) : (
+    <div className="flex flex-col gap-6 pb-4">
+      {groups.map((g) => (
+        <section key={g.label} className="flex flex-col gap-2">
+          <div className="px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">{g.label}</div>
+          <div className="flex flex-col gap-2">
+            {g.rows.map((r) => (
+              <ActivityRow key={r.id} row={r} />
+            ))}
+          </div>
+        </section>
+      ))}
+      {nextCursor && (
+        <button
+          onClick={loadMore}
+          disabled={loadingMore}
+          className="surface-skeuo mx-auto mt-1 rounded-full px-5 py-2.5 text-[13px] font-bold text-text-2 transition-transform active:scale-95 disabled:opacity-60"
+        >
+          {loadingMore ? 'Loading…' : 'Load more'}
+        </button>
       )}
-
-      {/* Portaled to body so the full-screen sheet escapes the money modal's transform (a fixed child of a
-          scaled ancestor is otherwise clipped to it). */}
-      {typeof document !== 'undefined' &&
-        createPortal(
-          <AnimatePresence>
-            {detail && <TxDetailSheet key={detail.id} row={detail} onClose={() => setDetail(null)} />}
-          </AnimatePresence>,
-          document.body,
-        )}
-    </>
+    </div>
   )
 }
 
-function ActivityRow({ row, onOpen }: { row: WalletTxDTO; onOpen: (r: WalletTxDTO) => void }) {
+function ActivityRow({ row }: { row: WalletTxDTO }) {
+  const detail = useOverlayState()
   const isIn = row.direction === 'in'
   const pending = row.status === 'pending'
-  const open = () => {
-    haptic('selection')
-    onOpen(row)
-  }
   const sub =
     row.kind === 'bridge'
       ? `${CHAIN_LABEL[row.chain] ?? row.chain} → Sui`
       : timeAgo(Number(row.timestampMs))
 
   return (
-    <button
-      onClick={open}
-      className="surface-skeuo flex items-center gap-3 rounded-card p-3.5 text-left transition-transform active:scale-[0.99]"
-    >
-      {/* Direction glyph in a tinted circle, with the coin logo as a small badge. */}
-      <div className="relative shrink-0">
-        <span
-          className={cnm(
-            'flex h-10 w-10 items-center justify-center rounded-full',
-            isIn ? 'bg-up/15 text-up' : 'bg-white/[0.07] text-text-2',
-          )}
-        >
-          {isIn ? <ArrowDownLeft className="h-5 w-5" strokeWidth={2.6} /> : <ArrowUpRight className="h-5 w-5" strokeWidth={2.6} />}
-        </span>
-        <CoinLogo
-          src={row.logo}
-          name={row.symbol ?? '?'}
-          size={18}
-          className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[#0e0e0e]"
-        />
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[15px] font-bold">{kindTitle(row)}</span>
-          {pending && (
-            <span className="rounded-full bg-brand-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-500">
-              Pending
-            </span>
-          )}
+    <div className="relative">
+      <button
+        type="button"
+        className="pointer-events-none surface-skeuo flex w-full items-center gap-3 rounded-card p-3.5 text-left transition-transform active:scale-[0.99]"
+      >
+        {/* Direction glyph in a tinted circle, with the coin logo as a small badge. */}
+        <div className="relative shrink-0">
+          <span
+            className={cnm(
+              'flex h-10 w-10 items-center justify-center rounded-full',
+              isIn ? 'bg-up/15 text-up' : 'bg-white/[0.07] text-text-2',
+            )}
+          >
+            {isIn ? <ArrowDownLeft className="h-5 w-5" strokeWidth={2.6} /> : <ArrowUpRight className="h-5 w-5" strokeWidth={2.6} />}
+          </span>
+          <CoinLogo
+            src={row.logo}
+            name={row.symbol ?? '?'}
+            size={18}
+            className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[#0e0e0e]"
+          />
         </div>
-        <div className="mt-0.5 truncate text-[12px] text-text-3">{sub}</div>
-      </div>
 
-      <div className="flex shrink-0 items-center gap-1">
-        <span className={cnm('tnum text-[15px] font-extrabold', isIn ? 'text-up' : 'text-text')}>
-          {isIn ? '+' : '-'}
-          {row.amount} {row.symbol ?? ''}
-        </span>
-        <ChevronRight className="h-4 w-4 text-text-3" strokeWidth={2.4} />
-      </div>
-    </button>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[15px] font-bold">{kindTitle(row)}</span>
+            {pending && (
+              <span className="rounded-full bg-brand-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-500">
+                Pending
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 truncate text-[12px] text-text-3">{sub}</div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1">
+          <span className={cnm('tnum text-[15px] font-extrabold', isIn ? 'text-up' : 'text-text')}>
+            {isIn ? '+' : '-'}
+            {row.amount} {row.symbol ?? ''}
+          </span>
+          <ChevronRight className="h-4 w-4 text-text-3" strokeWidth={2.4} />
+        </div>
+      </button>
+      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={() => detail.open()} />
+
+      <TxDetailModal row={row} isOpen={detail.isOpen} onOpenChange={detail.setOpen} />
+    </div>
   )
 }
 
-// The detail sheet: full tx info (amount, status, network, from/to, tx hash) with copy + an explorer button,
-// so a tap reads the movement without leaving the app. Bottom sheet, App Surface language.
-function TxDetailSheet({ row, onClose }: { row: WalletTxDTO; onClose: () => void }) {
-  const reduced = useReducedMotion()
+// The detail modal: full tx info (amount, status, network, from/to, tx hash) with copy + an explorer button,
+// so a tap reads the movement without leaving the app. Uses the shared centered Modal, same shell as the
+// play-history detail / Share PnL modals.
+function TxDetailModal({ row, isOpen, onOpenChange }: { row: WalletTxDTO; isOpen: boolean; onOpenChange: (open: boolean) => void }) {
   const isIn = row.direction === 'in'
   const network =
     row.kind === 'bridge' ? `${CHAIN_LABEL[row.chain] ?? row.chain} → Sui` : CHAIN_LABEL[row.chain] ?? row.chain
@@ -216,89 +202,72 @@ function TxDetailSheet({ row, onClose }: { row: WalletTxDTO; onClose: () => void
   }
 
   return (
-    <motion.div
-      className="fixed inset-0 z-[120] flex items-end justify-center"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-    >
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-xl" onClick={onClose} />
-      <motion.div
-        role="dialog"
-        aria-modal="true"
-        className="relative w-full max-w-[440px] rounded-t-[28px] border-t border-white/10 bg-[#141414] p-5 pb-9"
-        initial={reduced ? { opacity: 0 } : { y: '100%' }}
-        animate={reduced ? { opacity: 1 } : { y: 0 }}
-        exit={reduced ? { opacity: 0 } : { y: '100%' }}
-        transition={reduced ? { duration: 0.18 } : { type: 'spring', stiffness: 380, damping: 34 }}
+    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="md" placement="center" className="border border-line bg-[#161615]">
+      <button
+        type="button"
+        onClick={() => onOpenChange(false)}
+        aria-label="Close"
+        className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.06] text-white/70 transition-transform active:scale-90"
       >
-        <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-white/15" />
+        <X className="h-[18px] w-[18px]" strokeWidth={2.6} />
+      </button>
 
-        {/* Header: glyph + coin badge, kind + time, signed amount. */}
-        <div className="flex items-center gap-3">
-          <div className="relative shrink-0">
-            <span
-              className={cnm(
-                'flex h-12 w-12 items-center justify-center rounded-full',
-                isIn ? 'bg-up/15 text-up' : 'bg-white/[0.07] text-text-2',
-              )}
-            >
-              {isIn ? <ArrowDownLeft className="h-6 w-6" strokeWidth={2.6} /> : <ArrowUpRight className="h-6 w-6" strokeWidth={2.6} />}
-            </span>
-            <CoinLogo
-              src={row.logo}
-              name={row.symbol ?? '?'}
-              size={20}
-              className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[#141414]"
-            />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-[17px] font-extrabold">{kindTitle(row)}</div>
-            <div className="mt-0.5 text-[12px] text-text-3">{when}</div>
-          </div>
-          <div className={cnm('tnum shrink-0 text-[18px] font-black', isIn ? 'text-up' : 'text-text')}>
-            {isIn ? '+' : '-'}
-            {row.amount} {row.symbol ?? ''}
-          </div>
-        </div>
-
-        {/* Fields. */}
-        <div className="mt-5 flex flex-col divide-y divide-white/[0.06] rounded-2xl bg-white/[0.03] px-4">
-          <Field
-            label="Status"
-            value={row.status === 'pending' ? 'Pending' : 'Confirmed'}
-            valueClass={row.status === 'pending' ? 'text-brand-400' : 'text-up'}
-          />
-          <Field label="Network" value={network} />
-          {row.counterparty && (
-            <Field label={isIn ? 'From' : 'To'} value={shorten(row.counterparty)} onCopy={() => copy('Address', row.counterparty!)} />
-          )}
-          {row.digest && <Field label="Transaction" value={shorten(row.digest)} onCopy={() => copy('Tx hash', row.digest)} />}
-        </div>
-
-        {/* Actions. */}
-        <div className="mt-5 flex flex-col gap-2.5">
-          {row.explorerUrl && (
-            <a
-              href={row.explorerUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => haptic('selection')}
-              className="flex h-12 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.05] text-[14px] font-bold text-text transition-transform active:scale-[0.99]"
-            >
-              <ExternalLink className="h-4 w-4" strokeWidth={2.4} /> View on explorer
-            </a>
-          )}
-          <button
-            onClick={onClose}
-            className="flex h-12 items-center justify-center rounded-2xl bg-white/[0.06] text-[14px] font-bold text-text-2 transition-transform active:scale-[0.99]"
+      {/* Header: glyph + coin badge, kind + time, signed amount hero. */}
+      <div className="flex items-center gap-3 pr-10">
+        <div className="relative shrink-0">
+          <span
+            className={cnm(
+              'flex h-12 w-12 items-center justify-center rounded-full',
+              isIn ? 'bg-up/15 text-up' : 'bg-white/[0.07] text-text-2',
+            )}
           >
-            Close
-          </button>
+            {isIn ? <ArrowDownLeft className="h-6 w-6" strokeWidth={2.6} /> : <ArrowUpRight className="h-6 w-6" strokeWidth={2.6} />}
+          </span>
+          <CoinLogo
+            src={row.logo}
+            name={row.symbol ?? '?'}
+            size={20}
+            className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[#161615]"
+          />
         </div>
-      </motion.div>
-    </motion.div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[17px] font-extrabold">{kindTitle(row)}</div>
+          <div className="mt-0.5 text-[12px] text-text-3">{when}</div>
+        </div>
+      </div>
+
+      <div className={cnm('tnum mt-4 text-[32px] font-black leading-none', isIn ? 'text-up' : 'text-text')}>
+        {isIn ? '+' : '-'}
+        {row.amount} {row.symbol ?? ''}
+      </div>
+
+      {/* Fields. */}
+      <div className="mt-5 flex flex-col divide-y divide-white/[0.06] rounded-2xl bg-white/[0.03] px-4">
+        <Field
+          label="Status"
+          value={row.status === 'pending' ? 'Pending' : 'Confirmed'}
+          valueClass={row.status === 'pending' ? 'text-brand-400' : 'text-up'}
+        />
+        <Field label="Network" value={network} />
+        {row.counterparty && (
+          <Field label={isIn ? 'From' : 'To'} value={shorten(row.counterparty)} onCopy={() => copy('Address', row.counterparty!)} />
+        )}
+        {row.digest && <Field label="Transaction" value={shorten(row.digest)} onCopy={() => copy('Tx hash', row.digest)} />}
+      </div>
+
+      {/* Explorer link, the one action worth surfacing (backdrop / X handle dismissal). */}
+      {row.explorerUrl && (
+        <a
+          href={row.explorerUrl}
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => haptic('selection')}
+          className="mt-5 flex h-12 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.05] text-[14px] font-bold text-text transition-transform active:scale-[0.99]"
+        >
+          <ExternalLink className="h-4 w-4" strokeWidth={2.4} /> View on explorer
+        </a>
+      )}
+    </Modal>
   )
 }
 
@@ -318,7 +287,7 @@ function Field({ label, value, valueClass, onCopy }: { label: string; value: str
   )
 }
 
-// Head…tail elision for an address / digest, so the sheet shows a copyable short form.
+// Head…tail elision for an address / digest, so the modal shows a copyable short form.
 const shorten = (s: string, head = 8, tail = 8): string => (s.length > head + tail + 1 ? `${s.slice(0, head)}…${s.slice(-tail)}` : s)
 
 function FeedSkeleton() {
