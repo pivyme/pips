@@ -12,8 +12,9 @@ import { achievementUnlock } from '@/lib/sound'
 import { haptic } from '@/lib/haptics'
 
 const SEEN_PREFIX = 'pips_ach_seen:'
-// On a user's first run we suppress the historical backlog, except anything just earned: an unlock
-// fresher than RECENT_MS still surfaces so a play that settled right before load isn't swallowed.
+// Backlog never celebrates, whether it's a first run or a catalog change/migration retroactively
+// granting achievements for old plays: only an unlock fresher than RECENT_MS surfaces, so a play
+// that just settled isn't swallowed but a bulk backfill doesn't bomb the user with a wall of trophies.
 const RECENT_MS = 120_000
 // Let the round's result land and read for a beat before the celebration blooms over it; the query refetch already lags slightly anyway.
 const SHOW_DELAY_MS = 1400
@@ -70,9 +71,7 @@ export function AchievementCelebration() {
     if (fresh.length > 0 || firstRun) writeSeen(userId, unlocked.map((a) => a.slug))
     if (fresh.length === 0) return
     const now = Date.now()
-    const toShow = firstRun
-      ? fresh.filter((a) => a.unlockedAt != null && now - Date.parse(a.unlockedAt) < RECENT_MS)
-      : fresh
+    const toShow = fresh.filter((a) => a.unlockedAt != null && now - Date.parse(a.unlockedAt) < RECENT_MS)
     if (toShow.length > 0) setQueue((qq) => [...qq, toShow.map((a) => resolveAchievement(a.slug))])
   }, [q.data, userId])
 
