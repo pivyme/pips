@@ -852,6 +852,16 @@ function luminance(c: THREE.Color): number {
   return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
 }
 
+// The scene runs hot on purpose (hemi 1.73 + ambient 0.5 + key 2.98, no tone mapping), so anything
+// light renders brighter than its own value and two light colours clip to the same white. Judging
+// contrast on the raw hex therefore passed pairs that are flat on screen, which is how a white note
+// on the Sui cap, or grey/purple/orange picks on a pale body, still came out invisible. This is the
+// lit value the eye actually gets.
+const LIGHT_GAIN = 2.2
+function litLuminance(c: THREE.Color): number {
+  return Math.min(1, luminance(c) * LIGHT_GAIN)
+}
+
 // A bold glyph on a solid cap, not body text. Set at the level that rescues the collisions (a black
 // PLAY on a dark skin sits at ~1.2) without repainting the presets that were already tuned by hand.
 const MIN_INK_RATIO = 2.0
@@ -872,18 +882,18 @@ function mixInk(c: THREE.Color, toWhite: boolean, t: number): void {
 // black-ish, just visible. The old hue-distance guard missed the achromatic picks (black on a
 // charcoal cap has no hue to be far in), which is how the note glyph vanished on a dark skin.
 function legibleInk(ink: THREE.Color, backdrop: THREE.Color): void {
-  const back = luminance(backdrop)
-  if (contrast(luminance(ink), back) >= MIN_INK_RATIO) return
+  const back = litLuminance(backdrop)
+  if (contrast(litLuminance(ink), back) >= MIN_INK_RATIO) return
   // Move away from the backdrop on the side the accent already leans to, so a bright skin colour
   // stays bright; take the other side only when that one runs out of headroom.
   const walk = (toWhite: boolean) => {
     const c = ink.clone()
-    for (let i = 0; i < 20 && contrast(luminance(c), back) < MIN_INK_RATIO; i++) mixInk(c, toWhite, 0.1)
+    for (let i = 0; i < 20 && contrast(litLuminance(c), back) < MIN_INK_RATIO; i++) mixInk(c, toWhite, 0.1)
     return c
   }
-  const up = luminance(ink) >= back
+  const up = litLuminance(ink) >= back
   const lead = walk(up)
-  ink.copy(contrast(luminance(lead), back) >= MIN_INK_RATIO ? lead : walk(!up))
+  ink.copy(contrast(litLuminance(lead), back) >= MIN_INK_RATIO ? lead : walk(!up))
 }
 
 // The raised P on the PLAY cap, exported because ConsoleCanvas owns that mesh. It reads purely as a
