@@ -872,16 +872,19 @@ export function createBezelAudio(
   device: THREE.Group, interactive: THREE.Mesh[], wx: Px, wy: Px,
 ) {
   const AMBER = 0xf5a623
+  // One knob for the whole cluster's size; every dimension below is a base size times S. The top bezel
+  // has to be deep enough to hold it, so raise TOP_BEZEL in ConsoleCanvas alongside this.
+  const S = 1.35
   // Cluster position in design px. y is measured DOWN the layout (wy flips it), so a smaller/more
-  // negative y sits HIGHER on the bezel. ~200 px = 1 world unit; the button is 46 px tall.
-  const BTN = { x: 88, y: -26 } // top-left bezel, the button's vertical
-  const TRK = { x: 286, y: -26 } // slider sits right next to the button, both hugging the left
-  const HOUSE_W = 1.28 // slider plate width (world units)
+  // negative y sits HIGHER on the bezel. 200 px = 1 world unit; the bezel band runs about -65..36.
+  const BTN = { x: 102, y: -14 } // top-left bezel, the button's centre
+  const TRK = { x: 369, y: -14 } // slider sits right next to the button, both hugging the left
+  const HOUSE_W = 1.28 * S // slider plate width (world units)
   const trackY = wy(TRK.y) // slider vertical
   const btnY = wy(BTN.y) // button vertical (independent of the slider so each can be nudged on its own)
   const cx = wx(TRK.x)
-  const CAP_W = 0.24
-  const travel = HOUSE_W - CAP_W - 0.12 // cap centre range, inset from the slot rims
+  const CAP_W = 0.24 * S
+  const travel = HOUSE_W - CAP_W - 0.12 * S // cap centre range, inset from the slot rims
   const leftX = cx - travel / 2
 
   // Tone-on-tone with the body: the cluster is molded out of the same shell, so it never distracts.
@@ -907,25 +910,25 @@ export function createBezelAudio(
 
   /* ── audio button ── cream cap in a tight recessed socket. Kept short (the bezel strip is thin) but wide. ── */
   const bx = wx(BTN.x)
-  const socket = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(0.46, 0.27, 0.1), 32), matRecess)
+  const socket = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(0.46 * S, 0.27 * S, 0.1 * S), 32), matRecess)
   socket.position.set(bx, btnY, 0.015)
   socket.receiveShadow = true
   group.add(socket)
 
-  const audioBtn = new THREE.Mesh(frontZeroed(roundedRect(0.4, 0.23, 0.08), 0.07, 0.02), matBtn)
+  const audioBtn = new THREE.Mesh(frontZeroed(roundedRect(0.4 * S, 0.23 * S, 0.08 * S), 0.07, 0.02), matBtn)
   audioBtn.position.set(bx, btnY, 0.1)
   audioBtn.castShadow = true
   audioBtn.userData = { kind: 'audioBtn', pressed: false, baseZ: 0.1, pressedZ: 0.035, glow: 0, baseEmissive: 0 }
   group.add(audioBtn)
   interactive.push(audioBtn)
 
-  const note = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), matNote)
-  note.position.set(0, 0.01, 0.05) // on the cap face, rides the press
+  const note = new THREE.Mesh(new THREE.PlaneGeometry(0.16 * S, 0.16 * S), matNote)
+  note.position.set(0, 0.01 * S, 0.05) // on the cap face, rides the press
   audioBtn.add(note)
 
   /* ── volume slider ── cream plate with a warm slot recessed through it, a proud ridged cap that slides ── */
-  const plateShape = roundedRect(HOUSE_W, 0.21, 0.085)
-  plateShape.holes.push(roundedRectPath(0, 0, HOUSE_W - 0.16, 0.14, 0.06)) // the slot cutout
+  const plateShape = roundedRect(HOUSE_W, 0.21 * S, 0.085 * S)
+  plateShape.holes.push(roundedRectPath(0, 0, HOUSE_W - 0.16 * S, 0.14 * S, 0.06 * S)) // the slot cutout
   const plate = new THREE.Mesh(frontZeroed(plateShape, 0.04, 0.012), matShell)
   plate.position.set(cx, trackY, 0.06)
   plate.castShadow = true
@@ -933,34 +936,34 @@ export function createBezelAudio(
   group.add(plate)
 
   // slot floor, set below the plate front so the channel reads recessed
-  const SLOT_W = HOUSE_W - 0.16
-  const slot = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(SLOT_W, 0.14, 0.06), 24), matSlot)
+  const SLOT_W = HOUSE_W - 0.16 * S
+  const slot = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(SLOT_W, 0.14 * S, 0.06 * S), 24), matSlot)
   slot.position.set(cx, trackY, 0.025)
   slot.receiveShadow = true
   group.add(slot)
 
   // Level bar printed on the slot floor, left rim up to the cap. Unlit on purpose so the accent reads
   // the same on a black shell as a cream one; the cap sits proud of it and hides the low end.
-  const fillLeft = cx - SLOT_W / 2 + 0.03
-  const fill = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.085), matFill)
+  const fillLeft = cx - SLOT_W / 2 + 0.03 * S
+  const fill = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.085 * S), matFill)
   fill.position.set(fillLeft, trackY, 0.033)
   group.add(fill)
 
   /* cap, overhangs the slot top and bottom like the Game Boy fader */
-  const faderCap = new THREE.Mesh(frontZeroed(roundedRect(CAP_W, 0.25, 0.035), 0.06, 0.015), matCap)
+  const faderCap = new THREE.Mesh(frontZeroed(roundedRect(CAP_W, 0.25 * S, 0.035 * S), 0.06, 0.015), matCap)
   faderCap.position.set(cx, trackY, 0.14)
   faderCap.castShadow = true
   group.add(faderCap)
   // three vertical grip grooves cut into the cap face
   for (let i = -1; i <= 1; i++) {
-    const groove = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.15, 0.02), matGroove)
-    groove.position.set(i * 0.062, 0, 0.02)
+    const groove = new THREE.Mesh(new THREE.BoxGeometry(0.02 * S, 0.15 * S, 0.02), matGroove)
+    groove.position.set(i * 0.062 * S, 0, 0.02)
     faderCap.add(groove)
   }
 
   // wide invisible hit target over the whole slot, so a click or drag anywhere positions the cap
   const hit = new THREE.Mesh(
-    new THREE.BoxGeometry(HOUSE_W + 0.12, 0.34, 0.04),
+    new THREE.BoxGeometry(HOUSE_W + 0.12 * S, 0.34 * S, 0.04),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
   )
   hit.position.set(cx, trackY, 0.16)

@@ -265,6 +265,14 @@ export default function ConsoleCanvas({
     const wx = (px: number) => (px - CX) * SCALE
     const wy = (py: number) => (CY - py) * SCALE
 
+    /* TOP_BEZEL deepens the forehead by dropping the SCREEN's top edge, so the shell stays exactly
+       6.2 x 11.95 and the silhouette, camera fit and left/right/bottom bezels never move. Growing the
+       body instead tips a wide frame into contain-by-height, shrinking the whole device, which reads as
+       fatter bezel on every side. Raise this to widen the forehead, it only ever eats screen height. */
+    const TOP_BEZEL = 0.16
+    const BODY_H = 11.95
+    const bodyCy = (ext: number) => wy(1130) + ext / 2 // bottom edge fixed, centre rises by half the stretch
+
     /* pocket holes — shared config needed before body geometry is built */
     const deviceCfg = { corner: 0.05 }
     const buttons = [
@@ -376,7 +384,7 @@ export default function ConsoleCanvas({
     // body cutout and the projected HTML layer, so they always agree.
     function screenWorldPts() {
       const yOf = (py: number) =>
-        wy(py) + SCREEN_MESH_Y_OFFSET + (py === 30 ? screenExt : 0)
+        wy(py) + SCREEN_MESH_Y_OFFSET + (py === 30 ? screenExt - TOP_BEZEL : 0)
       // z carries the device-group offset so the projected HTML layer lands on the actual cutout.
       return SCREEN_PX.map(
         (p) => new THREE.Vector3(wx(p.x), yOf(p.y), DEVICE_Z + 0.06),
@@ -384,8 +392,8 @@ export default function ConsoleCanvas({
     }
 
     function buildBodyShape() {
-      const cy = wy(1130) + screenExt / 2 // body center rises by ext/2 so the bottom edge stays fixed
-      const s = roundedRect(6.2, 11.95 + screenExt, deviceCfg.corner)
+      const cy = bodyCy(screenExt) // body center rises by ext/2 so the bottom edge stays fixed
+      const s = roundedRect(6.2, BODY_H + screenExt, deviceCfg.corner)
       BTN_PX.forEach((p, i) => {
         // hole center in body-local space (body mesh sits at wx(585), cy)
         const lx = wx(p.x) + buttons[i].dx - wx(585)
@@ -478,7 +486,7 @@ export default function ConsoleCanvas({
       frontZeroed(buildBodyShape(), 0.6, 0.08),
       matBody,
     )
-    body.position.set(wx(585), wy(1130), 0)
+    body.position.set(wx(585), bodyCy(0), 0)
     body.receiveShadow = true
     body.castShadow = true
     device.add(body)
@@ -493,13 +501,13 @@ export default function ConsoleCanvas({
     })
     const backPanel = new THREE.Mesh(
       frontZeroed(
-        roundedRect(6.2, 11.95 + screenExt, deviceCfg.corner),
+        roundedRect(6.2, BODY_H + screenExt, deviceCfg.corner),
         1.2,
         0.08,
       ),
       matBack,
     )
-    backPanel.position.set(wx(585), wy(1130) + screenExt / 2, -0.76)
+    backPanel.position.set(wx(585), bodyCy(screenExt), -0.76)
     backPanel.castShadow = true
     backPanel.receiveShadow = true
     // Hidden until the device is flipped. main's screen is an HTML layer behind the canvas, shown
@@ -532,23 +540,23 @@ export default function ConsoleCanvas({
       side: THREE.DoubleSide,
     })
     const BACK_HALF_W = (6.2 + 0.16) / 2
-    const backHalfH = () => (11.95 + screenExt + 0.16) / 2
+    const backHalfH = () => (BODY_H + screenExt + 0.16) / 2
     const backDetails = createBackDetails(
       device,
       backPanel,
-      { bodyW: 6.2, bodyH: 11.95, corner: deviceCfg.corner, seamZ: -0.72, bodyCx: wx(585) },
+      { bodyW: 6.2, bodyH: BODY_H, corner: deviceCfg.corner, seamZ: -0.72, bodyCx: wx(585) },
       { metal: matMetal, seam: matSeam, recess: matBackRecess, shell: matBack },
       '#7c7870',
     )
     backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
-    backDetails.rebuildSeam(screenExt, wy(1130) + screenExt / 2)
+    backDetails.rebuildSeam(screenExt, bodyCy(screenExt))
     yield // chunk: back dress details
 
     // Exposed guts for the transparent "Clear" skin (PCB, copper coil, battery, ribbon, glyph light strips) between the two shells. Built once and hidden; applyTheme reveals it, riding the body center so it tracks the screen-stretch like the body does.
     // Full guts (incl. the top-frame band) only in showcase contexts; the live game screen can grow into that band, so a played clear skin keeps just the always-safe bottom + side internals.
     const fullInternals = debug || customize || exportMode
     const internals = createInternals(device, '#e5322b', fullInternals)
-    internals.group.position.set(wx(585), wy(1130) + screenExt / 2, 0)
+    internals.group.position.set(wx(585), bodyCy(screenExt), 0)
     yield // chunk: clear-skin internals
 
     const SVG_W = 1539,
@@ -582,7 +590,7 @@ export default function ConsoleCanvas({
       // run no bevel here (straight 90° letter cuts), so grow the outline by the same amount to match.
       const s = roundedRect(
         6.2 + 0.16,
-        11.95 + screenExt + 0.16,
+        BODY_H + screenExt + 0.16,
         deviceCfg.corner + 0.08,
       )
       for (const h of logoHoles) s.holes.push(h)
@@ -711,7 +719,7 @@ export default function ConsoleCanvas({
     function buildScreenGeo() {
       const pts = SCREEN_PX.map((p) => ({
         x: wx(p.x),
-        y: wy(p.y) + (p.y === 30 ? screenExt : 0),
+        y: wy(p.y) + (p.y === 30 ? screenExt - TOP_BEZEL : 0),
       }))
       const g = frontZeroed(roundedPoly(pts, 0.25), 0.12, 0.03)
       setBoxUVs(g)
@@ -1916,15 +1924,15 @@ export default function ConsoleCanvas({
       body.geometry.dispose()
       body.geometry = frontZeroed(buildBodyShape(), 0.6, 0.08)
       if (bodySkinTex) fitBodySkin() // re-project the skin onto the new (stretched) body box
-      body.position.y = wy(1130) + screenExt / 2
+      body.position.y = bodyCy(screenExt)
       // back panel tracks the body so it stays a full cover when the screen stretches, keeping the cut logo
       backPanel.geometry.dispose()
       backPanel.geometry = buildBackPanelGeo()
-      backPanel.position.y = wy(1130) + screenExt / 2
+      backPanel.position.y = bodyCy(screenExt)
       // the panel grew taller: re-hug the corner screws + strap to the new edges, regrow the seam
       backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
-      backDetails.rebuildSeam(screenExt, wy(1130) + screenExt / 2)
-      internals.group.position.y = wy(1130) + screenExt / 2 // guts ride the body center
+      backDetails.rebuildSeam(screenExt, bodyCy(screenExt))
+      internals.group.position.y = bodyCy(screenExt) // guts ride the body center
     }
 
     // Stretch the screen + body top to `ext` world units past natural, then refresh the projection
@@ -2035,7 +2043,7 @@ export default function ConsoleCanvas({
     const lerp = (a: number, b: number, t: number) => a + (b - a) * t
     const responsiveScreenExt = () => {
       const aspect = Math.max(camera.aspect, 0.0001)
-      return Math.max(0, Math.round((6.2 / aspect - 11.95) * 100) / 100)
+      return Math.max(0, Math.round((6.2 / aspect - BODY_H) * 100) / 100)
     }
     const clamp01 = (t: number) => Math.max(0, Math.min(1, t))
 
@@ -2093,8 +2101,8 @@ export default function ConsoleCanvas({
         const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
         const aspect = Math.max(camera.aspect, 0.0001)
         const ext = responsiveScreenExt()
-        const appCy = wy(1130) + ext / 2
-        const appZ = (ext > 0 ? (6.2 * 0.5) / (tanHalf * aspect) : (11.95 * 0.5) / tanHalf) + DEVICE_Z
+        const appCy = bodyCy(ext)
+        const appZ = (ext > 0 ? (6.2 * 0.5) / (tanHalf * aspect) : (BODY_H * 0.5) / tanHalf) + DEVICE_Z
         lookY = lerp(appCy, CUST.lookY[1], e)
         camZ = lerp(appZ, CUST.camZ[1] * custCam.zoom, e)
         yaw = lerp(0, CUST.yaw[1], e) + orbitYaw * e
@@ -2122,11 +2130,11 @@ export default function ConsoleCanvas({
         const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
         const aspect = Math.max(camera.aspect, 0.0001)
         const ext = responsiveScreenExt()
-        const cy = wy(1130) + ext / 2
+        const cy = bodyCy(ext)
         const frontZ =
           (ext > 0
             ? (6.2 * 0.5) / (tanHalf * aspect)
-            : (11.95 * 0.5) / tanHalf) + DEVICE_Z
+            : (BODY_H * 0.5) / tanHalf) + DEVICE_Z
         lookX = lerp(lookX, 0, o)
         lookY = lerp(lookY, cy, o)
         camZ = lerp(camZ, frontZ, o)
@@ -2147,12 +2155,12 @@ export default function ConsoleCanvas({
       const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
       const aspect = Math.max(camera.aspect, 0.0001)
       const ext = responsiveScreenExt()
-      const cy = wy(1130) + ext / 2
+      const cy = bodyCy(ext)
       // 1.25 pulls the camera back so the device sits smaller in frame with breathing room around it.
       const frontZ =
         (ext > 0
           ? (6.2 * 0.5) / (tanHalf * aspect)
-          : (11.95 * 0.5) / tanHalf) * 1.25 + DEVICE_Z
+          : (BODY_H * 0.5) / tanHalf) * 1.25 + DEVICE_Z
       camera.position.set(0, cy, frontZ)
       camera.lookAt(0, cy, 0)
       device.position.y = 0
@@ -2958,7 +2966,7 @@ export default function ConsoleCanvas({
       if (debug) {
         // Playground: contain the whole device (with margin), screen at natural height.
         relayout(0)
-        const fitH = (11.95 * 0.5 * 1.06) / tanHalf
+        const fitH = (BODY_H * 0.5 * 1.06) / tanHalf
         const fitW = (6.2 * 0.5 * 1.06) / (tanHalf * camera.aspect)
         camera.position.set(0, 0, Math.max(fitH, fitW) + DEVICE_Z)
         camera.lookAt(0, 0, 0)
@@ -2966,13 +2974,13 @@ export default function ConsoleCanvas({
         // Always fill the width: a frame taller than the device's ratio grows the screen to fill the extra height (control deck keeps its size); a wider frame falls back to contain-by-height so the device gaps at the sides but is never cropped.
         // The resting pose is captured (not applied) here; placeLiveCamera() applies it plus any hero/welcome blend.
         const visibleH = 6.2 / camera.aspect // world height when the device width is fit edge to edge
-        const ext = Math.max(0, Math.round((visibleH - 11.95) * 100) / 100)
+        const ext = Math.max(0, Math.round((visibleH - BODY_H) * 100) / 100)
         relayout(ext)
-        const cy = wy(1130) + ext / 2 // device center after the top extension
+        const cy = bodyCy(ext) // device center after the top extension
         const d =
           ext > 0
             ? (6.2 * 0.5) / (tanHalf * camera.aspect) // fill width
-            : (11.95 * 0.5) / tanHalf // contain by height (wider frame)
+            : (BODY_H * 0.5) / tanHalf // contain by height (wider frame)
         restCamPos.set(0, cy, d + DEVICE_Z)
         restLook.set(0, cy, 0)
       }
