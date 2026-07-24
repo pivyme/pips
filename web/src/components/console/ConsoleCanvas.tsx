@@ -28,7 +28,9 @@ import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
 import { themeBackdrop, type ConsoleTheme } from './themes'
 import type { PartId } from './customize'
 import { betLadder } from '@/lib/sui/config'
-import { Modal, useOverlayState } from '@/ui/Modal'
+import { useOverlayState } from '@/ui/Modal'
+import { SoundsDrawer } from './SoundsDrawer'
+import { getMusicVolume, setMusicVolume, subscribeAudio } from '@/lib/audio'
 
 // Main / Action1 / Action2 / MenuTab / HomeTab, matching ConsoleShell's DOM equivalents.
 const BTN_HAPTIC: HapticPreset[] = ['rigid', 'medium', 'medium', 'selection', 'selection']
@@ -169,10 +171,22 @@ export default function ConsoleCanvas({
   // Studio only: finishes an in-flight chunked build synchronously (a Customize tap mid-warm).
   const flushBuildRef = useRef<() => void>(() => {})
 
-  // Bezel audio button -> a placeholder modal. The imperative scene fires this ref on the button's release.
+  // Bezel audio button -> the sounds drawer. The imperative scene fires this ref on the button's release.
   const audioModal = useOverlayState()
   const openAudioModalRef = useRef<() => void>(() => {})
   openAudioModalRef.current = audioModal.open
+  // The bezel volume fader is the music-volume control, kept in sync with the drawer's music slider.
+  const bezelAudioRef = useRef<ReturnType<typeof createBezelAudio> | null>(null)
+  const pokeRenderRef = useRef<() => void>(() => {})
+
+  // Drawer's music slider moved -> slide the 3D fader cap to match (and request a frame to show it).
+  useEffect(() => {
+    const apply = () => {
+      bezelAudioRef.current?.setVolume(getMusicVolume())
+      pokeRenderRef.current()
+    }
+    return subscribeAudio(apply)
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -962,9 +976,15 @@ export default function ConsoleCanvas({
     )
 
     // Top-left bezel audio controls (press button + volume fader), modelled into the shell. Pressed/dragged
-    // through the same raycast loop as the buttons. Shown on the live device + dev playground, skipped in the
-    // customize studio / export (their own camera + backdrop). The button opens a placeholder modal; the fader is inert.
-    const bezelAudio = !customize && !exportMode ? createBezelAudio(device, interactive, wx, wy) : null
+    // through the same raycast loop as the buttons. Built on every surface (live shell, dev playground,
+    // customize studio, share-card shots) so there is one device everywhere; the studio and export just
+    // never route taps into it (their pointer path is the turntable).
+    const bezelAudio = createBezelAudio(device, interactive, wx, wy)
+    bezelAudioRef.current = bezelAudio
+    bezelAudio.setVolume(getMusicVolume()) // seed the cap from the saved music volume
+    pokeRenderRef.current = () => {
+      dirty = true
+    }
 
     // Canvas-texture label. Static caption (makeLabel) or live, updatable (makeDynLabel).
     function drawLabel(
@@ -1875,6 +1895,9 @@ export default function ConsoleCanvas({
       menuLbl.recolor(labelColor)
       gamesLbl.recolor(labelColor)
       backMark.recolor(labelColor)
+      // Bezel audio cluster: molded out of the body like the rest of the shell, accented with the
+      // skin's PLAY colour on the note glyph, the level bar and the press glow.
+      bezelAudio.recolor(t.body, t.main, metal, env)
       // Number wheel stays the factory dark hardware on every skin (wheel customization is retired).
       dirty = true
     }
@@ -1912,7 +1935,7 @@ export default function ConsoleCanvas({
       rebuildBodyGeo()
       // The bezel audio lives on the top bezel, which rises by ext when the screen stretches; ride it up so
       // the cluster stays glued to the bezel instead of detaching over the screen on tall (mobile) frames.
-      if (bezelAudio) bezelAudio.group.position.y = ext
+      bezelAudio.group.position.y = ext
       screenMesh.geometry.dispose()
       screenMesh.geometry = buildScreenGeo()
       screenWorld = screenWorldPts()
@@ -2511,12 +2534,13 @@ export default function ConsoleCanvas({
 
     // Raycast the wide fader hit target, map the world hit to the fader's local x, and set the volume.
     function setFaderFromPointer() {
-      if (!bezelAudio) return
       raycaster.setFromCamera(ndc, camera)
       const h = raycaster.intersectObject(bezelAudio.faderHit, false)
       if (!h.length) return
       const local = device.worldToLocal(h[0].point.clone())
-      bezelAudio.setVolume(bezelAudio.pickVolume(local.x))
+      const v = bezelAudio.pickVolume(local.x)
+      bezelAudio.setVolume(v)
+      setMusicVolume(v) // fader is the music-volume control; the drawer slider mirrors it
       dirty = true
     }
 
@@ -3598,10 +3622,11 @@ export default function ConsoleCanvas({
         </div>
       )}
 
-      {/* Placeholder opened by the bezel audio button. */}
-      <Modal isOpen={audioModal.isOpen} onOpenChange={audioModal.setOpen} size="sm">
-        <div className="py-6 text-center text-base font-medium">Audio Modal</div>
-      </Modal>
+      {/* Sounds drawer, opened by the bezel audio button. App chrome, not device: the studio and the
+          offscreen share-card render mount outside the app providers, and it reads auth via useReducedMotion. */}
+      {!customize && !exportMode && (
+        <SoundsDrawer isOpen={audioModal.isOpen} onClose={() => audioModal.setOpen(false)} />
+      )}
     </div>
   )
 }

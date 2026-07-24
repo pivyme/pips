@@ -38,6 +38,14 @@ export interface MarketDTO {
   live: boolean
 }
 
+// The chart's shared pre-roll: the server-recorded display feed, oldest first. Point ages are measured
+// against `now` (the server clock), so a device with a skewed clock still lands the history at the right offset.
+export interface PriceHistoryDTO {
+  asset: string
+  now: number
+  points: Array<{ t: number; p: number }>
+}
+
 export interface LuckyParams {
   asset: string
   side: Side
@@ -449,6 +457,9 @@ const realApi = {
 
   // markets + plays. `playsPaused` is the real-mode sponsor-floor pause (always false in fork/demo); blocks new plays while the gas sponsor tops up.
   markets: () => request<{ markets: MarketDTO[]; playsPaused?: boolean }>('GET', '/markets'),
+  // The chart's shared pre-roll, so every device draws the same line behind the leading edge. Go through
+  // priceBus.history(), not this, so charts on the same asset share one fetch.
+  priceHistory: (asset: string) => request<PriceHistoryDTO>('GET', `/prices/history?asset=${encodeURIComponent(asset)}`),
   // Price the whole band ladder for an asset in one call; cached on select so every band shows its real multiple instantly, no estimate fallback.
   rangeQuotes: (asset: string, widthPcts: number[]) =>
     request<{ quotes: RangeQuote[] }>('GET', `/games/range/quotes?asset=${encodeURIComponent(asset)}&widths=${widthPcts.join(',')}`),

@@ -28,6 +28,14 @@ export interface MarketDTO {
   live: boolean; // oracle fresh + tradeable right now
 }
 
+// The chart's shared pre-roll: the recorded display feed, oldest first. Ages are measured against `now`
+// (the server clock), so a device with a skewed clock still lands the history at the right offset.
+export interface PriceHistoryDTO {
+  asset: string;
+  now: number;
+  points: Array<{ t: number; p: number }>;
+}
+
 export interface LuckyParams {
   asset: string;
   side: Side;

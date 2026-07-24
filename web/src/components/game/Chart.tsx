@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { type PriceTick } from '@/lib/api'
-import { priceBus } from '@/lib/priceBus'
+import { priceBus, type PricePast } from '@/lib/priceBus'
 import { isDemo } from '@/lib/demo'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
@@ -127,8 +127,9 @@ const PARTICLE_GRAV = 0.00018 // px/ms^2 gravity pulling sparks down
 const TAU = Math.PI * 2
 const TOP_PAD = 18
 const BOT_PAD = 18
-// Warm-up history: a synthetic walk drawn across the window on first tick, so a fresh chart isn't a
-// flat bar. Cosmetic only (see seedHistory).
+// Warm-up history: the LAST RESORT pre-roll, a synthetic walk drawn across the window on first tick so a
+// fresh chart isn't a flat bar. The real pre-roll is the server's recorded window (priceBus.fetchPast), which
+// is identical on every device; this only runs when that hasn't landed or isn't available. Cosmetic (seedHistory).
 const SEED_N = 32 // pre-roll points, matched to the ~1s tick cadence over the window
 const SEED_STEP_VOL = 0.0024 // per-step move size of the warm-up walk (fraction of price)
 const SEED_MOMENTUM = 0.62 // walk persistence, so it forms natural runs instead of pure jitter
@@ -177,6 +178,18 @@ function seedHistory(price: number, tNow: number, stepVol: number, maxDev: numbe
   return out
 }
 
+// The server's recorded pre-roll onto this chart's perf-time axis. Ages are server-relative, so the shape
+// lands in the same place on every device regardless of clock skew; anything older than the window is dropped.
+function pastToPoints(past: PricePast, tNow: number): Point[] {
+  const stale = tNow - past.fetchedAt // a cache hit is already this old, so age it on top of the server ages
+  const out: Point[] = []
+  for (const pt of past.points) {
+    const t = tNow - pt.ageMs - stale
+    if (t > tNow - WINDOW_MS) out.push({ t, p: pt.p })
+  }
+  return out
+}
+
 export function Chart({ asset, overlays, height, className, onPrice, livePriceRef, geometryRef, initialPrice, onError, onTap, degen = true, showPriceTag = true, frozen = false }: ChartProps) {
   const reduced = useReducedMotion()
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -188,6 +201,8 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
   const target = useRef<number>(0)
   const display = useRef<number>(0)
   const seeded = useRef(false) // first-tick guard; a ref not state, so onTick reads it live and seeds exactly once
+  const prerollEnd = useRef(0) // perf-time where the pre-roll ends and real ticks begin, so the pre-roll can be swapped out later
+  const realPast = useRef(false) // the pre-roll is the server's recorded window, not the synthetic warm-up
   const range = useRef<{ min: number; max: number }>({ min: 0, max: 1 })
   const entryReveal = useRef(0) // 0 -> 1 fade-in as the entry line appears on a new round
   const targetReveal = useRef(0) // 0 -> 1 fade-in as the target line appears on a new round
@@ -257,6 +272,8 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     // Fresh series for this subscription; must run before streamPrices so demo's synchronous first tick seeds the baseline instead of landing as a lone dot.
     points.current = []
     seeded.current = false
+    prerollEnd.current = 0
+    realPast.current = false
     entryReveal.current = 0
     targetReveal.current = 0
     lastTickP.current = 0
@@ -265,28 +282,37 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     burst.current = null
     setHasData(false)
 
-    // Seed the flat baseline once: warm-up history anchored at `p`, frame pre-fitted, live edge parked at the price.
-    // Runs on the first real tick or up front from initialPrice; guarded by `seeded` so the first stream tick never re-seeds.
-    const seedAt = (p: number, tNow: number): void => {
-      seeded.current = true
-      const seedPts = seedHistory(
-        p,
-        tNow,
-        liveMicroFeed ? REAL_SEED_STEP_VOL : SEED_STEP_VOL,
-        liveMicroFeed ? REAL_SEED_MAX_DEV : SEED_MAX_DEV,
-      )
+    // Fit the frame around a series plus the live edge.
+    const fitTo = (pts: Point[], p: number): void => {
       let lo = p
       let hi = p
-      for (const sp of seedPts) {
-        if (sp.p < lo) lo = sp.p
-        if (sp.p > hi) hi = sp.p
-        points.current.push(sp)
+      for (const pt of pts) {
+        if (pt.p < lo) lo = pt.p
+        if (pt.p > hi) hi = pt.p
       }
       const center = (lo + hi) / 2
       const half = Math.max(((hi - lo) / 2) * PAD, p * MIN_HALF_PCT)
+      range.current = { min: center - half, max: center + half }
+    }
+
+    // Seed the baseline once: pre-roll behind `p`, frame pre-fitted, live edge parked at the price. Runs on
+    // the first real tick or up front from initialPrice; guarded by `seeded` so the first stream tick never re-seeds.
+    // Prefers the server's recorded window when it's already in hand (identical on every device), else the
+    // synthetic warm-up, which the fetch below then replaces.
+    const seedAt = (p: number, tNow: number): void => {
+      seeded.current = true
+      const cached = priceBus.cachedPast(asset)
+      const real = cached ? pastToPoints(cached, tNow) : []
+      const pre =
+        real.length > 1
+          ? real
+          : seedHistory(p, tNow, liveMicroFeed ? REAL_SEED_STEP_VOL : SEED_STEP_VOL, liveMicroFeed ? REAL_SEED_MAX_DEV : SEED_MAX_DEV)
+      realPast.current = real.length > 1
+      prerollEnd.current = tNow
+      for (const sp of pre) points.current.push(sp)
       display.current = p
       target.current = p
-      range.current = { min: center - half, max: center + half }
+      fitTo(pre, p)
       setHasData(true)
     }
 
@@ -296,6 +322,37 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       seedAt(initialPrice, performance.now())
       onPriceRef.current?.(initialPrice)
     }
+
+    // The real pre-roll: the server's recorded window, so the line behind the leading edge is the same on
+    // every device instead of a per-client random walk. Shared + deduped in priceBus, so it usually lands
+    // within a frame or two of mount; it takes over the synthetic seed, never the live edge.
+    let dropped = false
+    void priceBus.fetchPast(asset).then((past) => {
+      if (dropped || !past || realPast.current) return
+      const tNow = performance.now()
+      const pre = pastToPoints(past, tNow)
+      if (pre.length < 2) return
+      realPast.current = true
+      if (!seeded.current) {
+        // Nothing painted yet (no initialPrice, stream still warming): show the real past now, the first
+        // tick takes the leading edge from here.
+        const last = pre[pre.length - 1]!.p
+        seeded.current = true
+        prerollEnd.current = tNow
+        points.current = pre
+        display.current = last
+        target.current = last
+        fitTo(pre, last)
+        setHasData(true)
+      } else {
+        // Already painted: keep every real tick since the seed, swap the synthetic pre-roll out from under them.
+        const live = points.current.filter((pt) => pt.t >= prerollEnd.current)
+        const cut = live.length > 0 ? live[0]!.t : tNow
+        points.current = [...pre.filter((pt) => pt.t < cut), ...live]
+        fitTo(points.current, display.current || pre[pre.length - 1]!.p)
+      }
+      if (reducedRef.current) paint(performance.now()) // the rAF loop is off in reduced motion, so draw the swap now
+    })
 
     const C = {
       text: readColor('--color-text'),
@@ -770,6 +827,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     if (!reduced) raf = requestAnimationFrame(loop)
 
     return () => {
+      dropped = true
       unsub()
       if (raf) cancelAnimationFrame(raf)
       ro.disconnect()

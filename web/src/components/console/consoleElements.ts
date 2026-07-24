@@ -819,14 +819,25 @@ export function createInternals(device: THREE.Group, accent: string, full: boole
   return { group, dispose }
 }
 
-// A beamed eighth-note glyph on a transparent canvas, for the audio button cap face.
+// Shading helpers for skin-derived parts. Both work in sRGB lightness, not the linear working space:
+// a linear lerp lifts a near-black shell straight to mid grey while barely touching a cream one.
+const _hsl = { h: 0, s: 0, l: 0 }
+function shade(base: THREE.Color, dl: number, out: THREE.Color): THREE.Color {
+  base.getHSL(_hsl, THREE.SRGBColorSpace)
+  return out.setHSL(_hsl.h, _hsl.s, Math.min(0.97, Math.max(0.03, _hsl.l + dl)), THREE.SRGBColorSpace)
+}
+function tone(c: THREE.Color): { h: number; l: number } {
+  c.getHSL(_hsl, THREE.SRGBColorSpace)
+  return { h: _hsl.h, l: _hsl.l }
+}
+
+// A beamed eighth-note glyph on a transparent canvas, for the audio button cap face. Drawn white so
+// the material tint is the only ink: the skin's accent recolors it (see createBezelAudio's recolor).
 function noteTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas')
   c.width = c.height = 128
   const x = c.getContext('2d')!
-  x.shadowColor = 'rgba(60,50,30,0.45)'
-  x.shadowBlur = 4
-  x.fillStyle = '#4a4234' // dark charcoal-brown: a silkscreened icon, clearly legible on the cream cap but still tonal
+  x.fillStyle = '#ffffff'
   const head = (cx: number, cy: number) => {
     x.save()
     x.translate(cx, cy)
@@ -871,8 +882,9 @@ export function createBezelAudio(
   const travel = HOUSE_W - CAP_W - 0.12 // cap centre range, inset from the slot rims
   const leftX = cx - travel / 2
 
-  // Tone-on-tone with the cream body: the whole cluster stays broken-white so it never distracts. Depth
-  // reads from geometry + shadow, not colour, so recesses are a shadowed cream, never black.
+  // Tone-on-tone with the body: the cluster is molded out of the same shell, so it never distracts.
+  // Depth reads from geometry + shadow, not colour, so recesses are a shadowed body tint, never black.
+  // These are the Classic defaults; `recolor` repaints the whole cluster to the live skin.
   const CREAM = 0xe9dbbf
   const matShell = new THREE.MeshStandardMaterial({ color: CREAM, roughness: 0.78, metalness: 0 })
   const matRecess = new THREE.MeshStandardMaterial({ color: 0xac9e78, roughness: 0.95, metalness: 0 }) // socket, in shadow
@@ -883,6 +895,9 @@ export function createBezelAudio(
     color: 0xe4d8bd, roughness: 0.55, metalness: 0.04,
     emissive: new THREE.Color(AMBER), emissiveIntensity: 0, // warms only on press, cream at rest
   })
+  // The one place the skin's accent shows: the printed level bar in the slot and the note glyph.
+  const matFill = new THREE.MeshBasicMaterial({ color: AMBER })
+  const matNote = new THREE.MeshBasicMaterial({ map: noteTexture(), color: AMBER, transparent: true, depthWrite: false })
 
   // Everything hangs off one group so the caller can ride it up with the screen stretch (screenExt): the
   // top bezel rises when the screen fills a tall frame, and the cluster must rise with it, not stay pinned.
@@ -902,10 +917,7 @@ export function createBezelAudio(
   group.add(audioBtn)
   interactive.push(audioBtn)
 
-  const note = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.16, 0.16),
-    new THREE.MeshBasicMaterial({ map: noteTexture(), transparent: true, depthWrite: false }),
-  )
+  const note = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), matNote)
   note.position.set(0, 0.01, 0.05) // on the cap face, rides the press
   audioBtn.add(note)
 
@@ -919,10 +931,18 @@ export function createBezelAudio(
   group.add(plate)
 
   // slot floor, set below the plate front so the channel reads recessed
-  const slot = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(HOUSE_W - 0.16, 0.14, 0.06), 24), matSlot)
+  const SLOT_W = HOUSE_W - 0.16
+  const slot = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(SLOT_W, 0.14, 0.06), 24), matSlot)
   slot.position.set(cx, trackY, 0.025)
   slot.receiveShadow = true
   group.add(slot)
+
+  // Level bar printed on the slot floor, left rim up to the cap. Unlit on purpose so the accent reads
+  // the same on a black shell as a cream one; the cap sits proud of it and hides the low end.
+  const fillLeft = cx - SLOT_W / 2 + 0.03
+  const fill = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.085), matFill)
+  fill.position.set(fillLeft, trackY, 0.033)
+  group.add(fill)
 
   /* cap, overhangs the slot top and bottom like the Game Boy fader */
   const faderCap = new THREE.Mesh(frontZeroed(roundedRect(CAP_W, 0.25, 0.035), 0.06, 0.015), matCap)
@@ -951,10 +971,47 @@ export function createBezelAudio(
   let volume = 0.72
   function setVolume(v: number) {
     volume = Math.max(0, Math.min(1, v))
-    faderCap.position.x = leftX + volume * travel
+    const capX = leftX + volume * travel
+    faderCap.position.x = capX
+    const w = Math.max(0.001, capX - fillLeft)
+    fill.scale.x = w
+    fill.position.x = fillLeft + w / 2
   }
   const pickVolume = (localX: number) => Math.max(0, Math.min(1, (localX - leftX) / travel))
   setVolume(volume)
 
-  return { group, audioBtn, faderCap, faderHit: hit, setVolume, pickVolume, getVolume: () => volume }
+  // Repaint to a skin: plate + caps take the body tone (still molded out of the shell), recesses are
+  // shaded from it, and the accent lands on the note glyph, the level bar, and the press glow.
+  function recolor(body: string, accent: string, metal: boolean, env: THREE.Texture | null) {
+    const base = new THREE.Color(body)
+    matShell.color.copy(base)
+    shade(base, 0.06, matCap.color) // proud parts catch the light
+    matBtn.color.copy(matCap.color)
+    shade(base, -0.13, matRecess.color)
+    shade(base, -0.2, matSlot.color)
+    shade(base, -0.17, matGroove.color)
+    const dress = (m: THREE.MeshStandardMaterial, rough: number) => {
+      m.metalness = metal ? 0.85 : 0
+      m.roughness = metal ? 0.3 : rough
+      m.envMap = env
+      m.needsUpdate = true
+    }
+    dress(matShell, 0.78)
+    dress(matCap, 0.42)
+    dress(matBtn, 0.55)
+    // The accent has to read against the cap it sits on. A far-off hue already separates the two
+    // (Cyberpunk's teal on magenta), so only a same-hue collision gets pushed apart in lightness.
+    const ink = new THREE.Color(accent)
+    const cap = tone(matCap.color)
+    const acc = tone(ink)
+    const dh = Math.abs(acc.h - cap.h)
+    if (Math.abs(acc.l - cap.l) < 0.3 && Math.min(dh, 1 - dh) < 0.12) {
+      shade(ink, cap.l > 0.5 ? -0.32 : 0.32, ink)
+    }
+    matNote.color.copy(ink)
+    matFill.color.copy(ink)
+    matBtn.emissive.copy(ink)
+  }
+
+  return { group, audioBtn, faderCap, faderHit: hit, setVolume, pickVolume, getVolume: () => volume, recolor }
 }

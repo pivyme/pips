@@ -17,6 +17,7 @@ import type {
   GameLeaderboard,
   GlobalLeaderboard,
   MarketDTO,
+  PriceHistoryDTO,
   Minigame,
   MinigameLeaderboard,
   MinigameSubmit,
@@ -213,11 +214,28 @@ function connectPyth(): void {
   }
 }
 
+// Rolling pre-roll of the walk, the demo twin of the server's price-history ring: a chart remount continues
+// the line it was already drawing instead of rolling a fresh random past.
+const HISTORY_MS = 60_000
+const history = new Map<string, Array<{ t: number; p: number }>>()
+
+function recordPrice(asset: string, p: number, t: number): void {
+  let ring = history.get(asset)
+  if (!ring) {
+    ring = []
+    history.set(asset, ring)
+  }
+  ring.push({ t, p })
+  const cutoff = t - HISTORY_MS
+  while (ring.length > 0 && ring[0]!.t < cutoff) ring.shift()
+}
+
 function startEngine(): void {
   if (priceTimer || typeof window === 'undefined') return
   for (const a of ASSETS) ensurePrice(a)
   connectPyth()
   priceTimer = setInterval(() => {
+    const t = nowMs()
     for (const a of ASSETS) {
       const anchor = anchors.get(a) as number
       // Velocity carries momentum, so consecutive ticks move together: smooth trends, not jitter.
@@ -238,6 +256,7 @@ function startEngine(): void {
       transients.set(a, tr)
       const next = anchor * (1 + drift + tr)
       prices.set(a, next > 0 ? next : anchor)
+      recordPrice(a, prices.get(a) as number, t)
     }
   }, TICK_MS)
 }
@@ -1217,6 +1236,13 @@ export const demoApi = {
     await delay(120)
     // Demo has no gas sponsor, so plays never pause here.
     return { markets: MARKET_ASSETS.map((a) => ({ asset: a, spot: String(currentPrice(a)), durations: DURATIONS, live: true })), playsPaused: false }
+  },
+
+  // The chart pre-roll, from the walk demo already ran. Empty on a cold engine, the chart falls back to its
+  // own warm-up seed then.
+  priceHistory: async (asset: string): Promise<PriceHistoryDTO> => {
+    currentPrice(asset) // makes sure the engine is running before we read its ring
+    return { asset, now: nowMs(), points: [...(history.get(asset) ?? [])] }
   },
 
   // Demo has no chain: each "quote" reuses the same model createRange mints against, so preview and locked value always agree.

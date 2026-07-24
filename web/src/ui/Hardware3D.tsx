@@ -1,8 +1,12 @@
+import { useRef, useState } from 'react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { HapticPreset } from '@/lib/haptics'
 import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
+
+const AMBER = '#f5a623'
+const AMBER_HI = '#ffd25e'
 
 // The 3D hardware UI kit: the tactile bezel language from the audio cluster,
 // generalized into common parts. Metallic domed keys on a machined panel, a
@@ -115,6 +119,125 @@ export function Hw3DIconButton({
         />
       </button>
     </span>
+  )
+}
+
+// The Game Boy style volume fader: a recessed notched groove with an amber level fill and a proud
+// ridged cap. Controlled (value 0..1). Width comes from `className` (e.g. flex-1 or w-32), everything
+// else is fixed material. This is the fader the whole hardware kit is built from.
+const FADER_THUMB = 22
+export function Hw3DFader({
+  value,
+  onChange,
+  label,
+  className,
+}: {
+  value: number
+  onChange: (v: number) => void
+  label: string
+  className?: string
+}) {
+  const trackRef = useRef<HTMLDivElement>(null)
+  const [dragging, setDragging] = useState(false)
+
+  const setFromClientX = (clientX: number) => {
+    const el = trackRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const usable = r.width - FADER_THUMB
+    onChange(Math.max(0, Math.min(1, (clientX - r.left - FADER_THUMB / 2) / usable)))
+  }
+
+  // Cap centre + fill both stop at the same point: half a cap in from each rim.
+  const travel = `calc(${FADER_THUMB / 2}px + (100% - ${FADER_THUMB}px) * ${value})`
+
+  return (
+    <div
+      ref={trackRef}
+      role="slider"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(value * 100)}
+      onPointerDown={(e) => {
+        setDragging(true)
+        e.currentTarget.setPointerCapture(e.pointerId)
+        haptic('selection')
+        setFromClientX(e.clientX)
+      }}
+      onPointerMove={(e) => dragging && setFromClientX(e.clientX)}
+      onPointerUp={() => setDragging(false)}
+      onPointerCancel={() => setDragging(false)}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+          onChange(Math.min(1, value + 0.02))
+          haptic('tick')
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+          onChange(Math.max(0, value - 0.02))
+          haptic('tick')
+        }
+      }}
+      className={cnm('relative outline-none', className)}
+      style={{
+        height: 22,
+        borderRadius: 11,
+        cursor: dragging ? 'grabbing' : 'pointer',
+        touchAction: 'none',
+        background: 'linear-gradient(180deg, #121316 0%, #1d1f22 100%)',
+        boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.75), inset 0 -1px 0 rgba(255,255,255,0.05)',
+      }}
+    >
+      {/* amber level fill */}
+      <div
+        className="pointer-events-none absolute left-0 top-0 h-full"
+        style={{
+          width: travel,
+          borderRadius: '11px 4px 4px 11px',
+          background: `linear-gradient(180deg, ${AMBER_HI} 0%, ${AMBER} 55%, #d98a12 100%)`,
+          boxShadow: `inset 0 1px 0 rgba(255,255,255,0.45), 0 0 10px ${AMBER}55`,
+        }}
+      />
+      {/* etched scale ticks across the groove */}
+      <div
+        className="pointer-events-none absolute inset-y-[6px] left-0 right-0"
+        style={{
+          backgroundImage:
+            'repeating-linear-gradient(90deg, rgba(0,0,0,0.35) 0 1px, transparent 1px, transparent 10%)',
+          opacity: 0.55,
+          mixBlendMode: 'overlay',
+        }}
+      />
+      {/* the fader cap */}
+      <div
+        className="pointer-events-none absolute top-1/2"
+        style={{
+          left: travel,
+          width: FADER_THUMB,
+          height: 30,
+          transform: `translate(-50%, -50%) ${dragging ? 'scale(1.04)' : 'scale(1)'}`,
+          borderRadius: 5,
+          background: 'linear-gradient(180deg, #5a5f66 0%, #3d4046 48%, #2a2c30 100%)',
+          boxShadow: `inset 0 1px 0 rgba(255,255,255,0.4), inset 0 -2px 3px rgba(0,0,0,0.5), 0 4px 8px -1px rgba(0,0,0,0.65)${dragging ? `, 0 0 0 1px ${AMBER}55` : ''}`,
+          transition: 'transform 120ms cubic-bezier(0.2,0.7,0.2,1), box-shadow 160ms ease',
+        }}
+      >
+        {/* grip ridges + a center index line */}
+        <div
+          className="absolute inset-x-[3px] top-1/2 -translate-y-1/2"
+          style={{
+            height: 16,
+            backgroundImage:
+              'repeating-linear-gradient(0deg, rgba(255,255,255,0.16) 0 1px, transparent 1px, transparent 3px)',
+            borderRadius: 2,
+          }}
+        />
+        <div
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+          style={{ width: 2, height: 20, borderRadius: 1, background: AMBER, boxShadow: `0 0 6px ${AMBER}` }}
+        />
+      </div>
+    </div>
   )
 }
 

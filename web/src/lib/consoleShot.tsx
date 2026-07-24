@@ -38,7 +38,7 @@ const SCREEN_AR = 1110 / 1650
 const SHOT_W = 836
 const SHOT_H = 1492
 // Bump when the pose, screen art, box size, or ConsoleCanvas visuals change: stale IDB shots die on version.
-const SHOT_VERSION = 3
+const SHOT_VERSION = 4
 // Skin/metallic textures load async after the scene's first paint; the fixed settle covers them
 // (mirrors /dev/export's 900ms), the non-blank poll covers a slow first frame.
 const SETTLE_MS = 1000
