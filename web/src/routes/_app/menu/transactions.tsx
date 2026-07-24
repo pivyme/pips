@@ -90,7 +90,7 @@ export function ActivityFeed() {
   }
 
   return (
-    <MenuScreen title="Activity">
+    <>
       {q.isLoading ? (
         <FeedSkeleton />
       ) : q.isError ? (
@@ -121,10 +121,16 @@ export function ActivityFeed() {
         </div>
       )}
 
-      <AnimatePresence>
-        {detail && <TxDetailSheet key={detail.id} row={detail} onClose={() => setDetail(null)} />}
-      </AnimatePresence>
-    </MenuScreen>
+      {/* Portaled to body so the full-screen sheet escapes the money modal's transform (a fixed child of a
+          scaled ancestor is otherwise clipped to it). */}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <AnimatePresence>
+            {detail && <TxDetailSheet key={detail.id} row={detail} onClose={() => setDetail(null)} />}
+          </AnimatePresence>,
+          document.body,
+        )}
+    </>
   )
 }
 

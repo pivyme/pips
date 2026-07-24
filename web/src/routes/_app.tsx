@@ -13,6 +13,7 @@ import { ActivePlayChip } from '@/components/console/ActivePlayChip'
 import { AchievementCelebration } from '@/components/AchievementCelebration'
 import { ChipGrantCelebration } from '@/components/ChipGrantCelebration'
 import { DepositLanded } from '@/components/DepositLanded'
+import { MoneyModalHost } from '@/components/menu/MoneyModal'
 import { AchievementDetailProvider } from '@/components/menu/AchievementDetail'
 import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '@/components/console/controls'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
@@ -511,6 +512,7 @@ function AppLayout() {
       <AchievementCelebration />
       <ChipGrantCelebration active={phase === 'app'} />
       <DepositLanded active={phase === 'app'} />
+      <MoneyModalHost />
       </ActivePlayProvider>
       </LivePresenceProvider>
       </TourProvider>

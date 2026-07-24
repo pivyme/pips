@@ -3,8 +3,7 @@
 // fallback drive it through the dependency-free bus. Closes on navigation (e.g. the deposit "Let's play"
 // jump to /games) so it never lingers over another screen.
 
-import { useEffect } from 'react'
-import { useSyncExternalStore } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { useRouterState } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'motion/react'
 import { X } from 'lucide-react'

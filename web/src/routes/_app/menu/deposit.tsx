@@ -22,7 +22,11 @@ import { cnm } from '@/utils/style'
 // is a plain address + QR (nothing to bridge), anything else previews a live LI.FI route. No mode switch
 // the player has to understand, and no state they can get stuck in.
 export const Route = createFileRoute('/_app/menu/deposit')({
-  component: DepositScreen,
+  component: () => (
+    <MenuScreen title="Add funds">
+      <DepositContent />
+    </MenuScreen>
+  ),
 })
 
 // Receive is the critical path and must survive /options being down, so the drawer falls back to a
@@ -40,7 +44,8 @@ const FALLBACK_OPTIONS: DepositOptionsDTO = {
   networks: [{ key: 'sui', label: 'Sui', logo: null }],
 }
 
-function DepositScreen() {
+// The deposit body, rendered both as the /menu/deposit page and inside the Add-funds money modal.
+export function DepositContent() {
   const { user, refresh } = useAuth()
   const address = user?.address ?? ''
   const [claiming, setClaiming] = useState(false)
@@ -112,50 +117,48 @@ function DepositScreen() {
   }
 
   return (
-    <MenuScreen title="Add funds">
-      <div className="flex flex-col gap-5">
-        <div className="flex items-start gap-3">
-          <AssetPicker label="Currency" value={currency} options={currencyOptions} onChange={pickCurrency} />
-          <AssetPicker label="Network" value={network} options={networkOptions} onChange={setNetwork} />
-        </div>
-
-        {mode === 'receive' && (
-          <>
-            <ReceivePanel address={address} chipSymbol={options.chipSymbol} minUsd={options.minUsd} />
-            <WaitingForDeposit landed={landed} />
-          </>
-        )}
-
-        {mode === 'bridge' && <BridgePanel options={options} currency={currency} network={network} />}
-
-        {/* Never a dead end: a labelled state with the reason and the way out. Soft urgency, it is a
-            nudge to pick another pair, not a fund-loss warning. */}
-        {mode === 'unsupported' && <Alert tone="alert">{unsupportedCopy(options.chipSymbol)}</Alert>}
-
-        {/* The faucet is the fastest way to chips today, so it stays on the screen in every mode. */}
-        {options.faucetAmount && (
-          <>
-            <div className="flex items-center gap-3 px-1 pt-1">
-              <span className="h-px flex-1 bg-white/[0.08]" />
-              <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">or</span>
-              <span className="h-px flex-1 bg-white/[0.08]" />
-            </div>
-
-            <button
-              onClick={claim}
-              disabled={claiming || !user}
-              className="btn-primary flex h-12 items-center justify-center gap-2 rounded-card text-[15px] font-semibold disabled:opacity-60"
-            >
-              <Coins className="h-[18px] w-[18px]" strokeWidth={2.4} />
-              {claiming ? 'Sending…' : `Get ${Number(options.faucetAmount)} test ${options.chipSymbol}`}
-            </button>
-            <p className="px-1 text-[13px] leading-snug text-text-3">
-              Instant test {options.chipSymbol} on {NETWORK_LABEL}. One batch per minute.
-            </p>
-          </>
-        )}
+    <div className="flex flex-col gap-5">
+      <div className="flex items-start gap-3">
+        <AssetPicker label="Currency" value={currency} options={currencyOptions} onChange={pickCurrency} />
+        <AssetPicker label="Network" value={network} options={networkOptions} onChange={setNetwork} />
       </div>
-    </MenuScreen>
+
+      {mode === 'receive' && (
+        <>
+          <ReceivePanel address={address} chipSymbol={options.chipSymbol} minUsd={options.minUsd} />
+          <WaitingForDeposit landed={landed} />
+        </>
+      )}
+
+      {mode === 'bridge' && <BridgePanel options={options} currency={currency} network={network} />}
+
+      {/* Never a dead end: a labelled state with the reason and the way out. Soft urgency, it is a
+          nudge to pick another pair, not a fund-loss warning. */}
+      {mode === 'unsupported' && <Alert tone="alert">{unsupportedCopy(options.chipSymbol)}</Alert>}
+
+      {/* The faucet is the fastest way to chips today, so it stays on the screen in every mode. */}
+      {options.faucetAmount && (
+        <>
+          <div className="flex items-center gap-3 px-1 pt-1">
+            <span className="h-px flex-1 bg-white/[0.08]" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">or</span>
+            <span className="h-px flex-1 bg-white/[0.08]" />
+          </div>
+
+          <button
+            onClick={claim}
+            disabled={claiming || !user}
+            className="btn-primary flex h-12 items-center justify-center gap-2 rounded-card text-[15px] font-semibold disabled:opacity-60"
+          >
+            <Coins className="h-[18px] w-[18px]" strokeWidth={2.4} />
+            {claiming ? 'Sending…' : `Get ${Number(options.faucetAmount)} test ${options.chipSymbol}`}
+          </button>
+          <p className="px-1 text-[13px] leading-snug text-text-3">
+            Instant test {options.chipSymbol} on {NETWORK_LABEL}. One batch per minute.
+          </p>
+        </>
+      )}
+    </div>
   )
 }
 

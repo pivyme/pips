@@ -19,14 +19,22 @@ import { cnm } from '@/utils/style'
 // Send any held coin to a Sui address. DUSDC (the chips) is the default; every other coin is labelled
 // "Recover" so an accidental deposit can be swept out. The backend signs for the user, so this is just a
 // token pick + a validated amount + a recipient.
-export const Route = createFileRoute('/_app/menu/withdraw')({ component: WithdrawScreen })
+export const Route = createFileRoute('/_app/menu/withdraw')({
+  component: () => (
+    <MenuScreen title="Send">
+      <SendForm />
+    </MenuScreen>
+  ),
+})
 
 const coinLine = (c: WalletCoinDTO): string => {
   const usd = c.usdValue ? ` · ~$${c.usdValue}` : ''
   return `${c.amount} ${c.symbol}${usd}`
 }
 
-function WithdrawScreen() {
+// The send body, rendered both as the /menu/withdraw page and inside the Send money modal. `onClose` (modal
+// mode) closes the modal on success; without it (route mode) it pops back to the menu.
+export function SendForm({ onClose }: { onClose?: () => void } = {}) {
   const { user, refresh } = useAuth()
   const navigate = useNavigate()
   const coinsQ = useQuery(walletCoinsQuery())
@@ -91,8 +99,11 @@ function WithdrawScreen() {
       await refresh()
       haptic('success')
       toast.success(`Sent ${selected.symbol}`, { id: 'withdraw' })
-      prepareMenuTransition('back')
-      void navigate({ to: '/menu', viewTransition: true })
+      if (onClose) onClose()
+      else {
+        prepareMenuTransition('back')
+        void navigate({ to: '/menu', viewTransition: true })
+      }
     } catch (e) {
       haptic('error')
       toast.error(e instanceof ApiError ? e.message : 'Could not send right now', { id: 'withdraw' })
@@ -101,8 +112,7 @@ function WithdrawScreen() {
   }
 
   return (
-    <MenuScreen title="Send">
-      <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5">
         {/* Token selector: the selected coin, tap to switch. Non-chip coins are labelled "Recover". */}
         <div className="card-neo rounded-card p-2">
           <button
@@ -211,8 +221,7 @@ function WithdrawScreen() {
             : `You are sending ${selected.symbol}, not your chips. `}
           Check the address carefully, transfers cannot be undone.
         </p>
-      </div>
-    </MenuScreen>
+    </div>
   )
 }
 
