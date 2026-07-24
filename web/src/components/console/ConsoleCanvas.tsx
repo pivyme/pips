@@ -28,6 +28,7 @@ import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
 import { themeBackdrop, type ConsoleTheme } from './themes'
 import type { PartId } from './customize'
 import { betLadder } from '@/lib/sui/config'
+import { Modal, useOverlayState } from '@/ui/Modal'
 
 // Main / Action1 / Action2 / MenuTab / HomeTab, matching ConsoleShell's DOM equivalents.
 const BTN_HAPTIC: HapticPreset[] = ['rigid', 'medium', 'medium', 'selection', 'selection']
@@ -167,6 +168,11 @@ export default function ConsoleCanvas({
   const applyFocusRef = useRef<(p: PartId | null) => void>(() => {})
   // Studio only: finishes an in-flight chunked build synchronously (a Customize tap mid-warm).
   const flushBuildRef = useRef<() => void>(() => {})
+
+  // Bezel audio button -> a placeholder modal. The imperative scene fires this ref on the button's release.
+  const audioModal = useOverlayState()
+  const openAudioModalRef = useRef<() => void>(() => {})
+  openAudioModalRef.current = audioModal.open
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -955,9 +961,10 @@ export default function ConsoleCanvas({
       body.position.z,
     )
 
-    // Dev playground only: the bezel audio controls (top-left press button + volume fader), modelled into
-    // the shell. Pressed/dragged through the same raycast loop as the buttons; gated so the live app is untouched.
-    const bezelAudio = debug ? createBezelAudio(device, interactive, wx, wy) : null
+    // Top-left bezel audio controls (press button + volume fader), modelled into the shell. Pressed/dragged
+    // through the same raycast loop as the buttons. Shown on the live device + dev playground, skipped in the
+    // customize studio / export (their own camera + backdrop). The button opens a placeholder modal; the fader is inert.
+    const bezelAudio = !customize && !exportMode ? createBezelAudio(device, interactive, wx, wy) : null
 
     // Canvas-texture label. Static caption (makeLabel) or live, updatable (makeDynLabel).
     function drawLabel(
@@ -1903,6 +1910,9 @@ export default function ConsoleCanvas({
       if (ext === screenExt) return
       screenExt = ext
       rebuildBodyGeo()
+      // The bezel audio lives on the top bezel, which rises by ext when the screen stretches; ride it up so
+      // the cluster stays glued to the bezel instead of detaching over the screen on tall (mobile) frames.
+      if (bezelAudio) bezelAudio.group.position.y = ext
       screenMesh.geometry.dispose()
       screenMesh.geometry = buildScreenGeo()
       screenWorld = screenWorldPts()
@@ -2766,11 +2776,13 @@ export default function ConsoleCanvas({
       if (active) {
         const btn = active
         const bi = bm.indexOf(btn)
+        const isAudioBtn = btn.userData.kind === 'audioBtn'
         active = null
         const elapsed = performance.now() - (btn.userData.pressedAt ?? 0)
         const delay = Math.max(0, MIN_PRESS_MS - elapsed)
         const t = setTimeout(() => {
-          if (bi === 0) audio.playSfx('mainRelease', 'main')
+          if (isAudioBtn) audio.playSfx('pillRelease', 'menu')
+          else if (bi === 0) audio.playSfx('mainRelease', 'main')
           else if (bi === 1) audio.playSfx('actionRelease', 'action1')
           else if (bi === 2) audio.playSfx('actionRelease', 'action2')
           else if (bi === 3) audio.playSfx('pillRelease', 'menu')
@@ -2778,6 +2790,7 @@ export default function ConsoleCanvas({
           btn.userData.pressed = false
         }, delay)
         pressTimers.push(t)
+        if (isAudioBtn) openAudioModalRef.current?.()
       }
     }
 
@@ -3584,6 +3597,11 @@ export default function ConsoleCanvas({
           />
         </div>
       )}
+
+      {/* Placeholder opened by the bezel audio button. */}
+      <Modal isOpen={audioModal.isOpen} onOpenChange={audioModal.setOpen} size="sm">
+        <div className="py-6 text-center text-base font-medium">Audio Modal</div>
+      </Modal>
     </div>
   )
 }
