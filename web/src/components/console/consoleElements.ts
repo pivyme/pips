@@ -594,12 +594,17 @@ export function createBackDetails(
 }
 
 // The guts: built once, parented to `device`, hidden until a transparent skin is on. Coordinates are
-// body-local; the screen L-cutout only ever grows UPWARD in Y (never X), so the bottom deck and side frames are always safe to fill without occluding the live HTML screen.
+// body-local at the device's NATURAL height, and the group stays pinned there (see setExt): the screen
+// L-cutout only ever grows UPWARD in Y (never X), so the bottom deck and side frames are always safe to fill without occluding the live HTML screen.
 export function createInternals(device: THREE.Group, accent: string, full: boolean) {
   const group = new THREE.Group()
   group.visible = false
   device.add(group)
   const trash: { dispose(): void }[] = []
+  // A tall frame stretches the case upward from a fixed bottom edge. Parts hanging off the top rim ride
+  // that stretch; the side frames grow into it. Everything else is deck-anchored and must not move.
+  const riders: THREE.Mesh[] = []
+  const stretchers: { m: THREE.Mesh; y: number; h: number }[] = []
   const G = <T extends THREE.BufferGeometry>(g: T): T => (trash.push(g), g) // register + return a geometry
   const M = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
     const m = new THREE.Mesh(geo, mat)
@@ -607,6 +612,8 @@ export function createInternals(device: THREE.Group, accent: string, full: boole
     group.add(m)
     return m
   }
+  const ridesTop = (m: THREE.Mesh) => (m.userData.baseY = m.position.y, riders.push(m), m)
+  const growsUp = (m: THREE.Mesh, h: number) => (stretchers.push({ m, y: m.position.y, h }), m)
 
   // z layers, front-to-back inside the case (more negative = deeper toward the back shell)
   const PCB_Z = -0.62
@@ -693,20 +700,21 @@ export function createInternals(device: THREE.Group, accent: string, full: boole
   const matLed = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1.35, roughness: 0.4 }) // glyph glow
   trash.push(matPcb, matCopper, matGold, matIc, matCell, matShield, matRibbon, matMetal, matCap, matAccent, matLed)
 
-  // HARD screen clearance: the L-cutout in body-local is x[-2.775,2.775], y down to -2.75 (left column)
-  // or -0.975 (right). Deck parts stay TOP <= -3.05, notch parts TOP <= -1.2, side parts at |x|=FRAME_X width <= 0.18.
+  // HARD screen clearance: the L-cutout in body-local runs wx(SCREEN_L)..wx(SCREEN_R) (about ±2.95 today,
+  // widen those in ConsoleCanvas and this gets tighter), y down to -2.75 (left column) or -0.975 (right).
+  // Deck parts stay TOP <= -3.05, notch parts TOP <= -1.2, side parts at |x|=FRAME_X width <= 0.18.
   const FRAME_X = 3.0
 
   // --- the boards: bottom deck + notch (behind the play button) + two side strips framing the screen ---
   const boardPlane = (w: number, h: number, r: number, x: number, y: number) => {
     const g = G(new THREE.ShapeGeometry(roundedRect(w, h, r), 16))
     setBoxUVs(g)
-    M(g, matPcb, x, y, PCB_Z)
+    return M(g, matPcb, x, y, PCB_Z)
   }
   boardPlane(6.0, 2.9, 0.12, 0, -4.5) // bottom deck (top -3.05)
   boardPlane(1.66, 1.42, 0.1, 1.82, -1.97) // notch (top -1.26)
-  boardPlane(0.2, 8.0, 0.06, -FRAME_X, 1.1) // left frame strip
-  boardPlane(0.2, 6.0, 0.06, FRAME_X, 2.1) // right frame strip
+  growsUp(boardPlane(0.2, 8.0, 0.06, -FRAME_X, 1.1), 8.0) // left frame strip
+  growsUp(boardPlane(0.2, 6.0, 0.06, FRAME_X, 2.1), 6.0) // right frame strip
 
   // --- battery cell: the dominant mass, lower-left of the deck, with a printed band + gold terminals ---
   M(G(frontZeroed(roundedRect(2.25, 2.3, 0.1), 0.24, 0.02)), matCell, -1.5, -4.55, TALL) // top -3.4
@@ -742,7 +750,7 @@ export function createInternals(device: THREE.Group, accent: string, full: boole
       else M(r04, i % 2 ? matCap : matMetal, x + ox, y, LOW + 0.02)
     }
     M(sideConn, matAccent, x, yBot + 0.5, LOW + 0.05)
-    M(sideConn, matGold, x, yTop - 0.7, LOW + 0.05)
+    ridesTop(M(sideConn, matGold, x, yTop - 0.7, LOW + 0.05)) // the strip's top connector, stays at its head
   }
   dressStrip(-FRAME_X, -2.6, 5.2) // left frame
   dressStrip(FRAME_X, -0.5, 5.1) // right frame
@@ -762,7 +770,7 @@ export function createInternals(device: THREE.Group, accent: string, full: boole
   M(G(new THREE.CircleGeometry(0.07, 16)), matIc, 2.45, -5.45, TALL + 0.08)
 
   // --- FPC ribbons + their red connectors, both pinned to the frame edge (clear of the screen) ---
-  M(G(new THREE.BoxGeometry(0.12, 4.4, 0.035)), matRibbon, FRAME_X, 1.7, LOW + 0.04)
+  growsUp(M(G(new THREE.BoxGeometry(0.12, 4.4, 0.035)), matRibbon, FRAME_X, 1.7, LOW + 0.04), 4.4)
   M(G(new THREE.BoxGeometry(0.12, 2.0, 0.035)), matRibbon, -FRAME_X, -0.4, LOW + 0.04)
 
   // --- the notch (behind the play button): mezzanine fingers + a shield + an IC and caps, packed ---
@@ -782,41 +790,53 @@ export function createInternals(device: THREE.Group, accent: string, full: boole
   if (full) {
     const topBoard = G(new THREE.ShapeGeometry(roundedRect(5.4, 0.28, 0.07), 12))
     setBoxUVs(topBoard)
-    M(topBoard, matPcb, 0, 5.82, PCB_Z) // bottom 5.68 (screen top ~5.63)
+    ridesTop(M(topBoard, matPcb, 0, 5.82, PCB_Z)) // bottom 5.68 (screen top ~5.63)
     // camera module: black housing + glassy lens + a metal trim ring
-    M(G(frontZeroed(roundedRect(0.36, 0.22, 0.04), 0.1, 0.01)), matIc, -0.25, 5.82, TALL)
-    M(G(new THREE.CylinderGeometry(0.075, 0.075, 0.07, 24).rotateX(Math.PI / 2)), matCap, -0.25, 5.82, TALL + 0.1)
-    M(G(new THREE.TorusGeometry(0.075, 0.015, 8, 24)), matMetal, -0.25, 5.82, TALL + 0.12)
+    ridesTop(M(G(frontZeroed(roundedRect(0.36, 0.22, 0.04), 0.1, 0.01)), matIc, -0.25, 5.82, TALL))
+    ridesTop(M(G(new THREE.CylinderGeometry(0.075, 0.075, 0.07, 24).rotateX(Math.PI / 2)), matCap, -0.25, 5.82, TALL + 0.1))
+    ridesTop(M(G(new THREE.TorusGeometry(0.075, 0.015, 8, 24)), matMetal, -0.25, 5.82, TALL + 0.12))
     // proximity sensor, a brushed earpiece bar, an SMD row and a side connector
-    M(G(new THREE.CylinderGeometry(0.04, 0.04, 0.05, 16).rotateX(Math.PI / 2)), matCap, 0.0, 5.82, TALL + 0.05)
-    M(G(new THREE.BoxGeometry(0.9, 0.045, 0.03)), matMetal, 0.85, 5.85, LOW + 0.04)
-    for (let i = 0; i < 6; i++) M(r04, i % 2 ? matCap : matMetal, -2.1 + i * 0.24, 5.79, LOW + 0.02)
-    M(G(frontZeroed(roundedRect(0.28, 0.14, 0.03), 0.06, 0.008)), matAccent, 2.3, 5.82, LOW + 0.05)
+    ridesTop(M(G(new THREE.CylinderGeometry(0.04, 0.04, 0.05, 16).rotateX(Math.PI / 2)), matCap, 0.0, 5.82, TALL + 0.05))
+    ridesTop(M(G(new THREE.BoxGeometry(0.9, 0.045, 0.03)), matMetal, 0.85, 5.85, LOW + 0.04))
+    for (let i = 0; i < 6; i++) ridesTop(M(r04, i % 2 ? matCap : matMetal, -2.1 + i * 0.24, 5.79, LOW + 0.02))
+    ridesTop(M(G(frontZeroed(roundedRect(0.28, 0.14, 0.03), 0.06, 0.008)), matAccent, 2.3, 5.82, LOW + 0.05))
   }
 
   // --- glyph lighting: brighter emissive runs down both frames, a ring around the coil, a bar along the bottom edge, all clear of the screen. ---
   const led = (w: number, h: number, x: number, y: number) =>
     M(G(frontZeroed(roundedRect(w, h, Math.min(w, h) / 2), 0.04, 0.01)), matLed, x, y, LED_Z)
-  led(0.1, 7.4, -FRAME_X, 1.1) // left frame glyph
-  led(0.1, 5.4, FRAME_X, 2.1) // right frame glyph
-  led(2.4, 0.1, -0.2, -5.88) // bottom-edge glyph bar
+  growsUp(led(0.1, 7.4, -FRAME_X, 1.1), 7.4) // left frame glyph
+  growsUp(led(0.1, 5.4, FRAME_X, 2.1), 5.4) // right frame glyph
+  led(2.4, 0.1, -0.2, -5.99) // bottom-edge glyph bar, tucked under the MENU / HOME captions so it never backlights them
   M(G(new THREE.TorusGeometry(1.07, 0.035, 10, 80)), matLed, 1.55, -4.5, LED_Z) // glyph ring around the coil
-  if (full) led(2.8, 0.09, 0, 5.7) // a glyph run along the top, in showcase
+  if (full) ridesTop(led(2.8, 0.09, 0, 5.7)) // a glyph run along the top, in showcase
 
   // --- hardware screws dotted around every board (all clear of the screen) ---
   const screwGeo = G(new THREE.CylinderGeometry(0.07, 0.085, 0.05, 16).rotateX(Math.PI / 2))
   for (const [sx, sy] of [
     [-2.95, -3.2], [2.95, -5.75], [-2.95, -5.75], [2.6, -1.35], [1.2, -2.5],
-    [-FRAME_X, 5.0], [-FRAME_X, -2.9], [FRAME_X, 4.9], [FRAME_X, -0.8],
+    [-FRAME_X, -2.9], [FRAME_X, -0.8],
   ] as [number, number][])
     M(screwGeo, matMetal, sx, sy, LOW + 0.04)
+  for (const [sx, sy] of [[-FRAME_X, 5.0], [FRAME_X, 4.9]] as [number, number][])
+    ridesTop(M(screwGeo, matMetal, sx, sy, LOW + 0.04)) // top frame screws follow the stretched head
+
+  // Stretch to the case's current height. The guts are authored against the natural body, so without
+  // this they'd ride the body centre up and creep over the bottom of the screen on tall frames.
+  function setExt(ext: number) {
+    for (const m of riders) m.position.y = (m.userData.baseY as number) + ext
+    for (const s of stretchers) {
+      s.m.scale.y = (s.h + ext) / s.h
+      s.m.position.y = s.y + ext / 2
+    }
+  }
 
   function dispose() {
     trash.forEach((t) => t.dispose())
     device.remove(group)
   }
 
-  return { group, dispose }
+  return { group, setExt, dispose }
 }
 
 // Shading helpers for skin-derived parts. Both work in sRGB lightness, not the linear working space:
@@ -872,16 +892,19 @@ export function createBezelAudio(
   device: THREE.Group, interactive: THREE.Mesh[], wx: Px, wy: Px,
 ) {
   const AMBER = 0xf5a623
+  // One knob for the whole cluster's size; every dimension below is a base size times S. The top bezel
+  // has to be deep enough to hold it, so raise TOP_BEZEL in ConsoleCanvas alongside this.
+  const S = 1.35
   // Cluster position in design px. y is measured DOWN the layout (wy flips it), so a smaller/more
-  // negative y sits HIGHER on the bezel. ~200 px = 1 world unit; the button is 46 px tall.
-  const BTN = { x: 88, y: -26 } // top-left bezel, the button's vertical
-  const TRK = { x: 286, y: -26 } // slider sits right next to the button, both hugging the left
-  const HOUSE_W = 1.28 // slider plate width (world units)
+  // negative y sits HIGHER on the bezel. 200 px = 1 world unit; the bezel band runs about -97..4.
+  const BTN = { x: 84, y: -34 } // top-left bezel, the button's centre
+  const TRK = { x: 339, y: -34 } // slider sits right next to the button, both hugging the left
+  const HOUSE_W = 1.28 * S // slider plate width (world units)
   const trackY = wy(TRK.y) // slider vertical
   const btnY = wy(BTN.y) // button vertical (independent of the slider so each can be nudged on its own)
   const cx = wx(TRK.x)
-  const CAP_W = 0.24
-  const travel = HOUSE_W - CAP_W - 0.12 // cap centre range, inset from the slot rims
+  const CAP_W = 0.24 * S
+  const travel = HOUSE_W - CAP_W - 0.12 * S // cap centre range, inset from the slot rims
   const leftX = cx - travel / 2
 
   // Tone-on-tone with the body: the cluster is molded out of the same shell, so it never distracts.
@@ -907,25 +930,25 @@ export function createBezelAudio(
 
   /* ── audio button ── cream cap in a tight recessed socket. Kept short (the bezel strip is thin) but wide. ── */
   const bx = wx(BTN.x)
-  const socket = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(0.46, 0.27, 0.1), 32), matRecess)
+  const socket = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(0.46 * S, 0.27 * S, 0.1 * S), 32), matRecess)
   socket.position.set(bx, btnY, 0.015)
   socket.receiveShadow = true
   group.add(socket)
 
-  const audioBtn = new THREE.Mesh(frontZeroed(roundedRect(0.4, 0.23, 0.08), 0.07, 0.02), matBtn)
+  const audioBtn = new THREE.Mesh(frontZeroed(roundedRect(0.4 * S, 0.23 * S, 0.08 * S), 0.07, 0.02), matBtn)
   audioBtn.position.set(bx, btnY, 0.1)
   audioBtn.castShadow = true
   audioBtn.userData = { kind: 'audioBtn', pressed: false, baseZ: 0.1, pressedZ: 0.035, glow: 0, baseEmissive: 0 }
   group.add(audioBtn)
   interactive.push(audioBtn)
 
-  const note = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), matNote)
-  note.position.set(0, 0.01, 0.05) // on the cap face, rides the press
+  const note = new THREE.Mesh(new THREE.PlaneGeometry(0.16 * S, 0.16 * S), matNote)
+  note.position.set(0, 0.01 * S, 0.05) // on the cap face, rides the press
   audioBtn.add(note)
 
   /* ── volume slider ── cream plate with a warm slot recessed through it, a proud ridged cap that slides ── */
-  const plateShape = roundedRect(HOUSE_W, 0.21, 0.085)
-  plateShape.holes.push(roundedRectPath(0, 0, HOUSE_W - 0.16, 0.14, 0.06)) // the slot cutout
+  const plateShape = roundedRect(HOUSE_W, 0.21 * S, 0.085 * S)
+  plateShape.holes.push(roundedRectPath(0, 0, HOUSE_W - 0.16 * S, 0.14 * S, 0.06 * S)) // the slot cutout
   const plate = new THREE.Mesh(frontZeroed(plateShape, 0.04, 0.012), matShell)
   plate.position.set(cx, trackY, 0.06)
   plate.castShadow = true
@@ -933,34 +956,34 @@ export function createBezelAudio(
   group.add(plate)
 
   // slot floor, set below the plate front so the channel reads recessed
-  const SLOT_W = HOUSE_W - 0.16
-  const slot = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(SLOT_W, 0.14, 0.06), 24), matSlot)
+  const SLOT_W = HOUSE_W - 0.16 * S
+  const slot = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(SLOT_W, 0.14 * S, 0.06 * S), 24), matSlot)
   slot.position.set(cx, trackY, 0.025)
   slot.receiveShadow = true
   group.add(slot)
 
   // Level bar printed on the slot floor, left rim up to the cap. Unlit on purpose so the accent reads
   // the same on a black shell as a cream one; the cap sits proud of it and hides the low end.
-  const fillLeft = cx - SLOT_W / 2 + 0.03
-  const fill = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.085), matFill)
+  const fillLeft = cx - SLOT_W / 2 + 0.03 * S
+  const fill = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.085 * S), matFill)
   fill.position.set(fillLeft, trackY, 0.033)
   group.add(fill)
 
   /* cap, overhangs the slot top and bottom like the Game Boy fader */
-  const faderCap = new THREE.Mesh(frontZeroed(roundedRect(CAP_W, 0.25, 0.035), 0.06, 0.015), matCap)
+  const faderCap = new THREE.Mesh(frontZeroed(roundedRect(CAP_W, 0.25 * S, 0.035 * S), 0.06, 0.015), matCap)
   faderCap.position.set(cx, trackY, 0.14)
   faderCap.castShadow = true
   group.add(faderCap)
   // three vertical grip grooves cut into the cap face
   for (let i = -1; i <= 1; i++) {
-    const groove = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.15, 0.02), matGroove)
-    groove.position.set(i * 0.062, 0, 0.02)
+    const groove = new THREE.Mesh(new THREE.BoxGeometry(0.02 * S, 0.15 * S, 0.02), matGroove)
+    groove.position.set(i * 0.062 * S, 0, 0.02)
     faderCap.add(groove)
   }
 
   // wide invisible hit target over the whole slot, so a click or drag anywhere positions the cap
   const hit = new THREE.Mesh(
-    new THREE.BoxGeometry(HOUSE_W + 0.12, 0.34, 0.04),
+    new THREE.BoxGeometry(HOUSE_W + 0.12 * S, 0.34 * S, 0.04),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
   )
   hit.position.set(cx, trackY, 0.16)

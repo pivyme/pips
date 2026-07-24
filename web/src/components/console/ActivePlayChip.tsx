@@ -1,4 +1,4 @@
-import { useMatchRoute, useNavigate } from '@tanstack/react-router'
+import { useMatchRoute, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
 import type { Game, PlayStatus } from '@/lib/api'
@@ -19,13 +19,18 @@ const STATUS_LABEL: Partial<Record<PlayStatus, string>> = {
 }
 
 // A floating "play resolving elsewhere" pill, chrome around the device (App Surface language, not the
-// screen), so it renders identically on Home, the Menu drawer, or another game. Hidden on the game's own screen (which has its own live UI); also owns the off-screen settle notification, the one moment worth interrupting for.
+// screen), shown only on Home or the Menu drawer, never while on a game screen (its own or another
+// one, which would just be noise). Still owns the off-screen settle notification everywhere, the one moment worth interrupting for.
 export function ActivePlayChip() {
   const { active } = useActivePlay()
   const matchRoute = useMatchRoute()
   const navigate = useNavigate()
   const reduced = useReducedMotion()
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
   const onOwnRoute = active != null && Boolean(matchRoute({ to: `/games/${active.game}` }))
+  // Only surface the pill on non-game surfaces (Home hub, menu). While playing any other
+  // game, a banner about a different game is just noise, not the one worth interrupting for.
+  const onOtherGameRoute = pathname.startsWith('/games/') && !onOwnRoute
   const notifiedRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -43,7 +48,7 @@ export function ActivePlayChip() {
     else toast.success(msg, { id: 'activeplay-settle' })
   }, [active?.id, active?.status, active?.pnl, active?.game, onOwnRoute])
 
-  if (!active || onOwnRoute) return null
+  if (!active || onOwnRoute || onOtherGameRoute) return null
 
   const label = GAME_LABEL[active.game]
   const status = active.status
