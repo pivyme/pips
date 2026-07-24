@@ -69,7 +69,10 @@ function between(min: number, max: number) {
   return min + Math.random() * (max - min)
 }
 
-// Master level for device SFX; the button/knob/roller samples decode at full scale and would drown out sound.ts's synth audio otherwise.
+// Master level for device SFX; the button/knob/roller samples decode at full scale and would drown out
+// sound.ts's synth audio otherwise. Deliberately FIXED: these are the hardware's own clicks and
+// detents, part of how the device feels, so they sit outside the user's sound-effects fader (that one
+// rides the game stings in sound.ts). Tuned to stay clearly on top of the music bed.
 const SFX_LEVEL = 0.25
 
 export function createAudio() {
@@ -200,7 +203,9 @@ export function createAudio() {
     resumeAudio,
     tone,
     chord,
-    dispose() { actx?.close() },
+    dispose() {
+      actx?.close()
+    },
   }
 }
 

@@ -49,7 +49,7 @@ import {
 } from '@/components/game/instruments'
 import { cnm } from '@/utils/style'
 
-export const Route = createFileRoute('/design-system')({
+export const Route = createFileRoute('/dev/design-system')({
   component: DesignSystemPage,
 })
 

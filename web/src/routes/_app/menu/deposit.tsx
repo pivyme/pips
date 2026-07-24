@@ -1,26 +1,33 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Coins } from 'lucide-react'
+import { CheckCircle2, Coins } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { MenuScreen } from '@/components/menu/shared'
 import { AssetPicker } from '@/components/menu/deposit/AssetPicker'
 import { ReceivePanel } from '@/components/menu/deposit/ReceivePanel'
 import { BridgePanel } from '@/components/menu/deposit/BridgePanel'
 import { Alert } from '@/ui/Alert'
+import { Hw3DButton } from '@/ui/Hardware3D'
 import { useAuth } from '@/lib/auth'
 import { api, ApiError } from '@/lib/api'
-import type { DepositOptionsDTO } from '@/lib/api'
+import type { DepositOptionsDTO, WalletTxDTO } from '@/lib/api'
 import { depositOptionsQuery } from '@/lib/menuQueries'
+import { useDepositWatch } from '@/hooks/useDepositWatch'
 import { networkLabel, resolveMode, unsupportedCopy } from '@/lib/deposit/mode'
 import { NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
+import { cnm } from '@/utils/style'
 
 // One drawer, two dropdowns. Pick a currency and a network and the mode falls out: the chip asset on Sui
 // is a plain address + QR (nothing to bridge), anything else previews a live LI.FI route. No mode switch
 // the player has to understand, and no state they can get stuck in.
 export const Route = createFileRoute('/_app/menu/deposit')({
-  component: DepositScreen,
+  component: () => (
+    <MenuScreen title="Add funds">
+      <DepositContent />
+    </MenuScreen>
+  ),
 })
 
 // Receive is the critical path and must survive /options being down, so the drawer falls back to a
@@ -38,7 +45,8 @@ const FALLBACK_OPTIONS: DepositOptionsDTO = {
   networks: [{ key: 'sui', label: 'Sui', logo: null }],
 }
 
-function DepositScreen() {
+// The deposit body, rendered both as the /menu/deposit page and inside the Add-funds money modal.
+export function DepositContent() {
   const { user, refresh } = useAuth()
   const address = user?.address ?? ''
   const [claiming, setClaiming] = useState(false)
@@ -87,6 +95,10 @@ function DepositScreen() {
 
   const mode = resolveMode(currency, network, options.chipSymbol)
 
+  // Live deposit detection: while the receive (QR) screen is open, watch the address and fire the "landed"
+  // celebration + SFX the moment funds arrive, no click needed. Only in receive mode (the address surface).
+  const { landed } = useDepositWatch(mode === 'receive')
+
   // Test faucet: free play money so anyone can jump in without a real deposit. The backend enforces the
   // per-tap cooldown; we just surface its message.
   const claim = async () => {
@@ -106,46 +118,75 @@ function DepositScreen() {
   }
 
   return (
-    <MenuScreen title="Add funds">
-      <div className="flex flex-col gap-5">
-        <div className="flex items-start gap-3">
-          <AssetPicker label="Currency" value={currency} options={currencyOptions} onChange={pickCurrency} />
-          <AssetPicker label="Network" value={network} options={networkOptions} onChange={setNetwork} />
-        </div>
-
-        {mode === 'receive' && (
-          <ReceivePanel address={address} chipSymbol={options.chipSymbol} minUsd={options.minUsd} />
-        )}
-
-        {mode === 'bridge' && <BridgePanel options={options} currency={currency} network={network} />}
-
-        {/* Never a dead end: a labelled state with the reason and the way out. Soft urgency, it is a
-            nudge to pick another pair, not a fund-loss warning. */}
-        {mode === 'unsupported' && <Alert tone="alert">{unsupportedCopy(options.chipSymbol)}</Alert>}
-
-        {/* The faucet is the fastest way to chips today, so it stays on the screen in every mode. */}
-        {options.faucetAmount && (
-          <>
-            <div className="flex items-center gap-3 px-1 pt-1">
-              <span className="h-px flex-1 bg-white/[0.08]" />
-              <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">or</span>
-              <span className="h-px flex-1 bg-white/[0.08]" />
-            </div>
-
-            <button
-              onClick={claim}
-              disabled={claiming || !user}
-              className="btn-primary flex h-12 items-center justify-center gap-2 rounded-card text-[15px] font-semibold disabled:opacity-60"
-            >
-              <Coins className="h-[18px] w-[18px]" strokeWidth={2.4} />
-              {claiming ? 'Sending…' : `Get ${Number(options.faucetAmount)} test ${options.chipSymbol}`}
-            </button>
-            <p className="px-1 text-[13px] leading-snug text-text-3">
-              Instant test {options.chipSymbol} on {NETWORK_LABEL}. One batch per minute.
-            </p>
-          </>
-        )}
+    <div className="flex flex-col gap-5">
+      <div className="flex items-start gap-3">
+        <AssetPicker label="Currency" value={currency} options={currencyOptions} onChange={pickCurrency} />
+        <AssetPicker label="Network" value={network} options={networkOptions} onChange={setNetwork} />
       </div>
-    </MenuScreen>
+
+      {mode === 'receive' && (
+        <>
+          <ReceivePanel address={address} chipSymbol={options.chipSymbol} minUsd={options.minUsd} />
+          <WaitingForDeposit landed={landed} />
+        </>
+      )}
+
+      {mode === 'bridge' && <BridgePanel options={options} currency={currency} network={network} />}
+
+      {/* Never a dead end: a labelled state with the reason and the way out. Soft urgency, it is a
+          nudge to pick another pair, not a fund-loss warning. */}
+      {mode === 'unsupported' && <Alert tone="alert">{unsupportedCopy(options.chipSymbol)}</Alert>}
+
+      {/* The faucet is the fastest way to chips today, so it stays on the screen in every mode. */}
+      {options.faucetAmount && (
+        <>
+          <div className="flex items-center gap-3 px-1 pt-1">
+            <span className="h-px flex-1 bg-white/[0.08]" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">or</span>
+            <span className="h-px flex-1 bg-white/[0.08]" />
+          </div>
+
+          <Hw3DButton variant="primary" wide icon={Coins} loading={claiming} disabled={!user} onPress={() => void claim()}>
+            {claiming ? 'Sending…' : `Get ${Number(options.faucetAmount)} test ${options.chipSymbol}`}
+          </Hw3DButton>
+          <p className="px-1 text-[13px] leading-snug text-text-3">
+            Instant test {options.chipSymbol} on {NETWORK_LABEL}. One batch per minute.
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
+// A compact affordance under the QR: a soft "waiting" pulse that swaps to a brief "received" confirmation
+// when funds land. The full-screen celebration is the moment; this is the passive on-screen status.
+function WaitingForDeposit({ landed }: { landed: WalletTxDTO | null }) {
+  const [justLanded, setJustLanded] = useState(false)
+  useEffect(() => {
+    if (!landed) return
+    setJustLanded(true)
+    const id = window.setTimeout(() => setJustLanded(false), 4000)
+    return () => window.clearTimeout(id)
+  }, [landed])
+
+  return (
+    <div
+      className={cnm(
+        'flex items-center justify-center gap-2 rounded-card px-4 py-3 text-[13px] font-semibold transition-colors',
+        justLanded ? 'bg-up/10 text-up' : 'bg-white/[0.04] text-text-3',
+      )}
+    >
+      {justLanded && landed ? (
+        <>
+          <CheckCircle2 className="h-4 w-4" strokeWidth={2.4} />
+          Received {landed.amount} {landed.symbol}
+        </>
+      ) : (
+        <>
+          <span className="h-2 w-2 animate-pulse rounded-full bg-brand-500" />
+          Waiting for your deposit…
+        </>
+      )}
+    </div>
   )
 }

@@ -13,6 +13,24 @@ import type { AchievementDTO, Game, UserStatsDTO } from '../types/api.ts';
 
 const money = (raw: bigint): string => fromDusdcRaw(raw).toFixed(2);
 
+const THEME_PARTS = ['body', 'play', 'buttons', 'knob', 'wheel', 'glow'];
+const THEME_PALETTE_SIZE = 12;
+// Mirrors web/src/components/console/customize.ts isValidConsoleCustom, minus the catalog check
+// (the id list lives client-side by design, same reasoning as the free-form `theme` above).
+const validThemeConfig = (v: unknown): boolean => {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (typeof o.preset !== 'string' || o.preset.length === 0 || o.preset.length > 40) return false;
+  if (Object.keys(o).some((k) => k !== 'preset' && k !== 'parts')) return false;
+  if (o.parts === undefined) return true;
+  if (typeof o.parts !== 'object' || o.parts === null || Array.isArray(o.parts)) return false;
+  const entries = Object.entries(o.parts as Record<string, unknown>);
+  if (entries.length > THEME_PARTS.length) return false;
+  return entries.every(
+    ([k, val]) => THEME_PARTS.includes(k) && Number.isInteger(val) && (val as number) >= 0 && (val as number) < THEME_PALETTE_SIZE,
+  );
+};
+
 export const menuRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
   // The shareable stats card. Derived live from the Play ledger (the source of truth), never from a
   // running counter, so the card's Net P&L always matches the sum of the user's own history.
@@ -74,14 +92,19 @@ export const menuRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     const u = request.user!;
     return reply
       .code(200)
-      .send({ success: true, error: null, data: { settings: { sound: u.soundEnabled, haptics: u.hapticsEnabled, reducedMotion: u.reducedMotion, confirmTrades: u.confirmTrades, theme: u.theme } } });
+      .send({
+        success: true,
+        error: null,
+        data: { settings: { sound: u.soundEnabled, haptics: u.hapticsEnabled, reducedMotion: u.reducedMotion, confirmTrades: u.confirmTrades, theme: u.theme, themeConfig: u.themeConfig ?? null } },
+      });
   });
 
   app.patch('/settings', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = (request.body ?? {}) as { sound?: boolean; haptics?: boolean; reducedMotion?: boolean; confirmTrades?: boolean; theme?: string };
+    const body = (request.body ?? {}) as { sound?: boolean; haptics?: boolean; reducedMotion?: boolean; confirmTrades?: boolean; theme?: string; themeConfig?: unknown };
     // theme is a free-form skin id (validated client-side against the catalog); cap the length so a
     // junk value can't bloat the row, but don't hardcode the id list here.
     const theme = typeof body.theme === 'string' && body.theme.length > 0 && body.theme.length <= 40 ? body.theme : undefined;
+    const themeConfig = validThemeConfig(body.themeConfig) ? (body.themeConfig as object) : undefined;
     try {
       const updated = await prismaQuery.user.update({
         where: { id: request.user!.id },
@@ -91,11 +114,16 @@ export const menuRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
           ...(typeof body.reducedMotion === 'boolean' ? { reducedMotion: body.reducedMotion } : {}),
           ...(typeof body.confirmTrades === 'boolean' ? { confirmTrades: body.confirmTrades } : {}),
           ...(theme ? { theme } : {}),
+          ...(themeConfig ? { themeConfig } : {}),
         },
       });
       return reply
         .code(200)
-        .send({ success: true, error: null, data: { settings: { sound: updated.soundEnabled, haptics: updated.hapticsEnabled, reducedMotion: updated.reducedMotion, confirmTrades: updated.confirmTrades, theme: updated.theme } } });
+        .send({
+          success: true,
+          error: null,
+          data: { settings: { sound: updated.soundEnabled, haptics: updated.hapticsEnabled, reducedMotion: updated.reducedMotion, confirmTrades: updated.confirmTrades, theme: updated.theme, themeConfig: updated.themeConfig ?? null } },
+        });
     } catch (error) {
       return handleError(reply, 500, 'Could not save settings', 'SETTINGS_FAILED', error as Error);
     }

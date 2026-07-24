@@ -4,11 +4,11 @@ import { Camera, X } from 'lucide-react'
 import { MenuScreen, prepareMenuTransition } from '@/components/menu/shared'
 import { XBadgeGlyph } from '@/components/menu/BrandGlyphs'
 import { Avatar } from '@/components/Avatar'
+import { Hw3DButton } from '@/ui/Hardware3D'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
 import { toSquareWebp } from '@/lib/avatar'
-import { HapticOverlay } from '@/components/HapticOverlay'
 import { displayHandle } from '@/utils/format'
 import { cnm } from '@/utils/style'
 
@@ -191,47 +191,29 @@ function UsernameScreen() {
                 Verified
               </span>
             ) : (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setName(twitterHandle)
-                    if (error) setError(null)
-                  }}
-                  className="pointer-events-none rounded-full bg-white/[0.06] px-3 py-1.5 text-xs font-bold text-text-2 active:scale-95"
-                >
-                  Use your X username
-                </button>
-                <HapticOverlay
-                  className="absolute inset-0 rounded-full"
-                  preset="selection"
-                  silent
-                  onTap={() => {
-                    setName(twitterHandle)
-                    if (error) setError(null)
-                  }}
-                />
-              </div>
+              <Hw3DButton
+                size="sm"
+                onPress={() => {
+                  setName(twitterHandle)
+                  if (error) setError(null)
+                }}
+              >
+                Use your X username
+              </Hw3DButton>
             )}
           </div>
         )}
 
-        <div className="relative h-12">
-          <button
-            onClick={save}
-            disabled={saving || !valid || !dirty}
-            className="btn-primary pointer-events-none flex h-12 w-full items-center justify-center rounded-card text-[15px] font-semibold disabled:opacity-50"
-          >
-            {saving ? 'Saving…' : 'Save handle'}
-          </button>
-          <HapticOverlay
-            className="absolute inset-0 rounded-card"
-            preset="medium"
-            disabled={saving || !valid || !dirty}
-            silent
-            onTap={() => void save()}
-          />
-        </div>
+        <Hw3DButton
+          variant="primary"
+          wide
+          disabled={!valid || !dirty}
+          loading={saving}
+          haptic="medium"
+          onPress={() => void save()}
+        >
+          Save handle
+        </Hw3DButton>
       </div>
     </MenuScreen>
   )

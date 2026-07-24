@@ -161,6 +161,16 @@ export function usePlayResolutionWatch({
   }, [enabled, finalizedRef, playId, syncedOpenPlayIdRef, watchdogMs])
 }
 
+// Absolute buzzer for a play: the minted on-chain expiry, falling back to the round length off openedAt for the
+// brief pending window before a market is routed.
+export function roundEndAt(play: PlayDTO, fallbackDurationSec: number): number {
+  if (play.market.expiry) return play.market.expiry
+  const openedAt = play.openedAt ? Date.parse(play.openedAt) : Date.now()
+  const durationSec =
+    'duration' in play.params && typeof play.params.duration === 'number' ? play.params.duration : fallbackDurationSec
+  return openedAt + durationSec * 1000
+}
+
 export function useRoundCountdown({
   enabled,
   play,
@@ -184,12 +194,7 @@ export function useRoundCountdown({
       return
     }
 
-    const openedAt = play.openedAt ? Date.parse(play.openedAt) : Date.now()
-    const durationSec =
-      'duration' in play.params && typeof play.params.duration === 'number'
-        ? play.params.duration
-        : fallbackDurationSec
-    const endAt = play.market.expiry || openedAt + durationSec * 1000
+    const endAt = roundEndAt(play, fallbackDurationSec)
 
     const tick = () => {
       const remaining = endAt - Date.now()
@@ -211,13 +216,17 @@ export function useRoundCountdown({
 // onRestore once with this game's open play, so the screen rehydrates into its live phase instead of idle.
 // Reuses the hub's query key, so Home -> game hits the warm cache and restores with no flash; a cold refresh
 // fetches fresh. `active` gates it off once the player has a round going this mount (never clobbers a fresh mint).
+// Only a round still before its buzzer is restored: one that already expired is finished, and rehydrating it would
+// replay its win/lose reveal on a screen you opened long after the fact. It still settles server-side, into history.
 export function useRestoreOpenPlay({
   game,
   active,
+  fallbackDurationSec,
   onRestore,
 }: {
   game: Game
   active: boolean
+  fallbackDurationSec: number
   onRestore: (play: PlayDTO) => void
 }) {
   const restoredRef = useRef(false)
@@ -235,11 +244,12 @@ export function useRestoreOpenPlay({
   const plays = openQ.data?.plays
   useEffect(() => {
     if (restoredRef.current || active || !plays) return
-    const match = plays.find((p) => p.game === game)
+    const now = Date.now()
+    const match = plays.find((p) => p.game === game && roundEndAt(p, fallbackDurationSec) > now)
     if (!match) return
     restoredRef.current = true
     onRestoreRef.current(match)
-  }, [plays, active, game])
+  }, [plays, active, game, fallbackDurationSec])
 
   // True until the first open-plays fetch settles. On a cold refresh the screen is momentarily idle before
   // restore lands, so callers gate PLAY on this to avoid opening a second round on top of a live one.

@@ -17,6 +17,7 @@ import type {
   GameLeaderboard,
   GlobalLeaderboard,
   MarketDTO,
+  PriceHistoryDTO,
   Minigame,
   MinigameLeaderboard,
   MinigameSubmit,
@@ -37,13 +38,17 @@ import type {
   Side,
   UserDTO,
   UserStatsDTO,
+  WalletCoinDTO,
+  WalletTxDTO,
+  WalletTransactionsQuery,
 } from './api'
+import type { ConsoleCustom } from '@/components/console/customize'
 
 // === Flag ===
 
 const OVERRIDE_KEY = 'pips_demo' // '1' force on, '0' force off, unset = env default
 const STATE_KEY = 'pips_demo_state'
-const STATE_VERSION = 6 // bumped: added referralAnon
+const STATE_VERSION = 7 // bumped: added wallet held coins + activity feed
 
 export function isDemo(): boolean {
   if (typeof window !== 'undefined') {
@@ -95,7 +100,7 @@ const PYTH_IDS: Record<string, string> = {
 }
 const HERMES_STREAM = 'https://hermes.pyth.network/v2/updates/price/stream'
 const DURATIONS = [10, 30, 60]
-const RANGE_ROUND_SEC = 30 // Range is one real settled round; the client no longer picks a duration
+const RANGE_ROUND_SEC = 30 // legacy widthPct quote only; the tier path sizes off the shared round clock (rangeRoundExpiry)
 
 // === Lucky: the slot-weighted multiplier reel (LUCKY.md §4-5) ===
 // Reel deals one tier per spin, weighted for fun not win odds; each tier settles at its own honest 1/mult odds.
@@ -209,11 +214,28 @@ function connectPyth(): void {
   }
 }
 
+// Rolling pre-roll of the walk, the demo twin of the server's price-history ring: a chart remount continues
+// the line it was already drawing instead of rolling a fresh random past.
+const HISTORY_MS = 60_000
+const history = new Map<string, Array<{ t: number; p: number }>>()
+
+function recordPrice(asset: string, p: number, t: number): void {
+  let ring = history.get(asset)
+  if (!ring) {
+    ring = []
+    history.set(asset, ring)
+  }
+  ring.push({ t, p })
+  const cutoff = t - HISTORY_MS
+  while (ring.length > 0 && ring[0]!.t < cutoff) ring.shift()
+}
+
 function startEngine(): void {
   if (priceTimer || typeof window === 'undefined') return
   for (const a of ASSETS) ensurePrice(a)
   connectPyth()
   priceTimer = setInterval(() => {
+    const t = nowMs()
     for (const a of ASSETS) {
       const anchor = anchors.get(a) as number
       // Velocity carries momentum, so consecutive ticks move together: smooth trends, not jitter.
@@ -234,6 +256,7 @@ function startEngine(): void {
       transients.set(a, tr)
       const next = anchor * (1 + drift + tr)
       prices.set(a, next > 0 ? next : anchor)
+      recordPrice(a, prices.get(a) as number, t)
     }
   }, TICK_MS)
 }
@@ -295,12 +318,14 @@ interface DemoState {
   balance: number
   username: string | null // null = first run, show onboarding (mirrors the live user.username signal)
   avatarUrl: string | null // custom uploaded avatar (data URL); null = use the demo default
-  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string }
+  settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string; themeConfig: ConsoleCustom | null }
   counters: Counters
   unlocked: Record<string, string> // slug -> unlockedAt ISO
   history: PlayDTO[] // settled plays only, newest first
   minigameScores: Record<string, number> // minigame key -> your best score, for the arcade boards
   referralAnon: boolean // link format toggle, mirrors the live user.referralAnon
+  coins: Record<string, number> // non-chip held coins symbol -> display amount (SUI, DEEP), the token-recovery case
+  activity: WalletTxDTO[] // wallet activity feed rows, newest first
 }
 
 // Assigned by the init block at the very bottom, once every const/function below is in scope.
@@ -361,17 +386,29 @@ function freshState(): DemoState {
   for (const c of CATALOG) if (meets(c.metric, c.threshold, counters)) unlocked[c.slug] = past(60 * 24)
   // Seed the demo account's minigame bests so the arcade boards look played-in (mid-table, beatable).
   const minigameScores: Record<string, number> = { 'line-rider': 1240, 'flappy-piper': 14 }
+  // A played-in activity feed: a receive, a send, a faucet, and a landed bridge, spread across days so the
+  // day-grouping + chain badges show. Newest first.
+  const other = '0x7c3f2a9e1b5d84f60c2a97e5b3d18a4f9e0c5b8a2d61f43c7e9b0a58f2d6c1e34'
+  const hoursAgo = (h: number): number => now - h * 3_600_000
+  const activity: WalletTxDTO[] = [
+    demoWalletTx({ direction: 'in', kind: 'receive', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: 50, timestampMs: hoursAgo(2), counterparty: other }),
+    demoWalletTx({ direction: 'out', kind: 'send', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: 12, timestampMs: hoursAgo(26), counterparty: other }),
+    demoWalletTx({ direction: 'in', kind: 'faucet', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: 500, timestampMs: hoursAgo(50) }),
+    demoWalletTx({ direction: 'in', kind: 'bridge', symbol: 'USDC', coinType: '', decimals: 6, amount: 25, timestampMs: hoursAgo(74), chain: 'base' }),
+  ]
   return {
     v: STATE_VERSION,
     balance: 2847.5,
     username: 'pips',
     avatarUrl: null,
-    settings: { sound: true, haptics: true, reducedMotion: false, confirmTrades: false, theme: 'classic' },
+    settings: { sound: true, haptics: true, reducedMotion: false, confirmTrades: false, theme: 'classic', themeConfig: null },
     counters,
     unlocked,
     history,
     minigameScores,
     referralAnon: false,
+    coins: { SUI: 12.5, DEEP: 150 },
+    activity,
   }
 }
 
@@ -385,6 +422,8 @@ function load(): DemoState {
         // Additive settings backfill: a state saved before a new toggle existed lacks the key, default
         // it in place rather than bumping the version and wiping the demo record.
         if (parsed.settings.confirmTrades == null) parsed.settings.confirmTrades = false
+        if (parsed.coins == null) parsed.coins = { SUI: 12.5, DEEP: 150 }
+        if (!Array.isArray(parsed.activity)) parsed.activity = []
         parsed.counters = { ...COUNTER_DEFAULTS, ...parsed.counters }
         // Carry unlocks saved under the retired catalog's slugs onto their identical-condition successors.
         for (const [from, to] of [['first_play', 'first_try'], ['all_games', 'market_hopper']]) {
@@ -494,6 +533,87 @@ function newId(): string {
   idSeq += 1
   return `demo-${nowMs().toString(36)}-${idSeq}`
 }
+
+// === Wallet coins + activity twin ===
+// Held-coin metadata for the send picker + activity feed. DUSDC is the chip (its amount is state.balance);
+// SUI + DEEP are the "recover a stray token" case (state.coins). Logos are bundled frontend assets (robust,
+// no CDN rot) so demo shows real coin art, not monograms.
+const COIN_LOGO: Record<string, string | null> = {
+  DUSDC: '/assets/icons/dusdc-logo.webp',
+  SUI: '/assets/images/coins/sui-logo.png',
+  DEEP: '/assets/images/deepbook-logo.jpg',
+  USDC: DEMO_LOGO.USDC,
+}
+const DEMO_COIN_META: Record<string, { coinType: string; name: string; decimals: number; price: number | null }> = {
+  DUSDC: { coinType: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::dusdc::DUSDC', name: 'DeepBook USDC', decimals: 6, price: 1 },
+  SUI: { coinType: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI', name: 'Sui', decimals: 9, price: SEED_PRICES.SUI },
+  DEEP: { coinType: '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP', name: 'DeepBook', decimals: 6, price: SEED_PRICES.DEEP },
+}
+const symbolForCoinType = (coinType: string): string | undefined => {
+  for (const [sym, m] of Object.entries(DEMO_COIN_META)) if (m.coinType === coinType) return sym
+  return undefined
+}
+const DEMO_EXPLORER = `https://suiscan.xyz/${env.VITE_SUI_NETWORK}/tx`
+
+// Build one WalletTxDTO with demo-plausible defaults (fake digest, decimals-aware amount).
+function demoWalletTx(p: {
+  direction: 'in' | 'out'
+  kind: WalletTxDTO['kind']
+  symbol: string
+  coinType: string
+  decimals: number
+  amount: number
+  timestampMs: number
+  chain?: string
+  counterparty?: string | null
+  status?: 'confirmed' | 'pending'
+}): WalletTxDTO {
+  const digest = demoDigest()
+  return {
+    id: `demo-wtx-${newId()}`,
+    direction: p.direction,
+    kind: p.kind,
+    coinType: p.coinType,
+    symbol: p.symbol,
+    logo: COIN_LOGO[p.symbol] ?? null,
+    amount: p.amount % 1 === 0 ? String(p.amount) : p.amount.toFixed(Math.min(p.decimals, 4)),
+    decimals: p.decimals,
+    counterparty: p.counterparty ?? null,
+    digest,
+    chain: p.chain ?? 'sui',
+    status: p.status ?? 'confirmed',
+    timestampMs: String(p.timestampMs),
+    explorerUrl: `${DEMO_EXPLORER}/${digest}`,
+  }
+}
+
+// One held-coin DTO: DUSDC reads its amount from state.balance, others from state.coins.
+function demoCoin(symbol: string, amount: number, isChip: boolean): WalletCoinDTO {
+  const meta = DEMO_COIN_META[symbol]
+  const decimals = meta?.decimals ?? 9
+  const price = meta?.price ?? null
+  const usd = price != null ? amount * price : null
+  return {
+    coinType: meta?.coinType ?? symbol,
+    symbol,
+    name: meta?.name ?? symbol,
+    decimals,
+    logo: COIN_LOGO[symbol] ?? null,
+    amount: amount % 1 === 0 ? String(amount) : String(amount),
+    amountRaw: String(Math.round(amount * 10 ** decimals)),
+    priceUsd: price != null ? String(price) : null,
+    usdValue: usd != null ? usd.toFixed(2) : null,
+    isChip,
+  }
+}
+
+// A one-off simulated DUSDC deposit that "lands" a few seconds after the deposit watch starts polling, so the
+// "landed" celebration + SFX are demonstrable with no chain. Session-only (not persisted).
+const DEMO_DEPOSIT_DELAY_MS = 6000
+const DEMO_DEPOSIT_AMOUNT = 50
+let demoDepositLandAt = 0
+let demoDepositScheduled = false
+const demoSyncedIds = new Set<string>() // rows already returned by walletSync, so a receive celebrates once
 const str = (n: number): string => n.toFixed(2)
 // Price string with enough precision for sub-dollar tokens (DEEP, SUI); the UI trims trailing zeros.
 const pxStr = (n: number): string => (n >= 1 ? n.toFixed(2) : n.toFixed(6))
@@ -517,6 +637,27 @@ function normCdf(x: number): number {
   return x >= 0 ? 1 - upper : upper
 }
 
+// Inverse standard normal CDF (Acklam's approximation), ported verbatim from the backend's probit() (games-real.ts):
+// the real RANGE solver sizes a tier's band as probit((1+p)/2) * sigma, so the demo band shape matches exactly.
+function probit(p: number): number {
+  const a = [-3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.38357751867269e2, -3.066479806614716e1, 2.506628277459239]
+  const b = [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1]
+  const c = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783]
+  const d = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416]
+  const lo = 0.02425
+  if (p < lo) {
+    const q = Math.sqrt(-2 * Math.log(p))
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+  }
+  if (p <= 1 - lo) {
+    const q = p - 0.5
+    const r = q * q
+    return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+  }
+  const q = Math.sqrt(-2 * Math.log(1 - p))
+  return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+}
+
 // Same shape as the Range screen's client estimate, so the locked multiple feels consistent.
 function estimateMultiplier(halfPct: number, durationSec: number): number {
   const sigma = 0.6 * Math.sqrt(durationSec / 30)
@@ -524,10 +665,35 @@ function estimateMultiplier(halfPct: number, durationSec: number): number {
   return Math.max(1.05, Math.min(0.97 / Math.max(prob, 0.03), 99))
 }
 
-// RANGE payout tiers, mirroring the backend ladder (main-config RANGE_TIER_PROBS); band width inverts
-// demo's own win-prob model so a tier's quote and its locked multiple always agree.
+// RANGE round clock: a real Range mint routes into a live on-chain minute market (isMinuteExpiry,
+// backend market-sync.ts), so every position opened before that market's cutoff shares the exact same
+// expiry, and a tap too close to the buzzer routes into the next one (RANGE_MIN_ORACLE_LIFE_MS). Demo
+// mirrors both with a shared wall-clock cadence standing in for the chain's minute markets: concurrent
+// positions land on the identical expiry (their strip bars deplete in lockstep, the chart draws one
+// cutoff line), and a tap inside the min-life window rolls forward, same as the client's own "Round
+// closing, next one up" guard (range.tsx `nextRound`).
+const RANGE_ROUND_CADENCE_MS = 60_000 // mirrors the chain's 1-minute market cadence
+const RANGE_MIN_ROUND_MS = 20_000 // mirrors RANGE_MIN_ORACLE_LIFE_MS
+function rangeRoundExpiry(): number {
+  const t = nowMs()
+  let expiry = Math.floor(t / RANGE_ROUND_CADENCE_MS) * RANGE_ROUND_CADENCE_MS + RANGE_ROUND_CADENCE_MS
+  if (expiry - t < RANGE_MIN_ROUND_MS) expiry += RANGE_ROUND_CADENCE_MS
+  return expiry
+}
+
+// RANGE payout tiers, mirroring the backend ladder (main-config RANGE_TIER_PROBS). Band half-width uses the
+// same probit(p) * sigma(secondsLeft) shape as the real solver (games-real.ts quoteRangeTiersReal), so it
+// breathes with the round clock exactly like range.tsx's own aimHalfPct math. RANGE_DEMO_ANNUAL_VOL is tuned
+// to demo's own exaggerated price walk, not real BTC vol (the chain-implied vol is ~100x smaller, see
+// REAL_BTC_ANNUAL_VOL); the payout multiple only depends on the tier's probability, so it matches real mode
+// exactly regardless of that tuning.
 const RANGE_TIER_PROBS = [0.85, 0.65, 0.45, 0.3, 0.18, 0.11, 0.065]
-const rangeTierHalfPct = (p: number): number => -Math.log(1 - p) * 0.6 * Math.sqrt(RANGE_ROUND_SEC / 30)
+const RANGE_DEMO_ANNUAL_VOL = 8.1
+const RANGE_QUOTE_HAIRCUT = 0.04
+const SECONDS_PER_YEAR = 365.25 * 24 * 3600
+const rangeSigmaFrac = (seconds: number): number => RANGE_DEMO_ANNUAL_VOL * Math.sqrt(Math.max(1, seconds) / SECONDS_PER_YEAR)
+const rangeHalfFrac = (p: number, seconds: number): number => probit((1 + p) / 2) * rangeSigmaFrac(seconds)
+const tierMultOf = (p: number): number => Math.max(1.01, (1 / p) * (1 - RANGE_QUOTE_HAIRCUT))
 const rangeTierProb = (tier: number): number =>
   RANGE_TIER_PROBS[Math.max(0, Math.min(RANGE_TIER_PROBS.length - 1, Math.round(tier)))]
 
@@ -762,23 +928,25 @@ function createRange(body: Record<string, unknown>): PlayDTO {
   const stake = Number(body.stake ?? 10)
   ensureBalance(stake)
   const asset = String(body.asset ?? ASSETS[0])
-  const duration = RANGE_ROUND_SEC // one real settled round; matches the backend's oracle-expiry round
-  // Tier play (the payout knob): band width derives from the tier's target odds; legacy widthPct kept for compat.
-  const halfPct = body.tier != null ? rangeTierHalfPct(rangeTierProb(Number(body.tier))) : Number(body.widthPct ?? 2) / 2
+  const openedMs = nowMs()
+  const expiryMs = rangeRoundExpiry() // shared wall-clock cutoff: every position opened before it rides the same buzzer
+  const seconds = Math.max(1, (expiryMs - openedMs) / 1000)
+  // Tier play (the payout knob): band half-width sizes off the tier's target win prob against the live round
+  // clock, same shape as the real solver; legacy widthPct keeps a flat band for the compat endpoint.
+  const tierP = body.tier != null ? rangeTierProb(Number(body.tier)) : null
+  const halfPct = tierP != null ? rangeHalfFrac(tierP, seconds) * 100 : Number(body.widthPct ?? 2) / 2
   const widthPct = halfPct * 2
   const entry = currentPrice(asset)
   const lower = entry * (1 - halfPct / 100)
   const upper = entry * (1 + halfPct / 100)
-  const lockedMult = estimateMultiplier(halfPct, duration)
-  const openedMs = nowMs()
-  const expiryMs = openedMs + duration * 1000
+  const lockedMult = tierP != null ? tierMultOf(tierP) : estimateMultiplier(halfPct, seconds)
   const id = newId()
   const p: PlayDTO = {
     id,
     game: 'range',
     status: 'pending', // mint "lands" ~1s later (the OPENING beat); the demo stream flips it to 'open'
     stake: str(stake),
-    params: { asset, lower: str(lower), upper: str(upper), widthPct, duration },
+    params: { asset, lower: str(lower), upper: str(upper), widthPct, duration: Math.max(1, Math.round(seconds)) },
     market: { asset, oracleId: `demo-oracle-${asset}`, expiry: expiryMs, lower: String(lower), upper: String(upper) },
     entryValue: str(stake),
     markValue: str(stake),
@@ -1070,6 +1238,13 @@ export const demoApi = {
     return { markets: MARKET_ASSETS.map((a) => ({ asset: a, spot: String(currentPrice(a)), durations: DURATIONS, live: true })), playsPaused: false }
   },
 
+  // The chart pre-roll, from the walk demo already ran. Empty on a cold engine, the chart falls back to its
+  // own warm-up seed then.
+  priceHistory: async (asset: string): Promise<PriceHistoryDTO> => {
+    currentPrice(asset) // makes sure the engine is running before we read its ring
+    return { asset, now: nowMs(), points: [...(history.get(asset) ?? [])] }
+  },
+
   // Demo has no chain: each "quote" reuses the same model createRange mints against, so preview and locked value always agree.
   rangeQuotes: async (asset: string, widthPcts: number[]): Promise<{ quotes: RangeQuote[] }> => {
     await delay(80)
@@ -1088,27 +1263,30 @@ export const demoApi = {
     return { quotes }
   },
 
-  // Payout-tier twin. Demo rounds start at the tap (no shared wall-clock buzzer), so model stays null:
-  // the client shows the static width and no round clock, which is the demo truth.
+  // Payout-tier twin: shares the same wall-clock round clock as createRange, so the aim preview's expiry
+  // and breathing band width equal what actually mints (games-real.ts quoteRangeTiersReal, mirrored 1:1).
   rangeTierQuotes: async (asset: string): Promise<{ quotes: RangeTierQuote[]; model: RangeQuoteModel | null }> => {
     await delay(80)
     const entry = currentPrice(asset)
+    const expiryMs = rangeRoundExpiry()
+    const seconds = Math.max(1, (expiryMs - nowMs()) / 1000)
     const quotes = RANGE_TIER_PROBS.map((p, tier) => {
-      const halfPct = rangeTierHalfPct(p)
+      const halfFrac = rangeHalfFrac(p, seconds)
+      const half = entry * halfFrac
       return {
         tier,
         prob: p,
-        multiplier: Math.max(1.05, 0.97 / p),
-        sigmaMult: -Math.log(1 - p),
-        halfPct,
-        lower: str(entry * (1 - halfPct / 100)),
-        upper: str(entry * (1 + halfPct / 100)),
+        multiplier: tierMultOf(p),
+        sigmaMult: probit((1 + p) / 2),
+        halfPct: halfFrac * 100,
+        lower: str(entry - half),
+        upper: str(entry + half),
         entrySpot: str(entry),
-        duration: RANGE_ROUND_SEC,
-        expiryMs: nowMs() + RANGE_ROUND_SEC * 1000,
+        duration: Math.max(1, Math.round(seconds)),
+        expiryMs,
       }
     })
-    return { quotes, model: null }
+    return { quotes, model: { annualVol: RANGE_DEMO_ANNUAL_VOL, minRoundMs: RANGE_MIN_ROUND_MS } }
   },
 
   // MOONSHOT aim twin: the same offset createMoonshot places the TARGET at, so the preview equals the round.
@@ -1134,14 +1312,63 @@ export const demoApi = {
     return { play, unlocked }
   },
 
-  withdraw: async (input: { recipient: string; amount: string }): Promise<{ user: UserDTO; digest: string }> => {
+  withdraw: async (input: { recipient: string; amount: string; coinType?: string }): Promise<{ user: UserDTO; digest: string }> => {
     await delay(160)
     const amount = parseFloat(String(input.amount).replace(/,/g, ''))
-    if (!Number.isFinite(amount) || amount <= 0) throw new ApiError('INVALID_AMOUNT', 'Enter an amount to withdraw', 400)
-    if (amount > state.balance + 0.005) throw new ApiError('INSUFFICIENT_DUSDC', 'Not enough balance to withdraw that much', 400)
-    state.balance = Math.max(0, state.balance - amount)
+    if (!Number.isFinite(amount) || amount <= 0) throw new ApiError('INVALID_AMOUNT', 'Enter an amount to send', 400)
+    // DUSDC (default) draws from the chip balance; any other coin draws from the held-coin bag (token recovery).
+    const symbol = input.coinType ? symbolForCoinType(input.coinType) ?? 'DUSDC' : 'DUSDC'
+    if (symbol === 'DUSDC') {
+      if (amount > state.balance + 0.005) throw new ApiError('INSUFFICIENT_DUSDC', 'Not enough balance to send that much', 400)
+      state.balance = Math.max(0, state.balance - amount)
+    } else {
+      const held = state.coins[symbol] ?? 0
+      if (amount > held + 1e-9) throw new ApiError('INSUFFICIENT_BALANCE', 'Not enough balance to send that much', 400)
+      state.coins[symbol] = Math.max(0, held - amount)
+    }
+    const meta = DEMO_COIN_META[symbol]
+    const row = demoWalletTx({ direction: 'out', kind: 'send', symbol, coinType: meta?.coinType ?? input.coinType ?? '', decimals: meta?.decimals ?? 9, amount, timestampMs: nowMs(), counterparty: input.recipient })
+    state.activity.unshift(row)
     save()
-    return { user: userDTO(), digest: `demo-wd-${newId()}` }
+    return { user: userDTO(), digest: row.digest }
+  },
+
+  walletCoins: async (): Promise<{ coins: WalletCoinDTO[] }> => {
+    await delay(90)
+    const coins: WalletCoinDTO[] = [demoCoin('DUSDC', state.balance, true)]
+    for (const [sym, amt] of Object.entries(state.coins)) if (amt > 0) coins.push(demoCoin(sym, amt, false))
+    return { coins }
+  },
+
+  walletTransactions: async (q: WalletTransactionsQuery = {}): Promise<{ transactions: WalletTxDTO[]; nextCursor: string | null }> => {
+    await delay(100)
+    const limit = q.limit ?? 25
+    const start = q.cursor ? Number(q.cursor) || 0 : 0
+    const page = state.activity.slice(start, start + limit)
+    const nextCursor = start + limit < state.activity.length ? String(start + limit) : null
+    return { transactions: page, nextCursor }
+  },
+
+  // Deposit-watch poll: land the one-off simulated deposit when due, then return any fresh incoming rows the
+  // caller hasn't seen yet (deduped by id) so the celebration fires once, exactly like the real /wallet/sync.
+  walletSync: async ({ sinceMs }: { sinceMs?: number } = {}): Promise<{ received: WalletTxDTO[] }> => {
+    await delay(90)
+    const now = nowMs()
+    if (!demoDepositScheduled) {
+      demoDepositScheduled = true
+      demoDepositLandAt = now + DEMO_DEPOSIT_DELAY_MS
+    }
+    if (demoDepositLandAt > 0 && now >= demoDepositLandAt) {
+      demoDepositLandAt = 0
+      const row = demoWalletTx({ direction: 'in', kind: 'receive', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: DEMO_DEPOSIT_AMOUNT, timestampMs: now })
+      state.balance += DEMO_DEPOSIT_AMOUNT
+      state.activity.unshift(row)
+      save()
+    }
+    const floor = sinceMs ?? 0
+    const received = state.activity.filter((r) => r.direction === 'in' && Number(r.timestampMs) >= floor && !demoSyncedIds.has(r.id))
+    for (const r of received) demoSyncedIds.add(r.id)
+    return { received }
   },
 
   // Request DUSDC faucet (demo twin): a fixed +500 chips with the same per-tap cooldown as the backend.
@@ -1154,8 +1381,10 @@ export const demoApi = {
     }
     demoFaucetAt = now
     state.balance += DEMO_FAUCET_AMOUNT
+    const row = demoWalletTx({ direction: 'in', kind: 'faucet', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: DEMO_FAUCET_AMOUNT, timestampMs: nowMs() })
+    state.activity.unshift(row)
     save()
-    return { user: userDTO(), amount: DEMO_FAUCET_AMOUNT.toFixed(2), digest: `demo-faucet-${newId()}` }
+    return { user: userDTO(), amount: DEMO_FAUCET_AMOUNT.toFixed(2), digest: row.digest }
   },
 
   // Starter-chip grant (demo twin): a broke demo player gets topped up so the client's grant + celebration
@@ -1166,6 +1395,8 @@ export const demoApi = {
     const GRANT = 100
     if (state.balance >= MIN) return { user: userDTO(), granted: null }
     state.balance += GRANT
+    const row = demoWalletTx({ direction: 'in', kind: 'grant', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: GRANT, timestampMs: nowMs() })
+    state.activity.unshift(row)
     save()
     return { user: userDTO(), granted: GRANT }
   },

@@ -9,7 +9,7 @@ import { useConsoleControls } from './controls'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
-import { HapticOverlay } from '@/components/HapticOverlay'
+import { Hw3DButton } from '@/ui/Hardware3D'
 import { welcomeJingle } from '@/lib/sound'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
@@ -191,15 +191,10 @@ export function ThemePicker({
             }}
           />
 
-          <div className="relative mt-4 h-14 w-full">
-            <button
-              type="button"
-              onClick={commit}
-              className="btn-primary pointer-events-none flex h-14 w-full items-center justify-center rounded-full text-base"
-            >
+          <div className="mt-4 w-full">
+            <Hw3DButton variant="primary" wide haptic="rigid" onPress={commit} className="h-14 text-base">
               Continue
-            </button>
-            <HapticOverlay className="absolute inset-0 rounded-full" preset="rigid" silent onTap={commit} />
+            </Hw3DButton>
           </div>
         </motion.div>
       </div>

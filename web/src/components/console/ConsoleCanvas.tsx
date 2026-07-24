@@ -18,6 +18,7 @@ import {
   createActionScreens,
   createBackDetails,
   createInternals,
+  createBezelAudio,
 } from './consoleElements'
 import { createAudio } from './consoleAudio'
 import { unlockAudio } from '@/lib/sound'
@@ -25,7 +26,11 @@ import { haptic } from '@/lib/haptics'
 import type { HapticPreset } from '@/lib/haptics'
 import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
 import { themeBackdrop, type ConsoleTheme } from './themes'
+import type { PartId } from './customize'
 import { betLadder } from '@/lib/sui/config'
+import { useOverlayState } from '@/ui/Modal'
+import { SoundsDrawer } from './SoundsDrawer'
+import { getMusicVolume, setMusicVolume, subscribeAudio } from '@/lib/audio'
 
 // Main / Action1 / Action2 / MenuTab / HomeTab, matching ConsoleShell's DOM equivalents.
 const BTN_HAPTIC: HapticPreset[] = ['rigid', 'medium', 'medium', 'selection', 'selection']
@@ -89,8 +94,12 @@ interface ConsoleCanvasProps {
   onWelcomeArrived?: () => void
   reducedMotion?: boolean
   // Hold the resting app pose with no hero -> app settle. A returning session sets this so a refresh
-  // never replays the entry zoom (that animation is for a real login only).
+  // never replays the entry zoom (that animation is for a real login only). Customize studio only:
+  // skips the introFromApp zoom-out too, opening pre-settled at the studio rest pose (a cold/direct
+  // load onto Customize has no live device on screen to hand off from).
   instant?: boolean
+  // Customize studio only: eases the camera onto a framing pose for the given part tab (null = studio rest pose).
+  focusPart?: PartId | null
 }
 
 export default function ConsoleCanvas({
@@ -114,6 +123,7 @@ export default function ConsoleCanvas({
   onWelcomeArrived,
   reducedMotion = false,
   instant = false,
+  focusPart = null,
 }: ConsoleCanvasProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -156,11 +166,43 @@ export default function ConsoleCanvas({
   const applyActiveRef = useRef<(on: boolean) => void>(() => {})
   // LIVE landing/onboarding arc: the [stage] effect drives hero / app / welcome poses.
   const applyStageRef = useRef<(s: 'hero' | 'app' | 'welcome') => void>(() => {})
+  // Customize only: the [focusPart] effect eases the studio camera onto the tabbed part.
+  const applyFocusRef = useRef<(p: PartId | null) => void>(() => {})
+  // Studio only: finishes an in-flight chunked build synchronously (a Customize tap mid-warm).
+  const flushBuildRef = useRef<() => void>(() => {})
+
+  // Bezel audio button -> the sounds drawer. The imperative scene fires this ref on the button's release.
+  const audioModal = useOverlayState()
+  const openAudioModalRef = useRef<() => void>(() => {})
+  openAudioModalRef.current = audioModal.open
+  // The bezel volume fader is the music-volume control, kept in sync with the drawer's music slider.
+  const bezelAudioRef = useRef<ReturnType<typeof createBezelAudio> | null>(null)
+  const pokeRenderRef = useRef<() => void>(() => {})
+
+  // Drawer's music slider moved -> slide the 3D fader cap to match (and request a frame to show it).
+  useEffect(() => {
+    const apply = () => {
+      bezelAudioRef.current?.setVolume(getMusicVolume())
+      pokeRenderRef.current()
+    }
+    return subscribeAudio(apply)
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
     const hint = hintRef.current
     if (!canvas || !hint) return
+
+    // The whole scene build lives in a generator: the live shell drains it synchronously (identical to
+    // the old inline build), while the hidden Customize studio pumps one chunk per idle callback so
+    // warming it never freezes the menu. Body indentation left untouched to keep the diff reviewable.
+    let buildStarted = false
+    let buildDisposed = false
+    let buildIdleId = 0
+    let disposeScene: (() => void) | null = null
+
+    // Expression, not a hoisted declaration, so the post-guard non-null narrowing of canvas/hint holds inside.
+    const buildSteps = function* () {
 
     const CREAM = 0xe9dbbf,
       RED = 0xd63a2e,
@@ -222,6 +264,15 @@ export default function ConsoleCanvas({
       CY = 1155
     const wx = (px: number) => (px - CX) * SCALE
     const wy = (py: number) => (CY - py) * SCALE
+
+    /* body height — 11.95 is the natural shell; TOP_BEZEL is extra material added ABOVE the screen so
+       the top bezel band is deep enough to carry a real, tappable audio cluster. Raise it to widen the
+       forehead. The screen aperture and the control deck do not move, only the shell grows upward. */
+    const TOP_BEZEL = 0.14
+    const BODY_H = 11.95 + TOP_BEZEL
+    // Body centre at a given screen stretch. The bottom edge is fixed, so the centre rises by half of
+    // whatever is added on top (the bezel growth plus the stretch).
+    const bodyCy = (ext: number) => wy(1130) + (TOP_BEZEL + ext) / 2
 
     /* pocket holes — shared config needed before body geometry is built */
     const deviceCfg = { corner: 0.05 }
@@ -312,13 +363,18 @@ export default function ConsoleCanvas({
 
     // screen L-shape in pixel coords — mirrors screenPts used for the screen mesh
     // screenMesh.position.y = 0.13 is baked in here as a world-space offset before converting to body-local
+    // Screen side edges, in design px. Body edges are -35 and 1205, so these set a 50 px side bezel,
+    // lining the aperture up with the button pockets below it (left pill rim 10, main button rim 1155)
+    // instead of sitting 15 px further in. Symmetric about the body centre (585).
+    const SCREEN_L = 0
+    const SCREEN_R = 1170
     const SCREEN_PX = [
-      { x: 30, y: 1680 },
+      { x: SCREEN_L, y: 1680 },
       { x: 760, y: 1680 },
       { x: 760, y: 1325 },
-      { x: 1140, y: 1325 },
-      { x: 1140, y: 30 },
-      { x: 30, y: 30 },
+      { x: SCREEN_R, y: 1325 },
+      { x: SCREEN_R, y: 30 },
+      { x: SCREEN_L, y: 30 },
     ]
     const SCREEN_MESH_Y_OFFSET = 0.13
 
@@ -342,8 +398,8 @@ export default function ConsoleCanvas({
     }
 
     function buildBodyShape() {
-      const cy = wy(1130) + screenExt / 2 // body center rises by ext/2 so the bottom edge stays fixed
-      const s = roundedRect(6.2, 11.95 + screenExt, deviceCfg.corner)
+      const cy = bodyCy(screenExt) // body center rises by ext/2 so the bottom edge stays fixed
+      const s = roundedRect(6.2, BODY_H + screenExt, deviceCfg.corner)
       BTN_PX.forEach((p, i) => {
         // hole center in body-local space (body mesh sits at wx(585), cy)
         const lx = wx(p.x) + buttons[i].dx - wx(585)
@@ -429,16 +485,18 @@ export default function ConsoleCanvas({
     const device = new THREE.Group()
     device.position.z = DEVICE_Z
     deck.add(device)
+    yield // chunk: renderer + lights + scene scaffolding
 
     /* body */
     const body = new THREE.Mesh(
       frontZeroed(buildBodyShape(), 0.6, 0.08),
       matBody,
     )
-    body.position.set(wx(585), wy(1130), 0)
+    body.position.set(wx(585), bodyCy(0), 0)
     body.receiveShadow = true
     body.castShadow = true
     device.add(body)
+    yield // chunk: body shell extrusion (the single heaviest geometry)
 
     /* back panel — solid cream shell behind the body, covering the open back (button + knob undersides) when flipped; deep enough to swallow the deepest button and the knob.
        Same outline as the body so it never peeks past the front silhouette. Grows with screenExt. */
@@ -449,13 +507,13 @@ export default function ConsoleCanvas({
     })
     const backPanel = new THREE.Mesh(
       frontZeroed(
-        roundedRect(6.2, 11.95 + screenExt, deviceCfg.corner),
+        roundedRect(6.2, BODY_H + screenExt, deviceCfg.corner),
         1.2,
         0.08,
       ),
       matBack,
     )
-    backPanel.position.set(wx(585), wy(1130) + screenExt / 2, -0.76)
+    backPanel.position.set(wx(585), bodyCy(screenExt), -0.76)
     backPanel.castShadow = true
     backPanel.receiveShadow = true
     // Hidden until the device is flipped. main's screen is an HTML layer behind the canvas, shown
@@ -466,6 +524,7 @@ export default function ConsoleCanvas({
     // carved back logo
     backPanel.geometry.computeBoundingBox()
     let backFaceLocalZ = backPanel.geometry.boundingBox!.min.z
+    yield // chunk: body + back shells extruded
 
     // Back + side dress: parting seam, gunmetal corner screws, speaker grille, vent, spec label, strap eyelet. Seam + recesses are darker shades of the shell, recolored per theme in applyTheme.
     // Half-extents grow with the screen stretch, so place() re-seats on relayout.
@@ -487,22 +546,25 @@ export default function ConsoleCanvas({
       side: THREE.DoubleSide,
     })
     const BACK_HALF_W = (6.2 + 0.16) / 2
-    const backHalfH = () => (11.95 + screenExt + 0.16) / 2
+    const backHalfH = () => (BODY_H + screenExt + 0.16) / 2
     const backDetails = createBackDetails(
       device,
       backPanel,
-      { bodyW: 6.2, bodyH: 11.95, corner: deviceCfg.corner, seamZ: -0.72, bodyCx: wx(585) },
+      { bodyW: 6.2, bodyH: BODY_H, corner: deviceCfg.corner, seamZ: -0.72, bodyCx: wx(585) },
       { metal: matMetal, seam: matSeam, recess: matBackRecess, shell: matBack },
       '#7c7870',
     )
     backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
-    backDetails.rebuildSeam(screenExt, wy(1130) + screenExt / 2)
+    backDetails.rebuildSeam(screenExt, bodyCy(screenExt))
+    yield // chunk: back dress details
 
-    // Exposed guts for the transparent "Clear" skin (PCB, copper coil, battery, ribbon, glyph light strips) between the two shells. Built once and hidden; applyTheme reveals it, riding the body center so it tracks the screen-stretch like the body does.
+    // Exposed guts for the transparent "Clear" skin (PCB, copper coil, battery, ribbon, glyph light strips) between the two shells. Built once and hidden; applyTheme reveals it.
+    // Pinned to the NATURAL body centre, never the stretched one: the deck is what the guts are laid out against, and riding the centre slid them up over the bottom of the screen on tall frames. setExt grows the side frames into the stretch instead.
     // Full guts (incl. the top-frame band) only in showcase contexts; the live game screen can grow into that band, so a played clear skin keeps just the always-safe bottom + side internals.
     const fullInternals = debug || customize || exportMode
     const internals = createInternals(device, '#e5322b', fullInternals)
-    internals.group.position.set(wx(585), wy(1130) + screenExt / 2, 0)
+    internals.group.position.set(wx(585), bodyCy(0), 0)
+    yield // chunk: clear-skin internals
 
     const SVG_W = 1539,
       SVG_H = 629
@@ -535,7 +597,7 @@ export default function ConsoleCanvas({
       // run no bevel here (straight 90° letter cuts), so grow the outline by the same amount to match.
       const s = roundedRect(
         6.2 + 0.16,
-        11.95 + screenExt + 0.16,
+        BODY_H + screenExt + 0.16,
         deviceCfg.corner + 0.08,
       )
       for (const h of logoHoles) s.holes.push(h)
@@ -721,7 +783,7 @@ export default function ConsoleCanvas({
     // Synthetic bottom-right of the screen's outer rectangle (the L's notch, occluded by the body).
     // Used to clip the black backing to the real projected quad so it never leaks past a tilted device.
     const screenQuadBR = new THREE.Vector3(
-      wx(1140),
+      wx(SCREEN_R),
       wy(1680) + SCREEN_MESH_Y_OFFSET,
       DEVICE_Z + 0.06,
     )
@@ -752,6 +814,7 @@ export default function ConsoleCanvas({
       wy,
     )
     const bmOrigin = bm.map((m) => ({ x: m.position.x, y: m.position.y }))
+    yield // chunk: screen mesh + logo + buttons
 
     // Frame the two action caps as mini LCD screens: a machined metal bezel + a glossy acrylic window
     // over each. The cap stays bm[i] (the raycast + press target); we just drive its color like a panel.
@@ -761,6 +824,7 @@ export default function ConsoleCanvas({
     const spinView = customize || exportMode
     const { dispose: disposeActionScreens, glow: actionGlow } =
       createActionScreens(device, bm, ACTION_IDX, buttons, BTN_PX, wx, wy, spinView)
+    yield // chunk: action cap screens
 
     // A binding's color lights the screen (LONG → green, SHORT → red); everything else falls through to actionHex below. The loop adds the press flash onto baseEmissive.
     // Hues stay pure-ish so the screen's own emissive glow keeps the color true instead of washing toward white on self-light.
@@ -925,6 +989,17 @@ export default function ConsoleCanvas({
       wy,
       body.position.z,
     )
+
+    // Top-left bezel audio controls (press button + volume fader), modelled into the shell. Pressed/dragged
+    // through the same raycast loop as the buttons. Built on every surface (live shell, dev playground,
+    // customize studio, share-card shots) so there is one device everywhere; the studio and export just
+    // never route taps into it (their pointer path is the turntable).
+    const bezelAudio = createBezelAudio(device, interactive, wx, wy)
+    bezelAudioRef.current = bezelAudio
+    bezelAudio.setVolume(getMusicVolume()) // seed the cap from the saved music volume
+    pokeRenderRef.current = () => {
+      dirty = true
+    }
 
     // Canvas-texture label. Static caption (makeLabel) or live, updatable (makeDynLabel).
     function drawLabel(
@@ -1528,7 +1603,7 @@ export default function ConsoleCanvas({
         const light = Math.pow(facing, 2.2)
         label.mat.opacity = facing > 0 ? 0.12 + 0.88 * light : 0
         const brightness = 0.32 + 0.68 * Math.pow(facing, 1.6)
-        label.mat.color.setRGB(brightness, brightness, brightness)
+        label.mat.color.setRGB(wheelInk.r * brightness, wheelInk.g * brightness, wheelInk.b * brightness)
       }
     }
 
@@ -1641,6 +1716,7 @@ export default function ConsoleCanvas({
         wy,
         body.position.z,
       )
+    yield // chunk: number wheel + knob
 
     // Body skin: some themes wrap an SVG across the front body instead of a flat color. Loaded once (cached), projected onto the body front as a normalized planar map, cover-fit so squares stay square at any frame height.
     // Texture transform does the cover crop, so a relayout never needs to touch the loaded image.
@@ -1730,6 +1806,12 @@ export default function ConsoleCanvas({
         panel(7, 4, [3.0, 2.9, 2.4], -4, 5, 4) // key softbox, upper left: the diagonal blade
         panel(2, 7, [1.8, 1.7, 1.4], 5, 1, 2) // rim strip, right
         panel(8, 8, [0.55, 0.42, 0.2], 0, -6, 2) // warm floor bounce
+        // Surfaces square to the camera (the screen aperture's walls + bevel, the outer silhouette) reflect
+        // straight backwards. Against the dark surround they went black and the aperture read as extra
+        // screen padding, so the back gets a broad, tame bounce: enough to keep those walls gold, dim
+        // enough to leave the polished face its contrast.
+        panel(16, 16, [0.5, 0.4, 0.2], 0, 0, -9)
+        panel(12, 6, [0.7, 0.58, 0.3], 0, 7, -2) // overhead: catches the up-facing bevels
         envTex = pmrem.fromScene(studio, 0.04).texture
         pmrem.dispose()
         studio.traverse((o) => {
@@ -1744,6 +1826,8 @@ export default function ConsoleCanvas({
 
     // Repaint the device to a skin. Colors only, no geometry touched, so it's cheap enough to run on
     // every card tap in the studio. emissive tracks the color so the press glow stays in-palette.
+    // Number-wheel digit ink: fixed white, the drum is always the factory dark hardware.
+    const wheelInk = new THREE.Color('#ffffff')
     function applyTheme(t?: ConsoleTheme) {
       if (!t) return
       // Transparent "Clear" skin: FRONT shell is real frosted acrylic via transmission (not a flat alpha film, which just read as a white overlay), so the guts read as diffused frosted plastic under a clearcoat.
@@ -1756,7 +1840,10 @@ export default function ConsoleCanvas({
       matBody.transmission = clear ? 1 : 0
       matBody.opacity = 1
       matBody.roughness = clear ? 0.28 : metal ? 0.3 : 0.82 // the frost: light enough to still read the guts
-      matBody.thickness = clear ? 0.5 : 0
+      // Thickness stays 0 on purpose. Three's transmission samples one screen-space grab of the whole
+      // scene, so any refraction offset also drags the hardware sitting IN FRONT of the shell (the bezel
+      // audio cluster, the caps) into a ghosted second copy below itself. The frost is the roughness blur.
+      matBody.thickness = 0
       matBody.ior = clear ? 1.47 : 1.5
       matBody.metalness = metal ? 1 : 0
       matBody.envMap = env
@@ -1765,8 +1852,8 @@ export default function ConsoleCanvas({
       // blows the highlights to white instead of gold.
       matBody.clearcoat = clear ? 1 : metal ? 0.12 : 0
       matBody.clearcoatRoughness = clear ? 0.18 : metal ? 0.3 : 0
-      matBody.attenuationColor.set(clear ? '#cdd4db' : '#ffffff') // smoke, not milk
-      matBody.attenuationDistance = clear ? 1.8 : Infinity
+      // Volume attenuation needs thickness, so the smoke tint lives on the shell colour instead (below).
+      matBody.attenuationDistance = Infinity
       matBody.needsUpdate = true
       // BACK shell: solid white frosted plastic (the white edition) so the back stays clean and easy to
       // read, and doubles as a bright backplate the guts read against from the front.
@@ -1795,8 +1882,8 @@ export default function ConsoleCanvas({
       matKnobSlab.needsUpdate = true
       internals.group.visible = clear
       // Body color is the flat skin and the pre-load tint; setBodySkin overlays the SVG when present.
-      // Clear keeps it near-white so transmission shows the guts true (the tint is the attenuation).
-      matBody.color.set(clear ? 0xffffff : t.body)
+      // On clear it doubles as the smoke tint the transmitted guts are seen through.
+      matBody.color.set(t.body)
       pendingSkinUrl = t.skin ?? null
       setBodySkin(t.skin)
       matBack.color.set(t.back ?? t.body)
@@ -1821,8 +1908,9 @@ export default function ConsoleCanvas({
       // Raised P tracks the button: a shade darker than the face, its open counter reads as the eye.
       matMainGlyph.color.set(t.main).multiplyScalar(0.7)
       // The action caps are screens, not flat buttons: the theme tone is just their dim idle glow; a
-      // bound game overrides it with the live up/down color (relightActionScreens).
-      actionThemeColor = t.action
+      // bound game overrides it with the live up/down color (relightActionScreens). `glow` only owns
+      // this neutral/idle state, SCREEN_COLORS up/down/amber during play always win.
+      actionThemeColor = t.glow ?? t.action
       relightActionScreens()
       paint(bm[3], t.pills)
       paint(bm[4], t.pills)
@@ -1831,6 +1919,10 @@ export default function ConsoleCanvas({
       menuLbl.recolor(labelColor)
       gamesLbl.recolor(labelColor)
       backMark.recolor(labelColor)
+      // Bezel audio cluster: molded out of the body like the rest of the shell, accented with the
+      // skin's PLAY colour on the note glyph, the level bar and the press glow.
+      bezelAudio.recolor(t.body, t.main, metal, env)
+      // Number wheel stays the factory dark hardware on every skin (wheel customization is retired).
       dirty = true
     }
     applyThemeRef.current = applyTheme
@@ -1848,15 +1940,15 @@ export default function ConsoleCanvas({
       body.geometry.dispose()
       body.geometry = frontZeroed(buildBodyShape(), 0.6, 0.08)
       if (bodySkinTex) fitBodySkin() // re-project the skin onto the new (stretched) body box
-      body.position.y = wy(1130) + screenExt / 2
+      body.position.y = bodyCy(screenExt)
       // back panel tracks the body so it stays a full cover when the screen stretches, keeping the cut logo
       backPanel.geometry.dispose()
       backPanel.geometry = buildBackPanelGeo()
-      backPanel.position.y = wy(1130) + screenExt / 2
+      backPanel.position.y = bodyCy(screenExt)
       // the panel grew taller: re-hug the corner screws + strap to the new edges, regrow the seam
       backDetails.place(BACK_HALF_W, backHalfH(), backFaceLocalZ)
-      backDetails.rebuildSeam(screenExt, wy(1130) + screenExt / 2)
-      internals.group.position.y = wy(1130) + screenExt / 2 // guts ride the body center
+      backDetails.rebuildSeam(screenExt, bodyCy(screenExt))
+      internals.setExt(screenExt) // guts stay deck-anchored; only the side frames grow
     }
 
     // Stretch the screen + body top to `ext` world units past natural, then refresh the projection
@@ -1865,6 +1957,9 @@ export default function ConsoleCanvas({
       if (ext === screenExt) return
       screenExt = ext
       rebuildBodyGeo()
+      // The bezel audio lives on the top bezel, which rises by ext when the screen stretches; ride it up so
+      // the cluster stays glued to the bezel instead of detaching over the screen on tall (mobile) frames.
+      bezelAudio.group.position.y = ext
       screenMesh.geometry.dispose()
       screenMesh.geometry = buildScreenGeo()
       screenWorld = screenWorldPts()
@@ -1892,6 +1987,34 @@ export default function ConsoleCanvas({
     // tiltX/tiltZ = pitch/roll sway (radians). Set any to 0 to drop that axis.
     const FLOAT = { speed: 1.5, bob: 0.15, tiltX: 0.07, tiltZ: 0.05 }
     let floatPhase = 0 // drives the studio idle float
+
+    // Part-focus poses for the customizer: lookX/lookY/camZ frame the part, yaw/pitch angle the deck.
+    // Derived from each control's real wx/wy (BTN_PX / knobPocket / numberWheelPocket above), then
+    // hand-verified on-device: Knob and Wheel sit close together, so each needs to clearly dominate
+    // its own frame rather than showing both at similar weight.
+    const FOCUS: Record<PartId, { x: number; y: number; z: number; yaw: number; pitch: number }> = {
+      // Body barely moves off the studio rest pose (camZ 40 / yaw -0.5): no zoom lunge, just a slight
+      // turn toward the front so the shell color reads.
+      body: { x: 0, y: -3.2, z: 39, yaw: -0.28, pitch: -0.15 },
+      // Play pulls back + swings right so the body's bottom edge clears the tab strip below the canvas.
+      play: { x: 1.2, y: -4.05, z: 24, yaw: -0.5, pitch: -0.08 },
+      buttons: { x: -1.2, y: -6.4, z: 21, yaw: 0.16, pitch: -0.08 },
+      knob: { x: 1.45, y: -5.1, z: 16, yaw: -0.35, pitch: -0.05 },
+      wheel: { x: 0.2, y: -6.5, z: 12, yaw: -0.15, pitch: 0 },
+      glow: { x: -1.2, y: -6.4, z: 25, yaw: 0, pitch: -0.06 },
+    }
+    let focusPart: PartId | null = null
+    // Eased-per-frame pose blend: handles pose->pose and pose->rest without tracking tween state.
+    const focusCur = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, mix: 0 }
+    applyFocusRef.current = (p) => {
+      focusPart = p
+      // A parked spin (device left facing the back) would ride into the part pose via orbitYaw and
+      // frame the wrong side, so a tab tap re-squares the orbit; a fresh drag cancels the settle.
+      if (p) {
+        orbitYaw -= Math.round(orbitYaw / (Math.PI * 2)) * Math.PI * 2 // shortest path home
+        orbitSettle = true
+      }
+    }
 
     // Accelerometer-reactive gold: tilting the phone sweeps the studio env across metallic skins
     // (envMapRotation, not the mesh itself, so it never fights the float/orbit rotation above).
@@ -1923,9 +2046,14 @@ export default function ConsoleCanvas({
       tiltTargetY = clamp((e.gamma - baseGamma) * TILT_GAIN)
     }
     window.addEventListener('deviceorientation', onDeviceOrientation)
-    let introT = customize ? 0 : 1 // 0 → start, 1 → settled
+    // 0 -> start, 1 -> settled. A cold-opened studio (no live device was ever on screen to hand off
+    // from, e.g. a direct/refreshed load straight onto Customize) starts pre-settled: instant=true
+    // skips replaying the app-pose-to-rest zoom-out, which otherwise flashes the device at full live
+    // size before it shrinks. A later park + reopen still replays it (applyActiveRef resets introT).
+    let introT = customize ? (instant ? 1 : 0) : 1
     let orbitYaw = 0 // persists, so you can park it facing back
     let orbitPitch = 0 // eases back to level on release
+    let orbitSettle = false // armed by a part-tab tap: eases a parked spin back to front
     let orbitDrag = false
     let orbitStartX = 0,
       orbitStartY = 0,
@@ -1943,7 +2071,7 @@ export default function ConsoleCanvas({
     const lerp = (a: number, b: number, t: number) => a + (b - a) * t
     const responsiveScreenExt = () => {
       const aspect = Math.max(camera.aspect, 0.0001)
-      return Math.max(0, Math.round((6.2 / aspect - 11.95) * 100) / 100)
+      return Math.max(0, Math.round((6.2 / aspect - BODY_H) * 100) / 100)
     }
     const clamp01 = (t: number) => Math.max(0, Math.min(1, t))
 
@@ -2001,8 +2129,8 @@ export default function ConsoleCanvas({
         const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
         const aspect = Math.max(camera.aspect, 0.0001)
         const ext = responsiveScreenExt()
-        const appCy = wy(1130) + ext / 2
-        const appZ = (ext > 0 ? (6.2 * 0.5) / (tanHalf * aspect) : (11.95 * 0.5) / tanHalf) + DEVICE_Z
+        const appCy = bodyCy(ext)
+        const appZ = (ext > 0 ? (6.2 * 0.5) / (tanHalf * aspect) : (BODY_H * 0.5) / tanHalf) + DEVICE_Z
         lookY = lerp(appCy, CUST.lookY[1], e)
         camZ = lerp(appZ, CUST.camZ[1] * custCam.zoom, e)
         yaw = lerp(0, CUST.yaw[1], e) + orbitYaw * e
@@ -2013,6 +2141,16 @@ export default function ConsoleCanvas({
         yaw = lerp(CUST.yaw[0], CUST.yaw[1], e) + orbitYaw * e
         pitch = lerp(CUST.pitch[0], CUST.pitch[1], e) + orbitPitch * e
       }
+      let lookX = 0
+      if (focusCur.mix > 0.001) {
+        // Part-focus tab: blend toward the framed pose; orbit stays live so a drag still nudges the focused view.
+        const f = focusCur.mix
+        lookX = lerp(0, focusCur.x, f)
+        lookY = lerp(lookY, focusCur.y, f)
+        camZ = lerp(camZ, focusCur.z, f)
+        yaw = lerp(yaw, focusCur.yaw + orbitYaw, f)
+        pitch = lerp(pitch, focusCur.pitch + orbitPitch, f)
+      }
       if (outroActive) {
         // Land on the exact pose the games view computes for this aspect (same cy/d math as the resize handler), so the studio hand-off to the live game device has no jump.
         // The device was stretched to that height when the outro armed.
@@ -2020,18 +2158,19 @@ export default function ConsoleCanvas({
         const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
         const aspect = Math.max(camera.aspect, 0.0001)
         const ext = responsiveScreenExt()
-        const cy = wy(1130) + ext / 2
+        const cy = bodyCy(ext)
         const frontZ =
           (ext > 0
             ? (6.2 * 0.5) / (tanHalf * aspect)
-            : (11.95 * 0.5) / tanHalf) + DEVICE_Z
+            : (BODY_H * 0.5) / tanHalf) + DEVICE_Z
+        lookX = lerp(lookX, 0, o)
         lookY = lerp(lookY, cy, o)
         camZ = lerp(camZ, frontZ, o)
         yaw = lerp(yaw, 0, o)
         pitch = lerp(pitch, 0, o)
       }
-      camera.position.set(0, lookY, camZ)
-      camera.lookAt(0, lookY, 0)
+      camera.position.set(lookX, lookY, camZ)
+      camera.lookAt(lookX, lookY, 0)
       deck.rotation.set(pitch, yaw, 0)
       // Keep the solid back on through the whole spin and only drop it once we're basically front-on,
       // so it doesn't pop while the device is still angled. By then it's occluded anyway.
@@ -2044,12 +2183,12 @@ export default function ConsoleCanvas({
       const tanHalf = Math.tan((camera.fov * Math.PI) / 180 / 2)
       const aspect = Math.max(camera.aspect, 0.0001)
       const ext = responsiveScreenExt()
-      const cy = wy(1130) + ext / 2
+      const cy = bodyCy(ext)
       // 1.25 pulls the camera back so the device sits smaller in frame with breathing room around it.
       const frontZ =
         (ext > 0
           ? (6.2 * 0.5) / (tanHalf * aspect)
-          : (11.95 * 0.5) / tanHalf) * 1.25 + DEVICE_Z
+          : (BODY_H * 0.5) / tanHalf) * 1.25 + DEVICE_Z
       camera.position.set(0, cy, frontZ)
       camera.lookAt(0, cy, 0)
       device.position.y = 0
@@ -2102,7 +2241,7 @@ export default function ConsoleCanvas({
       el.style.setProperty('--screen-content-scale', contentScale.toFixed(4))
       // rim + notch are px in the content's pre-scale space, so divide by the scale to land at the
       // intended physical inset once the transform shrinks everything back down.
-      const scale = (maxX - minX) / (wx(1140) - wx(30))
+      const scale = (maxX - minX) / (wx(SCREEN_R) - wx(SCREEN_L))
       const rimPx = Math.max(16, Math.round(M + 0.33 * scale))
       el.style.setProperty('--screen-rim', `${Math.round(rimPx / contentScale)}px`)
       const notchPx = Math.max(0, Math.round(maxY + M - notchTopY))
@@ -2387,7 +2526,24 @@ export default function ConsoleCanvas({
           },
         })
       : null
-    applyActiveRef.current = () => {
+    // A kept-warm studio parks at the intro start pose whenever it deactivates, so the next reveal's
+    // first frame is already the live app pose and the zoom-out replays like a fresh open, no rebuild.
+    let wasActive = false
+    applyActiveRef.current = (on: boolean) => {
+      if (customize && !on && wasActive) {
+        introT = 0
+        orbitYaw = 0
+        orbitPitch = 0
+        orbitSettle = false
+        floatPhase = 0
+        focusPart = null
+        focusCur.mix = 0
+        device.position.y = 0
+        device.rotation.set(0, 0, 0)
+        relayout(responsiveScreenExt())
+        placeCustomizeCamera()
+      }
+      wasActive = on
       dirty = true
     }
     applyActiveRef.current(activeRef.current)
@@ -2410,6 +2566,19 @@ export default function ConsoleCanvas({
       numberWheelStartValue = 0
     let numberWheelStartPosition = 0
     const NUMBER_WHEEL_PX_PER_STEP = 28
+    let faderDrag = false
+
+    // Raycast the wide fader hit target, map the world hit to the fader's local x, and set the volume.
+    function setFaderFromPointer() {
+      raycaster.setFromCamera(ndc, camera)
+      const h = raycaster.intersectObject(bezelAudio.faderHit, false)
+      if (!h.length) return
+      const local = device.worldToLocal(h[0].point.clone())
+      const v = bezelAudio.pickVolume(local.x)
+      bezelAudio.setVolume(v)
+      setMusicVolume(v) // fader is the music-volume control; the drawer slider mirrors it
+      dirty = true
+    }
 
     function toNDC(e: PointerEvent) {
       const r = renderer.domElement.getBoundingClientRect()
@@ -2433,6 +2602,7 @@ export default function ConsoleCanvas({
         if (outroActive) return
         canvas.setPointerCapture(e.pointerId)
         orbitDrag = true
+        orbitSettle = false // the user grabbed the device, their spin wins over the tab re-square
         orbitStartX = e.clientX
         orbitStartY = e.clientY
         orbitBaseYaw = orbitYaw
@@ -2493,6 +2663,23 @@ export default function ConsoleCanvas({
         knobStartDetent = Math.round(knobOffset / kp.snapInterval)
         knobLastStep = 0
         knobStartValue = state.knob?.value ?? 0
+        return
+      }
+      if (obj.userData.kind === 'volumeFader') {
+        canvas.setPointerCapture(e.pointerId)
+        faderDrag = true
+        haptic('selection')
+        setFaderFromPointer()
+        return
+      }
+      if (obj.userData.kind === 'audioBtn') {
+        canvas.setPointerCapture(e.pointerId)
+        obj.userData.pressed = true
+        obj.userData.pressedAt = performance.now()
+        obj.userData.glow = Math.max(obj.userData.glow, 0.001)
+        active = obj
+        haptic('selection')
+        audio.playSfx('pillPress', 'menu')
         return
       }
       const bi = bm.indexOf(obj)
@@ -2615,12 +2802,18 @@ export default function ConsoleCanvas({
         }
         return
       }
+      if (faderDrag) {
+        setFaderFromPointer()
+        return
+      }
       const target = pick()
       canvas.style.cursor = target
         ? target.userData.kind === 'knob' ||
           target.userData.kind === 'numberWheel'
           ? 'ns-resize'
-          : 'pointer'
+          : target.userData.kind === 'volumeFader'
+            ? 'ew-resize'
+            : 'pointer'
         : 'default'
     }
 
@@ -2639,14 +2832,17 @@ export default function ConsoleCanvas({
         knobTarget = Math.round(knobOffset / kp.snapInterval) * kp.snapInterval
         knobDrag = false
       }
+      if (faderDrag) faderDrag = false
       if (active) {
         const btn = active
         const bi = bm.indexOf(btn)
+        const isAudioBtn = btn.userData.kind === 'audioBtn'
         active = null
         const elapsed = performance.now() - (btn.userData.pressedAt ?? 0)
         const delay = Math.max(0, MIN_PRESS_MS - elapsed)
         const t = setTimeout(() => {
-          if (bi === 0) audio.playSfx('mainRelease', 'main')
+          if (isAudioBtn) audio.playSfx('pillRelease', 'menu')
+          else if (bi === 0) audio.playSfx('mainRelease', 'main')
           else if (bi === 1) audio.playSfx('actionRelease', 'action1')
           else if (bi === 2) audio.playSfx('actionRelease', 'action2')
           else if (bi === 3) audio.playSfx('pillRelease', 'menu')
@@ -2654,6 +2850,7 @@ export default function ConsoleCanvas({
           btn.userData.pressed = false
         }, delay)
         pressTimers.push(t)
+        if (isAudioBtn) openAudioModalRef.current?.()
       }
     }
 
@@ -2797,7 +2994,7 @@ export default function ConsoleCanvas({
       if (debug) {
         // Playground: contain the whole device (with margin), screen at natural height.
         relayout(0)
-        const fitH = (11.95 * 0.5 * 1.06) / tanHalf
+        const fitH = (BODY_H * 0.5 * 1.06) / tanHalf
         const fitW = (6.2 * 0.5 * 1.06) / (tanHalf * camera.aspect)
         camera.position.set(0, 0, Math.max(fitH, fitW) + DEVICE_Z)
         camera.lookAt(0, 0, 0)
@@ -2805,13 +3002,13 @@ export default function ConsoleCanvas({
         // Always fill the width: a frame taller than the device's ratio grows the screen to fill the extra height (control deck keeps its size); a wider frame falls back to contain-by-height so the device gaps at the sides but is never cropped.
         // The resting pose is captured (not applied) here; placeLiveCamera() applies it plus any hero/welcome blend.
         const visibleH = 6.2 / camera.aspect // world height when the device width is fit edge to edge
-        const ext = Math.max(0, Math.round((visibleH - 11.95) * 100) / 100)
+        const ext = Math.max(0, Math.round((visibleH - BODY_H) * 100) / 100)
         relayout(ext)
-        const cy = wy(1130) + ext / 2 // device center after the top extension
+        const cy = bodyCy(ext) // device center after the top extension
         const d =
           ext > 0
             ? (6.2 * 0.5) / (tanHalf * camera.aspect) // fill width
-            : (11.95 * 0.5) / tanHalf // contain by height (wider frame)
+            : (BODY_H * 0.5) / tanHalf // contain by height (wider frame)
         restCamPos.set(0, cy, d + DEVICE_Z)
         restLook.set(0, cy, 0)
       }
@@ -2831,6 +3028,7 @@ export default function ConsoleCanvas({
     }
     const ro = new ResizeObserver(() => resize())
     if (rootRef.current) ro.observe(rootRef.current)
+    yield // chunk: input handlers + gui wiring
     resize()
     applyView(viewRef.current)
 
@@ -2950,9 +3148,32 @@ export default function ConsoleCanvas({
           }
         } else if (orbitDrag) {
           animating = true
-        } else if (Math.abs(orbitPitch) > 0.0006) {
-          orbitPitch += (0 - orbitPitch) * Math.min(1, dt * 5) // level out the tilt on release
-          animating = true
+        } else {
+          if (Math.abs(orbitPitch) > 0.0006) {
+            orbitPitch += (0 - orbitPitch) * Math.min(1, dt * 5) // level out the tilt on release
+            animating = true
+          }
+          // Tab-armed re-square: ease a parked spin back to front so the part pose frames the part.
+          if (orbitSettle) {
+            if (Math.abs(orbitYaw) > 0.0006) {
+              orbitYaw += (0 - orbitYaw) * Math.min(1, dt * 5)
+              animating = true
+            } else {
+              orbitYaw = 0
+              orbitSettle = false
+            }
+          }
+        }
+        // Part-focus blend: eases toward the tabbed part's pose, or back to 0 (rest) when cleared.
+        const focusTgt = focusPart ? FOCUS[focusPart] : null
+        const focusK = reducedMotionRef.current ? 1 : Math.min(1, dt * 5)
+        focusCur.mix += ((focusTgt ? 1 : 0) - focusCur.mix) * focusK
+        if (focusTgt) {
+          focusCur.x += (focusTgt.x - focusCur.x) * focusK
+          focusCur.y += (focusTgt.y - focusCur.y) * focusK
+          focusCur.z += (focusTgt.z - focusCur.z) * focusK
+          focusCur.yaw += (focusTgt.yaw - focusCur.yaw) * focusK
+          focusCur.pitch += (focusTgt.pitch - focusCur.pitch) * focusK
         }
         if (animating) placeCustomizeCamera()
       } else if (!debug) {
@@ -3034,7 +3255,7 @@ export default function ConsoleCanvas({
 
       interactive.forEach((o) => {
         const d = o.userData
-        if (d.kind === 'numberWheel' || d.kind === 'knob') return
+        if (d.kind === 'numberWheel' || d.kind === 'knob' || d.kind === 'volumeFader') return
         const targetZ = d.pressed ? d.pressedZ : d.baseZ
         if (Math.abs(targetZ - o.position.z) > 0.0002) animating = true
         o.position.z += (targetZ - o.position.z) * Math.min(1, dt * 20)
@@ -3170,7 +3391,7 @@ export default function ConsoleCanvas({
     }
     loop()
 
-    return () => {
+    disposeScene = () => {
       cancelAnimationFrame(rafId)
       timer.dispose()
       canvas.removeEventListener('pointerdown', onPointerDown)
@@ -3194,10 +3415,13 @@ export default function ConsoleCanvas({
       applyActiveRef.current = () => {}
       overlayPressRef.current = null
       applyStageRef.current = () => {}
+      applyFocusRef.current = () => {}
       gui?.destroy()
       disposeActionScreens()
       backDetails.dispose()
       internals.dispose()
+      bezelAudio.dispose()
+      bezelAudioRef.current = null // a late audio-store push must not poke a torn-down scene
       matMetal.dispose()
       matSeam.dispose()
       matBackRecess.dispose()
@@ -3210,6 +3434,55 @@ export default function ConsoleCanvas({
       screenTex?.dispose()
       renderer.dispose()
       audio.dispose()
+    }
+    } // end buildSteps expression
+
+    const it = buildSteps()
+    const finishNow = () => {
+      buildStarted = true
+      let r = it.next()
+      while (!r.done) r = it.next()
+    }
+
+    if (!customize) {
+      // Live shell (and debug/export): drain in one go, exactly the old synchronous build.
+      finishNow()
+    } else {
+      // Studio warm: one chunk per idle callback so the menu stays responsive; the timeout still
+      // forces progress under load. A Customize tap mid-warm flushes the remainder inline.
+      const w = window as Window & {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+        cancelIdleCallback?: (id: number) => void
+      }
+      const schedule = (cb: () => void) =>
+        w.requestIdleCallback ? w.requestIdleCallback(cb, { timeout: 500 }) : window.setTimeout(cb, 40)
+      const cancelScheduled = (id: number) =>
+        w.cancelIdleCallback ? w.cancelIdleCallback(id) : window.clearTimeout(id)
+      const pump = () => {
+        if (buildDisposed) return
+        buildStarted = true
+        if (!it.next().done) buildIdleId = schedule(pump)
+      }
+      buildIdleId = schedule(pump)
+      flushBuildRef.current = () => {
+        if (buildDisposed || disposeScene) return
+        cancelScheduled(buildIdleId)
+        finishNow()
+      }
+    }
+
+    return () => {
+      buildDisposed = true
+      flushBuildRef.current = () => {}
+      if (buildIdleId) {
+        const w = window as Window & { cancelIdleCallback?: (id: number) => void }
+        if (w.cancelIdleCallback) w.cancelIdleCallback(buildIdleId)
+        else window.clearTimeout(buildIdleId)
+      }
+      // StrictMode's probe unmount lands before the first chunk (nothing to free). A real teardown
+      // mid-build finishes the remaining steps so every GPU resource exists, then disposes them all.
+      if (buildStarted && !disposeScene) finishNow()
+      disposeScene?.()
     }
     // Scene is built once per mode; live bindings flow through refs + the effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3232,6 +3505,7 @@ export default function ConsoleCanvas({
 
   // Arm / disarm the Done outro.
   useEffect(() => {
+    if (outro) flushBuildRef.current()
     applyOutroRef.current(outro)
   }, [outro])
 
@@ -3240,7 +3514,14 @@ export default function ConsoleCanvas({
     applyStageRef.current(stage)
   }, [stage])
 
+  // Customize only: ease the studio camera onto the tabbed part (or back to rest).
   useEffect(() => {
+    applyFocusRef.current(focusPart)
+  }, [focusPart])
+
+  useEffect(() => {
+    // A reveal mid-warm can't wait for idle chunks: finish the build inline, then activate.
+    if (active) flushBuildRef.current()
     applyActiveRef.current(active)
   }, [active])
 
@@ -3377,6 +3658,12 @@ export default function ConsoleCanvas({
             style={{ position: 'absolute', left: 0, top: 0, width: 0, height: 0, pointerEvents: 'none' }}
           />
         </div>
+      )}
+
+      {/* Sounds drawer, opened by the bezel audio button. App chrome, not device: the studio and the
+          offscreen share-card render mount outside the app providers, and it reads auth via useReducedMotion. */}
+      {!customize && !exportMode && (
+        <SoundsDrawer isOpen={audioModal.isOpen} onClose={() => audioModal.setOpen(false)} />
       )}
     </div>
   )
