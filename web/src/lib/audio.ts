@@ -1,7 +1,12 @@
-// App-level audio mixer + background-music player. Sits above sound.ts (the synth stings) and
-// consoleAudio.ts (the device SFX): it owns the two user-facing volumes and the music transport.
-// The old per-game synth beds are unlinked (GAME_BEDS_ENABLED in sound.ts); background music is one
-// mp3 played here.
+// App-level audio mixer + background-music player. It owns the two user-facing volumes and the music
+// transport. The old per-game synth beds are unlinked (GAME_BEDS_ENABLED in sound.ts); background
+// music is one mp3 played here.
+//
+// Three buses, and only two of them are user-facing:
+//   1. Device SFX (consoleAudio.ts) - button, knob, roller. FIXED level, no fader. They are the
+//      hardware's own feel, so they always cut through, same as a real handheld's clicks.
+//   2. Game sounds (sound.ts) - win, lose, achievement, slot ticks. The sound-effects fader.
+//   3. Music (here) - the mp3 bed. Its own fader, capped well under the other two.
 //
 // The transport skips PARTS of that one track, not tracks. Left alone, playback rolls from part to
 // part with no seam (it is a single file) and loops back to the top at the end. Skip forward stops at
@@ -10,23 +15,26 @@
 
 import { useSyncExternalStore } from 'react'
 import { setSynthSfxVolume } from './sound'
-import { setDeviceSfxVolume } from '@/components/console/consoleAudio'
 
 const BGM_SRC = '/sounds/PIPS_BGM.mp3'
 
-// The parts of the track, by start time in seconds (timed off the mix). Names read as the stem names
-// they are; the transport shows one at a time, so it looks like a playlist.
+// The parts of the track, by start time in seconds (timed off the mix). The transport shows one at a
+// time, so it reads like a playlist.
 const PARTS = [
   { at: 0, title: 'PIPS - Intro' },
-  { at: 32.78, title: 'PIPS - Main A' },
-  { at: 57.6, title: 'PIPS - High D 2' },
+  { at: 32.78, title: 'PIPS - Build' },
+  { at: 57.6, title: 'PIPS - Drop' },
   { at: 98.46, title: 'PIPS - Outro' },
 ]
 
-// The music bus tops out here, not at unity. The mix is hot (~-20 dBFS RMS) and the console SFX are
-// short transients on a separate bus, so a full-scale bed would bury every click. This keeps the
-// fader's whole travel under the SFX, so even at max the buttons read clearly.
+// The music bus tops out here, not at unity. The mix is hot (~-20 dBFS RMS) and both SFX buses are
+// short transients, so a full-scale bed would bury every click. This keeps the fader's whole travel
+// under them: even at max, a button press sits well on top.
 const MUSIC_CEILING = 0.4
+
+// Where the faders sit by default, and where the drawer's reset puts them back. Tuned against the
+// fixed device level so nothing masks anything.
+export const RECOMMENDED = { sfx: 1, music: 0.72 }
 
 const SFX_KEY = 'pips_sfx_vol'
 const MUSIC_KEY = 'pips_music_vol'
@@ -51,8 +59,8 @@ function persist(key: string, value: number): void {
   }
 }
 
-let sfxVolume = load(SFX_KEY, 1)
-let musicVolume = load(MUSIC_KEY, 0.72)
+let sfxVolume = load(SFX_KEY, RECOMMENDED.sfx)
+let musicVolume = load(MUSIC_KEY, RECOMMENDED.music)
 let playing = false
 let partIndex = 0
 
@@ -166,13 +174,13 @@ export function getMusicVolume(): number {
   return musicVolume
 }
 
+// Scales the game stings only. Device SFX are fixed, see the header.
 export function setSfxVolume(v: number): void {
   v = clamp01(v)
   if (v === sfxVolume) return
   sfxVolume = v
   persist(SFX_KEY, sfxVolume)
   setSynthSfxVolume(sfxVolume)
-  setDeviceSfxVolume(sfxVolume)
   emit()
 }
 
@@ -183,6 +191,11 @@ export function setMusicVolume(v: number): void {
   persist(MUSIC_KEY, musicVolume)
   applyVolume()
   emit()
+}
+
+export function resetVolumes(): void {
+  setSfxVolume(RECOMMENDED.sfx)
+  setMusicVolume(RECOMMENDED.music)
 }
 
 export function togglePlay(): void {
@@ -219,10 +232,9 @@ export function useAudioState(): AudioSnapshot {
   return useSyncExternalStore(subscribeAudio, () => snapshot, () => snapshot)
 }
 
-// Seed the SFX backends with the persisted volume at import time (before their gain nodes exist, the
-// setters just stash the scale and apply it when the node is first created).
+// Seed the sting bus with the persisted volume at import time (before its gain node exists, the
+// setter just stashes the scale and applies it when the node is first created).
 setSynthSfxVolume(sfxVolume)
-setDeviceSfxVolume(sfxVolume)
 
 // Fetch the track once the boot is out of the way, so ~1.8MB never competes with the first paint or
 // the 3D scene. Pressing play earlier still works, it just streams from the url that first time.

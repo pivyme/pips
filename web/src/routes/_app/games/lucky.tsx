@@ -302,7 +302,12 @@ function LuckyScreen() {
     },
     [track],
   )
-  const { restorePending } = useRestoreOpenPlay({ game: 'lucky', active: phase !== 'idle', onRestore: restoreOpenPlay })
+  const { restorePending } = useRestoreOpenPlay({
+    game: 'lucky',
+    active: phase !== 'idle',
+    fallbackDurationSec: ROUND_SEC,
+    onRestore: restoreOpenPlay,
+  })
 
   // Bed rides the whole round: fades in as reels deal, out the moment the phase leaves the live window.
   // finishResult also cuts it so the sting lands over silence. Bright + bouncy, the counterpart to Range's tension.

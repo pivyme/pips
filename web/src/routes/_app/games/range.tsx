@@ -270,9 +270,11 @@ function RangeScreen() {
   const settlingWave = soonestExpiry != null && soonestExpiry <= nowMs && openPos.length > 0
 
   // Restore the board left riding when the screen was last open (navigated Home and back). Runs once. Drops any
-  // mid-mint chip with no playId (its placePlay promise died with the old mount, unrecoverable), and re-seeds the
-  // key counter above the restored chips so a fresh PLAY can't collide. The PositionWatch list re-attaches an SSE +
-  // watchdog to every restored open play, so open positions reconcile to chain truth instead of showing a stale mark.
+  // mid-mint chip with no playId (its placePlay promise died with the old mount, unrecoverable), plus anything
+  // already resolved or past its buzzer: that round is over, and its watcher would refetch the settled play and
+  // replay the win/lose wave on a screen you just opened. Those still settle server-side, into history.
+  // Re-seeds the key counter above the restored chips so a fresh PLAY can't collide. The PositionWatch list
+  // re-attaches an SSE + watchdog to every restored open play, so it reconciles to chain truth, not a stale mark.
   const restoredRef = useRef(false)
   useEffect(() => {
     if (restoredRef.current) return
@@ -284,8 +286,9 @@ function RangeScreen() {
     } catch {
       /* corrupt store: start clean */
     }
-    const usable = saved.filter((p) => p.playId)
-    if (!usable.length) return
+    const now = Date.now()
+    const usable = saved.filter((p) => p.playId && isLive(p) && p.expiry != null && p.expiry > now)
+    if (!usable.length) return // the persist effect below rewrites the empty board, so a finished one can't come back
     keySeq.current = usable.reduce((m, p) => Math.max(m, keyIndex(p.key)), -1) + 1
     setPositions(usable)
   }, [])

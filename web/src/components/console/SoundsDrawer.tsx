@@ -2,18 +2,20 @@
 // music) plus a Now Playing transport. Music volume is the same value the 3D bezel fader drives, so
 // the two stay in sync. Styled as App Surface (rounded cards), amber accent to match the console.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Music, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-react'
+import { Music, Pause, Play, RotateCcw, SkipBack, SkipForward, Volume2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import {
   next,
   prev,
+  resetVolumes,
   setMusicVolume,
   setSfxVolume,
   togglePlay,
   useAudioState,
 } from '@/lib/audio'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
+import { haptic } from '@/lib/haptics'
 import { Hw3DFader, Hw3DIconButton } from '@/ui/Hardware3D'
 
 const AMBER = '#f5a623'
@@ -133,8 +135,9 @@ export function SoundsDrawer({ isOpen, onClose }: { isOpen: boolean; onClose: ()
           Sounds
         </h2>
 
-        <Section label="Sound Effects">
-          <FaderRow icon={Volume2} value={state.sfxVolume} onChange={setSfxVolume} label="Sound effects volume" />
+        {/* Game stings only. The console's own clicks and detents run at a fixed level, like real hardware. */}
+        <Section label="SFX">
+          <FaderRow icon={Volume2} value={state.sfxVolume} onChange={setSfxVolume} label="SFX volume" />
         </Section>
 
         <Section label="Background Music">
@@ -168,6 +171,19 @@ export function SoundsDrawer({ isOpen, onClose }: { isOpen: boolean; onClose: ()
             </div>
           </div>
         </Section>
+
+        {/* Quiet escape hatch, not a call to action. */}
+        <button
+          type="button"
+          onClick={() => {
+            haptic('selection')
+            resetVolumes()
+          }}
+          className="mx-auto mt-6 flex w-fit items-center gap-1.5 px-2 py-1 text-[12px] text-text-3 transition-colors hover:text-text-2"
+        >
+          <RotateCcw size={12} strokeWidth={2.2} />
+          Reset to recommended
+        </button>
       </div>
     </div>
   )

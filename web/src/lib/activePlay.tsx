@@ -1,12 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, streamPlay, type Game, type PlayStatus } from '@/lib/api'
+import { roundEndAt } from '@/hooks/useGameRound'
 
 export type TrackedPlay = { id: string; game: Game }
 export type ActivePlay = TrackedPlay & { status: PlayStatus | null; pnl: string | null }
 
 // How long a terminal state holds in the chip before clearing, so a settle landing while you're elsewhere still gets a reveal, not an instant vanish.
 const TERMINAL_HOLD_MS = 4000
+// Round length assumed when a seeded play carries no minted expiry yet; the longest game round, so the guard errs toward keeping a live play.
+const SEED_FALLBACK_SEC = 60
 export const PLAY_TERMINAL = new Set<PlayStatus>(['won', 'lost', 'cashed_out', 'error'])
 
 interface Ctx {
@@ -32,14 +35,16 @@ export function ActivePlayProvider({ children }: { children: ReactNode }) {
   // Re-seed from the durable open-plays list on mount, so the chip + off-screen settle toast survive a hard
   // refresh (the in-memory tracking above is lost on reload). Only seeds when nothing is already tracked (the
   // functional update makes it a no-op if a game screen tracked a fresh mint first); the stream below fills in
-  // status/pnl. Range plays are skipped: it manages its own stacked board, the chip can't represent it.
+  // status/pnl. Range plays are skipped: it manages its own stacked board, the chip can't represent it. A round
+  // already past its buzzer is skipped too, so a stale open row can't pop a settle toast for a round you finished ages ago.
   useEffect(() => {
     let cancelled = false
     api
       .plays({ status: 'open', limit: 30 })
       .then(({ plays }) => {
         if (cancelled || !plays.length) return
-        const open = plays.find((p) => p.game !== 'range')
+        const now = Date.now()
+        const open = plays.find((p) => p.game !== 'range' && roundEndAt(p, SEED_FALLBACK_SEC) > now)
         if (!open) return
         setTracked((cur) => cur ?? { id: open.id, game: open.game })
       })

@@ -16,6 +16,7 @@ import { NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
+import { roundEndAt } from '@/hooks/useGameRound'
 import { cnm } from '@/utils/style'
 import { displayHandle } from '@/utils/format'
 
@@ -29,6 +30,8 @@ const RIM = 'px-[var(--screen-rim,24px)]'
 // A little breathing room up top so the status strip doesn't kiss the bevel, kept small so the last minigame clears the bottom-right body.
 const RIM_T = 'pt-[calc(var(--screen-rim,24px)_+_6px)]'
 const RIM_B = 'pb-[var(--screen-rim,24px)]'
+// Round length assumed when an open play has no minted expiry yet (the sub-second pending window); the longest game round.
+const ROUND_FALLBACK_SEC = 60
 
 type GameDef = { to: string; icon: LucideIcon | string; name: string; tag: string }
 
@@ -71,7 +74,9 @@ function GamesConsole() {
     staleTime: 3000,
     retry: false,
   })
-  const openPlays = openPlaysQ.data?.plays ?? []
+  // Past its buzzer the round is over even while the row still reads 'open' (settlement lands a beat later), and
+  // the game screens no longer restore one, so the flag would promise a live board that isn't there.
+  const openPlays = (openPlaysQ.data?.plays ?? []).filter((p) => roundEndAt(p, ROUND_FALLBACK_SEC) > Date.now())
   const inPlayFor = (to: string): boolean =>
     to === '/games/lucky'
       ? openPlays.some((p) => p.game === 'lucky')

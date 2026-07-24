@@ -333,7 +333,12 @@ function MoonshotScreen() {
     },
     [track],
   )
-  const { restorePending } = useRestoreOpenPlay({ game: 'moonshot', active: phase !== 'idle', onRestore: restoreOpenPlay })
+  const { restorePending } = useRestoreOpenPlay({
+    game: 'moonshot',
+    active: phase !== 'idle',
+    fallbackDurationSec: NOMINAL_ROUND_SEC,
+    onRestore: restoreOpenPlay,
+  })
 
   // The bed rides the active window (placing -> open) and cuts the moment it resolves so the sting lands clean. Tense + punchy, the ignition counterpart to Lucky's funk and Range's dark techno.
   const bedPlaying = phase === 'placing' || phase === 'open'

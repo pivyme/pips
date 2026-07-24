@@ -872,8 +872,10 @@ export function createBezelAudio(
   device: THREE.Group, interactive: THREE.Mesh[], wx: Px, wy: Px,
 ) {
   const AMBER = 0xf5a623
-  const BTN = { x: 88, y: -18 } // top-left bezel, design px (y centres the cluster in the visible bezel band)
-  const TRK = { x: 286, y: -20 } // slider sits right next to the button, both hugging the left
+  // Cluster position in design px. y is measured DOWN the layout (wy flips it), so a smaller/more
+  // negative y sits HIGHER on the bezel. ~200 px = 1 world unit; the button is 46 px tall.
+  const BTN = { x: 88, y: -26 } // top-left bezel, the button's vertical
+  const TRK = { x: 286, y: -26 } // slider sits right next to the button, both hugging the left
   const HOUSE_W = 1.28 // slider plate width (world units)
   const trackY = wy(TRK.y) // slider vertical
   const btnY = wy(BTN.y) // button vertical (independent of the slider so each can be nudged on its own)

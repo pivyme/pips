@@ -69,17 +69,11 @@ function between(min: number, max: number) {
   return min + Math.random() * (max - min)
 }
 
-// Master level for device SFX; the button/knob/roller samples decode at full scale and would drown out sound.ts's synth audio otherwise.
+// Master level for device SFX; the button/knob/roller samples decode at full scale and would drown out
+// sound.ts's synth audio otherwise. Deliberately FIXED: these are the hardware's own clicks and
+// detents, part of how the device feels, so they sit outside the user's sound-effects fader (that one
+// rides the game stings in sound.ts). Tuned to stay clearly on top of the music bed.
 const SFX_LEVEL = 0.25
-
-// User SFX volume (0..1), applied on top of SFX_LEVEL. Tracked at module scope so the sounds drawer
-// (via lib/audio.ts) can scale every live master gain, whichever createAudio instance owns it.
-let sfxScale = 1
-const liveMasters = new Set<GainNode>()
-export function setDeviceSfxVolume(v: number): void {
-  sfxScale = Math.max(0, Math.min(1, v))
-  for (const m of liveMasters) m.gain.value = SFX_LEVEL * sfxScale
-}
 
 export function createAudio() {
   let actx: AudioContext | null = null
@@ -172,16 +166,14 @@ export function createAudio() {
   function resumeAudio() {
     // Backgrounding a standalone PWA can drain the context to 'closed' under memory pressure, leaving stale silent no-ops forever if not rebuilt.
     if (actx && actx.state === 'closed') {
-      if (master) liveMasters.delete(master)
       actx = null
       master = null
     }
     if (!actx) {
       actx = new AudioContext()
       master = actx.createGain()
-      master.gain.value = SFX_LEVEL * sfxScale
+      master.gain.value = SFX_LEVEL
       master.connect(actx.destination)
-      liveMasters.add(master)
       loadSfx()
     }
     // iOS Safari has a non-standard 'interrupted' state beyond the spec's suspended/running/closed
@@ -212,7 +204,6 @@ export function createAudio() {
     tone,
     chord,
     dispose() {
-      if (master) liveMasters.delete(master)
       actx?.close()
     },
   }
