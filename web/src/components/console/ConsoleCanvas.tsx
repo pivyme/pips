@@ -957,7 +957,7 @@ export default function ConsoleCanvas({
 
     // Dev playground only: the bezel audio controls (top-left press button + volume fader), modelled into
     // the shell. Pressed/dragged through the same raycast loop as the buttons; gated so the live app is untouched.
-    const bezelAudio = debug ? createBezelAudio(device, interactive, matPocket, wx, wy) : null
+    const bezelAudio = debug ? createBezelAudio(device, interactive, wx, wy) : null
 
     // Canvas-texture label. Static caption (makeLabel) or live, updatable (makeDynLabel).
     function drawLabel(

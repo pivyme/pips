@@ -7,6 +7,7 @@ import { env } from '@/env'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { SocialFooter } from '@/components/SocialFooter'
+import { Hw3DButton } from '@/ui/Hardware3D'
 import { isDemo, setDemoOverride } from '@/lib/demo'
 import { accessGuardEnabled, isUnlocked, tryUnlock } from '@/lib/accessGuard'
 import { api } from '@/lib/api'
@@ -223,22 +224,17 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
 
         {inviteText && <p className="mt-4 text-[13px] font-bold text-brand-500">{inviteText}</p>}
 
-        <div className="relative pointer-events-auto mt-6 w-full">
-          <button
-            type="button"
-            onClick={() => void onCta()}
-            disabled={busy}
-            className="btn-primary pointer-events-none flex h-14 w-full items-center justify-center rounded-full text-lg disabled:opacity-70"
+        <div className="pointer-events-auto mt-6 w-full">
+          <Hw3DButton
+            variant="primary"
+            wide
+            loading={busy}
+            haptic="rigid"
+            onPress={() => void onCta()}
+            className="h-14 text-lg"
           >
             {label}
-          </button>
-          <HapticOverlay
-            className="absolute inset-0 rounded-full"
-            preset="rigid"
-            disabled={busy}
-            silent
-            onTap={() => void onCta()}
-          />
+          </Hw3DButton>
         </div>
 
         {/* Connect Sui Wallet button hidden for now. Uncomment to bring native wallet connect back.

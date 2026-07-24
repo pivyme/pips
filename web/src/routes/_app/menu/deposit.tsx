@@ -8,6 +8,7 @@ import { AssetPicker } from '@/components/menu/deposit/AssetPicker'
 import { ReceivePanel } from '@/components/menu/deposit/ReceivePanel'
 import { BridgePanel } from '@/components/menu/deposit/BridgePanel'
 import { Alert } from '@/ui/Alert'
+import { Hw3DButton } from '@/ui/Hardware3D'
 import { useAuth } from '@/lib/auth'
 import { api, ApiError } from '@/lib/api'
 import type { DepositOptionsDTO, WalletTxDTO } from '@/lib/api'
@@ -145,14 +146,9 @@ export function DepositContent() {
             <span className="h-px flex-1 bg-white/[0.08]" />
           </div>
 
-          <button
-            onClick={claim}
-            disabled={claiming || !user}
-            className="btn-primary flex h-12 items-center justify-center gap-2 rounded-card text-[15px] font-semibold disabled:opacity-60"
-          >
-            <Coins className="h-[18px] w-[18px]" strokeWidth={2.4} />
+          <Hw3DButton variant="primary" wide icon={Coins} loading={claiming} disabled={!user} onPress={() => void claim()}>
             {claiming ? 'Sending…' : `Get ${Number(options.faucetAmount)} test ${options.chipSymbol}`}
-          </button>
+          </Hw3DButton>
           <p className="px-1 text-[13px] leading-snug text-text-3">
             Instant test {options.chipSymbol} on {NETWORK_LABEL}. One batch per minute.
           </p>

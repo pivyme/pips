@@ -12,7 +12,7 @@ import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { Modal, useOverlayState } from '@/ui/Modal'
-import { Switch } from '@/ui/Switch'
+import { Hw3DButton, Hw3DToggle } from '@/ui/Hardware3D'
 import { renderPlayCard, sharePlayCard } from '@/lib/playCard'
 import { preloadPlayCardAssets } from '@/lib/cardAssets'
 import { cnm } from '@/utils/style'
@@ -292,13 +292,10 @@ function HistoryPage() {
               <div className="text-[14px] font-bold text-text">Show devnet history</div>
               <div className="mt-0.5 text-[12px] leading-snug text-text-3">Your older plays from before the testnet move.</div>
             </div>
-            <Switch
+            <Hw3DToggle
               label="Show devnet history"
               isSelected={showDevnet}
-              onChange={(v) => {
-                haptic('selection')
-                setShowDevnet(v)
-              }}
+              onChange={setShowDevnet}
             />
           </div>
         )}
@@ -524,16 +521,9 @@ function PlayDetailModal({
             <div className="text-[15px] font-bold text-white">{positive ? 'Share your gain' : 'Share your rekt'}</div>
             <div className="mt-0.5 text-[12px] leading-snug text-text-3">Turn this play into a card.</div>
           </div>
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              className="btn-primary pointer-events-none flex items-center gap-2 rounded-full px-5 py-2.5 text-[13px] font-extrabold uppercase tracking-wide"
-            >
-              <Share2 className="h-[15px] w-[15px]" strokeWidth={2.6} />
-              Share
-            </button>
-            <HapticOverlay className="absolute inset-0 rounded-full" preset="medium" silent onTap={onShare} />
-          </div>
+          <Hw3DButton size="sm" variant="primary" icon={Share2} haptic="medium" onPress={onShare} className="shrink-0">
+            Share
+          </Hw3DButton>
         </div>
 
         {/* The technical record, collapsed by default. */}
@@ -645,27 +635,19 @@ function PlayShareModal({ play, isOpen, onOpenChange }: { play: PlayDTO; isOpen:
             <div className="text-[14px] font-bold text-white">Show PnL value</div>
             <div className="mt-0.5 text-[12px] leading-snug text-text-3">Your net dollar PnL on the card.</div>
           </div>
-          <Switch
-            label="Show PnL value"
-            isSelected={showPnl}
-            onChange={(v) => {
-              haptic('selection')
-              setShowPnl(v)
-            }}
-          />
+          <Hw3DToggle label="Show PnL value" isSelected={showPnl} onChange={setShowPnl} />
         </div>
 
-        <div className="relative">
-          <button
-            type="button"
-            disabled={sharing}
-            className="btn-primary pointer-events-none flex w-full items-center justify-center gap-2 rounded-md py-3.5 text-[15px] font-extrabold uppercase tracking-wide disabled:opacity-70"
-          >
-            {sharing ? <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={2.6} /> : <Share2 className="h-[18px] w-[18px]" strokeWidth={2.6} />}
-            {sharing ? 'Making your card' : 'Share card'}
-          </button>
-          <HapticOverlay className="absolute inset-0 rounded-md" preset="medium" disabled={sharing} silent onTap={() => void doShare()} />
-        </div>
+        <Hw3DButton
+          variant="primary"
+          wide
+          loading={sharing}
+          icon={Share2}
+          haptic="medium"
+          onPress={() => void doShare()}
+        >
+          {sharing ? 'Making your card' : 'Share card'}
+        </Hw3DButton>
       </div>
     </Modal>
   )

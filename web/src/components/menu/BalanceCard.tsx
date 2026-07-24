@@ -5,12 +5,12 @@ import { useAuth } from '@/lib/auth'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { prepareMenuTransition } from '@/components/menu/shared'
 import { haptic } from '@/lib/haptics'
-import { openMoneyModal, type MoneyView } from '@/lib/moneyModalBus'
 import { Hw3DButton } from '@/ui/Hardware3D'
 import { formatCompactMoney } from '@/utils/format'
 
 // The money card: balance headline (DUSDC chips) on the left, a history button top-right that pushes the
-// Wallet Activity page, and Deposit / Send below (those open a centered money modal).
+// Wallet Activity page, and Deposit / Send below. All three push their own menu page (native drawer feel),
+// no modals.
 export function BalanceCard() {
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -55,8 +55,8 @@ export function BalanceCard() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <MoneyButton view="deposit" icon={ArrowDownToLine} label="Deposit" primary />
-          <MoneyButton view="send" icon={ArrowUpFromLine} label="Send" />
+          <MoneyButton to="/menu/deposit" icon={ArrowDownToLine} label="Deposit" primary />
+          <MoneyButton to="/menu/withdraw" icon={ArrowUpFromLine} label="Send" iconOnly />
         </div>
       </div>
     </div>
@@ -64,25 +64,33 @@ export function BalanceCard() {
 }
 
 function MoneyButton({
-  view,
+  to,
   icon,
   label,
   primary = false,
+  iconOnly = false,
 }: {
-  view: MoneyView
+  to: '/menu/deposit' | '/menu/withdraw'
   icon: LucideIcon
   label: string
   primary?: boolean
+  iconOnly?: boolean
 }) {
+  const navigate = useNavigate()
   return (
     <Hw3DButton
       size="sm"
       variant={primary ? 'primary' : 'neutral'}
       icon={icon}
       haptic={primary ? 'medium' : 'selection'}
-      onPress={() => openMoneyModal(view)}
+      onPress={() => {
+        prepareMenuTransition('forward')
+        void navigate({ to, viewTransition: true })
+      }}
+      aria-label={iconOnly ? label : undefined}
+      className={iconOnly ? 'w-9 px-0' : undefined}
     >
-      {label}
+      {iconOnly ? undefined : label}
     </Hw3DButton>
   )
 }

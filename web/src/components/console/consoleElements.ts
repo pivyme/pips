@@ -824,9 +824,9 @@ function noteTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas')
   c.width = c.height = 128
   const x = c.getContext('2d')!
-  x.shadowColor = 'rgba(245,166,35,0.85)'
-  x.shadowBlur = 9
-  x.fillStyle = '#ffd25e'
+  x.shadowColor = 'rgba(120,104,66,0.5)'
+  x.shadowBlur = 5
+  x.fillStyle = '#8f7f58' // muted taupe: reads as a soft engraving on the cream cap, not a bright accent
   const head = (cx: number, cy: number) => {
     x.save()
     x.translate(cx, cy)
@@ -852,87 +852,91 @@ function noteTexture(): THREE.CanvasTexture {
   return t
 }
 
-// Bezel audio cluster, modelled into the shell (not a DOM overlay): a round press button with a glowing
-// note glyph + a Game Boy style volume fader (recessed track, amber level fill, a proud ridged cap that
-// slides). The button presses through the shared interactive loop; the cap drags via `setVolume`. Design px
-// centres, world-unit sizes. AMBER matches the app's one accent.
+// Bezel audio cluster, modelled into the shell (not a DOM overlay): a round press button with a note glyph
+// + a Game Boy style volume slider (a recessed slot in a plate, with a proud ridged cap that slides). The
+// whole thing is tone-on-tone with the cream body so it never distracts, depth reads from shadow not colour.
+// Sits tight in the top-left bezel, sized to stay within the bezel strip. The button presses through the
+// shared interactive loop; the cap drags via `setVolume`. Design px centres, world-unit sizes.
 export function createBezelAudio(
-  device: THREE.Group, interactive: THREE.Mesh[], matPocket: THREE.Material, wx: Px, wy: Px,
+  device: THREE.Group, interactive: THREE.Mesh[], wx: Px, wy: Px,
 ) {
   const AMBER = 0xf5a623
-  const BTN = { x: 232, y: -22 } // top-left bezel, design px
-  const TRK = { x: 648, y: -22 }
-  const HOUSE_W = 1.5
+  const BTN = { x: 88, y: -30 } // top-left bezel, design px (y centres the cluster in the bezel strip)
+  const TRK = { x: 286, y: -30 } // slider sits right next to the button, both hugging the left
+  const HOUSE_W = 1.28 // slider plate width (world units)
   const trackY = wy(TRK.y)
   const cx = wx(TRK.x)
-  const travel = HOUSE_W - 0.26 // cap centre range, inset from the housing rims
+  const CAP_W = 0.24
+  const travel = HOUSE_W - CAP_W - 0.12 // cap centre range, inset from the slot rims
   const leftX = cx - travel / 2
-  const fillLeft = cx - HOUSE_W / 2 + 0.11 // amber fill visually starts inside the left rim
 
-  const matHousing = new THREE.MeshStandardMaterial({ color: 0x22242a, roughness: 0.62, metalness: 0.1 })
-  const matCap = new THREE.MeshStandardMaterial({ color: 0x565b63, roughness: 0.36, metalness: 0.45 })
+  // Tone-on-tone with the cream body: the whole cluster stays broken-white so it never distracts. Depth
+  // reads from geometry + shadow, not colour, so recesses are a shadowed cream, never black.
+  const CREAM = 0xe9dbbf
+  const matShell = new THREE.MeshStandardMaterial({ color: CREAM, roughness: 0.78, metalness: 0 })
+  const matRecess = new THREE.MeshStandardMaterial({ color: 0xcdbf9e, roughness: 0.9, metalness: 0 })
+  const matSlot = new THREE.MeshStandardMaterial({ color: 0xc2b389, roughness: 0.92, metalness: 0 })
+  const matCap = new THREE.MeshStandardMaterial({ color: 0xf1e6cd, roughness: 0.6, metalness: 0 })
+  const matGroove = new THREE.MeshStandardMaterial({ color: 0xc9ba95, roughness: 0.7, metalness: 0 })
   const matBtn = new THREE.MeshStandardMaterial({
-    color: 0x33373d, roughness: 0.5, metalness: 0.2,
-    emissive: new THREE.Color(AMBER), emissiveIntensity: 0,
-  })
-  const matFill = new THREE.MeshStandardMaterial({
-    color: AMBER, emissive: new THREE.Color(AMBER), emissiveIntensity: 0.95, roughness: 0.4,
-  })
-  const matIndex = new THREE.MeshStandardMaterial({
-    color: AMBER, emissive: new THREE.Color(AMBER), emissiveIntensity: 1, roughness: 0.4,
+    color: 0xece0c6, roughness: 0.68, metalness: 0,
+    emissive: new THREE.Color(AMBER), emissiveIntensity: 0, // warms only on press, cream at rest
   })
 
-  /* ── audio button ── */
+  /* ── audio button ── cream cap in a tight recessed socket ── */
   const bx = wx(BTN.x)
-  const socket = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(0.5, 0.5, 0.14), 32), matPocket)
-  socket.position.set(bx, trackY, 0.02)
+  const socket = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(0.34, 0.34, 0.11), 32), matRecess)
+  socket.position.set(bx, trackY, 0.015)
   socket.receiveShadow = true
   device.add(socket)
 
-  const audioBtn = new THREE.Mesh(frontZeroed(roundedRect(0.38, 0.38, 0.11), 0.14, 0.03), matBtn)
-  audioBtn.position.set(bx, trackY, 0.18)
+  const audioBtn = new THREE.Mesh(frontZeroed(roundedRect(0.29, 0.29, 0.09), 0.08, 0.02), matBtn)
+  audioBtn.position.set(bx, trackY, 0.1)
   audioBtn.castShadow = true
-  audioBtn.userData = { kind: 'audioBtn', pressed: false, baseZ: 0.18, pressedZ: 0.06, glow: 0, baseEmissive: 0 }
+  audioBtn.userData = { kind: 'audioBtn', pressed: false, baseZ: 0.1, pressedZ: 0.035, glow: 0, baseEmissive: 0 }
   device.add(audioBtn)
   interactive.push(audioBtn)
 
   const note = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.28, 0.28),
+    new THREE.PlaneGeometry(0.2, 0.2),
     new THREE.MeshBasicMaterial({ map: noteTexture(), transparent: true, depthWrite: false }),
   )
-  note.position.set(0, 0.01, 0.075) // on the cap face, rides the press
+  note.position.set(0, 0.01, 0.05) // on the cap face, rides the press
   audioBtn.add(note)
 
-  /* ── volume fader ── */
-  const housing = new THREE.Mesh(frontZeroed(roundedRect(HOUSE_W, 0.3, 0.14), 0.1, 0.02), matHousing)
-  housing.position.set(cx, trackY, 0.08)
-  housing.castShadow = true
-  housing.receiveShadow = true
-  device.add(housing)
+  /* ── volume slider ── graphite plate with a black slot recessed through it ── */
+  const plateShape = roundedRect(HOUSE_W, 0.26, 0.1)
+  plateShape.holes.push(roundedRectPath(0, 0, HOUSE_W - 0.16, 0.18, 0.08)) // the slot cutout
+  const plate = new THREE.Mesh(frontZeroed(plateShape, 0.04, 0.012), matShell)
+  plate.position.set(cx, trackY, 0.06)
+  plate.castShadow = true
+  plate.receiveShadow = true
+  device.add(plate)
 
-  // recessed groove floor (darker inset the fill + cap ride in)
-  const groove = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(HOUSE_W - 0.16, 0.13, 0.06), 24), matPocket)
-  groove.position.set(cx, trackY, 0.085)
-  device.add(groove)
+  // black slot floor, set below the plate front so the channel reads recessed
+  const slot = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(HOUSE_W - 0.16, 0.18, 0.08), 24), matSlot)
+  slot.position.set(cx, trackY, 0.025)
+  slot.receiveShadow = true
+  device.add(slot)
 
-  const fill = new THREE.Mesh(new THREE.BoxGeometry(1, 0.1, 0.03), matFill) // unit width, scaled by setVolume
-  fill.position.set(cx, trackY, 0.1)
-  device.add(fill)
-
-  const faderCap = new THREE.Mesh(frontZeroed(roundedRect(0.15, 0.36, 0.05), 0.13, 0.02), matCap)
-  faderCap.position.set(cx, trackY, 0.2)
+  /* silver cap, overhangs the slot top and bottom like the Game Boy fader */
+  const faderCap = new THREE.Mesh(frontZeroed(roundedRect(CAP_W, 0.32, 0.04), 0.06, 0.015), matCap)
+  faderCap.position.set(cx, trackY, 0.14)
   faderCap.castShadow = true
   device.add(faderCap)
-  const index = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.26, 0.02), matIndex)
-  index.position.set(0, 0, 0.075)
-  faderCap.add(index)
+  // three vertical grip grooves cut into the cap face
+  for (let i = -1; i <= 1; i++) {
+    const groove = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.21, 0.02), matGroove)
+    groove.position.set(i * 0.062, 0, 0.02)
+    faderCap.add(groove)
+  }
 
-  // wide invisible hit target over the whole track, so a click or drag anywhere positions the cap
+  // wide invisible hit target over the whole slot, so a click or drag anywhere positions the cap
   const hit = new THREE.Mesh(
-    new THREE.BoxGeometry(HOUSE_W + 0.12, 0.46, 0.04),
+    new THREE.BoxGeometry(HOUSE_W + 0.12, 0.42, 0.04),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
   )
-  hit.position.set(cx, trackY, 0.2)
+  hit.position.set(cx, trackY, 0.16)
   hit.userData = { kind: 'volumeFader' }
   device.add(hit)
   interactive.push(hit)
@@ -940,11 +944,7 @@ export function createBezelAudio(
   let volume = 0.72
   function setVolume(v: number) {
     volume = Math.max(0, Math.min(1, v))
-    const capX = leftX + volume * travel
-    faderCap.position.x = capX
-    const w = Math.max(0.0001, capX - fillLeft)
-    fill.scale.x = w
-    fill.position.x = (fillLeft + capX) / 2
+    faderCap.position.x = leftX + volume * travel
   }
   const pickVolume = (localX: number) => Math.max(0, Math.min(1, (localX - leftX) / travel))
   setVolume(volume)

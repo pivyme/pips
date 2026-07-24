@@ -654,37 +654,37 @@
       0 0 14px -2px rgba(245, 166, 35, 0.5);
   }
 
-  /* Destructive key. Always faintly lit red, brightens under the finger. */
+  /* Destructive key. Always faintly lit red, brightens under the finger. Same coral-red as btn-danger. */
   .hw3d-key-danger {
     color: #2a0603;
     background:
-      radial-gradient(130% 84% at 50% -16%, rgba(255, 255, 255, 0.3) 0%, transparent 56%),
-      linear-gradient(180deg, #ff8f84 0%, #ec4a3c 48%, #c22a1e 100%);
+      radial-gradient(130% 84% at 50% -16%, rgba(255, 255, 255, 0.34) 0%, transparent 56%),
+      linear-gradient(180deg, #ff9a8d 0%, #ff6b5a 46%, #e2392c 100%);
     box-shadow:
-      inset 0 1.5px 0.5px rgba(255, 255, 255, 0.46),
-      inset 0 -3px 6px rgba(103, 14, 9, 0.5),
+      inset 0 1.5px 0.5px rgba(255, 255, 255, 0.48),
+      inset 0 -3px 6px rgba(103, 14, 9, 0.42),
       0 2px 0 rgba(76, 9, 6, 0.65),
       0 6px 14px -3px rgba(0, 0, 0, 0.6),
-      0 0 11px -3px rgba(236, 74, 60, 0.32);
+      0 0 11px -3px rgba(255, 108, 90, 0.4);
   }
   .hw3d-key-danger:not(:disabled):hover {
     transform: translateY(-1px);
     filter: brightness(1.05);
     box-shadow:
-      inset 0 1.5px 0.5px rgba(255, 255, 255, 0.46),
-      inset 0 -3px 6px rgba(103, 14, 9, 0.5),
+      inset 0 1.5px 0.5px rgba(255, 255, 255, 0.48),
+      inset 0 -3px 6px rgba(103, 14, 9, 0.42),
       0 3px 0 rgba(76, 9, 6, 0.65),
       0 10px 20px -4px rgba(0, 0, 0, 0.62),
-      0 0 20px -2px rgba(236, 74, 60, 0.55);
+      0 0 20px -2px rgba(255, 108, 90, 0.6);
   }
   .hw3d-key-danger:not(:disabled):active {
     transform: translateY(1.5px);
     filter: none;
-    background: linear-gradient(180deg, #c73a2d 0%, #a82a20 60%, #8c2016 100%);
+    background: linear-gradient(180deg, #dd4b3c 0%, #c23528 60%, #a02a1e 100%);
     box-shadow:
       inset 0 2px 5px rgba(45, 6, 3, 0.7),
       0 1px 2px rgba(0, 0, 0, 0.4),
-      0 0 14px -2px rgba(236, 74, 60, 0.45);
+      0 0 14px -2px rgba(255, 108, 90, 0.5);
   }
 
   /* Round key sunk into a dark socket (the audio-cluster press button). */

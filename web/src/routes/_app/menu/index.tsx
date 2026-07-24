@@ -15,7 +15,7 @@ import { useTour } from '@/components/console/tour'
 import { StatsCard, StatsCardSkeleton } from '@/components/menu/StatsCard'
 import { Avatar } from '@/components/Avatar'
 import { SocialFooter } from '@/components/SocialFooter'
-import { Button } from '@/ui/Button'
+import { Hw3DButton } from '@/ui/Hardware3D'
 import { Illo } from '@/ui/Illo'
 import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import {
@@ -62,19 +62,10 @@ function MenuHome() {
           <HowItWorksRow />
           <AboutRow />
         </div>
-        <div className="relative mt-16 w-full">
-          <Button
-            variant="danger"
-            onClick={() => {
-              haptic('rigid')
-              signOut()
-            }}
-            className="pointer-events-none h-14 w-full rounded-card text-sm"
-          >
-            <LogOut className="h-5 w-5" strokeWidth={2.4} />
+        <div className="mt-16 w-full">
+          <Hw3DButton variant="danger" wide icon={LogOut} haptic="rigid" onPress={signOut}>
             Log out
-          </Button>
-          <HapticOverlay className="absolute inset-0 rounded-card" preset="rigid" silent onTap={signOut} />
+          </Hw3DButton>
         </div>
         <MenuFooter />
       </div>
@@ -205,21 +196,9 @@ function StatsSection() {
           </div>
           <div className="text-sm text-text-3">No plays yet. Make your first play.</div>
         </div>
-        <div className="relative">
-          <Link
-            to="/games"
-            onClick={() => haptic('medium')}
-            className="pointer-events-none btn-primary flex rounded-full px-4 py-2 text-xs font-extrabold uppercase tracking-wide"
-          >
-            Play
-          </Link>
-          <HapticOverlay
-            className="absolute inset-0 rounded-full"
-            preset="medium"
-            silent
-            onTap={() => void navigate({ to: '/games' })}
-          />
-        </div>
+        <Hw3DButton size="sm" variant="primary" haptic="medium" onPress={() => void navigate({ to: '/games' })}>
+          Play
+        </Hw3DButton>
       </div>
     )
   }

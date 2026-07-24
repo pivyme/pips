@@ -6,13 +6,12 @@ import toast from 'react-hot-toast'
 import { isValidSuiAddress, normalizeSuiAddress } from '@mysten/sui/utils'
 import { MenuScreen, prepareMenuTransition } from '@/components/menu/shared'
 import { CoinLogo } from '@/components/menu/deposit/CoinLogo'
-import { Button } from '@/ui/Button'
+import { Hw3DButton } from '@/ui/Hardware3D'
 import { ApiError, api } from '@/lib/api'
 import type { WalletCoinDTO } from '@/lib/api'
 import { walletCoinsQuery } from '@/lib/menuQueries'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
-import { HapticOverlay } from '@/components/HapticOverlay'
 import { formatStringToNumericDecimals, serializeFormattedStringToFloat } from '@/utils/format'
 import { cnm } from '@/utils/style'
 
@@ -21,7 +20,7 @@ import { cnm } from '@/utils/style'
 // token pick + a validated amount + a recipient.
 export const Route = createFileRoute('/_app/menu/withdraw')({
   component: () => (
-    <MenuScreen title="Send">
+    <MenuScreen title="Send funds">
       <SendForm />
     </MenuScreen>
   ),
@@ -163,12 +162,9 @@ export function SendForm({ onClose }: { onClose?: () => void } = {}) {
         <div className="card-neo rounded-card p-5">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">Amount</span>
-            <div className="relative inline-block">
-              <button className="pointer-events-none rounded-full bg-white/[0.06] px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-500 transition-transform active:scale-95">
-                Max
-              </button>
-              <HapticOverlay className="absolute inset-0 rounded-full" preset="selection" silent onTap={setMax} />
-            </div>
+            <Hw3DButton size="sm" onPress={setMax} className="h-7 px-3 text-[11px] text-brand-500">
+              Max
+            </Hw3DButton>
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <input
@@ -207,13 +203,18 @@ export function SendForm({ onClose }: { onClose?: () => void } = {}) {
           )}
         </div>
 
-        <div className="relative h-14 w-full">
-          <Button onClick={submit} disabled={!canSubmit} loading={submitting} className="pointer-events-none h-14 w-full rounded-card">
-            <ArrowUpFromLine className="h-5 w-5" strokeWidth={2.6} />
-            {amountOk ? `Send ${amount} ${selected.symbol}` : 'Send'}
-          </Button>
-          <HapticOverlay className="absolute inset-0 rounded-card" preset="medium" disabled={!canSubmit} silent onTap={() => void submit()} />
-        </div>
+        <Hw3DButton
+          variant="primary"
+          wide
+          icon={ArrowUpFromLine}
+          disabled={!canSubmit}
+          loading={submitting}
+          haptic="medium"
+          onPress={() => void submit()}
+          className="h-14"
+        >
+          {amountOk ? `Send ${amount} ${selected.symbol}` : 'Send'}
+        </Hw3DButton>
 
         <p className="px-1 text-[13px] leading-snug text-text-3">
           {selected.isChip
