@@ -8,9 +8,8 @@ import '../dotenv.ts';
 
 import { prismaQuery } from '../src/lib/prisma.ts';
 import { operatorAddress } from '../src/lib/sui/signer.ts';
-import { ORACLES } from '../src/lib/sui/config.ts';
 import { STARTING_BALANCE, SUI_NETWORK } from '../src/config/main-config.ts';
-import { getDusdcBalance, mintDusdc } from '../src/lib/sui/dusdc.ts';
+import { getDusdcBalance, transferDusdc } from '../src/lib/sui/dusdc.ts';
 import { ACHIEVEMENT_CATALOG } from '../src/services/achievements.ts';
 
 // DUSDC display units -> 6dp base units.
@@ -77,8 +76,8 @@ async function main(): Promise<void> {
     const have = await getDusdcBalance(operatorAddress);
     const shortfall = STARTING_BALANCE - have;
     if (shortfall > 1) {
-      const digest = await mintDusdc(operatorAddress, shortfall);
-      console.log(`[seed] minted ${shortfall.toFixed(2)} DUSDC chips to the dev wallet (${digest})`);
+      const digest = await transferDusdc(operatorAddress, shortfall);
+      console.log(`[seed] sent ${shortfall.toFixed(2)} DUSDC chips to the dev wallet from treasury (${digest})`);
     } else {
       console.log(`[seed] dev wallet already holds ${have.toFixed(2)} DUSDC, no top-up needed`);
     }
@@ -104,7 +103,7 @@ async function main(): Promise<void> {
 
   // Recent play history. oracleId is display-only here; no fake tx digests (explorer links
   // only render for real on-chain plays).
-  const oracleId = ORACLES[0]?.oracleId ?? '0xseed';
+  const oracleId = '0xseed';
   for (const p of PLAYS) {
     const openedAt = hoursAgo(p.h);
     const settledAt = new Date(openedAt.getTime() + p.dur * 1000);
