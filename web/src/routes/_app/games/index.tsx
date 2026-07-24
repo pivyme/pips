@@ -327,8 +327,22 @@ function MarqueeTextActive({ text, className }: { text: string; className: strin
   // Speed scales with distance so a longer tag doesn't fly past, plus a hold at each end to actually read it.
   const duration = 1.6 + overflow / 30
 
+  // The fade eases in (via the --marquee-fade-w transition in styles.css) once the text is actually
+  // moving: hold off through the keyframe's opening pause (0-10% of duration) so a freshly-selected row
+  // reads its full tag edge-to-edge first, then the fade grows in rather than popping in.
+  const [moving, setMoving] = useState(false)
+  useEffect(() => {
+    if (!scrolls) {
+      setMoving(false)
+      return
+    }
+    setMoving(false)
+    const t = setTimeout(() => setMoving(true), duration * 1000 * 0.1)
+    return () => clearTimeout(t)
+  }, [scrolls, duration])
+
   return (
-    <div ref={outerRef} className={cnm('overflow-hidden', scrolls && 'marquee-fade', className)}>
+    <div ref={outerRef} className={cnm('overflow-hidden', scrolls && 'marquee-mask', moving && 'marquee-fade', className)}>
       <span
         ref={innerRef}
         className={cnm('inline-block whitespace-nowrap', scrolls && 'marquee-bounce')}

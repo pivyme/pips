@@ -18,6 +18,7 @@ import {
   createActionScreens,
   createBackDetails,
   createInternals,
+  createBezelAudio,
 } from './consoleElements'
 import { createAudio } from './consoleAudio'
 import { unlockAudio } from '@/lib/sound'
@@ -953,6 +954,10 @@ export default function ConsoleCanvas({
       wy,
       body.position.z,
     )
+
+    // Dev playground only: the bezel audio controls (top-left press button + volume fader), modelled into
+    // the shell. Pressed/dragged through the same raycast loop as the buttons; gated so the live app is untouched.
+    const bezelAudio = debug ? createBezelAudio(device, interactive, matPocket, wx, wy) : null
 
     // Canvas-texture label. Static caption (makeLabel) or live, updatable (makeDynLabel).
     function drawLabel(
@@ -2492,6 +2497,18 @@ export default function ConsoleCanvas({
       numberWheelStartValue = 0
     let numberWheelStartPosition = 0
     const NUMBER_WHEEL_PX_PER_STEP = 28
+    let faderDrag = false
+
+    // Raycast the wide fader hit target, map the world hit to the fader's local x, and set the volume.
+    function setFaderFromPointer() {
+      if (!bezelAudio) return
+      raycaster.setFromCamera(ndc, camera)
+      const h = raycaster.intersectObject(bezelAudio.faderHit, false)
+      if (!h.length) return
+      const local = device.worldToLocal(h[0].point.clone())
+      bezelAudio.setVolume(bezelAudio.pickVolume(local.x))
+      dirty = true
+    }
 
     function toNDC(e: PointerEvent) {
       const r = renderer.domElement.getBoundingClientRect()
@@ -2576,6 +2593,23 @@ export default function ConsoleCanvas({
         knobStartDetent = Math.round(knobOffset / kp.snapInterval)
         knobLastStep = 0
         knobStartValue = state.knob?.value ?? 0
+        return
+      }
+      if (obj.userData.kind === 'volumeFader') {
+        canvas.setPointerCapture(e.pointerId)
+        faderDrag = true
+        haptic('selection')
+        setFaderFromPointer()
+        return
+      }
+      if (obj.userData.kind === 'audioBtn') {
+        canvas.setPointerCapture(e.pointerId)
+        obj.userData.pressed = true
+        obj.userData.pressedAt = performance.now()
+        obj.userData.glow = Math.max(obj.userData.glow, 0.001)
+        active = obj
+        haptic('selection')
+        audio.playSfx('pillPress', 'menu')
         return
       }
       const bi = bm.indexOf(obj)
@@ -2698,12 +2732,18 @@ export default function ConsoleCanvas({
         }
         return
       }
+      if (faderDrag) {
+        setFaderFromPointer()
+        return
+      }
       const target = pick()
       canvas.style.cursor = target
         ? target.userData.kind === 'knob' ||
           target.userData.kind === 'numberWheel'
           ? 'ns-resize'
-          : 'pointer'
+          : target.userData.kind === 'volumeFader'
+            ? 'ew-resize'
+            : 'pointer'
         : 'default'
     }
 
@@ -2722,6 +2762,7 @@ export default function ConsoleCanvas({
         knobTarget = Math.round(knobOffset / kp.snapInterval) * kp.snapInterval
         knobDrag = false
       }
+      if (faderDrag) faderDrag = false
       if (active) {
         const btn = active
         const bi = bm.indexOf(btn)
@@ -3141,7 +3182,7 @@ export default function ConsoleCanvas({
 
       interactive.forEach((o) => {
         const d = o.userData
-        if (d.kind === 'numberWheel' || d.kind === 'knob') return
+        if (d.kind === 'numberWheel' || d.kind === 'knob' || d.kind === 'volumeFader') return
         const targetZ = d.pressed ? d.pressedZ : d.baseZ
         if (Math.abs(targetZ - o.position.z) > 0.0002) animating = true
         o.position.z += (targetZ - o.position.z) * Math.min(1, dt * 20)

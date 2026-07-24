@@ -6,8 +6,8 @@ import { HapticOverlay } from '@/components/HapticOverlay'
 import { prepareMenuTransition } from '@/components/menu/shared'
 import { haptic } from '@/lib/haptics'
 import { openMoneyModal, type MoneyView } from '@/lib/moneyModalBus'
+import { Hw3DButton } from '@/ui/Hardware3D'
 import { formatCompactMoney } from '@/utils/format'
-import { cnm } from '@/utils/style'
 
 // The money card: balance headline (DUSDC chips) on the left, a history button top-right that pushes the
 // Wallet Activity page, and Deposit / Send below (those open a centered money modal).
@@ -65,7 +65,7 @@ export function BalanceCard() {
 
 function MoneyButton({
   view,
-  icon: Icon,
+  icon,
   label,
   primary = false,
 }: {
@@ -75,23 +75,14 @@ function MoneyButton({
   primary?: boolean
 }) {
   return (
-    <div className="relative h-11">
-      <button
-        type="button"
-        className={cnm(
-          'pointer-events-none flex h-11 items-center gap-1 rounded-xl px-2.5 text-[11px] font-extrabold uppercase tracking-wide',
-          primary ? 'btn-primary' : 'border border-white/10 bg-white/[0.05] text-text',
-        )}
-      >
-        <Icon className="h-[14px] w-[14px]" strokeWidth={2.6} />
-        {label}
-      </button>
-      <HapticOverlay
-        className="absolute inset-0 rounded-xl"
-        preset={primary ? 'medium' : 'selection'}
-        silent
-        onTap={() => openMoneyModal(view)}
-      />
-    </div>
+    <Hw3DButton
+      size="sm"
+      variant={primary ? 'primary' : 'neutral'}
+      icon={icon}
+      haptic={primary ? 'medium' : 'selection'}
+      onPress={() => openMoneyModal(view)}
+    >
+      {label}
+    </Hw3DButton>
   )
 }

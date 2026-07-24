@@ -5,6 +5,7 @@ import { Check, Copy, ExternalLink, MoreHorizontal, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { MenuScreen, ScreenError } from '@/components/menu/shared'
 import { Modal, useOverlayState } from '@/ui/Modal'
+import { Hw3DButton } from '@/ui/Hardware3D'
 import { api, ApiError, type ReferralClaimDTO } from '@/lib/api'
 import { referralQuery } from '@/lib/menuQueries'
 import { useAuth } from '@/lib/auth'
@@ -130,24 +131,16 @@ function ReferralsScreen() {
               {/* Amount + Claim share one row: the number leads, the button sits right. Compact. */}
               <div className="mt-2 flex items-center justify-between gap-4">
                 <div className="tnum text-[38px] font-black leading-none text-white">{usd(info.claimable)}</div>
-                <div className="relative shrink-0">
-                  <button
-                    type="button"
-                    disabled={!canClaim || claiming}
-                    className={cnm(
-                      'pointer-events-none flex h-[46px] items-center justify-center rounded-xl px-6 text-[15px] font-extrabold',
-                      canClaim ? 'btn-primary' : 'btn-muted',
-                    )}
-                  >
-                    {claiming ? 'Claiming…' : 'Claim'}
-                  </button>
-                  <HapticOverlay
-                    className="absolute inset-0 rounded-xl"
-                    preset="success"
-                    disabled={!canClaim || claiming}
-                    onTap={claim}
-                  />
-                </div>
+                <Hw3DButton
+                  variant="primary"
+                  disabled={!canClaim}
+                  loading={claiming}
+                  haptic="success"
+                  onPress={() => void claim()}
+                  className="shrink-0 px-6"
+                >
+                  Claim
+                </Hw3DButton>
               </div>
               {!canClaim && (
                 <p className="mt-2.5 text-[12px] leading-snug text-brand-300/60">

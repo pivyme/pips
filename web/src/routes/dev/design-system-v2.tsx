@@ -2,6 +2,7 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
+  Bell,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -10,18 +11,25 @@ import {
   ExternalLink,
   History,
   LogOut,
+  Trash2,
+  Music,
   MoreHorizontal,
+  Play,
+  Settings,
   Share2,
   Sparkles,
   Vibrate,
   Volume2,
   X,
+  Zap,
 } from 'lucide-react'
 import { useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { UserStatsDTO } from '@/lib/api'
 import { StatsCard, StatsCardSkeleton } from '@/components/menu/StatsCard'
+import { AudioControl } from '@/components/console/AudioControl'
+import { Hw3DButton, Hw3DIconButton, Hw3DPanel, Hw3DToggle } from '@/ui/Hardware3D'
 import { ScreenEmpty, ScreenError } from '@/components/menu/shared'
 import { Avatar } from '@/components/Avatar'
 import { XGlyph } from '@/components/menu/BrandGlyphs'
@@ -152,6 +160,12 @@ function DesignSystemV2() {
         <Section eyebrow="States" title="Empty, Error, Loading">
           <Frame>
             <StatesShowcase />
+          </Frame>
+        </Section>
+
+        <Section eyebrow="Hardware" title="3D UI">
+          <Frame>
+            <Hardware3DShowcase />
           </Frame>
         </Section>
       </main>
@@ -1096,6 +1110,84 @@ function StatesShowcase() {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ── 3D UI (the tactile hardware kit) ─────────────────────────────────────────
+
+function KitLabel({ children }: { children: ReactNode }) {
+  return <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">{children}</span>
+}
+
+function Hardware3DShowcase() {
+  const [sound, setSound] = useState(true)
+  const [haptics, setHaptics] = useState(true)
+  const [motion, setMotion] = useState(false)
+  return (
+    <div className="flex flex-col gap-7">
+      {/* Keys: the metallic domed buttons in every variant. */}
+      <div className="flex flex-col gap-3">
+        <KitLabel>Keys</KitLabel>
+        <div className="flex flex-wrap items-center gap-3">
+          <Hw3DButton icon={Play}>Play</Hw3DButton>
+          <Hw3DButton variant="primary" icon={Zap}>Commit</Hw3DButton>
+          <Hw3DButton variant="danger" icon={Trash2}>Delete</Hw3DButton>
+          <Hw3DButton disabled>Disabled</Hw3DButton>
+        </div>
+        <Hw3DButton variant="primary" wide icon={Zap}>Wide Commit Key</Hw3DButton>
+        <Hw3DButton wide>Wide Neutral Key</Hw3DButton>
+      </div>
+
+      {/* Socketed round keys: the audio-cluster press button, generalized. */}
+      <div className="flex flex-col gap-3">
+        <KitLabel>Socket keys</KitLabel>
+        <div className="flex items-center gap-4">
+          <Hw3DIconButton icon={Music} label="Audio" />
+          <Hw3DIconButton icon={Settings} label="Settings" />
+          <Hw3DIconButton icon={Bell} label="Alerts" accent="#34d399" />
+          <Hw3DIconButton icon={Play} label="Play" size={54} />
+        </div>
+      </div>
+
+      {/* Toggles: the proud slide switch, groove lights amber on. */}
+      <div className="flex flex-col gap-3">
+        <KitLabel>Toggles</KitLabel>
+        <Hw3DPanel className="flex flex-col gap-0.5 p-1.5">
+          <Hw3DToggleRow icon={Volume2} title="Sound" on={sound} onChange={setSound} />
+          <Hw3DToggleRow icon={Vibrate} title="Haptics" on={haptics} onChange={setHaptics} />
+          <Hw3DToggleRow icon={Sparkles} title="Reduced motion" on={motion} onChange={setMotion} />
+        </Hw3DPanel>
+      </div>
+
+      {/* Panel: the machined bezel plate, and the original audio cluster on it. */}
+      <div className="flex flex-col gap-3">
+        <KitLabel>Panel + audio cluster</KitLabel>
+        <div className="flex justify-center">
+          <AudioControl />
+        </div>
+        <Caption>The bezel button + Game Boy fader this whole kit is built from.</Caption>
+      </div>
+    </div>
+  )
+}
+
+function Hw3DToggleRow({
+  icon: Icon,
+  title,
+  on,
+  onChange,
+}: {
+  icon: LucideIcon
+  title: string
+  on: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-[13px] px-3 py-2.5">
+      <Icon size={17} className="shrink-0 text-white/70" strokeWidth={2.2} />
+      <span className="flex-1 text-[15px] font-bold text-white/90">{title}</span>
+      <Hw3DToggle label={title} isSelected={on} onChange={onChange} />
     </div>
   )
 }
