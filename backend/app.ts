@@ -31,6 +31,8 @@ import { startDepositCleanupWorker } from './src/workers/depositCleanup.ts';
 import { startSettleWorker } from './src/workers/settle.ts';
 import { startMarketSync } from './src/workers/market-sync.ts';
 import { startPriceWarmer } from './src/workers/price-warmer.ts';
+import { startTokenWorker } from './src/workers/token-worker.ts';
+import { startWalletIndexer } from './src/workers/wallet-indexer.ts';
 import { startBinance } from './src/lib/binance-ws.ts';
 
 import { warmExecuteCaches } from './src/lib/sui/execute.ts';
@@ -324,6 +326,11 @@ const start = async (): Promise<void> => {
     // Keeps every display asset's Pyth spot pre-warmed so a cold WS asset loop never blocks its first
     // broadcast on a live Hermes fetch (the LUCKY non-BTC reel-lag fix). Runs on every instance.
     startPriceWarmer();
+    // Token metadata/price cache refresh (send picker + activity feed logos), off the request path.
+    startTokenWorker();
+    // Wallet activity indexer: presence-gated address scanner that records deposits/sends to the WalletTx
+    // ledger, plus an hourly reconcile self-heal. Real networks only; no-op when nobody is online.
+    startWalletIndexer();
 
     await fastify.listen({
       port: APP_PORT,

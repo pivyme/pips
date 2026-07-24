@@ -205,7 +205,42 @@ export type WithdrawResult = { user: UserDTO; digest: string }
 export interface WithdrawInput {
   recipient: string
   amount: string
+  coinType?: string // omit to send DUSDC chips; set to send any other held coin (token recovery)
 }
+
+// One coin the wallet holds, for the send picker + balance list. amount is display units; usdValue/priceUsd
+// are null when the price is unknown (the UI hides value then, never shows $0 or $NaN).
+export interface WalletCoinDTO {
+  coinType: string
+  symbol: string
+  name: string | null
+  decimals: number
+  logo: string | null
+  amount: string
+  amountRaw: string
+  priceUsd: string | null
+  usdValue: string | null
+  isChip: boolean // true for DUSDC (the balance headline)
+}
+
+// One row in the wallet activity feed. direction + kind drive the glyph/title; explorerUrl opens the tx.
+export interface WalletTxDTO {
+  id: string
+  direction: 'in' | 'out'
+  kind: 'receive' | 'send' | 'faucet' | 'grant' | 'bridge'
+  coinType: string
+  symbol: string | null
+  logo: string | null
+  amount: string
+  decimals: number
+  counterparty: string | null
+  digest: string
+  chain: string // source chain label ('sui', or a bridge origin like 'base')
+  status: 'confirmed' | 'pending'
+  timestampMs: string
+  explorerUrl: string
+}
+export type WalletTransactionsQuery = { limit?: number; cursor?: string | null }
 // POST /wallet/request-dusdc -> the refreshed user, the amount handed out, and the tx digest.
 export type FaucetResult = { user: UserDTO; amount: string; digest: string }
 // POST /wallet/grant -> the refreshed user + the DUSDC just granted (null when skipped: already funded, on
@@ -440,6 +475,17 @@ const realApi = {
   requestDusdc: () => request<FaucetResult>('POST', '/wallet/request-dusdc', {}),
   // Top up a player who can't afford the minimum stake back to the starting grant (guarded server-side).
   grantChips: () => request<GrantResult>('POST', '/wallet/grant', {}),
+  // Every coin the wallet holds (send picker + balance list), and the DB-backed activity feed.
+  walletCoins: () => request<{ coins: WalletCoinDTO[] }>('GET', '/wallet/coins'),
+  walletTransactions: (q: WalletTransactionsQuery = {}) => {
+    const params = new URLSearchParams()
+    if (q.limit) params.set('limit', String(q.limit))
+    if (q.cursor) params.set('cursor', q.cursor)
+    const qs = params.toString()
+    return request<{ transactions: WalletTxDTO[]; nextCursor: string | null }>('GET', `/wallet/transactions${qs ? `?${qs}` : ''}`)
+  },
+  // On-demand deposit scan (the deposit-watch poll): returns any new incoming rows since `sinceMs`.
+  walletSync: (input: { sinceMs?: number } = {}) => request<{ received: WalletTxDTO[] }>('POST', '/wallet/sync', input),
 
   // deposit. toAddress is never sent: the server stamps it from the authed user, and supplying one is refused.
   depositOptions: () => request<DepositOptionsDTO>('GET', '/deposit/options'),

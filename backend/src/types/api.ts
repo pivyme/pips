@@ -136,6 +136,39 @@ export interface WithdrawResult {
   digest: string;
 }
 
+// One coin the wallet holds, resolved + priced, for the send picker + balance list. amount/amountRaw are the
+// token's own decimals; usdValue/priceUsd are null when the price is unknown (never shown as $0 or $NaN).
+export interface WalletCoinDTO {
+  coinType: string;
+  symbol: string;
+  name: string | null;
+  decimals: number;
+  logo: string | null;
+  amount: string; // display units
+  amountRaw: string; // base units
+  priceUsd: string | null;
+  usdValue: string | null;
+  isChip: boolean; // true for DUSDC (the balance headline)
+}
+
+// One row in the wallet activity feed. Direction + kind drive the glyph/title; explorerUrl opens the tx.
+export interface WalletTxDTO {
+  id: string;
+  direction: 'in' | 'out';
+  kind: 'receive' | 'send' | 'faucet' | 'grant' | 'bridge';
+  coinType: string;
+  symbol: string | null;
+  logo: string | null;
+  amount: string; // display units, decimals-aware
+  decimals: number;
+  counterparty: string | null;
+  digest: string;
+  chain: string; // source chain label ('sui', or a bridge origin)
+  status: 'confirmed' | 'pending';
+  timestampMs: string; // ms, string so a BigInt never loses precision on the wire
+  explorerUrl: string;
+}
+
 // === Leaderboards ===
 // Every board exposes username (or the generated displayName as a fallback), never the address.
 

@@ -877,7 +877,7 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
       rgba(255, 255, 255, 0.04) 70%
     );
     background-size: 200% 100%;
-    animation: shimmer 1.2s var(--ease-out-expo) infinite;
+    animation: shimmer 1.4s linear infinite;
   }
   @keyframes shimmer {
     to {

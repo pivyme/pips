@@ -1,10 +1,10 @@
 import { Link, createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowDownToLine, ArrowUpFromLine, LogOut, Pencil } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import { LogOut, Pencil } from 'lucide-react'
 import { useEffect, type ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
+import { BalanceCard } from '@/components/menu/BalanceCard'
 import {
   cardPressClass,
   openFromCard,
@@ -27,7 +27,7 @@ import {
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
-import { displayHandle, formatCompactMoney } from '@/utils/format'
+import { displayHandle } from '@/utils/format'
 import { cnm } from '@/utils/style'
 
 // The menu home, rendered inside the bottom drawer: the trader card (pen opens the handle editor) up top,
@@ -55,7 +55,7 @@ function MenuHome() {
           className="-my-3 w-full select-none"
           draggable={false}
         />
-        <BalanceHero />
+        <BalanceCard />
         <NavGrid />
         <AchievementsSection />
         <div className="flex flex-col gap-1.5">
@@ -150,87 +150,12 @@ function AboutRow() {
   )
 }
 
-// The money card: balance on the left, Deposit and Withdraw right beside it so the card stays
-// compact. Both push to their own screens with the native menu transition.
-function BalanceHero() {
-  const { user } = useAuth()
-  const balance = formatCompactMoney(user?.balance ?? '0')
-
-  return (
-    <div className="card-neo rounded-card p-4">
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">My Balance</span>
-        <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-text-2">
-          DUSDC
-        </span>
-      </div>
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <img
-            src="/assets/icons/dusdc-logo.webp"
-            alt=""
-            className="h-10 w-10 shrink-0 rounded-full"
-            draggable={false}
-          />
-          <div className="flex min-w-0 items-baseline gap-0.5">
-            <span className="text-xl font-black text-text-3">$</span>
-            <span className="tnum truncate text-[34px] font-black leading-none text-text">{balance}</span>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <MoneyButton to="/menu/deposit" icon={ArrowDownToLine} label="Deposit" primary />
-          <MoneyButton to="/menu/withdraw" icon={ArrowUpFromLine} label="Send" />
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // Warm a route's JS chunk on finger-down so the tap doesn't wait on a cold module fetch. The tiles
 // navigate through the HapticOverlay switch (the Link is pointer-events-none), so the router never sees
 // hover intent, this restores that head start. Idempotent and best-effort; a miss just loads on navigate.
 function usePreload() {
   const router = useRouter()
   return (to: string) => void router.preloadRoute({ to }).catch(() => {})
-}
-
-function MoneyButton({
-  to,
-  icon: Icon,
-  label,
-  primary = false,
-}: {
-  to: string
-  icon: LucideIcon
-  label: string
-  primary?: boolean
-}) {
-  const navigate = useNavigate()
-  const preload = usePreload()
-  const go = () => {
-    prepareMenuTransition('forward')
-    void navigate({ to, viewTransition: true })
-  }
-  return (
-    <div className="relative h-11" onPointerDownCapture={() => preload(to)}>
-      <Link
-        to={to}
-        viewTransition
-        onClick={() => {
-          prepareMenuTransition('forward')
-          haptic('selection')
-        }}
-        className={cnm(
-          'pointer-events-none flex h-11 items-center gap-1 rounded-xl px-2.5 text-[11px] font-extrabold uppercase tracking-wide',
-          primary ? 'btn-primary' : 'border border-white/10 bg-white/[0.05] text-text',
-        )}
-      >
-        <Icon className="h-[14px] w-[14px]" strokeWidth={2.6} />
-        {label}
-      </Link>
-      <HapticOverlay className="absolute inset-0 rounded-xl" preset="selection" silent onTap={go} />
-    </div>
-  )
 }
 
 function StatsSection() {

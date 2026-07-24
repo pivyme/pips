@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Coins } from 'lucide-react'
+import { CheckCircle2, Coins } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { MenuScreen } from '@/components/menu/shared'
 import { AssetPicker } from '@/components/menu/deposit/AssetPicker'
@@ -10,11 +10,13 @@ import { BridgePanel } from '@/components/menu/deposit/BridgePanel'
 import { Alert } from '@/ui/Alert'
 import { useAuth } from '@/lib/auth'
 import { api, ApiError } from '@/lib/api'
-import type { DepositOptionsDTO } from '@/lib/api'
+import type { DepositOptionsDTO, WalletTxDTO } from '@/lib/api'
 import { depositOptionsQuery } from '@/lib/menuQueries'
+import { useDepositWatch } from '@/hooks/useDepositWatch'
 import { networkLabel, resolveMode, unsupportedCopy } from '@/lib/deposit/mode'
 import { NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
+import { cnm } from '@/utils/style'
 
 // One drawer, two dropdowns. Pick a currency and a network and the mode falls out: the chip asset on Sui
 // is a plain address + QR (nothing to bridge), anything else previews a live LI.FI route. No mode switch
@@ -87,6 +89,10 @@ function DepositScreen() {
 
   const mode = resolveMode(currency, network, options.chipSymbol)
 
+  // Live deposit detection: while the receive (QR) screen is open, watch the address and fire the "landed"
+  // celebration + SFX the moment funds arrive, no click needed. Only in receive mode (the address surface).
+  const { landed } = useDepositWatch(mode === 'receive')
+
   // Test faucet: free play money so anyone can jump in without a real deposit. The backend enforces the
   // per-tap cooldown; we just surface its message.
   const claim = async () => {
@@ -114,7 +120,10 @@ function DepositScreen() {
         </div>
 
         {mode === 'receive' && (
-          <ReceivePanel address={address} chipSymbol={options.chipSymbol} minUsd={options.minUsd} />
+          <>
+            <ReceivePanel address={address} chipSymbol={options.chipSymbol} minUsd={options.minUsd} />
+            <WaitingForDeposit landed={landed} />
+          </>
         )}
 
         {mode === 'bridge' && <BridgePanel options={options} currency={currency} network={network} />}
@@ -147,5 +156,38 @@ function DepositScreen() {
         )}
       </div>
     </MenuScreen>
+  )
+}
+
+// A compact affordance under the QR: a soft "waiting" pulse that swaps to a brief "received" confirmation
+// when funds land. The full-screen celebration is the moment; this is the passive on-screen status.
+function WaitingForDeposit({ landed }: { landed: WalletTxDTO | null }) {
+  const [justLanded, setJustLanded] = useState(false)
+  useEffect(() => {
+    if (!landed) return
+    setJustLanded(true)
+    const id = window.setTimeout(() => setJustLanded(false), 4000)
+    return () => window.clearTimeout(id)
+  }, [landed])
+
+  return (
+    <div
+      className={cnm(
+        'flex items-center justify-center gap-2 rounded-card px-4 py-3 text-[13px] font-semibold transition-colors',
+        justLanded ? 'bg-up/10 text-up' : 'bg-white/[0.04] text-text-3',
+      )}
+    >
+      {justLanded && landed ? (
+        <>
+          <CheckCircle2 className="h-4 w-4" strokeWidth={2.4} />
+          Received {landed.amount} {landed.symbol}
+        </>
+      ) : (
+        <>
+          <span className="h-2 w-2 animate-pulse rounded-full bg-brand-500" />
+          Waiting for your deposit…
+        </>
+      )}
+    </div>
   )
 }

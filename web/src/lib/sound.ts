@@ -222,6 +222,63 @@ export function achievementUnlock(): void {
   bell(ac, 1318.51, t + 0.52, 0.7, 0.016) // E6, a whisper of air
 }
 
+// Deposit landed: a warm rising F-major arpeggio resolving onto a sustained major chord, a soft sub thump for
+// weight, and a high-passed coin shimmer on the resolve. Rounder + warmer than achievementUnlock (bright Cmaj9)
+// and chipsGranted (coin plinks), so "money arrived" never blurs with a badge unlock or a starter gift. Fires
+// once when the landed overlay appears.
+export function depositLanded(): void {
+  if (!enabled) return
+  const ac = audio()
+  if (!ac) return
+  ensureRunning(ac)
+  const t = ac.currentTime
+
+  // Soft sub thump for weight, felt more than heard, quick.
+  const sub = ac.createOscillator()
+  const subG = ac.createGain()
+  sub.type = 'sine'
+  sub.frequency.setValueAtTime(87.31, t) // F2
+  sub.frequency.exponentialRampToValueAtTime(58.27, t + 0.4)
+  subG.gain.setValueAtTime(0.0001, t)
+  subG.gain.exponentialRampToValueAtTime(0.16, t + 0.02)
+  subG.gain.exponentialRampToValueAtTime(0.0001, t + 0.6)
+  sub.connect(subG).connect(out(ac))
+  sub.start(t)
+  sub.stop(t + 0.62)
+
+  // Rising F-major arpeggio (F4 A4 C5 F5), warm mallet, each a touch behind the last.
+  const climb: Array<[number, number]> = [
+    [349.23, 0.0], // F4
+    [440.0, 0.08], // A4
+    [523.25, 0.16], // C5
+    [698.46, 0.26], // F5, the lift
+  ]
+  for (const [f, dt] of climb) bell(ac, f, t + dt, 0.5, 0.06)
+
+  // The resolve: a sustained F-major chord (F A C) bloomed a hair apart, held long + warm.
+  const chord: Array<[number, number]> = [
+    [349.23, 0.42], // F4
+    [440.0, 0.46], // A4
+    [523.25, 0.5], // C5
+  ]
+  for (const [f, dt] of chord) bell(ac, f, t + dt, 1.1, 0.05)
+  bell(ac, 698.46, t + 0.5, 0.9, 0.03) // F5 warmth on top
+
+  // High-passed coin shimmer on the resolve: filtered noise, brief + airy.
+  const src = ac.createBufferSource()
+  const nf = ac.createBiquadFilter()
+  const ng = ac.createGain()
+  src.buffer = noise(ac)
+  nf.type = 'highpass'
+  nf.frequency.value = 5200
+  ng.gain.setValueAtTime(0.0001, t + 0.42)
+  ng.gain.exponentialRampToValueAtTime(0.03, t + 0.46)
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.7)
+  src.connect(nf).connect(ng).connect(out(ac))
+  src.start(t + 0.42)
+  src.stop(t + 0.72)
+}
+
 export function sound(kind: Sound): void {
   if (!enabled) return
   const ac = audio()

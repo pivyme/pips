@@ -38,6 +38,7 @@ export function CustomizeStudio({
   initialCustom,
   visible = true,
   active = true,
+  coldOpen = false,
   onCommit,
   onOutroComplete,
   onCancel,
@@ -45,6 +46,9 @@ export function CustomizeStudio({
   initialCustom: ConsoleCustom
   visible?: boolean
   active?: boolean
+  // A direct/refreshed load straight onto Customize: no live device was ever visible to hand off
+  // from, so the intro opens pre-settled at the studio rest pose instead of flashing full-size first.
+  coldOpen?: boolean
   onCommit: (custom: ConsoleCustom) => void
   onOutroComplete: () => void
   onCancel: () => void
@@ -143,6 +147,7 @@ export function CustomizeStudio({
             customize
             introFromApp
             active={active}
+            instant={coldOpen}
             theme={resolved}
             focusPart={tab === 'presets' ? null : tab}
             outro={exiting}

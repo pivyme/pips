@@ -16,6 +16,7 @@ import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as RCodeRouteImport } from './routes/r.$code'
 import { Route as DevSoundsRouteImport } from './routes/dev/sounds'
 import { Route as DevExportRouteImport } from './routes/dev/export'
+import { Route as DevDesignSystemV2RouteImport } from './routes/dev/design-system-v2'
 import { Route as DevDesignSystemRouteImport } from './routes/dev/design-system'
 import { Route as DevConsoleTransparentRouteImport } from './routes/dev/console-transparent'
 import { Route as DevConsoleRouteImport } from './routes/dev/console'
@@ -23,6 +24,7 @@ import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
 import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
 import { Route as AppMenuWithdrawRouteImport } from './routes/_app/menu/withdraw'
 import { Route as AppMenuUsernameRouteImport } from './routes/_app/menu/username'
+import { Route as AppMenuTransactionsRouteImport } from './routes/_app/menu/transactions'
 import { Route as AppMenuShareRouteImport } from './routes/_app/menu/share'
 import { Route as AppMenuSettingsRouteImport } from './routes/_app/menu/settings'
 import { Route as AppMenuReferralsRouteImport } from './routes/_app/menu/referrals'
@@ -73,6 +75,11 @@ const DevExportRoute = DevExportRouteImport.update({
   path: '/dev/export',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DevDesignSystemV2Route = DevDesignSystemV2RouteImport.update({
+  id: '/dev/design-system-v2',
+  path: '/dev/design-system-v2',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DevDesignSystemRoute = DevDesignSystemRouteImport.update({
   id: '/dev/design-system',
   path: '/dev/design-system',
@@ -106,6 +113,11 @@ const AppMenuWithdrawRoute = AppMenuWithdrawRouteImport.update({
 const AppMenuUsernameRoute = AppMenuUsernameRouteImport.update({
   id: '/menu/username',
   path: '/menu/username',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMenuTransactionsRoute = AppMenuTransactionsRouteImport.update({
+  id: '/menu/transactions',
+  path: '/menu/transactions',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMenuShareRoute = AppMenuShareRouteImport.update({
@@ -190,6 +202,7 @@ export interface FileRoutesByFullPath {
   '/dev/console': typeof DevConsoleRoute
   '/dev/console-transparent': typeof DevConsoleTransparentRoute
   '/dev/design-system': typeof DevDesignSystemRoute
+  '/dev/design-system-v2': typeof DevDesignSystemV2Route
   '/dev/export': typeof DevExportRoute
   '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
@@ -209,6 +222,7 @@ export interface FileRoutesByFullPath {
   '/menu/referrals': typeof AppMenuReferralsRoute
   '/menu/settings': typeof AppMenuSettingsRoute
   '/menu/share': typeof AppMenuShareRoute
+  '/menu/transactions': typeof AppMenuTransactionsRoute
   '/menu/username': typeof AppMenuUsernameRoute
   '/menu/withdraw': typeof AppMenuWithdrawRoute
   '/games/': typeof AppGamesIndexRoute
@@ -219,6 +233,7 @@ export interface FileRoutesByTo {
   '/dev/console': typeof DevConsoleRoute
   '/dev/console-transparent': typeof DevConsoleTransparentRoute
   '/dev/design-system': typeof DevDesignSystemRoute
+  '/dev/design-system-v2': typeof DevDesignSystemV2Route
   '/dev/export': typeof DevExportRoute
   '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
@@ -239,6 +254,7 @@ export interface FileRoutesByTo {
   '/menu/referrals': typeof AppMenuReferralsRoute
   '/menu/settings': typeof AppMenuSettingsRoute
   '/menu/share': typeof AppMenuShareRoute
+  '/menu/transactions': typeof AppMenuTransactionsRoute
   '/menu/username': typeof AppMenuUsernameRoute
   '/menu/withdraw': typeof AppMenuWithdrawRoute
   '/games': typeof AppGamesIndexRoute
@@ -251,6 +267,7 @@ export interface FileRoutesById {
   '/dev/console': typeof DevConsoleRoute
   '/dev/console-transparent': typeof DevConsoleTransparentRoute
   '/dev/design-system': typeof DevDesignSystemRoute
+  '/dev/design-system-v2': typeof DevDesignSystemV2Route
   '/dev/export': typeof DevExportRoute
   '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
@@ -271,6 +288,7 @@ export interface FileRoutesById {
   '/_app/menu/referrals': typeof AppMenuReferralsRoute
   '/_app/menu/settings': typeof AppMenuSettingsRoute
   '/_app/menu/share': typeof AppMenuShareRoute
+  '/_app/menu/transactions': typeof AppMenuTransactionsRoute
   '/_app/menu/username': typeof AppMenuUsernameRoute
   '/_app/menu/withdraw': typeof AppMenuWithdrawRoute
   '/_app/games/': typeof AppGamesIndexRoute
@@ -284,6 +302,7 @@ export interface FileRouteTypes {
     | '/dev/console'
     | '/dev/console-transparent'
     | '/dev/design-system'
+    | '/dev/design-system-v2'
     | '/dev/export'
     | '/dev/sounds'
     | '/r/$code'
@@ -303,6 +322,7 @@ export interface FileRouteTypes {
     | '/menu/referrals'
     | '/menu/settings'
     | '/menu/share'
+    | '/menu/transactions'
     | '/menu/username'
     | '/menu/withdraw'
     | '/games/'
@@ -313,6 +333,7 @@ export interface FileRouteTypes {
     | '/dev/console'
     | '/dev/console-transparent'
     | '/dev/design-system'
+    | '/dev/design-system-v2'
     | '/dev/export'
     | '/dev/sounds'
     | '/r/$code'
@@ -333,6 +354,7 @@ export interface FileRouteTypes {
     | '/menu/referrals'
     | '/menu/settings'
     | '/menu/share'
+    | '/menu/transactions'
     | '/menu/username'
     | '/menu/withdraw'
     | '/games'
@@ -344,6 +366,7 @@ export interface FileRouteTypes {
     | '/dev/console'
     | '/dev/console-transparent'
     | '/dev/design-system'
+    | '/dev/design-system-v2'
     | '/dev/export'
     | '/dev/sounds'
     | '/r/$code'
@@ -364,6 +387,7 @@ export interface FileRouteTypes {
     | '/_app/menu/referrals'
     | '/_app/menu/settings'
     | '/_app/menu/share'
+    | '/_app/menu/transactions'
     | '/_app/menu/username'
     | '/_app/menu/withdraw'
     | '/_app/games/'
@@ -376,6 +400,7 @@ export interface RootRouteChildren {
   DevConsoleRoute: typeof DevConsoleRoute
   DevConsoleTransparentRoute: typeof DevConsoleTransparentRoute
   DevDesignSystemRoute: typeof DevDesignSystemRoute
+  DevDesignSystemV2Route: typeof DevDesignSystemV2Route
   DevExportRoute: typeof DevExportRoute
   DevSoundsRoute: typeof DevSoundsRoute
   RCodeRoute: typeof RCodeRoute
@@ -433,6 +458,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DevExportRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dev/design-system-v2': {
+      id: '/dev/design-system-v2'
+      path: '/dev/design-system-v2'
+      fullPath: '/dev/design-system-v2'
+      preLoaderRoute: typeof DevDesignSystemV2RouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dev/design-system': {
       id: '/dev/design-system'
       path: '/dev/design-system'
@@ -480,6 +512,13 @@ declare module '@tanstack/react-router' {
       path: '/menu/username'
       fullPath: '/menu/username'
       preLoaderRoute: typeof AppMenuUsernameRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/menu/transactions': {
+      id: '/_app/menu/transactions'
+      path: '/menu/transactions'
+      fullPath: '/menu/transactions'
+      preLoaderRoute: typeof AppMenuTransactionsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/menu/share': {
@@ -607,6 +646,7 @@ interface AppRouteChildren {
   AppMenuReferralsRoute: typeof AppMenuReferralsRoute
   AppMenuSettingsRoute: typeof AppMenuSettingsRoute
   AppMenuShareRoute: typeof AppMenuShareRoute
+  AppMenuTransactionsRoute: typeof AppMenuTransactionsRoute
   AppMenuUsernameRoute: typeof AppMenuUsernameRoute
   AppMenuWithdrawRoute: typeof AppMenuWithdrawRoute
   AppGamesIndexRoute: typeof AppGamesIndexRoute
@@ -630,6 +670,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppMenuReferralsRoute: AppMenuReferralsRoute,
   AppMenuSettingsRoute: AppMenuSettingsRoute,
   AppMenuShareRoute: AppMenuShareRoute,
+  AppMenuTransactionsRoute: AppMenuTransactionsRoute,
   AppMenuUsernameRoute: AppMenuUsernameRoute,
   AppMenuWithdrawRoute: AppMenuWithdrawRoute,
   AppGamesIndexRoute: AppGamesIndexRoute,
@@ -644,6 +685,7 @@ const rootRouteChildren: RootRouteChildren = {
   DevConsoleRoute: DevConsoleRoute,
   DevConsoleTransparentRoute: DevConsoleTransparentRoute,
   DevDesignSystemRoute: DevDesignSystemRoute,
+  DevDesignSystemV2Route: DevDesignSystemV2Route,
   DevExportRoute: DevExportRoute,
   DevSoundsRoute: DevSoundsRoute,
   RCodeRoute: RCodeRoute,

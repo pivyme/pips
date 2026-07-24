@@ -1,5 +1,5 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { ArrowUpRight, AudioLines, Camera, Gamepad2, Palette, Scan } from 'lucide-react'
+import { ArrowUpRight, AudioLines, Camera, Gamepad2, LayoutGrid, Palette, Scan } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 // Dev hub: every internal tool/playground page in one grid. Adding a dev page? Drop the route
@@ -10,6 +10,7 @@ const PAGES: { to: string; name: string; desc: string; tag: string; Icon: Lucide
   { to: '/dev/console', name: 'Console Lab', desc: 'The 3D device with lil-gui tuning on. No game bound, screen stays black.', tag: 'device', Icon: Gamepad2, tint: 'text-brand-500', tile: 'bg-brand-500/12' },
   { to: '/dev/console-transparent', name: 'Console Clear', desc: 'The transparent "Clear" skin showcase: frosted shell over exposed guts.', tag: 'device', Icon: Scan, tint: 'text-info', tile: 'bg-info/12' },
   { to: '/dev/design-system', name: 'Design System', desc: 'Living UI-kit reference: tokens, instruments, App Surface patterns.', tag: 'ui', Icon: Palette, tint: 'text-premium-500', tile: 'bg-premium-500/12' },
+  { to: '/dev/design-system-v2', name: 'Menu Design System', desc: 'The real /menu drawer kit only: player card, leaderboard, referrals, history, modals.', tag: 'ui', Icon: LayoutGrid, tint: 'text-brand-400', tile: 'bg-brand-400/12' },
   { to: '/dev/export', name: 'Export Studio', desc: 'PNG asset dump: bare device per skin, game screens, screen-only shots.', tag: 'tooling', Icon: Camera, tint: 'text-up', tile: 'bg-up/12' },
   { to: '/dev/sounds', name: 'Sound Lab', desc: 'Every music bed and SFX in one audition bench, grouped per game.', tag: 'audio', Icon: AudioLines, tint: 'text-down', tile: 'bg-down/12' },
 ]

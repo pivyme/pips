@@ -26,6 +26,21 @@ const LIVE_HEARTBEAT_MS = 25_000;
 // Broadcast count on every join/leave for the "N ONLINE" ticker; one process serves every client, so this Set is the global count.
 const liveClients = new Set<{ send: (data: unknown) => void }>();
 
+// userId-keyed online set (ref-counted: a user can have multiple tabs/sessions). The wallet-indexer scans
+// only online users, so idle app = ~0 external calls (§12c). One process serves every client, so this is the global set.
+const onlineUsers = new Map<string, number>();
+export function onlineUserIds(): string[] {
+  return [...onlineUsers.keys()];
+}
+function presenceEnter(userId: string): void {
+  onlineUsers.set(userId, (onlineUsers.get(userId) ?? 0) + 1);
+}
+function presenceLeave(userId: string): void {
+  const n = (onlineUsers.get(userId) ?? 0) - 1;
+  if (n <= 0) onlineUsers.delete(userId);
+  else onlineUsers.set(userId, n);
+}
+
 function broadcastOnline(): void {
   const payload = { online: liveClients.size };
   for (const c of liveClients) {
@@ -126,6 +141,7 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
     const { send, onClose } = openStream(reply, request);
     const client = { send };
     liveClients.add(client);
+    presenceEnter(user.id); // mark this user online for the presence-gated wallet indexer
     broadcastOnline(); // newcomer is in the set, so this also primes the new connection
 
     let closed = false;
@@ -135,6 +151,7 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
       closed = true;
       clearInterval(heartbeat);
       liveClients.delete(client);
+      presenceLeave(user.id);
       broadcastOnline();
     };
     heartbeat = setInterval(() => {

@@ -25,6 +25,14 @@ export const referralQuery = () =>
 export const depositOptionsQuery = () =>
   queryOptions({ queryKey: ['deposit-options'], queryFn: () => api.depositOptions(), staleTime: 5 * 60_000 })
 
+// Held coins (the send picker) + the activity feed's first page. Short staleTime: money moves, so a re-open
+// should feel current, but a warmed key still lands the first frame from cache.
+export const walletCoinsQuery = () =>
+  queryOptions({ queryKey: ['wallet-coins'], queryFn: () => api.walletCoins(), staleTime: 8_000 })
+
+export const walletTransactionsQuery = () =>
+  queryOptions({ queryKey: ['wallet-transactions'], queryFn: () => api.walletTransactions({ limit: 50 }), staleTime: 5_000 })
+
 // History defaults to showing devnet rows (see history.tsx), so the warmed key must match that first render.
 export const historyQuery = (showDevnet: boolean) =>
   queryOptions({
@@ -43,4 +51,5 @@ export function prefetchMenuData(qc: QueryClient): void {
   void qc.prefetchQuery(referralQuery())
   void qc.prefetchQuery(depositOptionsQuery())
   void qc.prefetchQuery(historyQuery(true))
+  void qc.prefetchQuery(walletTransactionsQuery())
 }

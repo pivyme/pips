@@ -57,6 +57,9 @@ model User {
 
   tzOffsetMin      Int?                        // JS getTimezoneOffset() at last login; localizes time-based achievements (null = UTC)
 
+  walletSyncCheckpoint BigInt?                  // wallet-indexer high-water mark (last indexed checkpoint seq); null = never synced
+  walletSyncedAt       DateTime?               // last successful index tick, for batch prioritization
+
   lastSignIn       DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
@@ -67,8 +70,55 @@ model User {
   minigameScores   MinigameScore[]
   referralClaims   ReferralClaim[]   @relation("ReferralClaims")
   deposits         Deposit[]
+  walletTxs        WalletTx[]
 
   @@index([referredById])
+}
+
+// Cached coin metadata + best-effort price, keyed by coin type per network. Populated by token-worker and
+// on-demand resolves; the send picker and activity feed read logos/decimals/symbol/price from here so we
+// never hand-add a token logo. Price is best-effort (null where unknown, common on testnet).
+model TokenInfo {
+  id         String   @id @default(cuid())
+  network    String                         // 'testnet' | 'mainnet' | ...
+  coinType   String                         // full type, e.g. 0x..::dusdc::DUSDC
+  symbol     String
+  name       String?
+  decimals   Int      @default(9)
+  iconUrl    String?                         // on-chain metadata iconUrl, or a curated override
+  priceUsd   Float?                          // best-effort; null = unknown
+  verified   Boolean  @default(false)        // curated/known vs discovered
+  source     String?                         // 'onchain' | 'curated' | 'cetus' | ...
+  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now())
+
+  @@unique([network, coinType])
+  @@index([network, symbol])
+}
+
+// One money movement at a user's Sui address. Written by the wallet-indexer (chain scan) and, for movements we
+// sign, inline by the wallet service (same digest -> upsert, no dup). Excludes PIPS-internal play churn.
+model WalletTx {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  address      String                         // user's Sui address at index time
+  direction    String                         // 'in' | 'out'
+  kind         String                         // 'receive' | 'send' | 'faucet' | 'grant' | 'bridge'
+  coinType     String
+  symbol       String?
+  decimals     Int      @default(9)
+  amount       BigInt                          // positive magnitude, base units
+  counterparty String?                         // other party address, best-effort (sender on a receive)
+  digest       String                          // Sui tx digest
+  chain        String   @default("sui")         // source chain label; bridges show origin (base, arbitrum, ...)
+  status       String   @default("confirmed")   // 'confirmed' | 'pending' (bridge in flight)
+  timestampMs  BigInt                           // on-chain tx timestamp (ms); ordering key
+  createdAt    DateTime @default(now())
+
+  @@unique([userId, digest, coinType])          // idempotent upsert key (one net change per coin per tx)
+  @@index([userId, timestampMs])
+  @@index([address])
 }
 
 // A cross-chain bridge deposit in flight. Not load-bearing for correctness: the balance live-reads the

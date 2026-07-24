@@ -12,6 +12,7 @@ import { AppFrame } from '@/components/console/AppFrame'
 import { ActivePlayChip } from '@/components/console/ActivePlayChip'
 import { AchievementCelebration } from '@/components/AchievementCelebration'
 import { ChipGrantCelebration } from '@/components/ChipGrantCelebration'
+import { DepositLanded } from '@/components/DepositLanded'
 import { AchievementDetailProvider } from '@/components/menu/AchievementDetail'
 import { ConsoleControlsProvider, DeviceSettledProvider, useConsoleView } from '@/components/console/controls'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
@@ -342,6 +343,20 @@ function AppLayout() {
     if (phase !== 'app') setCustomizePrepared(false)
   }, [phase])
 
+  // A drawer tap into Customize gets a free head start: closeTo() flips customizePrepared while the
+  // drawer's close animation plays, so the studio's chunked build has already progressed idle by the
+  // time active flips true and forces the remaining flush. A hard refresh / deep link straight onto
+  // /menu/customize has none of that: active is true on the very first render, so the studio's whole
+  // build flushes synchronously in the same frame as the live console's own synchronous build. Give a
+  // cold entry a short non-blocking head start too before activating, so the two builds don't collide.
+  const [coldCustomizeEntry] = useState(onCustomize)
+  const [coldCustomizeWarm, setColdCustomizeWarm] = useState(!coldCustomizeEntry)
+  useEffect(() => {
+    if (!coldCustomizeEntry || coldCustomizeWarm) return
+    const t = window.setTimeout(() => setColdCustomizeWarm(true), 350)
+    return () => window.clearTimeout(t)
+  }, [coldCustomizeEntry, coldCustomizeWarm])
+
   const showCustomizeStudio = onCustomize || customizeHandoff
   const mountCustomizeStudio = showCustomizeStudio || customizePrepared
 
@@ -454,7 +469,8 @@ function AppLayout() {
             <CustomizeStudio
               initialCustom={saved.custom}
               visible={showCustomizeStudio}
-              active={onCustomize || customizeHandoff}
+              active={(onCustomize || customizeHandoff) && coldCustomizeWarm}
+              coldOpen={coldCustomizeEntry}
               onCommit={(next) => {
                 setCustomizeHandoff(true)
                 saved.set(next)
@@ -494,6 +510,7 @@ function AppLayout() {
       {recovering && !showLoadingScreen && <RecoveryOverlay />}
       <AchievementCelebration />
       <ChipGrantCelebration active={phase === 'app'} />
+      <DepositLanded active={phase === 'app'} />
       </ActivePlayProvider>
       </LivePresenceProvider>
       </TourProvider>

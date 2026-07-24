@@ -37,6 +37,9 @@ import type {
   Side,
   UserDTO,
   UserStatsDTO,
+  WalletCoinDTO,
+  WalletTxDTO,
+  WalletTransactionsQuery,
 } from './api'
 import type { ConsoleCustom } from '@/components/console/customize'
 
@@ -44,7 +47,7 @@ import type { ConsoleCustom } from '@/components/console/customize'
 
 const OVERRIDE_KEY = 'pips_demo' // '1' force on, '0' force off, unset = env default
 const STATE_KEY = 'pips_demo_state'
-const STATE_VERSION = 6 // bumped: added referralAnon
+const STATE_VERSION = 7 // bumped: added wallet held coins + activity feed
 
 export function isDemo(): boolean {
   if (typeof window !== 'undefined') {
@@ -302,6 +305,8 @@ interface DemoState {
   history: PlayDTO[] // settled plays only, newest first
   minigameScores: Record<string, number> // minigame key -> your best score, for the arcade boards
   referralAnon: boolean // link format toggle, mirrors the live user.referralAnon
+  coins: Record<string, number> // non-chip held coins symbol -> display amount (SUI, DEEP), the token-recovery case
+  activity: WalletTxDTO[] // wallet activity feed rows, newest first
 }
 
 // Assigned by the init block at the very bottom, once every const/function below is in scope.
@@ -362,6 +367,16 @@ function freshState(): DemoState {
   for (const c of CATALOG) if (meets(c.metric, c.threshold, counters)) unlocked[c.slug] = past(60 * 24)
   // Seed the demo account's minigame bests so the arcade boards look played-in (mid-table, beatable).
   const minigameScores: Record<string, number> = { 'line-rider': 1240, 'flappy-piper': 14 }
+  // A played-in activity feed: a receive, a send, a faucet, and a landed bridge, spread across days so the
+  // day-grouping + chain badges show. Newest first.
+  const other = '0x7c3f2a9e1b5d84f60c2a97e5b3d18a4f9e0c5b8a2d61f43c7e9b0a58f2d6c1e34'
+  const hoursAgo = (h: number): number => now - h * 3_600_000
+  const activity: WalletTxDTO[] = [
+    demoWalletTx({ direction: 'in', kind: 'receive', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: 50, timestampMs: hoursAgo(2), counterparty: other }),
+    demoWalletTx({ direction: 'out', kind: 'send', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: 12, timestampMs: hoursAgo(26), counterparty: other }),
+    demoWalletTx({ direction: 'in', kind: 'faucet', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: 500, timestampMs: hoursAgo(50) }),
+    demoWalletTx({ direction: 'in', kind: 'bridge', symbol: 'USDC', coinType: '', decimals: 6, amount: 25, timestampMs: hoursAgo(74), chain: 'base' }),
+  ]
   return {
     v: STATE_VERSION,
     balance: 2847.5,
@@ -373,6 +388,8 @@ function freshState(): DemoState {
     history,
     minigameScores,
     referralAnon: false,
+    coins: { SUI: 12.5, DEEP: 150 },
+    activity,
   }
 }
 
@@ -386,6 +403,8 @@ function load(): DemoState {
         // Additive settings backfill: a state saved before a new toggle existed lacks the key, default
         // it in place rather than bumping the version and wiping the demo record.
         if (parsed.settings.confirmTrades == null) parsed.settings.confirmTrades = false
+        if (parsed.coins == null) parsed.coins = { SUI: 12.5, DEEP: 150 }
+        if (!Array.isArray(parsed.activity)) parsed.activity = []
         parsed.counters = { ...COUNTER_DEFAULTS, ...parsed.counters }
         // Carry unlocks saved under the retired catalog's slugs onto their identical-condition successors.
         for (const [from, to] of [['first_play', 'first_try'], ['all_games', 'market_hopper']]) {
@@ -495,6 +514,87 @@ function newId(): string {
   idSeq += 1
   return `demo-${nowMs().toString(36)}-${idSeq}`
 }
+
+// === Wallet coins + activity twin ===
+// Held-coin metadata for the send picker + activity feed. DUSDC is the chip (its amount is state.balance);
+// SUI + DEEP are the "recover a stray token" case (state.coins). Logos are bundled frontend assets (robust,
+// no CDN rot) so demo shows real coin art, not monograms.
+const COIN_LOGO: Record<string, string | null> = {
+  DUSDC: '/assets/icons/dusdc-logo.webp',
+  SUI: '/assets/images/coins/sui-logo.png',
+  DEEP: '/assets/images/deepbook-logo.jpg',
+  USDC: DEMO_LOGO.USDC,
+}
+const DEMO_COIN_META: Record<string, { coinType: string; name: string; decimals: number; price: number | null }> = {
+  DUSDC: { coinType: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::dusdc::DUSDC', name: 'DeepBook USDC', decimals: 6, price: 1 },
+  SUI: { coinType: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI', name: 'Sui', decimals: 9, price: SEED_PRICES.SUI },
+  DEEP: { coinType: '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP', name: 'DeepBook', decimals: 6, price: SEED_PRICES.DEEP },
+}
+const symbolForCoinType = (coinType: string): string | undefined => {
+  for (const [sym, m] of Object.entries(DEMO_COIN_META)) if (m.coinType === coinType) return sym
+  return undefined
+}
+const DEMO_EXPLORER = `https://suiscan.xyz/${env.VITE_SUI_NETWORK}/tx`
+
+// Build one WalletTxDTO with demo-plausible defaults (fake digest, decimals-aware amount).
+function demoWalletTx(p: {
+  direction: 'in' | 'out'
+  kind: WalletTxDTO['kind']
+  symbol: string
+  coinType: string
+  decimals: number
+  amount: number
+  timestampMs: number
+  chain?: string
+  counterparty?: string | null
+  status?: 'confirmed' | 'pending'
+}): WalletTxDTO {
+  const digest = demoDigest()
+  return {
+    id: `demo-wtx-${newId()}`,
+    direction: p.direction,
+    kind: p.kind,
+    coinType: p.coinType,
+    symbol: p.symbol,
+    logo: COIN_LOGO[p.symbol] ?? null,
+    amount: p.amount % 1 === 0 ? String(p.amount) : p.amount.toFixed(Math.min(p.decimals, 4)),
+    decimals: p.decimals,
+    counterparty: p.counterparty ?? null,
+    digest,
+    chain: p.chain ?? 'sui',
+    status: p.status ?? 'confirmed',
+    timestampMs: String(p.timestampMs),
+    explorerUrl: `${DEMO_EXPLORER}/${digest}`,
+  }
+}
+
+// One held-coin DTO: DUSDC reads its amount from state.balance, others from state.coins.
+function demoCoin(symbol: string, amount: number, isChip: boolean): WalletCoinDTO {
+  const meta = DEMO_COIN_META[symbol]
+  const decimals = meta?.decimals ?? 9
+  const price = meta?.price ?? null
+  const usd = price != null ? amount * price : null
+  return {
+    coinType: meta?.coinType ?? symbol,
+    symbol,
+    name: meta?.name ?? symbol,
+    decimals,
+    logo: COIN_LOGO[symbol] ?? null,
+    amount: amount % 1 === 0 ? String(amount) : String(amount),
+    amountRaw: String(Math.round(amount * 10 ** decimals)),
+    priceUsd: price != null ? String(price) : null,
+    usdValue: usd != null ? usd.toFixed(2) : null,
+    isChip,
+  }
+}
+
+// A one-off simulated DUSDC deposit that "lands" a few seconds after the deposit watch starts polling, so the
+// "landed" celebration + SFX are demonstrable with no chain. Session-only (not persisted).
+const DEMO_DEPOSIT_DELAY_MS = 6000
+const DEMO_DEPOSIT_AMOUNT = 50
+let demoDepositLandAt = 0
+let demoDepositScheduled = false
+const demoSyncedIds = new Set<string>() // rows already returned by walletSync, so a receive celebrates once
 const str = (n: number): string => n.toFixed(2)
 // Price string with enough precision for sub-dollar tokens (DEEP, SUI); the UI trims trailing zeros.
 const pxStr = (n: number): string => (n >= 1 ? n.toFixed(2) : n.toFixed(6))
@@ -1186,14 +1286,63 @@ export const demoApi = {
     return { play, unlocked }
   },
 
-  withdraw: async (input: { recipient: string; amount: string }): Promise<{ user: UserDTO; digest: string }> => {
+  withdraw: async (input: { recipient: string; amount: string; coinType?: string }): Promise<{ user: UserDTO; digest: string }> => {
     await delay(160)
     const amount = parseFloat(String(input.amount).replace(/,/g, ''))
-    if (!Number.isFinite(amount) || amount <= 0) throw new ApiError('INVALID_AMOUNT', 'Enter an amount to withdraw', 400)
-    if (amount > state.balance + 0.005) throw new ApiError('INSUFFICIENT_DUSDC', 'Not enough balance to withdraw that much', 400)
-    state.balance = Math.max(0, state.balance - amount)
+    if (!Number.isFinite(amount) || amount <= 0) throw new ApiError('INVALID_AMOUNT', 'Enter an amount to send', 400)
+    // DUSDC (default) draws from the chip balance; any other coin draws from the held-coin bag (token recovery).
+    const symbol = input.coinType ? symbolForCoinType(input.coinType) ?? 'DUSDC' : 'DUSDC'
+    if (symbol === 'DUSDC') {
+      if (amount > state.balance + 0.005) throw new ApiError('INSUFFICIENT_DUSDC', 'Not enough balance to send that much', 400)
+      state.balance = Math.max(0, state.balance - amount)
+    } else {
+      const held = state.coins[symbol] ?? 0
+      if (amount > held + 1e-9) throw new ApiError('INSUFFICIENT_BALANCE', 'Not enough balance to send that much', 400)
+      state.coins[symbol] = Math.max(0, held - amount)
+    }
+    const meta = DEMO_COIN_META[symbol]
+    const row = demoWalletTx({ direction: 'out', kind: 'send', symbol, coinType: meta?.coinType ?? input.coinType ?? '', decimals: meta?.decimals ?? 9, amount, timestampMs: nowMs(), counterparty: input.recipient })
+    state.activity.unshift(row)
     save()
-    return { user: userDTO(), digest: `demo-wd-${newId()}` }
+    return { user: userDTO(), digest: row.digest }
+  },
+
+  walletCoins: async (): Promise<{ coins: WalletCoinDTO[] }> => {
+    await delay(90)
+    const coins: WalletCoinDTO[] = [demoCoin('DUSDC', state.balance, true)]
+    for (const [sym, amt] of Object.entries(state.coins)) if (amt > 0) coins.push(demoCoin(sym, amt, false))
+    return { coins }
+  },
+
+  walletTransactions: async (q: WalletTransactionsQuery = {}): Promise<{ transactions: WalletTxDTO[]; nextCursor: string | null }> => {
+    await delay(100)
+    const limit = q.limit ?? 25
+    const start = q.cursor ? Number(q.cursor) || 0 : 0
+    const page = state.activity.slice(start, start + limit)
+    const nextCursor = start + limit < state.activity.length ? String(start + limit) : null
+    return { transactions: page, nextCursor }
+  },
+
+  // Deposit-watch poll: land the one-off simulated deposit when due, then return any fresh incoming rows the
+  // caller hasn't seen yet (deduped by id) so the celebration fires once, exactly like the real /wallet/sync.
+  walletSync: async ({ sinceMs }: { sinceMs?: number } = {}): Promise<{ received: WalletTxDTO[] }> => {
+    await delay(90)
+    const now = nowMs()
+    if (!demoDepositScheduled) {
+      demoDepositScheduled = true
+      demoDepositLandAt = now + DEMO_DEPOSIT_DELAY_MS
+    }
+    if (demoDepositLandAt > 0 && now >= demoDepositLandAt) {
+      demoDepositLandAt = 0
+      const row = demoWalletTx({ direction: 'in', kind: 'receive', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: DEMO_DEPOSIT_AMOUNT, timestampMs: now })
+      state.balance += DEMO_DEPOSIT_AMOUNT
+      state.activity.unshift(row)
+      save()
+    }
+    const floor = sinceMs ?? 0
+    const received = state.activity.filter((r) => r.direction === 'in' && Number(r.timestampMs) >= floor && !demoSyncedIds.has(r.id))
+    for (const r of received) demoSyncedIds.add(r.id)
+    return { received }
   },
 
   // Request DUSDC faucet (demo twin): a fixed +500 chips with the same per-tap cooldown as the backend.
@@ -1206,8 +1355,10 @@ export const demoApi = {
     }
     demoFaucetAt = now
     state.balance += DEMO_FAUCET_AMOUNT
+    const row = demoWalletTx({ direction: 'in', kind: 'faucet', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: DEMO_FAUCET_AMOUNT, timestampMs: nowMs() })
+    state.activity.unshift(row)
     save()
-    return { user: userDTO(), amount: DEMO_FAUCET_AMOUNT.toFixed(2), digest: `demo-faucet-${newId()}` }
+    return { user: userDTO(), amount: DEMO_FAUCET_AMOUNT.toFixed(2), digest: row.digest }
   },
 
   // Starter-chip grant (demo twin): a broke demo player gets topped up so the client's grant + celebration
@@ -1218,6 +1369,8 @@ export const demoApi = {
     const GRANT = 100
     if (state.balance >= MIN) return { user: userDTO(), granted: null }
     state.balance += GRANT
+    const row = demoWalletTx({ direction: 'in', kind: 'grant', symbol: 'DUSDC', coinType: DEMO_COIN_META.DUSDC.coinType, decimals: 6, amount: GRANT, timestampMs: nowMs() })
+    state.activity.unshift(row)
     save()
     return { user: userDTO(), granted: GRANT }
   },

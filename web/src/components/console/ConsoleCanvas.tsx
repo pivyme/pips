@@ -90,7 +90,9 @@ interface ConsoleCanvasProps {
   onWelcomeArrived?: () => void
   reducedMotion?: boolean
   // Hold the resting app pose with no hero -> app settle. A returning session sets this so a refresh
-  // never replays the entry zoom (that animation is for a real login only).
+  // never replays the entry zoom (that animation is for a real login only). Customize studio only:
+  // skips the introFromApp zoom-out too, opening pre-settled at the studio rest pose (a cold/direct
+  // load onto Customize has no live device on screen to hand off from).
   instant?: boolean
   // Customize studio only: eases the camera onto a framing pose for the given part tab (null = studio rest pose).
   focusPart?: PartId | null
@@ -1970,7 +1972,11 @@ export default function ConsoleCanvas({
       tiltTargetY = clamp((e.gamma - tiltBaseline.gamma) * TILT_GAIN)
     }
     window.addEventListener('deviceorientation', onDeviceOrientation)
-    let introT = customize ? 0 : 1 // 0 → start, 1 → settled
+    // 0 -> start, 1 -> settled. A cold-opened studio (no live device was ever on screen to hand off
+    // from, e.g. a direct/refreshed load straight onto Customize) starts pre-settled: instant=true
+    // skips replaying the app-pose-to-rest zoom-out, which otherwise flashes the device at full live
+    // size before it shrinks. A later park + reopen still replays it (applyActiveRef resets introT).
+    let introT = customize ? (instant ? 1 : 0) : 1
     let orbitYaw = 0 // persists, so you can park it facing back
     let orbitPitch = 0 // eases back to level on release
     let orbitSettle = false // armed by a part-tab tap: eases a parked spin back to front

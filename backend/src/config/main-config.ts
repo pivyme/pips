@@ -361,3 +361,25 @@ export const ERROR_LOG_CLEANUP_INTERVAL: string = '0 * * * *'; // Every hour
 // depends on the table, this is pure housekeeping.
 export const DEPOSIT_CLEANUP_CRON: string = process.env.PIPS_DEPOSIT_CLEANUP_CRON || '17 * * * *'; // hourly, off the 0 slot
 export const DEPOSIT_STALE_HOURS: number = Number(process.env.PIPS_DEPOSIT_STALE_HOURS) || 24;
+
+// Wallet activity indexer + token metadata worker (BALANCE_FEATURE). Both run only on real networks
+// (testnet/mainnet), where the public Mysten GraphQL schema serves tx-history; localnet/devnet skip.
+// The indexer is presence-gated (scans online users + a recently-active tail only), so idle app = ~0 calls.
+export const WALLET_INDEX_CRON: string = process.env.PIPS_WALLET_INDEX_CRON || '*/2 * * * *'; // every 2 min
+export const WALLET_INDEX_BATCH: number = Number(process.env.PIPS_WALLET_INDEX_BATCH) || 25; // users per tick
+export const WALLET_INDEX_MAX_PAGES: number = Number(process.env.PIPS_WALLET_INDEX_MAX_PAGES) || 5; // GraphQL page budget per scan
+// Low-cadence self-heal (§12b): re-scan a bounded recent window for recently-active users, ignoring the
+// high-water mark, to backfill anything a GraphQL hiccup dropped.
+export const WALLET_RECONCILE_CRON: string = process.env.PIPS_WALLET_RECONCILE_CRON || '23 * * * *'; // hourly, off the 0 slot
+export const WALLET_RECONCILE_BATCH: number = Number(process.env.PIPS_WALLET_RECONCILE_BATCH) || 40;
+export const WALLET_RECONCILE_ACTIVE_HOURS: number = Number(process.env.PIPS_WALLET_RECONCILE_ACTIVE_HOURS) || 48;
+// Checkpoints the reconcile pass rewinds before re-scanning, to re-verify recent history + backfill a drop
+// (idempotent, so over-scanning is always safe). The page budget still bounds the work.
+export const WALLET_RECONCILE_LOOKBACK_CP: number = Number(process.env.PIPS_WALLET_RECONCILE_LOOKBACK_CP) || 2000;
+// On-demand /wallet/sync: per-user min interval (anti-spam, like the faucet cooldown) + the staleness
+// threshold that triggers a light repair-on-read when the activity feed is opened.
+export const WALLET_SYNC_MIN_INTERVAL_MS: number = Number(process.env.PIPS_WALLET_SYNC_MIN_INTERVAL_MS) || 3000;
+export const WALLET_SYNC_STALE_MS: number = Number(process.env.PIPS_WALLET_SYNC_STALE_MS) || 120_000;
+// Token metadata/price refresh: chill cadence, off the request path. Batch bounds the per-tick work.
+export const TOKEN_SYNC_CRON: string = process.env.PIPS_TOKEN_SYNC_CRON || '*/10 * * * *'; // every 10 min
+export const TOKEN_SYNC_BATCH: number = Number(process.env.PIPS_TOKEN_SYNC_BATCH) || 50;

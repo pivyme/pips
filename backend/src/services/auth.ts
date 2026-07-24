@@ -12,7 +12,8 @@ import { transferDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { treasuryAddress, TREASURY_ENABLED } from '../lib/sui/signer.ts';
 import { generateCustodialWallet } from '../lib/sui/custodial.ts';
 import { readUserChipsRaw } from '../lib/sui/predict-real.ts';
-import { fromDusdcRaw } from '../lib/sui/config.ts';
+import { fromDusdcRaw, toDusdcRaw, DUSDC_TYPE } from '../lib/sui/config.ts';
+import { recordWalletTx } from '../lib/sui/wallet-ledger.ts';
 import { alert } from '../lib/alert.ts';
 import { effectiveAvatar } from '../utils/miscUtils.ts';
 import type { UserDTO } from '../types/api.ts';
@@ -46,6 +47,17 @@ export async function resolveReferrer(
   } catch {
     return null;
   }
+}
+
+// True when a Prisma P2002 was thrown for a unique violation on `field`. Prisma 7's pg driver adapter
+// nests the constraint fields under meta.driverAdapterError.cause.constraint (quoted column names)
+// instead of the older flat meta.target, so check both shapes.
+function isUniqueConflictOn(e: unknown, field: string): boolean {
+  if ((e as { code?: string })?.code !== 'P2002') return false;
+  const meta = (e as { meta?: Record<string, unknown> }).meta;
+  const driverFields = (meta as { driverAdapterError?: { cause?: { constraint?: { fields?: string[] } } } })?.driverAdapterError?.cause?.constraint?.fields;
+  const fields = (meta?.target as string[] | undefined) ?? driverFields ?? [];
+  return fields.some((f) => f.includes(field));
 }
 
 export type EnsureUserParams = {
@@ -83,20 +95,35 @@ export async function ensureUser(params: EnsureUserParams): Promise<ProvisionRes
   // clicking a friend's link is never retroactively marked as referred. Resolved up front since upsert can't branch its `where`.
   const referrer = await resolveReferrer(referralCode);
 
-  const user = await prismaQuery.user.upsert({
-    where: { address },
-    update: { provider, lastSignIn: new Date(), ...(email ? { email } : {}), ...privyFields, ...tzField },
-    create: {
-      address,
-      provider,
-      displayName: generateHandle(),
-      email: email ?? null,
-      lastSignIn: new Date(),
-      ...privyFields,
-      ...tzField,
-      ...(referrer ? { referredById: referrer.id, referredAt: new Date() } : {}),
-    },
-  });
+  const upsert = () =>
+    prismaQuery.user.upsert({
+      where: { address },
+      update: { provider, lastSignIn: new Date(), ...(email ? { email } : {}), ...privyFields, ...tzField },
+      create: {
+        address,
+        provider,
+        displayName: generateHandle(),
+        email: email ?? null,
+        lastSignIn: new Date(),
+        ...privyFields,
+        ...tzField,
+        ...(referrer ? { referredById: referrer.id, referredAt: new Date() } : {}),
+      },
+    });
+
+  let user: User;
+  try {
+    user = await upsert();
+  } catch (e) {
+    // A token that verified here proves Privy currently has this X account linked to THIS user, so a
+    // stale twitterSubject left on another row (unlinked there, per Privy) loses the race. Steal it and retry once.
+    if (!twitter || !isUniqueConflictOn(e, 'twitterSubject')) throw e;
+    await prismaQuery.user.updateMany({
+      where: { twitterSubject: twitter.subject, address: { not: address } },
+      data: { twitterSubject: null, twitterUsername: null, twitterName: null },
+    });
+    user = await upsert();
+  }
 
   return provisionUser(user);
 }
@@ -167,8 +194,10 @@ export async function grantStarterChips(user: User, cooldownMs: number, threshol
   if (chips >= threshold || !cooldownOk || !(await treasuryAboveFloor())) return { user, granted: null };
 
   try {
-    await transferDusdc(user.address, STARTING_BALANCE); // sends STARTING_BALANCE; throws if the treasury can't pay
+    const digest = await transferDusdc(user.address, STARTING_BALANCE); // sends STARTING_BALANCE; throws if the treasury can't pay
     const updated = await prismaQuery.user.update({ where: { id: user.id }, data: { dusdcFunded: true, lastFundedAt: new Date() } });
+    // Inline feed row for the grant (login refill + explicit TOP UP), so it shows instantly; the indexer upserts the same digest later.
+    await recordWalletTx({ userId: user.id, address: user.address, direction: 'in', kind: 'grant', coinType: DUSDC_TYPE, amountRaw: toDusdcRaw(STARTING_BALANCE), digest, counterparty: treasuryAddress || null });
     return { user: updated, granted: STARTING_BALANCE };
   } catch (e) {
     console.error('[auth] chip grant failed (treasury payout):', e instanceof Error ? e.message : e);
