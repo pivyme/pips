@@ -84,7 +84,9 @@ export function preloadPlayCardAssets(): void {
   void loadImage('/assets/pnl-card/under-lose.webp')
   void loadImage('/assets/pnl-card/over-win.webp')
   void loadImage('/assets/pnl-card/over-lose.webp')
-  void loadImage('/assets/pnl-card/console-classic-win.webp')
-  void loadImage('/assets/pnl-card/console-classic-rekt.webp')
-  void import('@/lib/consoleShot').then((m) => m.warmConsoleShot())
+  void import('@/lib/consoleShot').then((m) => {
+    void loadImage(m.CLASSIC_SRC('win')) // one source for the baked path, it carries a cache-busting suffix
+    void loadImage(m.CLASSIC_SRC('rekt'))
+    m.warmConsoleShot()
+  })
 }

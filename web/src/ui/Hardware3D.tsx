@@ -89,6 +89,7 @@ export function Hw3DIconButton({
   label,
   size = 44,
   accent = '#f5a623',
+  disabled,
   onPress,
   className,
 }: {
@@ -96,6 +97,7 @@ export function Hw3DIconButton({
   label: string
   size?: number
   accent?: string
+  disabled?: boolean
   onPress?: () => void
   className?: string
 }) {
@@ -104,7 +106,9 @@ export function Hw3DIconButton({
       <button
         type="button"
         aria-label={label}
+        disabled={disabled}
         onClick={() => {
+          if (disabled) return
           haptic('selection')
           onPress?.()
         }}
@@ -114,8 +118,12 @@ export function Hw3DIconButton({
         <Icon
           size={Math.round(size * 0.43)}
           strokeWidth={2.4}
-          color={accent}
-          style={{ filter: `drop-shadow(0 1px 1px rgba(0,0,0,0.6)) drop-shadow(0 0 5px ${accent}55)` }}
+          color={disabled ? 'rgba(255,255,255,0.22)' : accent}
+          style={{
+            filter: disabled
+              ? 'none'
+              : `drop-shadow(0 1px 1px rgba(0,0,0,0.6)) drop-shadow(0 0 5px ${accent}55)`,
+          }}
         />
       </button>
     </span>

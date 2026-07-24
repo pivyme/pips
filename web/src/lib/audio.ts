@@ -1,20 +1,32 @@
 // App-level audio mixer + background-music player. Sits above sound.ts (the synth stings) and
 // consoleAudio.ts (the device SFX): it owns the two user-facing volumes and the music transport.
-// The old per-game synth beds are unlinked (GAME_BEDS_ENABLED in sound.ts); background music now
-// comes from mp3 tracks played here. UI-first for now: the playlist is a placeholder until the mp3s
-// land. Drop files in web/public/music, list them in TRACKS, and the drawer + player wire up as-is.
+// The old per-game synth beds are unlinked (GAME_BEDS_ENABLED in sound.ts); background music is one
+// mp3 played here.
+//
+// The transport skips PARTS of that one track, not tracks. Left alone, playback rolls from part to
+// part with no seam (it is a single file) and loops back to the top at the end. Skip forward stops at
+// the last part, skip back stops at the first. The whole file is pulled into a blob at boot, so a
+// skip or a loop never waits on the network.
 
 import { useSyncExternalStore } from 'react'
 import { setSynthSfxVolume } from './sound'
 import { setDeviceSfxVolume } from '@/components/console/consoleAudio'
 
-export type Track = { title: string; src: string }
+const BGM_SRC = '/sounds/PIPS_BGM.mp3'
 
-// Placeholder playlist. `src` is empty until the mp3s arrive, so play/next just move the UI without
-// touching audio; once a track has a real src it plays normally with no other change needed.
-export const TRACKS: Array<Track> = [
-  { title: 'Euphoria - INTRO LOW A 1', src: '' },
+// The parts of the track, by start time in seconds (timed off the mix). Names read as the stem names
+// they are; the transport shows one at a time, so it looks like a playlist.
+const PARTS = [
+  { at: 0, title: 'PIPS - Intro' },
+  { at: 32.78, title: 'PIPS - Main A' },
+  { at: 57.6, title: 'PIPS - High D 2' },
+  { at: 98.46, title: 'PIPS - Outro' },
 ]
+
+// The music bus tops out here, not at unity. The mix is hot (~-20 dBFS RMS) and the console SFX are
+// short transients on a separate bus, so a full-scale bed would bury every click. This keeps the
+// fader's whole travel under the SFX, so even at max the buttons read clearly.
+const MUSIC_CEILING = 0.4
 
 const SFX_KEY = 'pips_sfx_vol'
 const MUSIC_KEY = 'pips_music_vol'
@@ -41,16 +53,16 @@ function persist(key: string, value: number): void {
 
 let sfxVolume = load(SFX_KEY, 1)
 let musicVolume = load(MUSIC_KEY, 0.72)
-let trackIndex = 0
 let playing = false
+let partIndex = 0
 
 export type AudioSnapshot = {
   sfxVolume: number
   musicVolume: number
   playing: boolean
-  track: Track
-  trackIndex: number
-  trackCount: number
+  title: string
+  isFirstPart: boolean
+  isLastPart: boolean
 }
 
 // A cached snapshot so useSyncExternalStore gets a stable reference between real changes.
@@ -62,9 +74,9 @@ function build(): AudioSnapshot {
     sfxVolume,
     musicVolume,
     playing,
-    track: TRACKS[trackIndex] ?? { title: 'No track', src: '' },
-    trackIndex,
-    trackCount: TRACKS.length,
+    title: PARTS[partIndex].title,
+    isFirstPart: partIndex === 0,
+    isLastPart: partIndex === PARTS.length - 1,
   }
 }
 
@@ -80,26 +92,74 @@ export function subscribeAudio(cb: () => void): () => void {
   }
 }
 
-// The single <audio> element for background music, created lazily on the first gesture (a play tap or
-// a volume drag) so autoplay policy is never hit.
+// musicVolume is the fader position (0..1); the element only ever hears it through the ceiling.
+function applyVolume(): void {
+  if (el) el.volume = musicVolume * MUSIC_CEILING
+}
+
+function partAt(t: number): number {
+  let i = 0
+  while (i + 1 < PARTS.length && t >= PARTS[i + 1].at) i++
+  return i
+}
+
+// Pull the file down once and hand the element a local blob. iOS ignores <audio preload> until a
+// gesture, but a plain fetch is not blocked, so the bytes are already here when play is first tapped.
+let blobUrl: string | null = null
+let warming: Promise<void> | null = null
+function warm(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve()
+  if (!warming) {
+    warming = fetch(BGM_SRC)
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`bgm ${r.status}`))))
+      .then((b) => {
+        blobUrl = URL.createObjectURL(b)
+        // Only swap an untouched element: re-pointing src mid-track would gap the audio, and by now
+        // the network url is in the http cache anyway.
+        if (el && el.paused && el.currentTime === 0 && !el.src.startsWith('blob:')) {
+          el.src = blobUrl
+          el.load()
+        }
+      })
+      .catch(() => {
+        warming = null // transient; the element still streams from the url and a later play retries
+      })
+  }
+  return warming
+}
+
 let el: HTMLAudioElement | null = null
 function ensureEl(): HTMLAudioElement | null {
   if (typeof window === 'undefined') return null
-  if (!el) {
-    el = new Audio()
-    el.volume = musicVolume
-    el.addEventListener('ended', next)
-  }
-  return el
-}
-
-function playCurrent(): void {
-  const a = ensureEl()
-  const track = TRACKS[trackIndex]
-  if (!a || !track?.src) return
-  if (!a.src.endsWith(track.src)) a.src = track.src
-  a.volume = musicVolume
-  a.play().catch(() => {})
+  if (el) return el
+  const a = new Audio()
+  a.preload = 'auto'
+  a.loop = true // the end runs straight back to the top
+  a.volume = musicVolume * MUSIC_CEILING
+  // play/pause events (not our own calls) drive the flag, so an OS interrupt stays in sync
+  a.addEventListener('play', () => {
+    if (!playing) {
+      playing = true
+      emit()
+    }
+  })
+  a.addEventListener('pause', () => {
+    if (playing) {
+      playing = false
+      emit()
+    }
+  })
+  a.addEventListener('timeupdate', () => {
+    const i = partAt(a.currentTime)
+    if (i !== partIndex) {
+      partIndex = i
+      emit()
+    }
+  })
+  a.src = blobUrl ?? BGM_SRC
+  a.load()
+  el = a
+  return a
 }
 
 export function getMusicVolume(): number {
@@ -121,34 +181,38 @@ export function setMusicVolume(v: number): void {
   if (v === musicVolume) return
   musicVolume = v
   persist(MUSIC_KEY, musicVolume)
-  if (el) el.volume = musicVolume
+  applyVolume()
   emit()
 }
 
 export function togglePlay(): void {
   const a = ensureEl()
-  if (playing) {
-    a?.pause()
-    playing = false
-  } else {
-    playing = true
-    playCurrent() // no-op while the track has no src, the UI still flips to playing
+  if (!a) return
+  if (playing) a.pause()
+  else void a.play().catch(() => {}) // blocked autoplay just leaves the transport paused
+}
+
+function seekPart(idx: number): void {
+  const a = ensureEl()
+  if (!a) return
+  try {
+    a.currentTime = PARTS[idx].at
+  } catch {
+    // seeking before metadata lands; the src position takes it from here
   }
+  partIndex = idx
   emit()
+  if (playing) void a.play().catch(() => {})
 }
 
 export function next(): void {
-  if (TRACKS.length === 0) return
-  trackIndex = (trackIndex + 1) % TRACKS.length
-  if (playing) playCurrent()
-  emit()
+  if (partIndex >= PARTS.length - 1) return // last part, nothing after it
+  seekPart(partIndex + 1)
 }
 
 export function prev(): void {
-  if (TRACKS.length === 0) return
-  trackIndex = (trackIndex - 1 + TRACKS.length) % TRACKS.length
-  if (playing) playCurrent()
-  emit()
+  if (partIndex <= 0) return // first part, nothing before it
+  seekPart(partIndex - 1)
 }
 
 export function useAudioState(): AudioSnapshot {
@@ -159,3 +223,13 @@ export function useAudioState(): AudioSnapshot {
 // setters just stash the scale and apply it when the node is first created).
 setSynthSfxVolume(sfxVolume)
 setDeviceSfxVolume(sfxVolume)
+
+// Fetch the track once the boot is out of the way, so ~1.8MB never competes with the first paint or
+// the 3D scene. Pressing play earlier still works, it just streams from the url that first time.
+if (typeof window !== 'undefined') {
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(() => void warm(), { timeout: 4000 })
+  } else {
+    window.setTimeout(() => void warm(), 2000) // Safari < 18.4
+  }
+}

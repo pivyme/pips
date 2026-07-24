@@ -3384,6 +3384,8 @@ export default function ConsoleCanvas({
       disposeActionScreens()
       backDetails.dispose()
       internals.dispose()
+      bezelAudio.dispose()
+      bezelAudioRef.current = null // a late audio-store push must not poke a torn-down scene
       matMetal.dispose()
       matSeam.dispose()
       matBackRecess.dispose()

@@ -8,7 +8,7 @@
 // verbatim as renderPlayCardLegacy behind the PNL_CARD_V2 kill switch and as the runtime fallback.
 import type { LuckyParams, PlayDTO, RangeParams } from '@/lib/api'
 import { loadCardFonts, loadImage, loadTintedIcon } from '@/lib/cardAssets'
-import { getConsoleShot } from '@/lib/consoleShot'
+import { CLASSIC_SRC, getConsoleShot } from '@/lib/consoleShot'
 import { GAME_ICON_SRC } from '@/lib/gameIcons'
 
 // Kill switch: false renders the exact pre-revamp card again (legacy path + legacy templates, both still
@@ -229,7 +229,7 @@ export async function renderPlayCard(play: PlayDTO, opts?: PlayCardOpts): Promis
   ])
   // Fallback ladder: no live shot -> the baked classic console for the tone (wrong-but-beautiful beats
   // a hole); any layer still missing -> the legacy card. A broken v2 can never produce a broken card.
-  const console3 = shot ?? (await loadImage(`/assets/pnl-card/console-classic-${screen}.webp`))
+  const console3 = shot ?? (await loadImage(CLASSIC_SRC(screen)))
   if (!under || !over || !console3) return renderPlayCardLegacy(play, opts)
 
   const canvas = document.createElement('canvas')

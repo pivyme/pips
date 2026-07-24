@@ -743,6 +743,15 @@
     outline: 2px solid rgba(245, 166, 35, 0.6);
     outline-offset: 3px;
   }
+  /* Dead key: flat in its socket, no dome, no press. */
+  .hw3d-cap:disabled,
+  .hw3d-cap:disabled:hover,
+  .hw3d-cap:disabled:active {
+    cursor: default;
+    transform: none;
+    background: radial-gradient(120% 120% at 50% 30%, #202226 0%, #16171a 100%);
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+  }
 
   /* Slide toggle: a proud metallic cap riding a recessed groove that lights
      amber when on. Same material family as the volume fader. */

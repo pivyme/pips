@@ -1013,5 +1013,15 @@ export function createBezelAudio(
     matBtn.emissive.copy(ink)
   }
 
-  return { group, audioBtn, faderCap, faderHit: hit, setVolume, pickVolume, getVolume: () => volume, recolor }
+  // The share-card shot mounts and tears down a whole scene per render, so the cluster owns its trash
+  // like every other element factory here.
+  function dispose() {
+    for (const m of [matShell, matRecess, matSlot, matCap, matGroove, matBtn, matFill, matNote]) m.dispose()
+    matNote.map?.dispose()
+    group.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.geometry.dispose()
+    })
+  }
+
+  return { group, audioBtn, faderCap, faderHit: hit, setVolume, pickVolume, getVolume: () => volume, recolor, dispose }
 }

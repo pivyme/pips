@@ -27,8 +27,9 @@ export const CONSOLE_SHOT_POSE = { x: (-14 * Math.PI) / 180, y: (-18 * Math.PI) 
 export type ShotScreen = 'win' | 'rekt'
 const SCREEN_ART = (s: ShotScreen) => `/assets/pnl-card/pnl-${s}-screen.webp`
 // Stock-classic rigs ship baked (same tool, same pose): the majority skips WebGL entirely, and the
-// same asset is the WebGL-dead fallback in playCard.
-const CLASSIC_SRC = (s: ShotScreen) => `/assets/pnl-card/console-classic-${s}.webp`
+// same asset is the WebGL-dead fallback in playCard. /assets/* is served immutable for a year, so a
+// re-bake must land on a NEW filename (bump the -vN suffix) or no returning browser ever sees it.
+export const CLASSIC_SRC = (s: ShotScreen) => `/assets/pnl-card/console-classic-${s}-v2.webp`
 // ConsoleCanvas stretches the screen texture across the mesh bbox (SCREEN_PX, 1110x1650); cover-crop
 // the art to that aspect first so it never distorts.
 const SCREEN_AR = 1110 / 1650

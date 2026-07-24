@@ -143,16 +143,28 @@ export function SoundsDrawer({ isOpen, onClose }: { isOpen: boolean; onClose: ()
 
         <Section label="Now Playing">
           <div className="surface-skeuo rounded-card px-4 py-6">
-            <div className="truncate text-center text-[15px] text-text-2">{state.track.title}</div>
+            <div className="truncate text-center text-[15px] text-text-2">{state.title}</div>
             <div className="mt-6 flex items-center justify-center gap-6">
-              <Hw3DIconButton icon={SkipBack} label="Previous track" size={48} onPress={prev} />
+              <Hw3DIconButton
+                icon={SkipBack}
+                label="Previous part"
+                size={48}
+                disabled={state.isFirstPart}
+                onPress={prev}
+              />
               <Hw3DIconButton
                 icon={state.playing ? Pause : Play}
                 label={state.playing ? 'Pause' : 'Play'}
                 size={64}
                 onPress={togglePlay}
               />
-              <Hw3DIconButton icon={SkipForward} label="Next track" size={48} onPress={next} />
+              <Hw3DIconButton
+                icon={SkipForward}
+                label="Next part"
+                size={48}
+                disabled={state.isLastPart}
+                onPress={next}
+              />
             </div>
           </div>
         </Section>
