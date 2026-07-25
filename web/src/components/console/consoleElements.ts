@@ -901,7 +901,7 @@ function legibleInk(ink: THREE.Color, backdrop: THREE.Color): void {
 // button had nothing left to darken, and a white one clipped to the same white as the cap under the
 // key light. Stepping a fraction in gamma space scales the step with the cap's brightness, which is
 // what beats the clipping. Measured on-device across every skin and palette pick.
-const EMBOSS_STEP = 0.22
+const EMBOSS_STEP = 0.25
 // A near-black cap has no room to darken, so the P lifts instead. Smaller, because a lift off a dark
 // surface reads far louder than the same step down off a bright one.
 const EMBOSS_LIFT = 0.13
