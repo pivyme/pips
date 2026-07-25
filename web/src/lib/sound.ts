@@ -68,6 +68,14 @@ export function unlockAudio(): void {
   if (ac) ensureRunning(ac)
 }
 
+// The music player (lib/audio.ts) borrows this context to route its <audio> element through a gain
+// node. iOS ignores HTMLMediaElement.volume, so on a phone that is the only working music fader.
+export function sharedAudioContext(): AudioContext | null {
+  const ac = audio()
+  if (ac) ensureRunning(ac)
+  return ac
+}
+
 // Re-arms the synth context on foreground return. A backgrounded standalone PWA on iOS drops the
 // context to 'interrupted' or drains it to 'closed'; without this it stayed dead until force-quit.
 if (typeof document !== 'undefined') {

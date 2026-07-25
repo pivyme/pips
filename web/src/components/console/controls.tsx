@@ -124,6 +124,26 @@ export function useDeviceSettled(): boolean {
   return useContext(DeviceSettledContext)
 }
 
+// A menu page transition hands the frame budget to the browser: it snapshots, commits React, and runs
+// the slide, all while the device and the last game's chart are painting behind a full-screen blur where
+// nobody can see them. Park those loops for the length of the nav so they stop competing for it.
+// Deliberately a module flag, not state: the render loops read it per frame and must not re-render to learn.
+let parkedUntil = 0
+
+export function parkDevice(ms: number): void {
+  parkedUntil = Math.max(parkedUntil, performance.now() + ms)
+}
+
+export function isDeviceParked(): boolean {
+  return performance.now() < parkedUntil
+}
+
+// ms left on the park, 0 when clear. Heavy one-off warms (a second WebGL rig, a bulk image decode) delay
+// themselves by this so they never land inside a transition.
+export function deviceParkRemaining(): number {
+  return Math.max(0, parkedUntil - performance.now())
+}
+
 // Read side: the shell.
 export function useConsoleView() {
   const { view, handlers } = useCtx()

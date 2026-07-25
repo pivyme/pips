@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { type PriceTick } from '@/lib/api'
 import { priceBus, type PricePast } from '@/lib/priceBus'
 import { isDemo } from '@/lib/demo'
+import { isDeviceParked } from '@/components/console/controls'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 import { formatPrice } from '@/utils/format'
@@ -774,6 +775,14 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
     let raf = 0
     let lastNow = 0
     const loop = (now: number) => {
+      // Parked through a menu page transition: the chart is buried under the drawer, so skip the repaint
+      // and let the transition have the frame. The ease still runs (dt-based, so it catches up on wake)
+      // and live ticks keep landing in `target`, the line just isn't drawn while nobody can see it.
+      if (isDeviceParked()) {
+        lastNow = now
+        raf = requestAnimationFrame(loop)
+        return
+      }
       // Frame-rate-independent ease. Clamp dt so a backgrounded tab (huge dt) doesn't snap the line.
       const dt = lastNow ? Math.min(now - lastNow, 100) : 16
       lastNow = now

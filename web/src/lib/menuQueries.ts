@@ -1,5 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 import type { QueryClient } from '@tanstack/react-query'
+import type { AnyRouter } from '@tanstack/react-router'
 import { api } from '@/lib/api'
 import { NETWORK } from '@/lib/sui/config'
 
@@ -53,3 +54,45 @@ export function prefetchMenuData(qc: QueryClient): void {
   void qc.prefetchQuery(historyQuery(true))
   void qc.prefetchQuery(walletTransactionsQuery())
 }
+
+// Every menu destination, as its own build chunk. Kept explicit so a new sub-screen is a one-line add.
+const MENU_ROUTES = [
+  '/menu',
+  '/menu/history',
+  '/menu/leaderboard',
+  '/menu/referrals',
+  '/menu/achievements',
+  '/menu/share',
+  '/menu/transactions',
+  '/menu/deposit',
+  '/menu/withdraw',
+  '/menu/settings',
+  '/menu/account',
+  '/menu/about',
+  '/menu/username',
+]
+
+// The game routes the hub tiles launch into. The drawer's close animation usually covers a cold fetch,
+// but only just, so warm them in the same idle pass.
+const GAME_ROUTES = [
+  '/games/range',
+  '/games/lucky',
+  '/games/moonshot',
+  '/games/flappy-piper',
+  '/games/line-rider',
+]
+
+// The code twin of prefetchMenuData. Without this a tile tap pays a round trip for the page's chunk
+// before the router will even start the transition, which is invisible on localhost and very much not
+// on a phone: preload-on-intent is hover-driven (touch never fires it) and the pointerdown preload only
+// buys the finger-down window. ~30KB gzipped for the whole set, immutably cached.
+export function prefetchRoutes(router: AnyRouter, routes: Array<string> = MENU_ROUTES): void {
+  const run = () => {
+    for (const to of routes) void router.preloadRoute({ to }).catch(() => {})
+  }
+  const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }
+  if (w.requestIdleCallback) w.requestIdleCallback(run, { timeout: 3000 })
+  else window.setTimeout(run, 400)
+}
+
+export { MENU_ROUTES, GAME_ROUTES }

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { HapticPreset } from '@/lib/haptics'
@@ -134,6 +134,11 @@ export function Hw3DIconButton({
 // ridged cap. Controlled (value 0..1). Width comes from `className` (e.g. flex-1 or w-32), everything
 // else is fixed material. This is the fader the whole hardware kit is built from.
 const FADER_THUMB = 22
+// Cap centre travels half a cap in from each rim, so the usable track is that much shorter.
+function faderValueAt(track: HTMLElement, clientX: number): number {
+  const r = track.getBoundingClientRect()
+  return Math.max(0, Math.min(1, (clientX - r.left - FADER_THUMB / 2) / (r.width - FADER_THUMB)))
+}
 export function Hw3DFader({
   value,
   onChange,
@@ -147,14 +152,33 @@ export function Hw3DFader({
 }) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState(false)
+  // Held in a ref so the window listeners below never close over a stale handler.
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
 
   const setFromClientX = (clientX: number) => {
     const el = trackRef.current
-    if (!el) return
-    const r = el.getBoundingClientRect()
-    const usable = r.width - FADER_THUMB
-    onChange(Math.max(0, Math.min(1, (clientX - r.left - FADER_THUMB / 2) / usable)))
+    if (el) onChangeRef.current(faderValueAt(el, clientX))
   }
+
+  // A grab owns the pointer until it is released: the finger can wander off the track, above it, or
+  // clean off the sheet and the cap still follows. Window-level, so it survives losing the capture.
+  useEffect(() => {
+    if (!dragging) return
+    const move = (e: PointerEvent) => {
+      const el = trackRef.current
+      if (el) onChangeRef.current(faderValueAt(el, e.clientX))
+    }
+    const end = () => setDragging(false)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
+    }
+  }, [dragging])
 
   // Cap centre + fill both stop at the same point: half a cap in from each rim.
   const travel = `calc(${FADER_THUMB / 2}px + (100% - ${FADER_THUMB}px) * ${value})`
@@ -170,13 +194,14 @@ export function Hw3DFader({
       aria-valuenow={Math.round(value * 100)}
       onPointerDown={(e) => {
         setDragging(true)
-        e.currentTarget.setPointerCapture(e.pointerId)
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId)
+        } catch {
+          // capture is best-effort, the window listeners carry the drag either way
+        }
         haptic('selection')
         setFromClientX(e.clientX)
       }}
-      onPointerMove={(e) => dragging && setFromClientX(e.clientX)}
-      onPointerUp={() => setDragging(false)}
-      onPointerCancel={() => setDragging(false)}
       onKeyDown={(e) => {
         if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
           onChange(Math.min(1, value + 0.02))

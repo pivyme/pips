@@ -583,10 +583,11 @@ function RangeScreen() {
       min: 0,
       max: tiers.length - 1, // step through the payout-tier ladder (safest to wildest)
       step: 1,
-      value: tierIdx,
-      onChange: setTierIdx,
+      // Dial is the mirror of tierIdx: up (raw value climbs) widens the band, so it maps to a lower tier index.
+      value: tiers.length - 1 - tierIdx,
+      onChange: (v: number) => setTierIdx(tiers.length - 1 - v),
       format: (v) => {
-        const t = tiers[Math.min(v, tiers.length - 1)]
+        const t = tiers[Math.min(tiers.length - 1 - v, tiers.length - 1)]
         return `${t.multiplier.toFixed(t.multiplier >= 10 ? 0 : 1)}x`
       },
     },

@@ -238,8 +238,13 @@ function HistoryPage() {
   const [everDevnet, setEverDevnet] = useState(false)
   const q = useQuery(historyQuery(showDevnet))
 
-  // Warm the share-card template art now so the share sheet's first open renders instantly.
-  useEffect(() => preloadPlayCardAssets(), [])
+  // Warm the share-card template art so the share sheet's first open renders instantly. Held until the
+  // push transition has finished: this decodes ~250KB of WebP and can mount a second WebGL rig, and this
+  // effect fires on the exact frame the slide-in starts.
+  useEffect(() => {
+    const t = window.setTimeout(preloadPlayCardAssets, 700)
+    return () => window.clearTimeout(t)
+  }, [])
 
   useEffect(() => {
     if (!everDevnet && (q.data?.plays ?? []).some((p) => p.network === 'devnet')) setEverDevnet(true)

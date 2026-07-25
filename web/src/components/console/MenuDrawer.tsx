@@ -56,6 +56,9 @@ export function MenuDrawer({
   const dragRef = useRef({ active: false, startY: 0, dy: 0, maxDy: 0, lastY: 0, lastT: 0, vel: 0 })
 
   // Remember each menu route's scroll offset (recorded live below), so popping back from a sub-page lands where you left off. A fresh page has no entry, so it still opens at the top.
+  // The scroll container is deliberately NOT keyed on the route: resolvedLocation only lands after the nav
+  // settles, so a key there mounted every page twice (once when the Outlet swapped, again when the key
+  // caught up). The layout effect below owns the reset instead, one mount per navigation.
   const scrollMemory = useRef<Record<string, number>>({})
 
   // Bottom fade: hints there's content clipped below the fold, gone once fully scrolled. Styled straight on the node, no per-scroll re-render.
@@ -292,7 +295,6 @@ export function MenuDrawer({
         {/* This named surface is snapshotted by the browser during menu route changes, preserving the outgoing page while the next slides over it. */}
         <div className="menu-page-transition relative min-h-0 flex-1 overflow-hidden bg-black">
           <div
-            key={pathname}
             ref={scrollRef}
             onScroll={(e) => {
               scrollMemory.current[pathname] = e.currentTarget.scrollTop

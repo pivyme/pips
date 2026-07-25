@@ -19,6 +19,7 @@ export interface ConsoleTheme {
   action: string // the two action buttons
   pills: string // MENU / GAMES nav pills
   glow?: string // idle action-screen glow; absent = falls through to `action` (today's rule)
+  bezelInk?: string // note glyph + level bar on the audio cluster; absent = the PLAY colour
   label?: string // MENU / GAMES caption text under the pills (defaults to a muted grey)
   logo?: string // embossed back logo letters (defaults to the accent); picked per skin for contrast
   logoEyes?: string // the logo's eye marks (defaults to `logo`); Classic keeps the red/blue original
@@ -238,6 +239,9 @@ export const THEMES: ConsoleTheme[] = [
     back: '#b943b9',
     knob: '#efd53f',
     main: '#00e5cc',
+    // The teal PLAY sat too close to the magenta bezel in tone. Deep rose stays in the skin's own
+    // family and reads dark against it.
+    bezelInk: '#7a0f4d',
     action: '#4c2399',
     pills: '#9e75f2',
     label: '#e8e8f0',

@@ -116,9 +116,10 @@ function GamesConsole() {
       min: 0,
       max: ALL.length - 1,
       step: 1,
-      value: sel,
-      onChange: move,
-      format: (v) => `${pad2(v + 1)}/${pad2(ALL.length)}`,
+      // Dial is the mirror of sel: up (raw value climbs) moves the cursor up the list, matching finger direction.
+      value: ALL.length - 1 - sel,
+      onChange: (v: number) => move(ALL.length - 1 - v),
+      format: (v) => `${pad2(ALL.length - v)}/${pad2(ALL.length)}`,
     },
     action1: { label: 'PREV', color: 'neutral', onPress: () => move(sel - 1) },
     action2: { label: 'NEXT', color: 'neutral', onPress: () => move(sel + 1) },

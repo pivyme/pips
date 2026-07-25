@@ -100,6 +100,9 @@ export function resolveTheme(custom: ConsoleCustom): ConsoleTheme {
     t.label = contrastInk(body, '#4a463c', '#e8e6df')
     t.logo = contrastInk(body, '#2a2a2e', '#f0efe8')
   }
+  // A preset's bezelInk is tuned against ITS body + PLAY pair, so either override drops it back to
+  // the accent and lets the contrast pass re-derive.
+  if (body || p.play !== undefined) delete t.bezelInk
   const play = hex(p.play)
   if (play) t.main = play
   const buttons = hex(p.buttons)
