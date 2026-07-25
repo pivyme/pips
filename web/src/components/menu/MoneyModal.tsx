@@ -41,7 +41,7 @@ export function MoneyModalHost() {
       {view && (
         <motion.div
           key="money-modal"
-          className="fixed inset-0 z-[120] flex items-center justify-center p-4"
+          className="viewport-fill fixed inset-0 z-[120] flex items-center justify-center p-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

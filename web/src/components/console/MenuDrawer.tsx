@@ -13,6 +13,7 @@ import { useRouter, useRouterState } from '@tanstack/react-router'
 import type { AnimationEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
+import { PerfDebug } from '@/components/menu/PerfDebug'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 // Lets a menu item slide the drawer away before navigating (e.g. Customize's handoff), reusing the proven close animation instead of an unmount transition.
@@ -231,6 +232,14 @@ export function MenuDrawer({
     return () => window.removeEventListener('keydown', onKey)
   }, [close])
 
+  // Marks that the console is behind a drawer, so the perf bisect can hide it without a React re-render.
+  useEffect(() => {
+    document.documentElement.dataset.drawer = 'open'
+    return () => {
+      delete document.documentElement.dataset.drawer
+    }
+  }, [])
+
   useEffect(
     () => () => {
       if (closeTimerRef.current !== null) {
@@ -314,6 +323,9 @@ export function MenuDrawer({
           />
         </div>
       </div>
+
+      {/* Outside the named surface on purpose, so it never gets snapshotted into a page transition. */}
+      <PerfDebug />
     </div>
   )
 }

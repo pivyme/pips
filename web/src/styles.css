@@ -166,6 +166,30 @@
   }
 }
 
+/* ── iOS home-screen launch: give back the stolen status-bar height ─────
+   Under apple-mobile-web-app-status-bar-style: black-translucent, iOS paints the
+   page from y=0 (under the status bar) but keeps the layout viewport short by
+   exactly that inset, so 100dvh ends above the screen: the whole app rides up and
+   a dead strip of html background sits at the bottom. AppFrame flags the shortfall
+   only when it actually measures it, so this no-ops everywhere else. */
+html[data-ios-inset-gap] .app-shell {
+  min-height: calc(100dvh + env(safe-area-inset-top));
+}
+
+/* Only the full-bleed phone frame; from sm up the card is aspect-locked (h-auto) and must stay that way. */
+@media (width < 40rem) {
+  html[data-ios-inset-gap] .app-frame {
+    height: calc(100dvh + env(safe-area-inset-top));
+  }
+}
+
+/* Same shortfall, but for surfaces that escape the frame: a `fixed inset-0` scrim resolves against
+   the short viewport, so it stops 59px above the screen and leaves an unblurred strip. Add
+   `viewport-fill` to any full-viewport fixed overlay; it's inert everywhere but an iOS home-screen launch. */
+html[data-ios-inset-gap] .viewport-fill {
+  bottom: calc(-1 * env(safe-area-inset-top));
+}
+
 /* ── Native touch feel (the app shell only) ─────────────────────────────
    Scoped to .app-shell (the device + landing + onboarding + menu) so a
    press-and-hold on a button or the knob never triggers iOS text selection,
@@ -897,15 +921,16 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   animation-name: menu-page-new-back;
 }
 
+/* The receding page dims to 0.52 alpha over the sheet's black, which is exactly what the old
+   opacity(0.72) + brightness(0.72) pair resolved to (0.72 x 0.72). Same pixels, one less full-texture
+   filter pass per frame, and no filter to force the clipped group into an offscreen buffer on WebKit. */
 @keyframes menu-page-old-forward {
   from {
     opacity: 1;
-    filter: brightness(1);
     transform: translateX(0) scale(1);
   }
   to {
-    opacity: 0.72;
-    filter: brightness(0.72);
+    opacity: 0.52;
     transform: translateX(-22%) scale(0.985);
   }
 }
@@ -930,13 +955,11 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
 
 @keyframes menu-page-new-back {
   from {
-    opacity: 0.72;
-    filter: brightness(0.72);
+    opacity: 0.52;
     transform: translateX(-22%) scale(0.985);
   }
   to {
     opacity: 1;
-    filter: brightness(1);
     transform: translateX(0) scale(1);
   }
 }
@@ -947,6 +970,63 @@ html[data-menu-transition='back']::view-transition-new(menu-page) {
   ::view-transition-new(menu-page) {
     animation-duration: 0.001ms;
   }
+}
+
+/* Perf bisect, unlocked by tapping the drawer title 5x (see lib/perfDebug.ts). Each flag strips one
+   suspect off the slide so a real phone can name the one that costs frames. Deliberately last in the
+   file: several of these tie on specificity with the rules above and win on source order. */
+html[data-perf~='flatSlide'][data-menu-transition='forward']::view-transition-old(menu-page) {
+  animation-name: menu-page-flat-out;
+}
+
+html[data-perf~='flatSlide'][data-menu-transition='back']::view-transition-new(menu-page) {
+  animation-name: menu-page-flat-in;
+}
+
+@keyframes menu-page-flat-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-22%);
+  }
+}
+
+@keyframes menu-page-flat-in {
+  from {
+    transform: translateX(-22%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+html[data-perf~='noShadow']::view-transition-old(menu-page),
+html[data-perf~='noShadow']::view-transition-new(menu-page) {
+  box-shadow: none;
+}
+
+html[data-perf~='noClip']::view-transition-group(menu-page) {
+  overflow: visible;
+}
+
+html[data-perf~='noBlur'] .drawer-scrim {
+  background: rgba(0, 0, 0, 0.82);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-perf~='noWillChange'] .drawer-sheet,
+html[data-perf~='noWillChange'] .drawer-scrim {
+  will-change: auto;
+}
+
+html[data-perf~='noSticky'] .menu-page-transition header {
+  position: static;
+}
+
+html[data-perf~='hideDevice'][data-drawer='open'] canvas {
+  visibility: hidden;
 }
 
 /* The menu drawer rises on mount and drops on close, and the dim/blur scrim fades with it so the

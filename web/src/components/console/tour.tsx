@@ -258,7 +258,7 @@ function TourOverlay({ onClose }: { onClose: () => void }) {
 
   return (
     <motion.div
-      className="fixed inset-0 z-[130]"
+      className="viewport-fill fixed inset-0 z-[130]"
       style={{ cursor: 'pointer' }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}

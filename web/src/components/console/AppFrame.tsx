@@ -1,14 +1,38 @@
 // PIPS is a handheld: full-screen on phone, but on desktop it's framed as a tall device floating on a drifting PIPS-logo field (a product shot, not a wide trading terminal), scaled to ~88dvh aspect-locked so it reads as the hero, not a chip.
 // Landing is exempt, it gets full width.
 import type { ReactNode } from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { cnm } from '@/utils/style'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
+
+const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
+
+// iOS home-screen launches paint under the status bar but keep the layout viewport short by that
+// same inset, so 100dvh stops above the screen edge. Measure the shortfall instead of assuming it,
+// so the compensation (see .app-shell in styles.css) dies on its own if Apple ever fixes it.
+function useIOSStatusBarGap() {
+  useIsoLayoutEffect(() => {
+    const sync = () => {
+      const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true
+      const gap = window.screen.height - window.innerHeight
+      // A status bar is at most ~62pt; anything larger is a rotated screen.height, not the bug.
+      document.documentElement.toggleAttribute('data-ios-inset-gap', standalone && gap > 0 && gap <= 80)
+    }
+    sync()
+    window.addEventListener('resize', sync)
+    window.addEventListener('orientationchange', sync)
+    return () => {
+      window.removeEventListener('resize', sync)
+      window.removeEventListener('orientationchange', sync)
+    }
+  }, [])
+}
 
 // `bg` tints the ambient (desktop surround + device frame) to the active skin, defaulting to black before a theme is known.
 // `dimmed` is the landing door: fades the drifting logo field out and swaps in the deconstructed-device backdrop, so the handheld card reads as the hero; the card itself is untouched.
 export function AppFrame({ children, bg, dimmed = false }: { children: ReactNode; bg?: string; dimmed?: boolean }) {
   const style = bg ? { background: bg } : undefined
+  useIOSStatusBarGap()
   return (
     <div
       className="app-shell relative flex min-h-dvh w-full items-stretch justify-center overflow-hidden bg-black sm:items-center"
@@ -23,7 +47,7 @@ export function AppFrame({ children, bg, dimmed = false }: { children: ReactNode
           Desktop-only (mobile is full-bleed) and behind the z-10 card, so the card stays untouched. */}
       <LandingBackdrop active={dimmed} />
       <div
-        className="relative z-10 flex h-dvh w-full flex-col overflow-hidden bg-black sm:h-auto sm:aspect-[23/44] sm:w-[min(88vw,46dvh)] sm:max-w-[720px] sm:rounded-[min(1.8vw,1.8dvh)] sm:border sm:border-white/10 sm:shadow-[0_40px_120px_-20px_rgba(0,0,0,0.9)]"
+        className="app-frame relative z-10 flex h-dvh w-full flex-col overflow-hidden bg-black sm:h-auto sm:aspect-[23/44] sm:w-[min(88vw,46dvh)] sm:max-w-[720px] sm:rounded-[min(1.8vw,1.8dvh)] sm:border sm:border-white/10 sm:shadow-[0_40px_120px_-20px_rgba(0,0,0,0.9)]"
         style={style}
       >
         {children}

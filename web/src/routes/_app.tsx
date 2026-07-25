@@ -454,8 +454,13 @@ function AppLayout() {
         {mountConsole && (
         <ConsoleControlsProvider>
           {/* Hidden (not unmounted) while the studio owns the frame: its device starts at the identical
-              app pose, so the swap is invisible, and no duplicate ghosts under the workshop fade-in. */}
-          <div style={{ visibility: showCustomizeStudio ? 'hidden' : undefined }}>
+              app pose, so the swap is invisible, and no duplicate ghosts under the workshop fade-in.
+              Positioned so the device box can drop clear of the iOS status bar on a home-screen launch
+              (the inset is 0 in a browser tab); the card behind paints the same backdrop, so no seam. */}
+          <div
+            className="absolute inset-0"
+            style={{ top: 'env(safe-area-inset-top)', visibility: showCustomizeStudio ? 'hidden' : undefined }}
+          >
             <Console3DRoute
               theme={saved.resolved}
               stage={canvasStage}
@@ -542,7 +547,7 @@ function AppLayout() {
 
 function AppLoadingScreen({ leaving = false }: { leaving?: boolean }) {
   return (
-    <div className={leaving ? 'app-loading-screen app-loading-screen-leaving' : 'app-loading-screen'}>
+    <div className={leaving ? 'app-loading-screen app-loading-screen-leaving viewport-fill' : 'app-loading-screen viewport-fill'}>
       <LoadingIcon size={72} />
     </div>
   )
@@ -550,7 +555,7 @@ function AppLoadingScreen({ leaving = false }: { leaving?: boolean }) {
 
 function RecoveryOverlay() {
   return (
-    <div className="recovery-overlay">
+    <div className="recovery-overlay viewport-fill">
       <LoadingIcon size={56} />
       <div className="recovery-overlay-text">Getting your account ready</div>
     </div>

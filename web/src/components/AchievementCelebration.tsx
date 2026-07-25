@@ -111,7 +111,7 @@ export function AchievementCelebration() {
           role="status"
           aria-live="polite"
           onClick={() => setCurrent(null)}
-          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 px-6 backdrop-blur-2xl"
+          className="viewport-fill fixed inset-0 z-[120] flex items-center justify-center bg-black/70 px-6 backdrop-blur-2xl"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

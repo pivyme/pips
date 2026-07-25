@@ -81,7 +81,7 @@ export function ChipGrantCelebration({ active = true }: { active?: boolean }) {
           role="status"
           aria-live="polite"
           onClick={() => setAmount(null)}
-          className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 px-6 backdrop-blur-2xl"
+          className="viewport-fill fixed inset-0 z-[130] flex items-center justify-center bg-black/70 px-6 backdrop-blur-2xl"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

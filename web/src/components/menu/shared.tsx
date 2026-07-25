@@ -1,11 +1,12 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronLeft } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { Illo } from '@/ui/Illo'
 import { Button } from '@/ui/Button'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { parkDevice } from '@/components/console/controls'
+import { isPerfPanelOpen, perfMarkNav, perfOn, setPerfPanelOpen } from '@/lib/perfDebug'
 import { cnm } from '@/utils/style'
 
 // Runs before every menu nav: sets the slide direction, and parks the render loops hidden behind the
@@ -13,7 +14,8 @@ import { cnm } from '@/utils/style'
 export function prepareMenuTransition(direction: 'forward' | 'back') {
   if (typeof document === 'undefined') return
   document.documentElement.dataset.menuTransition = direction
-  parkDevice(600)
+  if (!perfOn('noPark')) parkDevice(600)
+  perfMarkNav()
 }
 
 // The DUSDC token mark: the coin logo, optionally with the ticker. Menu surfaces only (balance,
@@ -76,6 +78,17 @@ export function MenuHeader({
     prepareMenuTransition('back')
     void navigate({ to: '/menu', viewTransition: true })
   }
+  // Five quick taps on the title opens the perf bisect panel (lib/perfDebug.ts). Hidden on purpose.
+  const taps = useRef({ n: 0, at: 0 })
+  const onTitleTap = () => {
+    const now = Date.now()
+    const t = taps.current
+    t.n = now - t.at > 600 ? 1 : t.n + 1
+    t.at = now
+    if (t.n < 5) return
+    t.n = 0
+    setPerfPanelOpen(!isPerfPanelOpen())
+  }
   return (
     <header className="sticky top-0 z-30 -mx-4 h-[76px] bg-[linear-gradient(180deg,#000_0%,#000_52%,rgba(0,0,0,0.72)_72%,rgba(0,0,0,0)_100%)]">
       {showBack && (
@@ -96,10 +109,11 @@ export function MenuHeader({
         </div>
       )}
       <h1
+        onClick={onTitleTap}
         className={
           showBack
-            ? 'absolute left-20 right-4 top-[14px] truncate text-left text-[24px] font-black leading-none text-white'
-            : 'absolute left-4 right-4 top-[14px] truncate text-left text-[28px] font-black leading-none text-white'
+            ? 'absolute left-20 right-4 top-[14px] truncate select-none text-left text-[24px] font-black leading-none text-white'
+            : 'absolute left-4 right-4 top-[14px] truncate select-none text-left text-[28px] font-black leading-none text-white'
         }
       >
         {title}
