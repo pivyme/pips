@@ -27,6 +27,7 @@ import { DEFAULT_THEME_ID, THEME_BY_ID, themeBackdrop } from '@/components/conso
 import { hasOverrides, isValidConsoleCustom, useConsoleCustom } from '@/components/console/customize'
 import { warmConsoleShot } from '@/lib/consoleShot'
 import { GAME_ROUTES, MENU_ROUTES, prefetchRoutes } from '@/lib/menuQueries'
+import { isMobile } from '@/lib/platform'
 import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
 import { api } from '@/lib/api'
@@ -320,6 +321,9 @@ function AppLayout() {
   // canvas, which must never compete with a live game); the history screen's preload catches those.
   useEffect(() => {
     if (phase !== 'app') return
+    // Never on mobile: a phone browser gets a hard per-tab memory ceiling and this rig is a second
+    // WebGL context. The history and share screens preload it on demand, which is soon enough there.
+    if (isMobile()) return
     const t = window.setTimeout(() => {
       const p = window.location.pathname
       if (p === '/games' || p.startsWith('/menu')) warmConsoleShot(deviceParkRemaining())
@@ -335,6 +339,10 @@ function AppLayout() {
   // (introFromApp) and zooms back out into the workshop, the mirror of the Done outro.
   useEffect(() => {
     if (!onMenu || customizePrepared) return
+    // Desktop only. Holding a third live WebGL scene for a screen the user may never open is what
+    // pushed iOS Safari over its tab budget and got the page killed mid-navigation; there it builds
+    // on open instead. Measured at ~157MB together with the shot warm.
+    if (isMobile()) return
     let idle = 0
     // Pushed past any in-flight page transition too: requestIdleCallback's timeout force-runs the build
     // on a busy thread, and this one blocks for ~1s.

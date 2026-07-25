@@ -849,6 +849,14 @@
   }
 }
 
+/* The only thing that moves during a menu route change is the drawer's page, which owns the named
+   surface below. Left at its default the browser ALSO snapshots the whole viewport twice per nav, at
+   device pixel ratio, live WebGL device and full-screen backdrop blur included. None of that changes,
+   so it is pure cost: on iOS Safari it measured ~60MB a nav and a sixth of the transition's frames. */
+:root {
+  view-transition-name: none;
+}
+
 .menu-page-transition {
   view-transition-name: menu-page;
 }
