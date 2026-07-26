@@ -263,6 +263,11 @@ function frame(records: Uint8Array[]): Uint8Array {
 // flush
 // ---------------------------------------------------------------------------
 
+/** Exported so the launch event can carry the PWA split, which the UA alone cannot tell us. */
+export function isPwaLaunch(): boolean {
+  return isStandalone()
+}
+
 function isStandalone(): boolean {
   try {
     return window.matchMedia('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true
@@ -357,6 +362,28 @@ export function track(name: EventName, props?: EventProps): void {
   }
 }
 
+const SETTLE_MS = 700
+const settleTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+// For a control a user scrubs: a knob or a stake slider fires dozens of changes for one intent, and the
+// rule is that an event fires once per user action. This waits for the value to settle and then sends the
+// final one, so a scrub is one row rather than forty.
+export function trackSettled(name: EventName, props?: EventProps): void {
+  try {
+    const existing = settleTimers.get(name)
+    if (existing) clearTimeout(existing)
+    settleTimers.set(
+      name,
+      setTimeout(() => {
+        settleTimers.delete(name)
+        track(name, props)
+      }, SETTLE_MS),
+    )
+  } catch {
+    // same contract as track(): a scheduling failure is a lost event, never an app error
+  }
+}
+
 // Depth 1, finite numbers, short strings: the same shape the server enforces, applied here so a bad call
 // site is a dropped prop rather than a rejected batch.
 function cleanProps(props?: EventProps): Record<string, string | number | boolean | null> | undefined {
@@ -395,6 +422,8 @@ export function installTrack(subscribe?: (fn: () => void) => void): void {
 
 /** Test seam: drops the queue and the handshake so a case starts clean. */
 export function resetTrackState(): void {
+  for (const t of settleTimers.values()) clearTimeout(t)
+  settleTimers.clear()
   queue.length = 0
   if (timer) clearTimeout(timer)
   timer = null

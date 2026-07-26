@@ -9,7 +9,7 @@ import { getSetting } from '../config/admin-settings.ts';
 import { RATE_LIMIT_WINDOW, SUI_NETWORK } from '../config/main-config.ts';
 import { MAX_EVENTS_PER_REQUEST, isEventName, isPreAuthEvent, platformFrom } from '../config/analytics-catalog.ts';
 import { RELEASE } from '../config/release.ts';
-import { ERROR_STATUSES, buildBrief, getErrorDetail, listErrorGroups, setErrorStatus, type ErrorStatus } from '../services/insights.ts';
+import { ERROR_STATUSES, buildBrief, getErrorDetail, listErrorGroups, setErrorStatus, usageReport, type ErrorStatus } from '../services/insights.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 
 import { ANALYTICS_OFF, BUDGET_SAMPLE_RATE, captureError, capMessage, capProps, errorBudgetExceeded, eventBudgetExceeded, redact } from '../lib/analytics.ts';
@@ -269,6 +269,13 @@ export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _op
       return reply.status(202).send({ success: true, error: null, data: { accepted } });
     }
   );
+
+  // Usage: the ascending event list, the funnel, per-game conversion, menu ranks, and D1/D7.
+  app.get('/admin/usage', admin, async (request: FastifyRequest, reply: FastifyReply) => {
+    const q = request.query as { days?: string };
+    const days = Math.min(90, Math.max(1, Number(q.days) || 30));
+    return ok(reply, await usageReport(days));
+  });
 
   // Grouped errors. Default is open bugs newest-first, which is the triage order.
   app.get('/admin/errors', admin, async (request: FastifyRequest, reply: FastifyReply) => {

@@ -16,16 +16,6 @@ export function OverviewPage() {
   )
 }
 
-export function UsagePage() {
-  return (
-    <Pending
-      title="Usage"
-      lead="What people actually use: event counts ascending, the sign-in funnel, per-game conversion, and D1/D7 retention."
-      waitingOn="the analytics ingest, so there are events to count"
-    />
-  )
-}
-
 export function PerfPage() {
   return (
     <Pending

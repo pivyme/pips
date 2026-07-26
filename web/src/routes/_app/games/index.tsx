@@ -14,6 +14,7 @@ import { useLivePresence } from '@/lib/presence'
 import { isDemo } from '@/lib/demo'
 import { NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
+import { track } from '@/lib/track'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { roundEndAt } from '@/hooks/useGameRound'
@@ -104,11 +105,20 @@ function GamesConsole() {
   const launch = useCallback(
     (i: number) => {
       haptic('rigid')
+      const game = ALL[i].to.replace('/games/', '')
+      // In Play means the tile is resuming a live round rather than starting one, which is a different
+      // intent and worth telling apart.
+      track(inPlayFor(ALL[i].to) ? 'hub.inplay_resume' : 'hub.game_tile_tap', { game })
       setSelTo(ALL[i].to)
       void navigate({ to: ALL[i].to })
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- inPlayFor is derived per render from the open-plays query
     [navigate, setSelTo],
   )
+
+  useEffect(() => {
+    track('hub.view')
+  }, [])
 
   useConsoleControls({
     knob: {

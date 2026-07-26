@@ -10,6 +10,7 @@ import { SocialFooter } from '@/components/SocialFooter'
 import { Hw3DButton } from '@/ui/Hardware3D'
 import { isDemo, setDemoOverride } from '@/lib/demo'
 import { accessGuardEnabled, isUnlocked, tryUnlock } from '@/lib/accessGuard'
+import { track } from '@/lib/track'
 import { api } from '@/lib/api'
 import { readRef } from '@/lib/referral'
 import { cnm } from '@/utils/style'
@@ -35,6 +36,11 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   const [signInError, setSignInError] = useState<AuthError | null>(null)
   // Private test deploy access-code sheet (VITE_ACCESS_GUARD), shown when START is tapped before this device has entered the code.
   const [codeOpen, setCodeOpen] = useState(false)
+
+  // The pre-auth funnel starts here, and this is the one step that happens before any session exists.
+  useEffect(() => {
+    track('door.landing_view')
+  }, [])
 
   // A referral link stashed a code before landing here (lib/referral.ts, /@{$handle} and /r/$code routes).
   // Fire-and-forget: a failed or unknown token renders nothing and never blocks sign-in; skipped in demo.
@@ -81,6 +87,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   // CHAIN_UNAVAILABLE client-side too, since the backend may lag; spinner stays up through the probe so the right copy paints first.
   const surfaceError = useCallback(async (err: AuthError) => {
     const wiped = err.code === 'CHAIN_UNAVAILABLE' || (await probeChainWiped())
+    if (wiped) track('friction.chain_unavailable')
     setConnecting(false)
     setSignInError(wiped ? { ...err, code: 'CHAIN_UNAVAILABLE' } : err)
     haptic('error')
@@ -99,6 +106,7 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
     }
     setSignInError(null) // a fresh attempt drops the last failure sheet
     setConnecting(true)
+    track('door.auth_start', { method: env.VITE_AUTH_MODE })
     try {
       // dev/demo resolve a session immediately (the effect walks us in); privy opens the modal and
       // settles once the user finishes or backs out.
@@ -107,14 +115,18 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
       // Backing out of the modal isn't an error (just drop the spinner); any other failure is real and surfaces via surfaceError.
       if (e instanceof Error && e.message === 'login_cancelled') {
         setConnecting(false)
+        track('door.auth_fail', { reason: 'cancelled' })
         return
       }
-      await surfaceError(toAuthError(e))
+      const failure = toAuthError(e)
+      track('door.auth_fail', { reason: failure.code ?? 'unknown' })
+      await surfaceError(failure)
     }
   }, [status, signIn, onEnter, surfaceError])
 
   const onCta = useCallback(() => {
     haptic('rigid')
+    track('door.start_tap')
     // Private test deploy: hold at the door until this device enters the access code.
     if (accessGuardEnabled() && !isUnlocked()) {
       setCodeOpen(true)
@@ -484,8 +496,10 @@ function AccessCodeSheet({
 
   const submit = () => {
     if (tryUnlock(code)) {
+      track('door.gate_pass')
       onUnlocked()
     } else {
+      track('door.gate_fail')
       setError(true)
       haptic('error')
     }

@@ -6,6 +6,7 @@ import { formatDuration } from '@/lib/deposit/mode'
 import { PRIVY_ENABLED } from '@/lib/privy'
 import { BridgeExecute } from './BridgeExecute'
 import { haptic } from '@/lib/haptics'
+import { track } from '@/lib/track'
 import { formatStringToNumericDecimals } from '@/utils/format'
 
 // Bridge mode. The whole panel is live: the amount input re-quotes as you type and every rendered number
@@ -53,6 +54,8 @@ export function BridgePanel({
         const res = await api.depositQuote({ currency, network, amount }, ctl.signal)
         if (ctl.signal.aborted) return
         setQuote(res.quote)
+        // Already debounced and abort-guarded above, so this is one event per amount the user settled on.
+        track('money.deposit_quote', { chain: network, token: currency })
       } catch (e) {
         if (ctl.signal.aborted || (e instanceof ApiError && e.code === 'ABORTED')) return
         setQuote(null)

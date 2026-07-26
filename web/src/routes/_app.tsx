@@ -34,6 +34,7 @@ import { api } from '@/lib/api'
 import { LivePresenceProvider } from '@/lib/presence'
 import { ActivePlayProvider } from '@/lib/activePlay'
 import { useAuth, loadToken } from '@/lib/auth'
+import { track } from '@/lib/track'
 import { useInstallGate } from '@/lib/platform'
 import { isDemo } from '@/lib/demo'
 import { refreshDeployedConfig } from '@/lib/sui/config'
@@ -239,6 +240,7 @@ function AppLayout() {
     if (needsOnboarding && !onboarding) {
       setOnboarding(true)
       setStep('username')
+      track('door.onboard_view')
     }
   }, [needsOnboarding, onboarding])
 
@@ -260,6 +262,7 @@ function AppLayout() {
 
   // Welcome dismissed: leave onboarding and refresh here (not at the username step) so the user object stays "not onboarded" through every step, and the phase can't jump to app mid-flow.
   const finishOnboarding = useCallback(() => {
+    track('door.onboard_done')
     onboardedRef.current = true
     setOnboarding(false)
     setWelcomeRevealed(false)
@@ -434,6 +437,7 @@ function AppLayout() {
     deviceChild = (
       <UsernameScreen
         onDone={(name) => {
+          track('door.onboard_username_set')
           setChosenName(name)
           setStep('customize')
         }}

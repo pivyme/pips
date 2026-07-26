@@ -16,6 +16,7 @@ import { HapticOverlay } from '@/components/HapticOverlay'
 import { PerfDebug } from '@/components/menu/PerfDebug'
 import { perfSlideMs } from '@/lib/perfDebug'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
+import { track } from '@/lib/track'
 
 // Lets a menu item slide the drawer away before navigating (e.g. Customize's handoff), reusing the proven close animation instead of an unmount transition.
 const MenuDrawerContext = createContext<{
@@ -275,6 +276,16 @@ export function MenuDrawer({
   const restedRef = useRef(false) // true once the rise settles, so a drag never fights the open
   const draggedRef = useRef(false) // distinguishes a real drag from a plain tap on the grabber
   const dragRef = useRef({ active: false, startY: 0, dy: 0, maxDy: 0, lastY: 0, lastT: 0, vel: 0 })
+
+  // One event with a prop, not 14 events, so the catalog stays readable and cardinality stays bounded.
+  // The hub itself is menu.open; every sub-screen is one menu.section. The drawer stays mounted behind the
+  // games too, so the /menu guard is what stops a game route being filed as a menu section.
+  useEffect(() => {
+    if (!pathname.startsWith('/menu')) return
+    const section = pathname.slice('/menu'.length).replace(/^\//, '')
+    if (section) track('menu.section', { section })
+    else track('menu.open')
+  }, [pathname])
 
   // The scroll container is deliberately NOT keyed on the route: resolvedLocation only lands after the
   // nav settles, so a key there mounted every page twice (once when the Outlet swapped, again when the

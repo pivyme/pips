@@ -13,6 +13,7 @@ import { setSoundEnabled } from '@/lib/sound'
 import { emitChipGrant } from '@/lib/chipGrantBus'
 import { readWalletBalances } from '@/lib/sui/predict'
 import { clearRef, readRef } from '@/lib/referral'
+import { track } from '@/lib/track'
 
 const TOKEN_KEY = 'pips_token'
 const WALLET_DEBUG_INTERVAL_MS = 30_000
@@ -120,6 +121,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthToken(token)
     setUser(u)
     move('authed')
+    // Carries the same anonId the pre-auth events used, which is what stitches the door funnel to a user.
+    track('door.auth_ok')
     // The backend only attributes a stashed referral on account creation, so clearing it unconditionally
     // is safe: real attribution already landed, a no-op resolve just leaves a stale code around.
     clearRef()
@@ -154,6 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (recoveringRef.current || Date.now() < healBackoffUntil.current) return
     recoveringRef.current = true
     setRecovering(true)
+    track('friction.session_heal')
     try {
       const { user: u } = await api.authHeal()
       setUser(u) // adopt the freshest user either way (new manager, or still-not-ready)
@@ -226,6 +230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { token, user: u, grant } = await api.authWalletVerify({ address: account.address, signature, referralCode: readRef() ?? undefined })
     apply(token, u)
     if (grant && u.username) emitChipGrant(grant) // popup only for onboarded users; new accounts get onboarding + the tour
+    if (grant) track('money.grant_received', { amount: String(grant) })
   }, [apply])
 
   // Any call 409ing MANAGER_NOT_READY means this session's manager was re-armed away; heal on the first

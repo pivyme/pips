@@ -135,6 +135,20 @@ Demo mode (`VITE_DEMO_MODE`) stays the one sanctioned no-backend sim. Suiet wall
 - **Sui IDs and package addresses live in config, never inline.** This applies to DeepBook Predict and any pool/object IDs.
 - **Sui only:** PIPS is Sui only. The EVM (`ethers`) and Solana (`@solana/web3.js`, `bs58`) starter deps have been removed from the backend. If any `ethers` / `@solana/*` reference survives, it is dead, do not build on it.
 
+### Analytics
+
+The in-house dashboard (error tracking, product analytics, ops health) is ADMIN-only at **`/admin`**, backed by the same Postgres and Fastify as the product. Spec: [`bigdev/plans/cont/03-ADMIN-DASHBOARD.md`](./bigdev/plans/cont/03-ADMIN-DASHBOARD.md). Errors are captured automatically; events are not, so:
+
+> **Shipping a new feature? Instrument it.**
+> 1. Add its event names to `EVENT_NAMES` (`backend/src/config/analytics-catalog.ts`, the source of truth, plus the typed twin in `web/src/lib/track.ts`). Unknown names are rejected at ingest with 400, so this step is mandatory, and it is what keeps cardinality bounded. `cd web && bun run check:admin` fails the gate if the two drift.
+> 2. Call `track()` at the moments that matter: opened, the primary action, success, failure. Four events is usually right. Twenty is wrong.
+> 3. If it touches chain or money, add a detector to the detectors array in `backend/src/services/insights.ts` with a one-line runbook.
+> 4. Never `await track()`, never call it in a render body, never track continuous data (ticks, frames, scroll). If it fires more than once per user action it is not an event.
+
+A feature that ships without steps 1 and 2 is indistinguishable from an unused one, and it gets cut for the wrong reason.
+
+Analytics is **never on the critical path**: every write is fire-and-forget with its rejection caught, and a broken `Event` table must never break a play. The server stamps `userId`, `ts`, `network`, `release`, `source`, and `platform`; anything a client sends for those is discarded. Tunables are DB-backed settings in `backend/src/config/admin-settings.ts`, not env vars (L-022).
+
 ---
 
 ## Style

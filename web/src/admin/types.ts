@@ -58,3 +58,21 @@ export interface AdminPing {
   network: string
   analyticsEnabled: boolean
 }
+
+export interface FunnelStepRow {
+  key: string
+  label: string
+  subjects: number
+  dropPct: number
+  skipped: boolean
+}
+
+export interface UsageReport {
+  windowDays: number
+  events: Array<{ name: string; count: number }>
+  funnel: FunnelStepRow[]
+  games: Array<{ game: string; opens: number; plays: number; conversionPct: number }>
+  menu: Array<{ section: string; count: number }>
+  cohorts: Array<{ date: string; signups: number; d1: number; d7: number; d1Pct: number; d7Pct: number }>
+  totalEvents: number
+}

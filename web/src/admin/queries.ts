@@ -5,7 +5,7 @@ import { queryOptions } from '@tanstack/react-query'
 
 import { getAuthToken } from '@/lib/api'
 import { env } from '@/env'
-import type { AdminPing, ErrorDetail, ErrorGroupRow, ErrorStatus } from './types'
+import type { AdminPing, ErrorDetail, ErrorGroupRow, ErrorStatus, UsageReport } from './types'
 
 const BASE = env.VITE_API_URL
 
@@ -88,3 +88,11 @@ export function setErrorStatus(fingerprint: string, status: ErrorStatus): Promis
     body: JSON.stringify({ status }),
   })
 }
+
+export const usageQuery = (days: number) =>
+  queryOptions({
+    queryKey: ['admin', 'usage', days],
+    queryFn: () => adminFetch<UsageReport>(`/admin/usage?days=${days}`),
+    staleTime: 60_000,
+    retry: false,
+  })

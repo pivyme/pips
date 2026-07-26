@@ -26,6 +26,8 @@ import {
   useRoundCountdown,
 } from '@/hooks/useGameRound'
 import { haptic } from '@/lib/haptics'
+// Aliased: this file already destructures a `track` from useActivePlay (the open-round tracker).
+import { track as trackEvent, trackSettled } from '@/lib/track'
 import {
   moonshotCashout,
   moonshotFire,
@@ -38,7 +40,7 @@ import {
 import { api, type LuckyParams, type MoonshotAim, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { cashOut, placePlay } from '@/lib/sui/predict'
 import { betLadder, netStakeUsd } from '@/lib/sui/config'
-import { toastError } from '@/lib/errors'
+import { errorCode, toastError } from '@/lib/errors'
 import { useTopUp } from '@/lib/chipGrant'
 import { useAuth } from '@/lib/auth'
 import { useActivePlay } from '@/lib/activePlay'
@@ -107,6 +109,11 @@ const UsdFlow = ({ value }: { value: number }) => (
 )
 
 function MoonshotScreen() {
+  // One per screen mount. Paired with game.play_tap this is the open-to-play conversion on the Usage page.
+  useEffect(() => {
+    trackEvent('game.open', { game: 'moonshot' })
+  }, [])
+
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
   const { track } = useActivePlay()
@@ -256,6 +263,8 @@ function MoonshotScreen() {
       if (final.status === 'won') moonshotWin()
       else if (final.status === 'cashed_out') moonshotCashout()
       else moonshotLose()
+      if (final.status === 'cashed_out') trackEvent('game.cashout_done', { game: 'moonshot', pnl: final.pnl ?? '0' })
+      else trackEvent('game.settled', { game: 'moonshot', result: final.status, pnl: final.pnl ?? '0' })
       void refresh()
       for (const key of ['stats', 'achievements', 'plays']) void qc.invalidateQueries({ queryKey: [key] })
       clearResetTimer()
@@ -330,6 +339,7 @@ function MoonshotScreen() {
       })
       setPhase('open')
       track({ id: p.id, game: 'moonshot' })
+      trackEvent('game.restore', { game: 'moonshot' })
     },
     [track],
   )
@@ -377,6 +387,7 @@ function MoonshotScreen() {
     // restorePending holds the first tap after a cold refresh until restore resolves, so it never opens a second round.
     if (phase !== 'idle' || restorePending) return
     if (playsPaused) {
+      trackEvent('friction.sponsor_paused', { game: 'moonshot' })
       toast.error('Plays paused while we top up. Back in a moment.', { id: 'paused' })
       return
     }
@@ -391,10 +402,13 @@ function MoonshotScreen() {
     setPhase('placing')
     haptic('heavy')
     moonshotFire()
+    trackEvent('game.play_tap', { game: 'moonshot', stake, tier: `${side}${reach}` })
+    const tapAt = Date.now()
     try {
       const { play: p } = await placePlay('moonshot', { stake, asset, side, reach })
       setPlay(p)
       track({ id: p.id, game: 'moonshot' })
+      trackEvent('game.play_open', { game: 'moonshot', latencyms: Date.now() - tapAt })
       setLive({
         markValue: p.markValue,
         pnl: p.pnl,
@@ -406,6 +420,7 @@ function MoonshotScreen() {
       setPhase('open')
       haptic('selection')
     } catch (e) {
+      trackEvent('game.play_error', { game: 'moonshot', code: errorCode(e) })
       toastError(e)
       setPhase('idle')
     }
@@ -430,6 +445,7 @@ function MoonshotScreen() {
 
   const doCashOut = useCallback(async () => {
     if (!liveHold || !play) return
+    trackEvent('game.cashout_tap', { game: 'moonshot' })
     setPhase('cashing')
     haptic('rigid')
     const started = Date.now()
@@ -513,7 +529,11 @@ function MoonshotScreen() {
       max: AIM_LADDER.length - 1,
       step: 1,
       value: aimIdx,
-      onChange: setAim,
+      onChange: (v: number) => {
+        setAim(v)
+        // Settled, not per-detent: one scrub of the aim ladder is one user action.
+        trackSettled('game.knob_change', { game: 'moonshot', tier: String(AIM_LADDER[Math.min(v, AIM_LADDER.length - 1)]) })
+      },
       format: (v) => {
         const a = AIM_LADDER[Math.min(v, AIM_LADDER.length - 1)]
         return `${a > 0 ? 'L' : 'S'}${Math.abs(a)}x`

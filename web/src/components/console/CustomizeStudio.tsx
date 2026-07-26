@@ -11,6 +11,7 @@ import type { ConsoleTheme } from './themes'
 import { GLOW_PALETTE, PALETTE, hasOverrides, resolveTheme } from './customize'
 import type { ConsoleCustom, PartId } from './customize'
 import { haptic } from '@/lib/haptics'
+import { track } from '@/lib/track'
 import { requestDeviceTiltPermission } from '@/lib/deviceTilt'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
@@ -87,6 +88,13 @@ export function CustomizeStudio({
     wasVisible.current = visible
   }, [visible])
 
+  // The studio is built ahead of time and parked hidden, so mount is not an open. The reveal edge is.
+  const openedRef = useRef(false)
+  useEffect(() => {
+    if (visible && !openedRef.current) track('custom.studio_open')
+    openedRef.current = visible
+  }, [visible])
+
   // Esc cancels, same as the X.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -99,6 +107,7 @@ export function CustomizeStudio({
   const pickPreset = (id: string) => {
     if (exiting) return
     haptic('selection')
+    track('custom.skin_preview', { skin: id })
     setDraft({ preset: id }) // preset tap resets all overrides
     // iOS gates motion access behind a tap; this tap is as good as any, and it's what makes the
     // gold's reflection sweep react to the phone in hand instead of sitting static.
@@ -114,6 +123,7 @@ export function CustomizeStudio({
   const commit = () => {
     if (exiting) return
     haptic('success')
+    track('custom.skin_apply', { skin: draft.preset })
     if (resolved.metallic) void requestDeviceTiltPermission() // covers Done without re-tapping the card
     setReady(true) // make sure the canvas is mounted so the outro can play + report completion
     setExiting(true)

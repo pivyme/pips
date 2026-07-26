@@ -8,6 +8,7 @@ import { executeBridge } from '@/lib/deposit/lifi'
 import type { BridgeProgress } from '@/lib/deposit/lifi'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
+import { track } from '@/lib/track'
 import { Hw3DButton } from '@/ui/Hardware3D'
 
 const shortenAddress = (a: string): string => (a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a)
@@ -62,6 +63,7 @@ export function BridgeExecute({
     setError(null)
     setProgress({ phase: 'preparing', message: 'Preparing your deposit…' })
     haptic('success')
+    track('money.deposit_execute')
     try {
       // Fresh, signable route with the connected source address; toAddress is stamped server-side.
       const quote = await api.depositExecuteQuote({ currency, network, amount, fromAddress: connectedAddress })
@@ -84,6 +86,9 @@ export function BridgeExecute({
     } catch (e) {
       haptic('error')
       const msg = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'The deposit failed.'
+      // The code, never the message: a bridge message carries amounts and tx hashes, so grouping on it
+      // would give one bucket per failure instead of one per cause.
+      track('money.deposit_fail', { chain: network, reason: e instanceof ApiError ? e.code : 'bridge_failed' })
       setProgress(null)
       setError(msg)
     }

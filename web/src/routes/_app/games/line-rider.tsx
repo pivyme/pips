@@ -7,6 +7,7 @@ import { MinigameBoard, useMinigameLeaderboard } from '@/components/game/Minigam
 import { RideEngine, type RideHud } from '@/components/game/rideEngine'
 import type { LeaderboardScoreEntry, MinigameSubmit } from '@/lib/api'
 import { haptic } from '@/lib/haptics'
+import { track } from '@/lib/track'
 import { rideCrash, rideStart, setRideState, startRideBgm, stopRideBgm } from '@/lib/sound'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
@@ -45,6 +46,7 @@ function LineRiderScreen() {
     rideCrash()
     setOver({ score, result: null })
     setPhase('over')
+    track('arcade.end', { game: 'line-rider', score })
     void submit(score)
       .then((result) => setOver((o) => (o ? { ...o, result } : { score, result })))
       .catch(() => {})
@@ -80,6 +82,7 @@ function LineRiderScreen() {
     setWheel(CENTER) // recenter so the run opens with the pip on the (flat) line
     setPhase('playing')
     startRun() // open the run before playing
+    track('arcade.start', { game: 'line-rider' })
     const eng = engineRef.current
     if (eng) {
       eng.setTarget(0.5)

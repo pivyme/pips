@@ -16,11 +16,13 @@ import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
 import { usePlayResolutionWatch } from '@/hooks/useGameRound'
 import { haptic } from '@/lib/haptics'
+// Aliased so the three game screens read the same way (lucky/moonshot collide with useActivePlay's track).
+import { track as trackEvent, trackSettled } from '@/lib/track'
 import { rangeBuzzer, rangeCross, rangeLose, rangeWin, startRangeBgm, stopRangeBgm } from '@/lib/sound'
 import { api } from '@/lib/api'
 import { placePlay } from '@/lib/sui/predict'
 import { betLadder, netStakeUsd } from '@/lib/sui/config'
-import { toastError } from '@/lib/errors'
+import { errorCode, toastError } from '@/lib/errors'
 import { useTopUp } from '@/lib/chipGrant'
 import { useAuth } from '@/lib/auth'
 import { cnm } from '@/utils/style'
@@ -168,6 +170,11 @@ const UsdFlow = ({ value }: { value: number }) => (
 )
 
 function RangeScreen() {
+  // One per screen mount. Paired with game.play_tap this is the open-to-play conversion on the Usage page.
+  useEffect(() => {
+    trackEvent('game.open', { game: 'range' })
+  }, [])
+
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
 
@@ -291,6 +298,7 @@ function RangeScreen() {
     if (!usable.length) return // the persist effect below rewrites the empty board, so a finished one can't come back
     keySeq.current = usable.reduce((m, p) => Math.max(m, keyIndex(p.key)), -1) + 1
     setPositions(usable)
+    trackEvent('game.restore', { game: 'range' })
   }, [])
 
   // Persist the live set so it survives leaving the screen. Only fires when the array REFERENCE changes; the 250ms
@@ -426,6 +434,8 @@ function RangeScreen() {
             : p,
         ),
       )
+      // Range has no cash-out (a band rides to its cutoff), so every resolution here is a settle.
+      trackEvent('game.settled', { game: 'range', result: final.status, pnl: final.pnl ?? '0' })
       // Fold this resolution into the current wave (or start one): one splash + one running total per
       // buzzer batch. The window rolls forward on each merge so staggered settlement stays one beat.
       const now = Date.now()
@@ -490,6 +500,7 @@ function RangeScreen() {
 
   const doPlay = useCallback(async () => {
     if (playsPaused) {
+      trackEvent('friction.sponsor_paused', { game: 'range' })
       toast.error('Plays paused while we top up. Back in a moment.', { id: 'range-paused' })
       return
     }
@@ -516,8 +527,11 @@ function RangeScreen() {
     setPositions((prev) => [...prev, placing])
     setSelfPlaceSignal((s) => s + 1) // your own coin-pop, same primitive as the crowd
     haptic('heavy')
+    trackEvent('game.play_tap', { game: 'range', stake, tier: String(tierView.tier) })
+    const tapAt = Date.now()
     try {
       const { play } = await withTimeout(placePlay('range', { stake, asset, tier: tierView.tier }), PLACE_TIMEOUT_MS)
+      trackEvent('game.play_open', { game: 'range', latencyms: Date.now() - tapAt })
       setPositions((prev) =>
         prev.map((p) =>
           p.key === key
@@ -544,6 +558,7 @@ function RangeScreen() {
       void refresh()
     } catch (e) {
       setPositions((prev) => prev.filter((p) => p.key !== key))
+      trackEvent('game.play_error', { game: 'range', code: e instanceof PlaceTimeout ? 'PLACE_TIMEOUT' : errorCode(e) })
       if (e instanceof PlaceTimeout) {
         haptic('error')
         toast.error('That one took too long, chips are safe. Fire again.', { id: 'range-slow' })
@@ -585,7 +600,12 @@ function RangeScreen() {
       step: 1,
       // Dial is the mirror of tierIdx: up (raw value climbs) widens the band, so it maps to a lower tier index.
       value: tiers.length - 1 - tierIdx,
-      onChange: (v: number) => setTierIdx(tiers.length - 1 - v),
+      onChange: (v: number) => {
+        const next = tiers.length - 1 - v
+        setTierIdx(next)
+        // Settled, not per-detent: one scrub of the payout ladder is one user action.
+        trackSettled('game.knob_change', { game: 'range', tier: String(tiers[Math.min(next, tiers.length - 1)]?.tier ?? next) })
+      },
       format: (v) => {
         const t = tiers[Math.min(tiers.length - 1 - v, tiers.length - 1)]
         return `${t.multiplier.toFixed(t.multiplier >= 10 ? 0 : 1)}x`
@@ -597,7 +617,10 @@ function RangeScreen() {
       max: maxBetIdx,
       step: 1,
       value: safeBetIdx,
-      onChange: setStakeIdx,
+      onChange: (v: number) => {
+        setStakeIdx(v)
+        trackSettled('game.stake_change', { game: 'range', stake: STAKE_LADDER[Math.min(v, maxBetIdx)] })
+      },
       format: (v) => `$${STAKE_LADDER[Math.min(v, maxBetIdx)]}`,
     },
     action1: { label: infoLabel, color: 'neutral', onPress: rotateInfo },

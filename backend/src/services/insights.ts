@@ -3,6 +3,7 @@
 // from joining Event, Play, and the error's own captured context in one Postgres.
 // See bigdev/plans/cont/03-ADMIN-DASHBOARD.md §5 and §7.4.
 
+import { EVENT_NAMES } from '../config/analytics-catalog.ts';
 import { prismaQuery } from '../lib/prisma.ts';
 
 export type ErrorStatus = 'open' | 'ack' | 'resolved' | 'ignored';
@@ -404,4 +405,240 @@ function clampBytes(text: string, max: number): string {
     used += cost;
   }
   return kept.join('\n') + note;
+}
+
+// ---------------------------------------------------------------------------
+// Usage (§7.4): what people actually use
+// ---------------------------------------------------------------------------
+
+// The math lives in pure functions below, and the fetches are a thin shell over them. That is deliberate:
+// an aggregate that is wrong looks exactly like a healthy product, so the arithmetic has to be assertable
+// against hand-computed fixtures without a database in the way (Addendum A6 item 10).
+
+/** The one funnel that matters, and most of it happens before a JWT exists (§4.3). */
+export const FUNNEL_STEPS: Array<{ key: string; label: string; event: string | null }> = [
+  { key: 'landing', label: 'Landed', event: 'door.landing_view' },
+  { key: 'gate', label: 'Passed the code gate', event: 'door.gate_pass' },
+  { key: 'start', label: 'Tapped START', event: 'door.start_tap' },
+  { key: 'auth', label: 'Signed in', event: 'door.auth_ok' },
+  { key: 'onboard', label: 'Onboarded', event: 'door.onboard_done' },
+  { key: 'play', label: 'First play', event: null }, // from Play, the only step Event cannot answer
+];
+
+export const TRADING_GAMES = ['lucky', 'range', 'moonshot'] as const;
+
+export interface FunnelStepRow {
+  key: string;
+  label: string;
+  subjects: number;
+  dropPct: number;
+  /** Nobody reached this step at all, which usually means it is not active (the code gate is off). */
+  skipped: boolean;
+}
+
+export interface UsageEventRow {
+  name: string;
+  anonId?: string | null;
+  userId?: string | null;
+  props?: unknown;
+}
+
+// One person, whether or not they had a session at the time. The client sends the same anonId before and
+// after login, so the pre-auth funnel joins to the user at QUERY time with no backfill write.
+function subjectKey(row: { anonId?: string | null; userId?: string | null }): string | null {
+  if (row.anonId) return row.anonId;
+  return row.userId ? `u:${row.userId}` : null;
+}
+
+// Sequential subset, not per-step totals: step N counts only subjects who also cleared every step before it.
+// Totals would let someone who arrived already signed in inflate a later step and produce a NEGATIVE
+// drop-off, which is the sort of number that gets believed.
+export function computeFunnel(events: UsageEventRow[], playUserIds: string[]): FunnelStepRow[] {
+  const byStep = new Map<string, Set<string>>();
+  const anonByUser = new Map<string, string>();
+
+  for (const e of events) {
+    if (e.anonId && e.userId) anonByUser.set(e.userId, e.anonId);
+    const key = subjectKey(e);
+    if (!key) continue;
+    let set = byStep.get(e.name);
+    if (!set) byStep.set(e.name, (set = new Set()));
+    set.add(key);
+  }
+
+  const playKeys = new Set(playUserIds.map((id) => anonByUser.get(id) ?? `u:${id}`));
+
+  const rows: FunnelStepRow[] = [];
+  let cohort: Set<string> | null = null;
+  let lastCounted = 0;
+
+  for (const step of FUNNEL_STEPS) {
+    const observed = step.event ? (byStep.get(step.event) ?? new Set<string>()) : playKeys;
+
+    // A step nobody reached is pass-through, not a cliff. Reporting 100% drop-off for a feature that is
+    // switched off (the access gate) would be a confident lie about where users leave.
+    if (!observed.size) {
+      rows.push({ key: step.key, label: step.label, subjects: cohort?.size ?? 0, dropPct: 0, skipped: true });
+      continue;
+    }
+
+    const carried: string[] = cohort === null ? [...observed] : [...cohort].filter((k) => observed.has(k));
+    cohort = new Set(carried);
+    const dropPct = lastCounted ? round1(((lastCounted - cohort.size) / lastCounted) * 100) : 0;
+    rows.push({ key: step.key, label: step.label, subjects: cohort.size, dropPct, skipped: false });
+    lastCounted = cohort.size;
+  }
+
+  return rows;
+}
+
+export interface GameConversionRow {
+  game: string;
+  opens: number;
+  plays: number;
+  conversionPct: number;
+}
+
+// Opens vs play taps per game. The interesting number is not the volume, it is which game people open and
+// then walk away from.
+export function computeGameConversion(events: UsageEventRow[]): GameConversionRow[] {
+  const opens = new Map<string, number>();
+  const plays = new Map<string, number>();
+
+  for (const e of events) {
+    const game = propString(e.props, 'game');
+    if (!game) continue;
+    const bucket = e.name === 'game.open' ? opens : e.name === 'game.play_tap' ? plays : null;
+    if (bucket) bucket.set(game, (bucket.get(game) ?? 0) + 1);
+  }
+
+  const games = [...new Set([...TRADING_GAMES, ...opens.keys(), ...plays.keys()])];
+  return games
+    .map((game) => {
+      const o = opens.get(game) ?? 0;
+      const p = plays.get(game) ?? 0;
+      return { game, opens: o, plays: p, conversionPct: o ? round1((p / o) * 100) : 0 };
+    })
+    .sort((a, b) => b.opens - a.opens);
+}
+
+/** Menu sections ranked, which is the same question as the ascending event list at a finer grain. */
+export function computeMenuSections(events: UsageEventRow[]): Array<{ section: string; count: number }> {
+  const tally = new Map<string, number>();
+  for (const e of events) {
+    const section = propString(e.props, 'section');
+    if (section) tally.set(section, (tally.get(section) ?? 0) + 1);
+  }
+  return [...tally.entries()].map(([section, count]) => ({ section, count })).sort((a, b) => b.count - a.count || a.section.localeCompare(b.section));
+}
+
+export interface CohortRow {
+  date: string;
+  signups: number;
+  d1: number;
+  d7: number;
+  d1Pct: number;
+  d7Pct: number;
+}
+
+// D1/D7 off tracked activity: a user counts as retained on day N if they fired any event in that 24h
+// window, measured from the START OF THEIR SIGNUP DAY so every cohort member shares one clock.
+export function computeCohorts(
+  users: Array<{ id: string; createdAt: Date }>,
+  activity: Array<{ userId: string | null; ts: Date }>
+): CohortRow[] {
+  const active = new Map<string, Date[]>();
+  for (const a of activity) {
+    if (!a.userId) continue;
+    const list = active.get(a.userId);
+    if (list) list.push(a.ts);
+    else active.set(a.userId, [a.ts]);
+  }
+
+  const cohorts = new Map<string, { signups: number; d1: number; d7: number }>();
+  for (const user of users) {
+    const day = dayStart(user.createdAt);
+    const key = isoDay(user.createdAt);
+    const row = cohorts.get(key) ?? { signups: 0, d1: 0, d7: 0 };
+    row.signups += 1;
+    const stamps = active.get(user.id) ?? [];
+    if (stamps.some((t) => inWindow(t, day + DAY_MS))) row.d1 += 1;
+    if (stamps.some((t) => inWindow(t, day + 7 * DAY_MS))) row.d7 += 1;
+    cohorts.set(key, row);
+  }
+
+  return [...cohorts.entries()]
+    .map(([date, r]) => ({ date, ...r, d1Pct: pct(r.d1, r.signups), d7Pct: pct(r.d7, r.signups) }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function inWindow(at: Date, from: number): boolean {
+  const t = at.getTime();
+  return t >= from && t < from + DAY_MS;
+}
+
+function dayStart(d: Date): number {
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+function isoDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function pct(n: number, of: number): number {
+  return of ? round1((n / of) * 100) : 0;
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+function propString(props: unknown, key: string): string | null {
+  if (!props || typeof props !== 'object') return null;
+  const value = (props as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value : null;
+}
+
+export interface UsageReport {
+  windowDays: number;
+  events: Array<{ name: string; count: number }>;
+  funnel: FunnelStepRow[];
+  games: GameConversionRow[];
+  menu: Array<{ section: string; count: number }>;
+  cohorts: CohortRow[];
+  totalEvents: number;
+}
+
+// Every name in the catalog appears, zero-count ones included, because a feature with NO events is the most
+// rarely used thing we have and it belongs at the very top of an ascending list. Without it the list only
+// ranks what is already working.
+export async function usageReport(windowDays: number): Promise<UsageReport> {
+  const since = new Date(Date.now() - windowDays * DAY_MS);
+  const funnelNames = FUNNEL_STEPS.map((s) => s.event).filter((n): n is string => !!n);
+
+  const [grouped, funnelEvents, gameEvents, menuEvents, plays, users, activity] = await Promise.all([
+    prismaQuery.event.groupBy({ by: ['name'], where: { ts: { gte: since } }, _count: { _all: true } }),
+    prismaQuery.event.findMany({ where: { name: { in: funnelNames }, ts: { gte: since } }, select: { name: true, anonId: true, userId: true } }),
+    prismaQuery.event.findMany({ where: { name: { in: ['game.open', 'game.play_tap'] }, ts: { gte: since } }, select: { name: true, props: true } }),
+    prismaQuery.event.findMany({ where: { name: 'menu.section', ts: { gte: since } }, select: { name: true, props: true } }),
+    prismaQuery.play.findMany({ where: { createdAt: { gte: since } }, select: { userId: true }, distinct: ['userId'] }),
+    prismaQuery.user.findMany({ where: { createdAt: { gte: since } }, select: { id: true, createdAt: true } }),
+    prismaQuery.event.findMany({ where: { ts: { gte: since }, userId: { not: null } }, select: { userId: true, ts: true } }),
+  ]);
+
+  const counts = new Map(grouped.map((g) => [g.name, g._count._all]));
+  const events: Array<{ name: string; count: number }> = EVENT_NAMES.map((name) => ({ name: name as string, count: counts.get(name) ?? 0 }));
+  // Anything counted but no longer in the catalog still shows, so a removed event does not vanish silently.
+  for (const [name, count] of counts) if (!events.some((e) => e.name === name)) events.push({ name, count });
+  events.sort((a, b) => a.count - b.count || a.name.localeCompare(b.name));
+
+  return {
+    windowDays,
+    events,
+    funnel: computeFunnel(funnelEvents, plays.map((p) => p.userId)),
+    games: computeGameConversion(gameEvents),
+    menu: computeMenuSections(menuEvents),
+    cohorts: computeCohorts(users, activity),
+    totalEvents: [...counts.values()].reduce((a, b) => a + b, 0),
+  };
 }

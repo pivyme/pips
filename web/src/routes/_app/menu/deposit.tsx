@@ -17,6 +17,7 @@ import { useDepositWatch } from '@/hooks/useDepositWatch'
 import { networkLabel, resolveMode, unsupportedCopy } from '@/lib/deposit/mode'
 import { NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
+import { track } from '@/lib/track'
 import { cnm } from '@/utils/style'
 
 // One drawer, two dropdowns. Pick a currency and a network and the mode falls out: the chip asset on Sui
@@ -53,6 +54,12 @@ export function DepositContent() {
 
   const { data } = useQuery(depositOptionsQuery())
   const options = data ?? FALLBACK_OPTIONS
+
+  // Fires from both entry points (the /menu/deposit page and the Add-funds modal), which menu.section alone
+  // cannot tell apart.
+  useEffect(() => {
+    track('money.deposit_open')
+  }, [])
 
   const [currency, setCurrency] = useState(options.chipSymbol)
   const [network, setNetwork] = useState(options.chipNetwork)
@@ -105,6 +112,7 @@ export function DepositContent() {
     if (claiming || !user) return
     setClaiming(true)
     try {
+      track('money.faucet_tap')
       const res = await api.requestDusdc()
       await refresh()
       haptic('success')

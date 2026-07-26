@@ -17,6 +17,13 @@ const FRIENDLY: Record<string, string> = {
   RATE_LIMITED: 'One play at a time. Hang on a sec.',
 }
 
+// The stable code, for analytics and error grouping. Never the message: our messages carry ids and amounts,
+// so grouping on the text gives one row per occurrence instead of one per bug.
+export function errorCode(e: unknown): string {
+  if (e instanceof ApiError && e.code) return e.code
+  return 'UNKNOWN'
+}
+
 export function friendlyError(e: unknown): string {
   if (e instanceof ApiError && FRIENDLY[e.code]) return FRIENDLY[e.code]
   return 'Something hiccuped. Try again.'

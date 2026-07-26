@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/auth'
 import { renderCard, shareStatsCard } from '@/lib/shareCard'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { haptic } from '@/lib/haptics'
+import { track } from '@/lib/track'
 import { displayHandle } from '@/utils/format'
 
 // Share screen: a live preview of the exact card the PNG renders, one Share button, and a single knob.
@@ -70,12 +71,17 @@ function ShareEditor({
   const [sharing, setSharing] = useState(false)
   const showNetPnl = !hidePnl
 
+  useEffect(() => {
+    track('social.share_open')
+  }, [])
+
   const doShare = async () => {
     if (sharing) return
     haptic('medium')
     setSharing(true)
     try {
       await shareStatsCard(stats, { displayName, avatarUrl, twitter }, { showNetPnl, rank })
+      track('social.share_card')
       haptic('success')
     } catch {
       const { default: toast } = await import('react-hot-toast')

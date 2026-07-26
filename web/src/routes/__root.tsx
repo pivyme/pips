@@ -12,7 +12,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { AuthProvider } from '@/lib/auth'
 import { AppPrivyProvider } from '@/lib/privy'
 import { installClientErrorHooks, reportClientError } from '@/lib/clientErrors'
-import { installTrack } from '@/lib/track'
+import { installTrack, isPwaLaunch, track } from '@/lib/track'
 
 interface MyRouterContext {
   queryClient: QueryClient
@@ -107,6 +107,10 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   // delivers what they did on the page they came from.
   useEffect(() => {
     installTrack((fn) => router.subscribe('onResolved', fn))
+    // One per launch, and the PWA split is the thing we cannot get from the UA alone.
+    const pwa = isPwaLaunch()
+    track('app.open', { cold: true, pwa })
+    if (pwa) track('app.pwa_launch')
   }, [router])
 
   return (

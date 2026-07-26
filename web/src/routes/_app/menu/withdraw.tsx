@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowUpFromLine, Check, ChevronDown } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -12,6 +12,7 @@ import type { WalletCoinDTO } from '@/lib/api'
 import { walletCoinsQuery } from '@/lib/menuQueries'
 import { useAuth } from '@/lib/auth'
 import { haptic } from '@/lib/haptics'
+import { track } from '@/lib/track'
 import { formatStringToNumericDecimals, serializeFormattedStringToFloat } from '@/utils/format'
 import { cnm } from '@/utils/style'
 
@@ -34,6 +35,11 @@ const coinLine = (c: WalletCoinDTO): string => {
 // The send body, rendered both as the /menu/withdraw page and inside the Send money modal. `onClose` (modal
 // mode) closes the modal on success; without it (route mode) it pops back to the menu.
 export function SendForm({ onClose }: { onClose?: () => void } = {}) {
+  // Fires from both entry points (the /menu/withdraw page and the Send money modal).
+  useEffect(() => {
+    track('money.withdraw_open')
+  }, [])
+
   const { user, refresh } = useAuth()
   const navigate = useNavigate()
   const coinsQ = useQuery(walletCoinsQuery())
@@ -96,6 +102,7 @@ export function SendForm({ onClose }: { onClose?: () => void } = {}) {
         coinType: selected.isChip ? undefined : selected.coinType,
       })
       await refresh()
+      track('money.withdraw_done')
       haptic('success')
       toast.success(`Sent ${selected.symbol}`, { id: 'withdraw' })
       if (onClose) onClose()
@@ -104,6 +111,7 @@ export function SendForm({ onClose }: { onClose?: () => void } = {}) {
         void navigate({ to: '/menu' })
       }
     } catch (e) {
+      track('money.withdraw_fail', { reason: e instanceof ApiError ? e.code : 'unknown' })
       haptic('error')
       toast.error(e instanceof ApiError ? e.message : 'Could not send right now', { id: 'withdraw' })
       setSubmitting(false)

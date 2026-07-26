@@ -25,6 +25,7 @@ import {
   BRIDGE_ASSET,
 } from '../lib/lifi.ts';
 import { prismaQuery } from '../lib/prisma.ts';
+import { track } from '../lib/analytics.ts';
 import {
   BRIDGE_EXECUTE_ENABLED,
   DEPOSIT_MIN_USD,
@@ -215,6 +216,8 @@ export const depositRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts
             : 'PENDING';
       if (status !== row.status || live.substatus !== row.substatus) {
         await prismaQuery.deposit.update({ where: { id: row.id }, data: { status, substatus: live.substatus } });
+        // Only the server sees a bridge land, and only on the transition, so a poll loop cannot inflate it.
+        if (status === 'DONE' && row.status !== 'DONE') track(request.user!.id, 'money.deposit_done', { props: { chain: row.fromChain } });
       }
       return reply.code(200).send({ success: true, error: null, data: { status, substatus: live.substatus, substatusMessage: live.substatusMessage } });
     } catch (error) {

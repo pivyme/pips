@@ -25,11 +25,13 @@ import {
   useRoundCountdown,
 } from '@/hooks/useGameRound'
 import { haptic } from '@/lib/haptics'
+// Aliased: this file already destructures a `track` from useActivePlay (the open-round tracker).
+import { track as trackEvent, trackSettled } from '@/lib/track'
 import { slotSpin, slotTick, slotPick, startLuckyBgm, stopLuckyBgm, luckyWin, luckyCashout, luckyLose } from '@/lib/sound'
 import { api, type LuckyParams, type PlayDTO, type PlayStatus, type Side } from '@/lib/api'
 import { placePlay, cashOut } from '@/lib/sui/predict'
 import { betLadder } from '@/lib/sui/config'
-import { toastError } from '@/lib/errors'
+import { errorCode, toastError } from '@/lib/errors'
 import { useTopUp } from '@/lib/chipGrant'
 import { useAuth } from '@/lib/auth'
 import { useActivePlay } from '@/lib/activePlay'
@@ -85,6 +87,11 @@ const fmtMult = (n: number): string =>
 const sideLabel = (s: Side): string => (s === 'up' ? 'UP' : 'DOWN')
 
 function LuckyScreen() {
+  // One per screen mount. Paired with game.play_tap this is the open-to-play conversion on the Usage page.
+  useEffect(() => {
+    trackEvent('game.open', { game: 'lucky' })
+  }, [])
+
   const { refresh, user } = useAuth()
   const qc = useQueryClient()
   const { track } = useActivePlay()
@@ -218,6 +225,8 @@ function LuckyScreen() {
       if (final.status === 'won') luckyWin()
       else if (final.status === 'cashed_out') luckyCashout()
       else luckyLose()
+      if (final.status === 'cashed_out') trackEvent('game.cashout_done', { game: 'lucky', pnl: final.pnl ?? '0' })
+      else trackEvent('game.settled', { game: 'lucky', result: final.status, pnl: final.pnl ?? '0' })
       void refresh()
       // Settle/cashout moved the record: freshen stats (streak), achievements, and history.
       for (const key of ['stats', 'achievements', 'plays']) void qc.invalidateQueries({ queryKey: [key] })
@@ -299,6 +308,7 @@ function LuckyScreen() {
       setRevealOverlays(true) // reveal the dealt strip + chart overlays at once; there was no spin to lead into them
       setPhase('open')
       track({ id: p.id, game: 'lucky' })
+      trackEvent('game.restore', { game: 'lucky' })
     },
     [track],
   )
@@ -377,6 +387,7 @@ function LuckyScreen() {
     // restorePending holds the first tap after a cold refresh until we know whether a live round is being restored, so it never opens a second.
     if (phase !== 'idle' || restorePending) return
     if (playsPaused) {
+      trackEvent('friction.sponsor_paused', { game: 'lucky' })
       toast.error('Plays paused while we top up. Back in a moment.', { id: 'paused' })
       return
     }
@@ -391,10 +402,13 @@ function LuckyScreen() {
     setPhase('placing')
     haptic('rigid')
     slotSpin()
+    trackEvent('game.play_tap', { game: 'lucky', stake: bet })
+    const tapAt = Date.now()
     try {
       const { play: p } = await placePlay('lucky', { stake: bet })
       setPlay(p)
       track({ id: p.id, game: 'lucky' })
+      trackEvent('game.play_open', { game: 'lucky', latencyms: Date.now() - tapAt })
       // Price debug: compares the chart's dealt-asset display price against what the backend solved the
       // round on. entrySpot/target read the live on-chain spot at the tap, so any gap is just display micro-motion, not staleness.
       if (import.meta.env.DEV) {
@@ -421,6 +435,7 @@ function LuckyScreen() {
       haptic('heavy')
       setTimeout(() => setPhase((cur) => (cur === 'spinning' ? 'open' : cur)), SPIN_TOTAL)
     } catch (e) {
+      trackEvent('game.play_error', { game: 'lucky', code: errorCode(e) })
       toastError(e)
       setPhase('idle')
     }
@@ -439,6 +454,7 @@ function LuckyScreen() {
 
   const doCashOut = useCallback(async () => {
     if (phase !== 'open' || !play || closeLocked) return
+    trackEvent('game.cashout_tap', { game: 'lucky' })
     setPhase('cashing')
     haptic('rigid')
     const started = Date.now()
@@ -508,7 +524,11 @@ function LuckyScreen() {
       max: maxBetIdx,
       step: 1,
       value: safeBetIdx,
-      onChange: setBetIdx,
+      onChange: (v: number) => {
+        setBetIdx(v)
+        // Settled, not per-detent: one scrub of the wheel is one user action, so it is one event.
+        trackSettled('game.stake_change', { game: 'lucky', stake: BET_LADDER[Math.min(v, maxBetIdx)] })
+      },
       format: (v) => `$${BET_LADDER[Math.min(v, maxBetIdx)]}`,
     },
     action1: isResult

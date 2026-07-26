@@ -78,6 +78,26 @@ Game screens (`/games/*`) render as an HTML layer **behind** the 3D device and s
 - It is always clearly badged (the `Demo` chip in the status strip, the landing chip + toggle, a reset in Settings). Keep it that way.
 - Do NOT wire demo state into the real backend or chain, and do NOT leak it into the real path. If you add a new `api` method or stream, add its demo twin in `demo.ts` so demo stays complete.
 
+## Analytics and the admin dashboard
+
+**`track()` (`src/lib/track.ts`) is the whole client analytics surface.** One line, no ceremony:
+
+```tsx
+import { track } from '@/lib/track'
+
+track('custom.skin_apply', { skin: 'aurum' })
+```
+
+Its guarantees are the implementation's job, so no call site ever has to think about them: it **returns `void`** (not a promise, nothing to await), **never throws** (the whole body is in a try/catch, so a malformed prop or a dead network silently no-ops), **never blocks** (it pushes to an in-memory array and returns, no fetch and no JSON work on the call path), and the **queue is capped at 200 with the oldest dropped** so a runaway loop cannot grow the tab's heap. No retries, no persistence, zero dependencies. Sealing and flushing are invisible: `track()` queues, the AES-GCM seal happens in a microtask, and the flush fires on a 5s timer, 20 queued events, a route change, or `visibilitychange: hidden` via `sendBeacon`.
+
+Rules that are not negotiable: **never `await track()`**, never call it in a render body (an effect or a handler), and **never track continuous data**. No price ticks, no frames, no scroll, no mouse. If it fires more than once per user action it is not an event. For a scrubbed control (a knob, a stake ladder), use `trackSettled()`, which debounces to the value the user landed on. Adding an event means adding it to `backend/src/config/analytics-catalog.ts` **and** the typed twin in `track.ts`, or ingest rejects it with a 400.
+
+**`src/admin/` is sealed off from the device shell.** The dashboard is a dense desktop instrument panel, deliberately neither of the product's two visual languages, and it must never pull the console into its bundle:
+
+- Nothing in `src/admin/**` imports from `src/components/console`, `src/components/game`, `three`, `gsap`, `motion`, or HeroUI. Admin tokens live in `src/admin/admin.css` scoped to `[data-admin]`, never in the global `@theme` in `styles.css`.
+- Admin routes (`src/routes/admin/*`) are siblings of `_app`, not children, so no WebGL ever mounts on them. Do **not** add them to `MENU_ROUTES` or `GAME_ROUTES` in `src/lib/menuQueries.ts`: prefetching an admin chunk on a game tile is exactly the leak this structure prevents.
+- Enforcement is `bun run check:admin` in the gate, next to `bunx tsc --noEmit`, not an eslint rule (root L-020). Run it before you commit anything under `src/admin/`.
+
 ## Game audio
 
 All game sound is **hand-built WebAudio, zero asset files**. Two files, two jobs:

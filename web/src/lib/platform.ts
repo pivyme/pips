@@ -2,6 +2,7 @@
 // guide (components/InstallGate). SSR-safe (window-guarded, inert 'desktop' on server); a pre-paint layout effect commits the real context so the guide never flashes.
 import { useCallback, useEffect, useLayoutEffect, useReducer, useState } from 'react'
 import { haptic } from '@/lib/haptics'
+import { track } from '@/lib/track'
 
 export type InstallContext =
   | 'standalone' // already launched from the home screen, no guide
@@ -159,7 +160,8 @@ export function useInstallGate(): InstallGateState {
     deferredPrompt = null // a captured prompt can only be used once
     try {
       await e.prompt()
-      await e.userChoice
+      const choice = await e.userChoice
+      track('app.install_prompt', { accepted: choice.outcome === 'accepted' })
     } catch {
       // dismissed or raced: appinstalled clears the gate on success; otherwise the manual steps stand.
     }

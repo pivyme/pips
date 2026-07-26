@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Check, Copy, ExternalLink, MoreHorizontal, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { MenuScreen, ScreenError } from '@/components/menu/shared'
@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/auth'
 import { buildReferralLink } from '@/lib/referral'
 import { explorerTxUrl } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
+import { track } from '@/lib/track'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { displayHandle, formatStringToNumericDecimals } from '@/utils/format'
 import { cnm } from '@/utils/style'
@@ -24,6 +25,10 @@ export const Route = createFileRoute('/_app/menu/referrals')({ component: Referr
 const usd = (s: string): string => `$${formatStringToNumericDecimals(s || '0', 2)}`
 
 function ReferralsScreen() {
+  useEffect(() => {
+    track('social.referral_open')
+  }, [])
+
   const { user, refresh } = useAuth()
   const q = useQuery(referralQuery())
   const info = q.data
@@ -67,6 +72,7 @@ function ReferralsScreen() {
       await api.claimReferral()
       await refresh() // the chips just landed in the balance
       await q.refetch() // claimable drops, a new paid row joins the history
+      track('social.referral_claim')
       haptic('success')
       toast.success(`Claimed ${usd(amount)}`, { id: 'referral-claim' })
     } catch (e) {

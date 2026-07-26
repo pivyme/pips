@@ -153,6 +153,29 @@ Error logs are pruned by age by the cleanup worker, off the `retention.error_day
 
 ---
 
+## Analytics and error capture (`src/lib/analytics.ts`)
+
+The ADMIN-only dashboard at `/admin` is fed from here. Spec: [`../bigdev/plans/cont/03-ADMIN-DASHBOARD.md`](../bigdev/plans/cont/03-ADMIN-DASHBOARD.md).
+
+**Errors need zero work.** `handleError()` (every HTTP path), `recordRun()` (every registered worker), and `handleFatal()` (process-level) already call `captureError()`, so a new route or worker is instrumented the moment it exists. Errors are fingerprinted and grouped, so 400 occurrences of one bug are one row with a count, never 400 rows.
+
+Only two cases need a line of your own:
+
+```ts
+captureError(e, { playId, fingerprint: 'chain.something' });   // a new Sui/chain call site
+track(userId, 'money.deposit_done', { props: { chain } });     // an event only the server can observe
+```
+
+Both are fire-and-forget, both are impossible to throw, and neither is ever awaited on a request or play path. If a feature touches chain or money, also add a detector to the array in `services/insights.ts` with a **one-line runbook**: an alert without a runbook is a notification, not a tool. Expected aborts (admission failures, benign 409s) stay at `warn` and never page.
+
+Never dedupe, group, or alert on an interpolated message string: our messages carry play ids, amounts, and object ids, so every occurrence is unique and the dedupe silently never fires. Key off the fingerprint or the detector key (root L-021).
+
+**No route may ever write `specialRoles`.** Every user write uses an explicit field allowlist, forever. Roles are read fresh per request (never baked into the JWT, or a revoke waits for token expiry), and ADMIN is granted only by `bun scripts/grant-role.ts <userIdOrUsername> ADMIN`, script-only forever, so a compromised admin session cannot mint more admins. A non-admin hitting `/admin/*` gets **404, not 403**: do not confirm the surface exists.
+
+Non-secret tunables are DB-backed settings in `src/config/admin-settings.ts` (declared once with a default and bounds, clamped on read, cached ~30s), not new entries in `main-config.ts` (root L-022). Secrets and boot-critical values stay in env forever.
+
+---
+
 ## Request Validation (`src/utils/validationUtils.ts`)
 
 Use `validateRequiredFields` for request body validation:

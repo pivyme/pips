@@ -98,6 +98,7 @@ mock.module('../lib/prisma.ts', () => ({
     },
     event: {
       findMany: async () => [],
+      groupBy: async () => [],
       count: async () => 0,
       // The push runs synchronously at call time (an async body runs to its first await), so the row is
       // observable by the time the fire-and-forget handler has replied.
@@ -106,7 +107,7 @@ mock.module('../lib/prisma.ts', () => ({
         return { count: data.length };
       },
     },
-    user: { findMany: async () => [{ id: 'u_normal', username: 'normal' }] },
+    user: { findMany: async () => [{ id: 'u_normal', username: 'normal', createdAt: new Date('2026-07-20T00:00:00Z') }] },
     play: { findMany: async () => [] },
     appConfig: {
       findUnique: async ({ where }: { where: { key: string } }) => {

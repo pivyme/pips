@@ -9,6 +9,7 @@ import { GameReadout, GameScreen, GameStage, ScreenCRT } from '@/components/game
 import { MinigameBoard, useMinigameLeaderboard } from '@/components/game/MinigameBoard'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { haptic } from '@/lib/haptics'
+import { track } from '@/lib/track'
 import { sound, startBgm, stopBgm, hopScore, hopLose, hopResetCombo } from '@/lib/sound'
 import { cnm } from '@/utils/style'
 
@@ -50,6 +51,7 @@ function FlappyPiperScreen() {
   endRef.current = (score: number) => {
     setOver({ score, result: null })
     setPhase('over')
+    track('arcade.end', { game: 'flappy-piper', score })
     void submit(score)
       .then((result) => {
         setOver((o) => (o ? { ...o, result } : { score, result }))
@@ -91,6 +93,7 @@ function FlappyPiperScreen() {
     setHud(EMPTY_HUD)
     setPhase('playing')
     startRun() // open the run before playing
+    track('arcade.start', { game: 'flappy-piper' })
     engineRef.current?.start()
     haptic('rigid')
   }, [startRun])
