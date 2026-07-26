@@ -6,6 +6,11 @@ import tailwindcss from '@tailwindcss/vite'
 import { nitro } from 'nitro/vite'
 
 const config = defineConfig({
+  // The release stamps itself: Vercel injects the sha at build time, `dev` locally. Never hand-maintained,
+  // because a stale release string blames the wrong deploy for a regression.
+  define: {
+    __RELEASE__: JSON.stringify((process.env.VERCEL_GIT_COMMIT_SHA || 'dev').slice(0, 7)),
+  },
   plugins: [
     nitro(),
     // this is the plugin that enables path aliases

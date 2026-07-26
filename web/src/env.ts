@@ -1,6 +1,12 @@
 import { createEnv } from '@t3-oss/env-core'
 import { z } from 'zod'
 
+// Injected by the `define` in vite.config.ts: Vercel's commit sha in prod, 'dev' locally. Never typed by
+// hand, so an error group always points at the deploy that actually shipped it.
+declare global {
+  const __RELEASE__: string
+}
+
 // Typed, validated client env. Import from here, never from import.meta.env directly.
 export const env = createEnv({
   clientPrefix: 'VITE_',

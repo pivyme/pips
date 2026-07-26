@@ -15,6 +15,10 @@ WORKDIR /usr/src/app
 
 COPY --from=builder /usr/src/app ./
 
+# Release stamp. .dockerignore excludes .git and oven/bun has no git binary, so the build time is the
+# release id: new on every deploy, sorts chronologically, maps 1:1 to a Dokploy deploy.
+RUN date -u +%Y%m%d-%H%M%S > .release
+
 USER bun
 
 EXPOSE 3780
