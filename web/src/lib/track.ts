@@ -365,6 +365,25 @@ export function track(name: EventName, props?: EventProps): void {
   }
 }
 
+const ONCE_CAP = 50
+const firedOnce = new Set<string>()
+
+// For a screen that can remount in a loop. A crash boundary re-mounts every time the tree throws, so a
+// plain per-mount effect turns one broken session into hundreds of rows and the Usage page then ranks the
+// error screen above opening the app. Same shape as the client error hook's per-session dedupe.
+export function trackOnce(name: EventName, props?: EventProps): void {
+  try {
+    const key = `${name}|${JSON.stringify(props ?? {})}`
+    if (firedOnce.has(key)) return
+    // Varied props must not turn the guard itself into the leak, so the set is bounded like the queue.
+    if (firedOnce.size >= ONCE_CAP) return
+    firedOnce.add(key)
+    track(name, props)
+  } catch {
+    // same contract as track(): never throws
+  }
+}
+
 const SETTLE_MS = 700
 const settleTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -427,6 +446,7 @@ export function installTrack(subscribe?: (fn: () => void) => void): void {
 export function resetTrackState(): void {
   for (const t of settleTimers.values()) clearTimeout(t)
   settleTimers.clear()
+  firedOnce.clear()
   queue.length = 0
   if (timer) clearTimeout(timer)
   timer = null

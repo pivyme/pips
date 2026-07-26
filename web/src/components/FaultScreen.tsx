@@ -5,7 +5,7 @@ import type { LucideIcon } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { haptic } from '@/lib/haptics'
-import { track } from '@/lib/track'
+import { trackOnce } from '@/lib/track'
 import { cnm } from '@/utils/style'
 
 // One design for both fault states (404 + crash): the console has "lost signal". A dead device
@@ -163,9 +163,10 @@ function FaultShell({
   actions: ReactNode
 }) {
   // Both fault states funnel through here, so one line covers 404 and the crash boundary. The code is the
-  // whole payload: a message would be one bucket per occurrence.
+  // whole payload: a message would be one bucket per occurrence. Once per session, because a crashing tree
+  // re-mounts the boundary on every throw and a per-mount effect files hundreds of rows for one bad session.
   useEffect(() => {
-    track('friction.error_screen', { code })
+    trackOnce('friction.error_screen', { code })
   }, [code])
 
   return (

@@ -99,6 +99,13 @@ function adminExpectation(method: string, url: string): { codes: number[]; why: 
   return { codes: [200], why: 'mutating, applied to the throwaway user only' };
 }
 
+// The real grant-role.ts, in its own process, exactly as a human would run it.
+async function runScript(args: string[]): Promise<{ code: number; out: string }> {
+  const proc = Bun.spawn(['bun', new URL('grant-role.ts', import.meta.url).pathname, ...args], { stdout: 'pipe', stderr: 'pipe' });
+  const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  return { code, out: `${stdout}${stderr}`.trim() };
+}
+
 const stamp = Date.now();
 const throwaway = await prismaQuery.user.create({
   data: {
@@ -175,6 +182,27 @@ try {
   const after = await call({ method: 'GET', url: '/admin/ping', token });
   assert(after.status === 404, `after revoke: GET /admin/ping returned ${after.status}, expected 404`);
   console.log('revoked: the very next request on the same token is already 404');
+
+  // 6: grant-role.ts is the ONLY thing that can move ADMIN, so run the real script rather than trusting it.
+  // Which branch of its last-ADMIN floor we get to see depends on how many admins the database already has.
+  const others = await prismaQuery.user.count({ where: { specialRoles: { has: 'ADMIN' }, id: { not: throwaway.id } } });
+  const granted = await runScript([throwaway.id, 'ADMIN']);
+  assert(granted.code === 0, `grant-role.ts grant exited ${granted.code}: ${granted.out}`);
+  const opened = await call({ method: 'GET', url: '/admin/ping', token });
+  assert(opened.status === 200, `after the script grant: GET /admin/ping returned ${opened.status}, expected 200`);
+
+  const revoked = await runScript([throwaway.id, 'ADMIN', '--revoke']);
+  if (others === 0) {
+    // The throwaway is the only admin alive, so the floor must hold: refusing is the whole point.
+    assert(revoked.code === 1, `grant-role.ts revoked the LAST admin (exit ${revoked.code}): ${revoked.out}`);
+    assert(revoked.out.includes('last ADMIN'), `the refusal did not name the reason: ${revoked.out}`);
+    console.log('grant-role: granted, then REFUSED to revoke the last ADMIN, which is the floor firing live');
+  } else {
+    assert(revoked.code === 0, `grant-role.ts revoke exited ${revoked.code}: ${revoked.out}`);
+    const closed = await call({ method: 'GET', url: '/admin/ping', token });
+    assert(closed.status === 404, `after the script revoke: GET /admin/ping returned ${closed.status}, expected 404`);
+    console.log(`grant-role: granted and revoked for real, ${others} other admin(s) kept the floor from firing`);
+  }
 
   console.log(`verify-admin passed against ${BASE}`);
 } finally {

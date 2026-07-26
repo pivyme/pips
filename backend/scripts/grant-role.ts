@@ -11,7 +11,7 @@
 import '../dotenv.ts';
 
 import { prismaQuery } from '../src/lib/prisma.ts';
-import { SPECIAL_ROLES, isSpecialRole } from '../src/config/roles.ts';
+import { SPECIAL_ROLES, isSpecialRole, wouldOrphanAdmins } from '../src/config/roles.ts';
 import { SUI_NETWORK } from '../src/config/main-config.ts';
 
 const [target, roleArg, ...rest] = process.argv.slice(2);
@@ -53,7 +53,7 @@ if (!revoke && has) {
 // actor session, so "cannot revoke your own ADMIN" has no meaning here; the last-ADMIN floor does.
 if (revoke && role === 'ADMIN') {
   const admins = await prismaQuery.user.count({ where: { specialRoles: { has: 'ADMIN' } } });
-  if (admins <= 1) {
+  if (wouldOrphanAdmins(admins)) {
     console.error('refusing to revoke the last ADMIN. Grant another admin first, or you lock everyone out.');
     process.exit(1);
   }

@@ -24,3 +24,10 @@ export function publicRoles(roles: string[]): SpecialRole[] {
 export function isAdmin(roles: string[] | undefined | null): boolean {
   return !!roles?.includes('ADMIN');
 }
+
+// The last ADMIN can never be revoked: zero admins locks everyone out of /admin with no way back in but a
+// SQL console. Lives here rather than inline in grant-role.ts so the floor is pinned by a test, since the
+// script is the only thing on the system that can revoke an ADMIN at all.
+export function wouldOrphanAdmins(adminCount: number): boolean {
+  return !Number.isFinite(adminCount) || adminCount <= 1;
+}

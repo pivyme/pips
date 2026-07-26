@@ -248,4 +248,22 @@ describe('never on the critical path (§13 rule 1)', () => {
     await flushCaptures();
     expect(groups.size).toBe(1);
   });
+
+  // The rule is only real if breaking it turns something red (L-020). Every capture in the codebase sits
+  // inside a self-healing path (settle recovery, the sponsor accumulator warm-up, the market re-route, the
+  // stuck-pending sweep), and a single stray `await` would put a DB write between a player and their play.
+  it('is never awaited anywhere in src/, so no call site can put a write on a play path', async () => {
+    const { Glob } = await import('bun');
+    const offenders: string[] = [];
+    for await (const file of new Glob('src/**/*.ts').scan('.')) {
+      if (file.endsWith('.test.ts')) continue;
+      const lines = (await Bun.file(file).text()).split('\n');
+      lines.forEach((line, i) => {
+        if (/\b(await|return)\s+(captureError|track)\s*\(/.test(line) || /=\s*(captureError|track)\s*\(/.test(line)) {
+          offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+        }
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
 });

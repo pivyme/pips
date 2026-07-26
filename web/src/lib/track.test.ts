@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { EVENT_NAMES, flushTrack, queuedCount, queuedPayloads, resetTrackState, sealedCount, track } from './track'
+import { EVENT_NAMES, flushTrack, queuedCount, queuedPayloads, resetTrackState, sealedCount, track, trackOnce } from './track'
 
 const originalFetch = globalThis.fetch
 const realSubtle = globalThis.crypto.subtle
@@ -199,6 +199,34 @@ describe('demo mode', () => {
     localStorage.setItem('pips_demo', '0')
     track('door.landing_view')
     await settle()
+    expect(queuedCount()).toBe(1)
+  })
+})
+
+describe('trackOnce', () => {
+  // A crash boundary re-mounts on every throw, so the per-mount effect behind friction.error_screen filed
+  // 257 rows in one session against 108 app opens, which made the error screen the top "feature" on Usage.
+  it('fires once per session and swallows every repeat of the same name and props', () => {
+    for (let i = 0; i < 300; i++) trackOnce('friction.error_screen', { code: 'ERR' })
+    expect(queuedCount()).toBe(1)
+  })
+
+  it('still separates genuinely different props, since 404 and a crash are different screens', () => {
+    trackOnce('friction.error_screen', { code: 'ERR' })
+    trackOnce('friction.error_screen', { code: '404' })
+    trackOnce('friction.error_screen', { code: 'ERR' })
+    expect(queuedCount()).toBe(2)
+  })
+
+  it('caps the distinct keys, so varied props cannot turn the guard into the leak', () => {
+    for (let i = 0; i < 300; i++) trackOnce('friction.error_screen', { code: `E${i}` })
+    expect(queuedCount()).toBe(50)
+  })
+
+  it('forgets the session on reset, so a new session reports again', () => {
+    trackOnce('friction.error_screen', { code: 'ERR' })
+    resetTrackState()
+    trackOnce('friction.error_screen', { code: 'ERR' })
     expect(queuedCount()).toBe(1)
   })
 })

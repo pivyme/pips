@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { PUBLIC_ROLES, SPECIAL_ROLES, isAdmin, isSpecialRole, publicRoles } from './roles.ts';
+import { PUBLIC_ROLES, SPECIAL_ROLES, isAdmin, isSpecialRole, publicRoles, wouldOrphanAdmins } from './roles.ts';
 
 describe('special roles', () => {
   it('never lets ADMIN or BETA_TESTER out through the public filter', () => {
@@ -25,5 +25,15 @@ describe('special roles', () => {
     expect(isAdmin([])).toBe(false);
     expect(isAdmin(['KOL'])).toBe(false);
     expect(isAdmin(['KOL', 'ADMIN'])).toBe(true);
+  });
+
+  // grant-role.ts is the only thing on the system that can revoke an ADMIN, so this floor is the last
+  // thing standing between a typo and nobody being able to reach /admin again (A6 item 6).
+  it('refuses to revoke the last ADMIN, and treats an unreadable count as the last one', () => {
+    expect(wouldOrphanAdmins(1)).toBe(true);
+    expect(wouldOrphanAdmins(0)).toBe(true);
+    expect(wouldOrphanAdmins(2)).toBe(false);
+    // A failed count must fail closed: refusing a revoke is recoverable, an empty admin set is not.
+    expect(wouldOrphanAdmins(NaN)).toBe(true);
   });
 });
