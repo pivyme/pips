@@ -107,12 +107,18 @@ mock.module('../lib/prisma.ts', () => ({
         return { count: data.length };
       },
     },
-    user: { findMany: async () => [{ id: 'u_normal', username: 'normal', createdAt: new Date('2026-07-20T00:00:00Z') }] },
-    play: { findMany: async () => [] },
+    user: { findMany: async () => [{ id: 'u_normal', username: 'normal', createdAt: new Date('2026-07-20T00:00:00Z') }], count: async () => 1 },
+    play: { findMany: async () => [], count: async () => 0 },
+    deposit: { findMany: async () => [] },
+    walletTx: { findMany: async () => [] },
     appConfig: {
       findUnique: async ({ where }: { where: { key: string } }) => {
         const value = settingRows.get(where.key);
         return value === undefined ? null : { key: where.key, value };
+      },
+      upsert: async ({ where, create }: { where: { key: string }; create: { value: string } }) => {
+        settingRows.set(where.key, create.value);
+        return { key: where.key, value: create.value };
       },
     },
     errorLog: { create: async () => ({}) },
@@ -173,8 +179,11 @@ function concrete(url: string): string {
   return url.replace(':fingerprint', encodeURIComponent(GROUP.fingerprint));
 }
 
-function payload(method: string): Record<string, unknown> | undefined {
-  return method === 'PATCH' ? { status: 'ack' } : undefined;
+function payload(method: string, url: string): Record<string, unknown> | undefined {
+  if (method !== 'PATCH') return undefined;
+  // A non-destructive key at its default: enough to prove the gate, and it changes nothing.
+  if (url === '/admin/settings') return { key: 'rate.admin_max', value: 60 };
+  return { status: 'ack' };
 }
 
 beforeEach(() => {
@@ -198,7 +207,7 @@ describe('/admin/* access control (§7.5)', () => {
   it('answers 404 for an unauthenticated request on every registered admin route', async () => {
     const { app, routes, call } = await buildApp();
     for (const r of routes) {
-      const res = await call(r.method, concrete(r.url), { body: payload(r.method) });
+      const res = await call(r.method, concrete(r.url), { body: payload(r.method, r.url) });
       expect(`${r.method} ${r.url} -> ${res.status}`).toBe(`${r.method} ${r.url} -> 404`);
     }
     await app.close();
@@ -207,7 +216,7 @@ describe('/admin/* access control (§7.5)', () => {
   it('answers 404 for a normal authenticated user on every registered admin route', async () => {
     const { app, routes, call } = await buildApp();
     for (const r of routes) {
-      const res = await call(r.method, concrete(r.url), { token: USER_TOKEN, body: payload(r.method) });
+      const res = await call(r.method, concrete(r.url), { token: USER_TOKEN, body: payload(r.method, r.url) });
       expect(`${r.method} ${r.url} -> ${res.status}`).toBe(`${r.method} ${r.url} -> 404`);
       // Never a 403: the response must not admit the route exists.
       expect(res.json()).toMatchObject({ success: false, error: { code: 'NOT_FOUND' } });
@@ -227,7 +236,7 @@ describe('/admin/* access control (§7.5)', () => {
   it('answers 200 for an ADMIN on every registered admin route', async () => {
     const { app, routes, call } = await buildApp();
     for (const r of routes) {
-      const res = await call(r.method, concrete(r.url), { token: ADMIN_TOKEN, body: payload(r.method) });
+      const res = await call(r.method, concrete(r.url), { token: ADMIN_TOKEN, body: payload(r.method, r.url) });
       expect(`${r.method} ${r.url} -> ${res.status}`).toBe(`${r.method} ${r.url} -> 200`);
     }
     await app.close();

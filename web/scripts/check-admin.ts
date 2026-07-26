@@ -1,9 +1,12 @@
 // Two invariants that only exist if they fail the gate the loop and CI actually run (L-020). `web`'s
 // eslint baseline is red and nobody runs it, so this sits next to `bunx tsc --noEmit` instead.
 //
-//   1. src/admin/** never imports the device shell. One stray `three` import drags the whole 3D console
-//      into the admin chunk and the encapsulation becomes decorative.
+//   1. src/admin/** never mounts the device. One stray `three` import drags the whole 3D console into
+//      the admin chunk and the encapsulation becomes decorative.
 //   2. The web twins of SPECIAL_ROLES and the event catalog match the backend source of truth (A2).
+//
+// The ban is on the DEVICE, not on the design system. Admin shares the app's palette, HeroUI wrappers,
+// hardware keys and icons on purpose, so it looks like the same product rather than a scaffold.
 //
 // Run: cd web && bun run check:admin
 
@@ -12,20 +15,16 @@ import { join } from 'node:path';
 
 const ADMIN_DIR = 'src/admin';
 
-// Bare specifiers and path prefixes the admin surface must never reach for.
+// Bare specifiers and path prefixes the admin surface must never reach for: WebGL, the timeline engine,
+// the console shell, the game screens, and game audio. All of them either mount a renderer or pull a
+// megabyte of scene code onto a page made of tables.
 const BANNED = [
   'three',
   '@react-three/',
   'gsap',
-  'motion',
-  'framer-motion',
-  '@heroui/',
   '@/components/console',
   '@/components/game',
-  '@/ui/',
   '@/lib/sound',
-  '@/lib/haptics',
-  'web-haptics',
 ];
 
 const failures: string[] = [];

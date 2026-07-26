@@ -5,14 +5,25 @@
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 
 import { adminMiddleware } from '../middlewares/adminMiddleware.ts';
-import { getSetting } from '../config/admin-settings.ts';
+import { allSettings, getSetting, isDestructive, isSettingKey, setSetting } from '../config/admin-settings.ts';
 import { RATE_LIMIT_WINDOW, SUI_NETWORK } from '../config/main-config.ts';
 import { MAX_EVENTS_PER_REQUEST, isEventName, isPreAuthEvent, platformFrom } from '../config/analytics-catalog.ts';
 import { RELEASE } from '../config/release.ts';
-import { ERROR_STATUSES, buildBrief, getErrorDetail, listErrorGroups, opsStatus, setErrorStatus, usageReport, type ErrorStatus } from '../services/insights.ts';
+import {
+  ERROR_STATUSES,
+  buildBrief,
+  getErrorDetail,
+  listErrorGroups,
+  opsStatus,
+  overviewReport,
+  perfReport,
+  setErrorStatus,
+  usageReport,
+  type ErrorStatus,
+} from '../services/insights.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 
-import { ANALYTICS_OFF, BUDGET_SAMPLE_RATE, captureError, capMessage, capProps, errorBudgetExceeded, eventBudgetExceeded, redact } from '../lib/analytics.ts';
+import { ANALYTICS_OFF, BUDGET_SAMPLE_RATE, captureError, capMessage, capProps, errorBudgetExceeded, eventBudgetExceeded, redact, track } from '../lib/analytics.ts';
 import { CLOCK_SKEW_MS, issueSession, open, unframe } from '../lib/envelope.ts';
 import { prismaQuery } from '../lib/prisma.ts';
 import { userFromToken, userIdFromToken } from '../services/auth.ts';
@@ -207,6 +218,32 @@ function hasStandaloneHint(events: RawEvent[]): boolean {
   return events.some((e) => e.standalone === true);
 }
 
+// ---------------------------------------------------------------------------
+// Settings (§2.6) with the §9.1 gate
+// ---------------------------------------------------------------------------
+
+type Applied = { ok: true; value: boolean | number } | { ok: false; status: number; code: string; message: string };
+
+// One key per call, validated against the SETTINGS bounds, audited on every apply. Destructive keys carry
+// the extra confirm rules; there is deliberately no force flag, so the API cannot be driven destructively
+// by accident and neither can the UI.
+async function applySettingChange(key: string, value: unknown, confirm: string | undefined, actorId: string | null): Promise<Applied> {
+  if (!isSettingKey(key) && !(await allSettings()).some((s) => s.key === key)) {
+    return { ok: false, status: 400, code: 'UNKNOWN_SETTING', message: 'unknown setting key' };
+  }
+  const destructive = isSettingKey(key) && isDestructive(key);
+  if (destructive && !confirm) {
+    return { ok: false, status: 400, code: 'CONFIRM_REQUIRED', message: 'this setting deletes rows, preview the change and type the confirmation first' };
+  }
+
+  const before = (await allSettings()).find((s) => s.key === key)?.value ?? null;
+  const result = await setSetting(key, value);
+  if (!result.ok) return { ok: false, status: 400, code: 'INVALID_VALUE', message: result.reason };
+
+  track(actorId, 'admin.setting_change', { props: { key, from: String(before), to: String(result.value) } });
+  return { ok: true, value: result.value };
+}
+
 export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
   // Sealed envelopes arrive as binary. Scoped to this plugin, so no other route's body parsing changes.
   app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_req, body, cb) => {
@@ -274,6 +311,33 @@ export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _op
   // a page load costs one row rather than twelve queries and cannot disagree with what already alerted.
   app.get('/admin/ops', admin, async (_request: FastifyRequest, reply: FastifyReply) => {
     return ok(reply, await opsStatus());
+  });
+
+  // Overview: users, plays, money, chain, and the two sparklines. Total user balances come from the
+  // 15-minute cron's stored row, never a per-request chain sweep.
+  app.get('/admin/overview', admin, async (_request: FastifyRequest, reply: FastifyReply) => {
+    return ok(reply, await overviewReport());
+  });
+
+  // Performance: mint latency, settle lag, per-route p95 off the in-memory access ring, worker health.
+  app.get('/admin/perf', admin, async (request: FastifyRequest, reply: FastifyReply) => {
+    const q = request.query as { hours?: string };
+    const hours = Math.min(168, Math.max(1, Number(q.hours) || 6));
+    return ok(reply, await perfReport(hours));
+  });
+
+  // The settings drawer renders itself from this, so adding a knob is one line in the SETTINGS const.
+  app.get('/admin/settings', admin, async (_request: FastifyRequest, reply: FastifyReply) => {
+    return ok(reply, { settings: await allSettings() });
+  });
+
+  // One key per call. A destructive key needs the §9.1 confirm, which has no bypass flag by design.
+  app.patch('/admin/settings', admin, async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = (request.body ?? {}) as { key?: string; value?: unknown; confirm?: string };
+    const key = typeof body.key === 'string' ? body.key : '';
+    const applied = await applySettingChange(key, body.value, body.confirm, request.user?.id ?? null);
+    if (!applied.ok) return handleError(reply, applied.status, applied.message, applied.code);
+    return ok(reply, { key, value: applied.value });
   });
 
   // Usage: the ascending event list, the funnel, per-game conversion, menu ranks, and D1/D7.

@@ -77,6 +77,98 @@ export interface UsageReport {
   totalEvents: number
 }
 
+export interface WalletBalance {
+  name: string
+  address: string
+  sui: number
+  dusdc: number | null
+}
+
+export interface BalanceSnapshot {
+  asOf: string
+  userChips: number | null
+  userCount: number
+  partial?: string
+  wallets: WalletBalance[]
+  gasBurnedToday: number
+}
+
+export interface OverviewReport {
+  users: {
+    total: number
+    newToday: number
+    new7d: number
+    dau: number
+    wau: number
+    onboardedPct: number | null
+    returningPct: number | null
+  }
+  plays: {
+    today: number
+    plays: number
+    settled: number
+    byGame: Array<{ game: string; plays: number; volume: number }>
+    avgStake: number | null
+    avgMultiplier: number | null
+    winRatePct: number | null
+    volume: number
+    playerNetPnl: number
+    netHousePnl: number
+    rake: number
+  }
+  money: {
+    balances: BalanceSnapshot | null
+    depositsByChain: Array<{ chain: string; count: number; done: number }>
+    withdrawals: { count: number; amount: number }
+    faucetOut: number
+    grantOut: number
+  }
+  chain: {
+    liveMarkets: number
+    wallets: WalletBalance[]
+    gasBurnedToday: number
+    costPerPlaySui: number | null
+    network: string
+  }
+  sparklines: { plays: Array<{ t: number; n: number }>; errors: Array<{ t: number; n: number }> }
+  generatedAt: string
+}
+
+export interface LatencyPoint {
+  t: number
+  n: number
+  p50: number | null
+  p95: number | null
+}
+
+export interface PerfReport {
+  windowHours: number
+  mint: { series: LatencyPoint[]; p50: number | null; p95: number | null; n: number }
+  settle: { series: LatencyPoint[]; p50: number | null; p95: number | null; n: number }
+  routes: Array<{ route: string; n: number; p50: number | null; p95: number | null; max: number | null }>
+  workers: Array<{
+    name: string
+    lastRunAt: number | null
+    lastSuccessAt: number | null
+    lastDurationMs: number | null
+    intervalMs: number | null
+    stale: boolean
+    lastError: string | null
+  }>
+  generatedAt: string
+}
+
+export interface SettingRow {
+  key: string
+  type: string
+  def: boolean | number
+  min?: number
+  max?: number
+  destructive: boolean
+  value: boolean | number
+  label?: string
+}
+
 export type OpsLevel = 'ok' | 'warn' | 'critical'
 
 export interface DetectorStatus {

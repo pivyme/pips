@@ -5,7 +5,7 @@ import { queryOptions } from '@tanstack/react-query'
 
 import { getAuthToken } from '@/lib/api'
 import { env } from '@/env'
-import type { AdminPing, ErrorDetail, ErrorGroupRow, ErrorStatus, OpsSnapshot, UsageReport } from './types'
+import type { AdminPing, ErrorDetail, ErrorGroupRow, ErrorStatus, OpsSnapshot, OverviewReport, PerfReport, SettingRow, UsageReport } from './types'
 
 const BASE = env.VITE_API_URL
 
@@ -96,6 +96,34 @@ export const usageQuery = (days: number) =>
     staleTime: 60_000,
     retry: false,
   })
+
+export const overviewQuery = () =>
+  queryOptions({
+    queryKey: ['admin', 'overview'],
+    queryFn: () => adminFetch<OverviewReport>('/admin/overview'),
+    staleTime: 60_000,
+    retry: false,
+  })
+
+export const perfQuery = (hours: number) =>
+  queryOptions({
+    queryKey: ['admin', 'perf', hours],
+    queryFn: () => adminFetch<PerfReport>(`/admin/perf?hours=${hours}`),
+    staleTime: 30_000,
+    retry: false,
+  })
+
+export const settingsQuery = () =>
+  queryOptions({
+    queryKey: ['admin', 'settings'],
+    queryFn: () => adminFetch<{ settings: SettingRow[] }>('/admin/settings'),
+    staleTime: 30_000,
+    retry: false,
+  })
+
+export function saveSetting(key: string, value: boolean | number, confirm?: string): Promise<{ key: string; value: boolean | number }> {
+  return adminFetch('/admin/settings', { method: 'PATCH', body: JSON.stringify({ key, value, confirm }) })
+}
 
 // The banner refreshes on its own: an ops page left open on a second monitor should go red without a
 // reload. 30s matches the cron's cadence closely enough without polling for nothing.

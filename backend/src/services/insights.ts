@@ -5,15 +5,20 @@
 
 import { EVENT_NAMES } from '../config/analytics-catalog.ts';
 import { getTunable, registerTunable } from '../config/admin-settings.ts';
-import { EXPIRY_SAFETY_MS, TREASURY_MIN_DUSDC } from '../config/main-config.ts';
+import { EXPIRY_SAFETY_MS, SUI_NETWORK, TREASURY_MIN_DUSDC } from '../config/main-config.ts';
 import { alert } from '../lib/alert.ts';
 import { prismaQuery } from '../lib/prisma.ts';
+import { routeSamples } from '../lib/route-latency.ts';
 import { allWorkerHealth, isWorkerStale } from '../lib/worker-registry.ts';
+import { DUSDC_TYPE } from '../lib/sui/config.ts';
 import { getDusdcBalance } from '../lib/sui/dusdc.ts';
+import { getSuiBalanceRaw } from '../lib/sui/gas.ts';
 import { tradeableMarkets } from '../lib/sui/markets.ts';
 import { sponsorHealth } from '../lib/sui/play-safety.ts';
-import { TREASURY_ENABLED, treasuryAddress } from '../lib/sui/signer.ts';
+import { sponsorAddress } from '../lib/sui/sponsor.ts';
+import { REVENUE_ENABLED, SETTLEMENT_ENABLED, TREASURY_ENABLED, operatorAddress, revenueAddress, settlementAddress, treasuryAddress } from '../lib/sui/signer.ts';
 import { STUCK_PENDING_MS } from './plays.ts';
+import { isWinningPlay } from './stats.ts';
 
 export type ErrorStatus = 'open' | 'ack' | 'resolved' | 'ignored';
 export const ERROR_STATUSES: ErrorStatus[] = ['open', 'ack', 'resolved', 'ignored'];
@@ -1074,4 +1079,476 @@ export async function buildNightlyDigest(now = Date.now()): Promise<string | nul
     for (const g of loudest) lines.push(`  ${g.count}x [${g.level}] ${g.title}`);
   }
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Overview (§7.4): the ten-second page
+// ---------------------------------------------------------------------------
+
+// The money aggregates are pure over rows, so every number on this page can be pinned against a fixture
+// with a hand-computed answer. A wrong number here is worse than a missing one, because it gets believed.
+
+export interface PlayAggRow {
+  game: string;
+  status: string;
+  stake: bigint;
+  entryCost: bigint;
+  rake: bigint;
+  pnl: bigint | null;
+  multiplier: number | null;
+}
+
+export interface PlayAggregates {
+  plays: number;
+  settled: number;
+  byGame: Array<{ game: string; plays: number; volume: number }>;
+  avgStake: number | null;
+  avgMultiplier: number | null;
+  winRatePct: number | null;
+  volume: number;
+  /** Players' realized PnL. Positive means the players are up. */
+  playerNetPnl: number;
+  /** The counterparty side of the same number. The vault carries it, we carry the rake. */
+  netHousePnl: number;
+  rake: number;
+}
+
+const SETTLED_STATUSES = new Set(['won', 'lost', 'cashed_out']);
+const DUSDC_UNIT = 1_000_000; // 6dp, per L-011
+
+const dusdc = (raw: bigint): number => Number(raw) / DUSDC_UNIT;
+
+export function computePlayAggregates(rows: PlayAggRow[]): PlayAggregates {
+  const settled = rows.filter((r) => SETTLED_STATUSES.has(r.status));
+
+  // Volume is Σ entry cost over SETTLED plays, matching computeLedgerStats so the dashboard and a user's
+  // own stats page can never disagree. An unminted or errored play cost nobody anything.
+  let volume = 0n;
+  let playerPnl = 0n;
+  let wins = 0;
+  for (const r of settled) {
+    volume += r.entryCost;
+    playerPnl += r.pnl ?? 0n;
+    if (isWinningPlay(r)) wins += 1;
+  }
+
+  // Rake is collected at mint, so it counts on every play that minted, settled or not.
+  let rake = 0n;
+  let stakeTotal = 0n;
+  for (const r of rows) {
+    rake += r.rake;
+    stakeTotal += r.stake;
+  }
+
+  const multipliers = rows.map((r) => r.multiplier).filter((m): m is number => typeof m === 'number' && Number.isFinite(m));
+
+  const byGame = new Map<string, { plays: number; volume: bigint }>();
+  for (const r of rows) {
+    const e = byGame.get(r.game) ?? { plays: 0, volume: 0n };
+    e.plays += 1;
+    if (SETTLED_STATUSES.has(r.status)) e.volume += r.entryCost;
+    byGame.set(r.game, e);
+  }
+
+  return {
+    plays: rows.length,
+    settled: settled.length,
+    byGame: [...byGame.entries()]
+      .map(([game, e]) => ({ game, plays: e.plays, volume: dusdc(e.volume) }))
+      .sort((a, b) => b.plays - a.plays),
+    avgStake: rows.length ? round2(dusdc(stakeTotal) / rows.length) : null,
+    avgMultiplier: multipliers.length ? round2(multipliers.reduce((a, b) => a + b, 0) / multipliers.length) : null,
+    winRatePct: settled.length ? round1((wins / settled.length) * 100) : null,
+    volume: dusdc(volume),
+    playerNetPnl: dusdc(playerPnl),
+    netHousePnl: dusdc(-playerPnl),
+    rake: dusdc(rake),
+  };
+}
+
+function round2(n: number): number {
+  return roundTo(n, 2);
+}
+
+function roundTo(n: number, digits: number): number {
+  const f = 10 ** digits;
+  return Math.round(n * f) / f;
+}
+
+/** Per-day counts over a window, zero-filled so a sparkline never implies a gap was a quiet day. */
+export function dailySeries(dates: Date[], days: number, now: number): Array<{ t: number; n: number }> {
+  const start = dayStart(new Date(now)) - (days - 1) * DAY_MS;
+  const out = Array.from({ length: days }, (_, i) => ({ t: start + i * DAY_MS, n: 0 }));
+  for (const d of dates) {
+    const i = Math.floor((dayStart(d) - start) / DAY_MS);
+    if (i >= 0 && i < days) out[i]!.n += 1;
+  }
+  return out;
+}
+
+export interface BalanceSnapshot {
+  asOf: string;
+  /** Σ user DUSDC read from chain. null when the sweep has never completed. */
+  userChips: number | null;
+  userCount: number;
+  /** Set when the sweep stopped at its cap, so a partial total is never read as the whole. */
+  partial?: string;
+  wallets: Array<{ name: string; address: string; sui: number; dusdc: number | null }>;
+  /** Positive sponsor SUI deltas seen today, so a human top-up never reads as negative burn. */
+  gasBurnedToday: number;
+  samples: Array<{ t: number; sui: number }>;
+}
+
+const BALANCE_ROW_KEY = 'ops:balances';
+/** A chain read per user, so the sweep is capped and says so rather than quietly totalling a subset. */
+const BALANCE_USER_CAP = 500;
+
+export async function readBalanceSnapshot(): Promise<BalanceSnapshot | null> {
+  try {
+    const row = await prismaQuery.appConfig.findUnique({ where: { key: BALANCE_ROW_KEY } });
+    return row ? (JSON.parse(row.value) as BalanceSnapshot) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The one expensive metric on the page (§7.4), so it runs on a cron and the page renders the stored row
+// with its "as of". Never called from a request handler.
+export async function refreshBalanceSnapshot(now = Date.now()): Promise<BalanceSnapshot> {
+  const prev = await readBalanceSnapshot();
+
+  const users = await prismaQuery.user.findMany({
+    where: { address: { not: '' } },
+    select: { address: true },
+    orderBy: { createdAt: 'asc' },
+    take: BALANCE_USER_CAP + 1,
+  });
+  const capped = users.length > BALANCE_USER_CAP;
+  const swept = capped ? users.slice(0, BALANCE_USER_CAP) : users;
+
+  let userChips = 0;
+  let read = 0;
+  for (const u of swept) {
+    try {
+      userChips += await getDusdcBalance(u.address);
+      read += 1;
+    } catch {
+      // One unreadable address must not lose the whole sweep; the count below says how many landed.
+    }
+  }
+
+  const wallets = await Promise.all([
+    walletBalance('sponsor', sponsorAddress, false),
+    walletBalance('treasury', TREASURY_ENABLED ? treasuryAddress : '', true),
+    walletBalance('settlement', SETTLEMENT_ENABLED ? settlementAddress : '', false),
+    walletBalance('revenue', REVENUE_ENABLED ? revenueAddress : '', true),
+    walletBalance('operator', operatorAddress, false),
+  ]);
+
+  // Burn is the sum of positive deltas across today's samples, so a top-up (a negative delta) is skipped
+  // rather than netted off. An estimate here would get believed, so it is measured or it is zero.
+  const sponsorSui = wallets.find((w) => w.name === 'sponsor')?.sui ?? 0;
+  const todayStart = dayStart(new Date(now));
+  const samples = [...(prev?.samples ?? []).filter((s) => s.t >= todayStart - DAY_MS), { t: now, sui: sponsorSui }];
+  let gasBurnedToday = 0;
+  for (let i = 1; i < samples.length; i += 1) {
+    if (samples[i]!.t < todayStart) continue;
+    const delta = samples[i - 1]!.sui - samples[i]!.sui;
+    if (delta > 0) gasBurnedToday += delta;
+  }
+
+  const snap: BalanceSnapshot = {
+    asOf: new Date(now).toISOString(),
+    userChips: read ? round2(userChips) : null,
+    userCount: read,
+    ...(capped ? { partial: `swept the ${BALANCE_USER_CAP} oldest of ${users.length}+ users` } : {}),
+    wallets,
+    gasBurnedToday: roundTo(gasBurnedToday, 4),
+    samples,
+  };
+
+  const value = JSON.stringify(snap);
+  try {
+    await prismaQuery.appConfig.upsert({ where: { key: BALANCE_ROW_KEY }, create: { key: BALANCE_ROW_KEY, value }, update: { value } });
+  } catch (e) {
+    console.warn('[ops] could not persist the balance snapshot:', e instanceof Error ? e.message : e);
+  }
+  if (capped) console.warn(`[ops] balance sweep capped at ${BALANCE_USER_CAP} users; the total is a subset`);
+  return snap;
+}
+
+const MIST = 1_000_000_000;
+
+async function walletBalance(name: string, address: string, withChips: boolean): Promise<BalanceSnapshot['wallets'][number]> {
+  if (!address) return { name, address: '', sui: 0, dusdc: null };
+  const [sui, chips] = await Promise.all([
+    getSuiBalanceRaw(address)
+      .then((raw) => Number(raw) / MIST)
+      .catch(() => 0),
+    withChips ? getDusdcBalance(address).catch(() => null) : Promise.resolve(null),
+  ]);
+  return { name, address, sui: roundTo(sui, 4), dusdc: chips == null ? null : round2(chips) };
+}
+
+export interface OverviewReport {
+  users: {
+    total: number;
+    newToday: number;
+    new7d: number;
+    dau: number;
+    wau: number;
+    onboardedPct: number | null;
+    returningPct: number | null;
+  };
+  plays: PlayAggregates & { today: number };
+  money: {
+    balances: BalanceSnapshot | null;
+    depositsByChain: Array<{ chain: string; count: number; done: number }>;
+    withdrawals: { count: number; amount: number };
+    faucetOut: number;
+    grantOut: number;
+  };
+  chain: {
+    liveMarkets: number;
+    wallets: BalanceSnapshot['wallets'];
+    gasBurnedToday: number;
+    costPerPlaySui: number | null;
+    network: string;
+  };
+  sparklines: { plays: Array<{ t: number; n: number }>; errors: Array<{ t: number; n: number }> };
+  generatedAt: string;
+}
+
+export async function overviewReport(now = Date.now()): Promise<OverviewReport> {
+  const todayStart = new Date(dayStart(new Date(now)));
+  const weekAgo = new Date(now - 7 * DAY_MS);
+  const fortnight = new Date(dayStart(new Date(now)) - 13 * DAY_MS);
+
+  const [total, newToday, new7d, onboarded, returning, dauRows, wauRows, windowPlays, todayPlays, playDates, errorDates, deposits, withdrawals, grants, balances] =
+    await Promise.all([
+      prismaQuery.user.count(),
+      prismaQuery.user.count({ where: { createdAt: { gte: todayStart } } }),
+      prismaQuery.user.count({ where: { createdAt: { gte: weekAgo } } }),
+      prismaQuery.user.count({ where: { username: { not: null } } }),
+      // Returning = signed in at least a day after signing up. A single-session user never qualifies.
+      prismaQuery.user.count({ where: { lastSignIn: { gte: weekAgo } } }),
+      prismaQuery.play.findMany({ where: { createdAt: { gte: todayStart } }, select: { userId: true }, distinct: ['userId'] }),
+      prismaQuery.play.findMany({ where: { createdAt: { gte: weekAgo } }, select: { userId: true }, distinct: ['userId'] }),
+      prismaQuery.play.findMany({
+        where: { createdAt: { gte: weekAgo } },
+        select: { game: true, status: true, stake: true, entryCost: true, rake: true, pnl: true, multiplier: true },
+      }),
+      prismaQuery.play.count({ where: { createdAt: { gte: todayStart } } }),
+      prismaQuery.play.findMany({ where: { createdAt: { gte: fortnight } }, select: { createdAt: true } }),
+      prismaQuery.errorEvent.findMany({ where: { createdAt: { gte: fortnight } }, select: { createdAt: true } }),
+      prismaQuery.deposit.findMany({ where: { createdAt: { gte: weekAgo } }, select: { fromChain: true, status: true } }),
+      // DUSDC only. `kind: 'send'` also carries indexed SUI transfers, and summing two currencies into
+      // one figure would produce a number that is confidently meaningless.
+      prismaQuery.walletTx.findMany({
+        where: { createdAt: { gte: weekAgo }, direction: 'out', kind: 'send', coinType: DUSDC_TYPE },
+        select: { amount: true, decimals: true },
+      }),
+      prismaQuery.walletTx.findMany({ where: { createdAt: { gte: weekAgo }, kind: { in: ['faucet', 'grant'] } }, select: { kind: true, amount: true, decimals: true } }),
+      readBalanceSnapshot(),
+    ]);
+
+  const byChain = new Map<string, { count: number; done: number }>();
+  for (const d of deposits) {
+    const e = byChain.get(d.fromChain) ?? { count: 0, done: 0 };
+    e.count += 1;
+    if (d.status === 'DONE') e.done += 1;
+    byChain.set(d.fromChain, e);
+  }
+
+  const amountOf = (rows: Array<{ amount: bigint; decimals: number }>): number =>
+    round2(rows.reduce((sum, r) => sum + Number(r.amount) / 10 ** r.decimals, 0));
+
+  const aggregates = computePlayAggregates(windowPlays);
+  const gasBurnedToday = balances?.gasBurnedToday ?? 0;
+
+  return {
+    users: {
+      total,
+      newToday,
+      new7d,
+      dau: dauRows.length,
+      wau: wauRows.length,
+      onboardedPct: total ? round1((onboarded / total) * 100) : null,
+      returningPct: total ? round1((returning / total) * 100) : null,
+    },
+    plays: { ...aggregates, today: todayPlays },
+    money: {
+      balances,
+      depositsByChain: [...byChain.entries()].map(([chain, e]) => ({ chain, ...e })).sort((a, b) => b.count - a.count),
+      withdrawals: { count: withdrawals.length, amount: amountOf(withdrawals) },
+      faucetOut: amountOf(grants.filter((g) => g.kind === 'faucet')),
+      grantOut: amountOf(grants.filter((g) => g.kind === 'grant')),
+    },
+    chain: {
+      liveMarkets: tradeableMarkets(now, EXPIRY_SAFETY_MS).length,
+      wallets: balances?.wallets ?? [],
+      gasBurnedToday,
+      costPerPlaySui: todayPlays ? roundTo(gasBurnedToday / todayPlays, 5) : null,
+      network: SUI_NETWORK,
+    },
+    sparklines: {
+      plays: dailySeries(
+        playDates.map((p) => p.createdAt),
+        14,
+        now
+      ),
+      errors: dailySeries(
+        errorDates.map((e) => e.createdAt),
+        14,
+        now
+      ),
+    },
+    generatedAt: new Date(now).toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Performance (§7.4)
+// ---------------------------------------------------------------------------
+
+export interface LatencyRow {
+  createdAt: Date;
+  openedAt: Date | null;
+  settledAt: Date | null;
+  expiry: bigint;
+  status: string;
+}
+
+export interface LatencyPoint {
+  t: number;
+  n: number;
+  p50: number | null;
+  p95: number | null;
+}
+
+/** Mint latency: the gap between a play being requested and the mint landing. */
+export function mintLatencies(rows: LatencyRow[]): Array<{ t: number; ms: number }> {
+  return rows
+    .filter((r) => r.openedAt != null)
+    .map((r) => ({ t: r.createdAt.getTime(), ms: r.openedAt!.getTime() - r.createdAt.getTime() }))
+    .filter((s) => s.ms >= 0);
+}
+
+/** Settle lag: expiry to settlement. Cash-outs close before expiry and would read as a negative lag. */
+export function settleLags(rows: LatencyRow[]): Array<{ t: number; ms: number }> {
+  return rows
+    .filter((r) => r.settledAt != null && (r.status === 'won' || r.status === 'lost'))
+    .map((r) => ({ t: r.settledAt!.getTime(), ms: Math.max(0, r.settledAt!.getTime() - Number(r.expiry)) }));
+}
+
+/** Bucketed p50/p95 over time. An empty bucket keeps its slot with nulls rather than being dropped. */
+export function latencySeries(samples: Array<{ t: number; ms: number }>, bucketMs: number, from: number, to: number): LatencyPoint[] {
+  const count = Math.max(1, Math.ceil((to - from) / bucketMs));
+  const buckets: number[][] = Array.from({ length: count }, () => []);
+  for (const s of samples) {
+    const i = Math.floor((s.t - from) / bucketMs);
+    if (i >= 0 && i < count) buckets[i]!.push(s.ms);
+  }
+  return buckets.map((values, i) => ({
+    t: from + i * bucketMs,
+    n: values.length,
+    p50: percentile(values, 50),
+    p95: percentile(values, 95),
+  }));
+}
+
+export interface RouteLatencyRow {
+  route: string;
+  n: number;
+  p50: number | null;
+  p95: number | null;
+  max: number | null;
+}
+
+export function computeRouteLatency(input: Array<{ route: string; samples: number[] }>): RouteLatencyRow[] {
+  const ms = (v: number | null) => (v == null ? null : roundTo(v, 2));
+  return input
+    .map(({ route, samples }) => ({
+      route,
+      n: samples.length,
+      p50: ms(percentile(samples, 50)),
+      p95: ms(percentile(samples, 95)),
+      max: samples.length ? roundTo(Math.max(...samples), 2) : null,
+    }))
+    .sort((a, b) => (b.p95 ?? 0) - (a.p95 ?? 0));
+}
+
+export interface PerfReport {
+  windowHours: number;
+  mint: { series: LatencyPoint[]; p50: number | null; p95: number | null; n: number };
+  settle: { series: LatencyPoint[]; p50: number | null; p95: number | null; n: number };
+  routes: RouteLatencyRow[];
+  workers: Array<{
+    name: string;
+    lastRunAt: number | null;
+    lastSuccessAt: number | null;
+    lastDurationMs: number | null;
+    intervalMs: number | null;
+    stale: boolean;
+    lastError: string | null;
+  }>;
+  generatedAt: string;
+}
+
+export async function perfReport(windowHours = 6, now = Date.now()): Promise<PerfReport> {
+  const from = now - windowHours * 3_600_000;
+  const bucketMs = Math.max(5 * MIN, Math.round((windowHours * 3_600_000) / 48));
+
+  const [minted, settled] = await Promise.all([
+    prismaQuery.play.findMany({
+      where: { createdAt: { gte: new Date(from) }, openedAt: { not: null } },
+      select: { createdAt: true, openedAt: true, settledAt: true, expiry: true, status: true },
+    }),
+    prismaQuery.play.findMany({
+      where: { settledAt: { gte: new Date(from) }, status: { in: ['won', 'lost'] } },
+      select: { createdAt: true, openedAt: true, settledAt: true, expiry: true, status: true },
+    }),
+  ]);
+
+  const mintSamples = mintLatencies(minted);
+  const settleSamples = settleLags(settled);
+
+  return {
+    windowHours,
+    mint: {
+      series: latencySeries(mintSamples, bucketMs, from, now),
+      p50: percentile(
+        mintSamples.map((s) => s.ms),
+        50
+      ),
+      p95: percentile(
+        mintSamples.map((s) => s.ms),
+        95
+      ),
+      n: mintSamples.length,
+    },
+    settle: {
+      series: latencySeries(settleSamples, bucketMs, from, now),
+      p50: percentile(
+        settleSamples.map((s) => s.ms),
+        50
+      ),
+      p95: percentile(
+        settleSamples.map((s) => s.ms),
+        95
+      ),
+      n: settleSamples.length,
+    },
+    routes: computeRouteLatency(routeSamples()),
+    workers: allWorkerHealth().map((w) => ({
+      name: w.name,
+      lastRunAt: w.lastRunAt,
+      lastSuccessAt: w.lastSuccessAt,
+      lastDurationMs: w.lastDurationMs,
+      intervalMs: w.intervalMs,
+      stale: isWorkerStale(w, now),
+      lastError: w.lastError,
+    })),
+    generatedAt: new Date(now).toISOString(),
+  };
 }

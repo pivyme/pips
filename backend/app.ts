@@ -10,6 +10,7 @@ import { NETWORK, PUBLIC_PREDICT_PACKAGE, PUBLIC_PREDICT_OBJECT, DUSDC_TYPE } fr
 import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
 import { prismaQuery } from './src/lib/prisma.ts';
 import { allWorkerHealth, isWorkerStale, stopAllWorkers } from './src/lib/worker-registry.ts';
+import { installRouteLatency } from './src/lib/route-latency.ts';
 import { alert } from './src/lib/alert.ts';
 import { captureError } from './src/lib/analytics.ts';
 
@@ -189,6 +190,10 @@ fastify.register(FastifyRateLimit, {
 // WebSocket support for the price hub (/ws). Registered before the routes that use `{websocket:true}`.
 // Verified on the Bun runtime; the SSE /stream/prices route stays as a flagged fallback for one release.
 fastify.register(FastifyWebsocket);
+
+// Per-route response times for the Performance page. In-memory rings keyed on the route PATTERN, so this
+// costs one hook and cannot grow with traffic.
+installRouteLatency(fastify);
 
 // Health check endpoint
 fastify.get('/', async (_request: FastifyRequest, reply: FastifyReply) => {
