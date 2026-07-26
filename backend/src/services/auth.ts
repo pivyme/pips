@@ -235,6 +235,17 @@ export async function userFromToken(token: string): Promise<User | null> {
   }
 }
 
+// Verify-only resolve, no DB round trip. For paths that need a trustworthy userId but must not spend a
+// query on it: the analytics rate-limit key and the ingest stamp, both of which run before any handler.
+export function userIdFromToken(token: string): string | null {
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as { userId?: string };
+    return payload.userId ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Fresh public view of a user, including the live on-chain DUSDC balance. Chips live in the wallet
 // (onboarding mint) and migrate into the PredictManager as plays run, so spendable balance is the sum of both.
 export async function toUserDTO(user: User): Promise<UserDTO> {

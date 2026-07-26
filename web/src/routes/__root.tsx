@@ -2,6 +2,7 @@ import {
   HeadContent,
   Scripts,
   createRootRouteWithContext,
+  useRouter,
 } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { Toaster } from 'react-hot-toast'
@@ -11,6 +12,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { AuthProvider } from '@/lib/auth'
 import { AppPrivyProvider } from '@/lib/privy'
 import { installClientErrorHooks, reportClientError } from '@/lib/clientErrors'
+import { installTrack } from '@/lib/track'
 
 interface MyRouterContext {
   queryClient: QueryClient
@@ -95,9 +97,17 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 })
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+  const router = useRouter()
+
   // Installed once, as early as the document exists, so a throw during the first render of any route is
   // still caught. Idempotent, and it never preventDefaults, so the browser console still shows the error.
   useEffect(installClientErrorHooks, [])
+
+  // The analytics flush triggers. A route change is one of them, so a user who leaves mid-session still
+  // delivers what they did on the page they came from.
+  useEffect(() => {
+    installTrack((fn) => router.subscribe('onResolved', fn))
+  }, [router])
 
   return (
     <html lang="en" className="dark" suppressHydrationWarning>

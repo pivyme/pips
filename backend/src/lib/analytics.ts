@@ -10,6 +10,7 @@ import type { Prisma } from '../../prisma/generated/client.js';
 import { RELEASE } from '../config/release.ts';
 import { SUI_NETWORK } from '../config/main-config.ts';
 import { getSetting } from '../config/admin-settings.ts';
+import { isEventName, type EventName } from '../config/analytics-catalog.ts';
 import { prismaQuery } from './prisma.ts';
 import { grpcErrorText } from './sui/client.ts';
 
@@ -433,8 +434,80 @@ export async function errorBudgetExceeded(): Promise<boolean> {
   return budgetHit;
 }
 
+// Daily row budget for events. Same shape as the error budget: on breach we sample rather than stop, say so
+// once, loudly, and keep serving. A silent drop is how a dashboard ends up under-reporting.
+let eventBudgetAt = 0;
+let eventBudgetHit = false;
+
+export async function eventBudgetExceeded(): Promise<boolean> {
+  const now = Date.now();
+  if (now - eventBudgetAt < 60_000) return eventBudgetHit;
+  eventBudgetAt = now;
+  try {
+    const max = await getSetting('analytics.daily_max');
+    const used = await prismaQuery.event.count({ where: { ts: { gte: new Date(now - 86_400_000) } } });
+    const wasHit = eventBudgetHit;
+    eventBudgetHit = used >= max;
+    if (eventBudgetHit && !wasHit) {
+      const { alert } = await import('./alert.ts');
+      alert('critical', 'event budget exhausted, ingest is sampling', { used, max }, 'budget:analytics_daily_max');
+    }
+  } catch {
+    eventBudgetHit = false;
+  }
+  return eventBudgetHit;
+}
+
+/** Past the budget we keep 1 in 10 rather than going dark, so trends stay visible while the table cools. */
+export const BUDGET_SAMPLE_RATE = 0.1;
+
 export async function flushCaptures(): Promise<void> {
   while (inflight.size) await Promise.all([...inflight]);
+}
+
+// ---------------------------------------------------------------------------
+// track (§4.1), the server-observed half of the catalog
+// ---------------------------------------------------------------------------
+
+export interface TrackOptions {
+  anonId?: string | null;
+  sessionId?: string;
+  platform?: string;
+  props?: Record<string, unknown> | null;
+}
+
+// Server-side twin of the client's track(). Same contract: returns void, never throws, never awaited on a
+// request path. For the handful of events only the server can observe (a landed deposit, an audit trail).
+export function track(userId: string | null, name: EventName | string, opts: TrackOptions = {}): void {
+  if (ANALYTICS_OFF) return;
+  try {
+    const p = writeEvent(userId, name, opts).catch(() => {});
+    inflight.add(p);
+    void p.finally(() => inflight.delete(p));
+  } catch {
+    // unreachable in practice; the belt to writeEvent's braces
+  }
+}
+
+async function writeEvent(userId: string | null, name: string, opts: TrackOptions): Promise<void> {
+  if (!isEventName(name)) return;
+  if (!(await getSetting('analytics.enabled'))) return;
+  if ((await eventBudgetExceeded()) && Math.random() > BUDGET_SAMPLE_RATE) return;
+
+  const capped = capProps(redact(opts.props ?? {}));
+  await prismaQuery.event.create({
+    data: {
+      name,
+      userId,
+      anonId: opts.anonId ?? null,
+      sessionId: opts.sessionId ?? 'server',
+      props: capped.ok && Object.keys(capped.props).length ? (capped.props as Prisma.InputJsonValue) : undefined,
+      platform: opts.platform ?? 'server',
+      source: 'backend',
+      release: RELEASE,
+      network: SUI_NETWORK,
+    },
+  });
 }
 
 // Distinct-user tracking. The samples table is capped, so it cannot answer "have we seen this user on this
