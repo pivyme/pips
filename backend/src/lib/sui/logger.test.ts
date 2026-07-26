@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { Transaction } from '@mysten/sui/transactions';
 
-import { LOGGER_ENABLED, buildLogPlay } from './logger.ts';
+import { LOGGER_ENABLED, buildLogPlay, buildLogPlayForPackage } from './logger.ts';
 import { buildMintPlay } from './predict-real.ts';
 
 const ATTRIBUTION = {
@@ -12,12 +12,19 @@ const ATTRIBUTION = {
 };
 
 describe('PIPS logger off-path', () => {
-  it('is disabled with an empty package id and appends no command', () => {
-    expect(LOGGER_ENABLED).toBe(false);
+  // Driven with an explicit empty package id so the assertion holds whatever the local .env sets.
+  it('appends no command for an empty package id', () => {
+    const tx = new Transaction();
+    const before = tx.getData().commands.length;
+    buildLogPlayForPackage(tx, '', ATTRIBUTION);
+    expect(tx.getData().commands.length).toBe(before);
+  });
+
+  it('keeps buildLogPlay in step with LOGGER_ENABLED', () => {
     const tx = new Transaction();
     const before = tx.getData().commands.length;
     buildLogPlay(tx, ATTRIBUTION);
-    expect(tx.getData().commands.length).toBe(before);
+    expect(tx.getData().commands.length).toBe(before + (LOGGER_ENABLED ? 1 : 0));
   });
 
   it('keeps a mint PTB byte-for-byte unchanged when no attribution is supplied', () => {
