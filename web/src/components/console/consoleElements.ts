@@ -950,8 +950,30 @@ function noteTexture(): THREE.CanvasTexture {
   return t
 }
 
-// Bezel audio cluster, modelled into the shell (not a DOM overlay): a round press button with a note glyph
-// + a Game Boy style volume slider (a recessed slot in a plate, with a proud ridged cap that slides). The
+// Play / pause glyphs for the transport cap, same white-on-transparent trick as noteTexture.
+function transportTexture(kind: 'play' | 'pause'): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = c.height = 128
+  const x = c.getContext('2d')!
+  x.fillStyle = '#ffffff'
+  if (kind === 'play') {
+    x.beginPath()
+    x.moveTo(42, 24)
+    x.lineTo(106, 64)
+    x.lineTo(42, 104)
+    x.closePath()
+    x.fill()
+  } else {
+    x.fillRect(36, 26, 21, 76)
+    x.fillRect(71, 26, 21, 76)
+  }
+  const t = new THREE.CanvasTexture(c)
+  t.anisotropy = 4
+  return t
+}
+
+// Bezel audio cluster, modelled into the shell (not a DOM overlay): a press button with a note glyph
+// (the sounds drawer), a play/pause cap next to it, and a Game Boy style volume slider (a recessed slot in a plate, with a proud ridged cap that slides). The
 // whole thing is tone-on-tone with the cream body so it never distracts, depth reads from shadow not colour.
 // Sits tight in the top-left bezel, sized to stay within the bezel strip. The button presses through the
 // shared interactive loop; the cap drags via `setVolume`. Design px centres, world-unit sizes.
@@ -964,8 +986,9 @@ export function createBezelAudio(
   const S = 1.35
   // Cluster position in design px. y is measured DOWN the layout (wy flips it), so a smaller/more
   // negative y sits HIGHER on the bezel. 200 px = 1 world unit; the bezel band runs about -97..4.
-  const BTN = { x: 84, y: -34 } // top-left bezel, the button's centre
-  const TRK = { x: 339, y: -34 } // slider sits right next to the button, both hugging the left
+  const BTN = { x: 84, y: -34 } // top-left bezel, the sounds-drawer button's centre
+  const PLAY = { x: 216, y: -34 } // music play/pause, tight to the note button so the two read as a pair
+  const TRK = { x: 474, y: -34 } // slider picks up after the pair, all three hugging the left
   const HOUSE_W = 1.28 * S // slider plate width (world units)
   const trackY = wy(TRK.y) // slider vertical
   const btnY = wy(BTN.y) // button vertical (independent of the slider so each can be nudged on its own)
@@ -987,9 +1010,13 @@ export function createBezelAudio(
     color: 0xe4d8bd, roughness: 0.55, metalness: 0.04,
     emissive: new THREE.Color(AMBER), emissiveIntensity: 0, // warms only on press, cream at rest
   })
+  const matPlayBtn = matBtn.clone() // own material so the two caps glow independently on press
   // The one place the skin's accent shows: the printed level bar in the slot and the note glyph.
   const matFill = new THREE.MeshBasicMaterial({ color: AMBER })
   const matNote = new THREE.MeshBasicMaterial({ map: noteTexture(), color: AMBER, transparent: true, depthWrite: false })
+  const playTex = transportTexture('play')
+  const pauseTex = transportTexture('pause')
+  const matTransport = new THREE.MeshBasicMaterial({ map: playTex, color: AMBER, transparent: true, depthWrite: false })
 
   // Everything hangs off one group so the caller can ride it up with the screen stretch (screenExt): the
   // top bezel rises when the screen fills a tall frame, and the cluster must rise with it, not stay pinned.
@@ -1012,6 +1039,24 @@ export function createBezelAudio(
   const note = new THREE.Mesh(new THREE.PlaneGeometry(0.16 * S, 0.16 * S), matNote)
   note.position.set(0, 0.01 * S, 0.05) // on the cap face, rides the press
   audioBtn.add(note)
+
+  /* ── play/pause ── the same cap next door, so starting the music never costs a trip to the drawer ── */
+  const px = wx(PLAY.x)
+  const playSocket = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(0.46 * S, 0.27 * S, 0.1 * S), 32), matRecess)
+  playSocket.position.set(px, btnY, 0.015)
+  playSocket.receiveShadow = true
+  group.add(playSocket)
+
+  const playBtn = new THREE.Mesh(frontZeroed(roundedRect(0.4 * S, 0.23 * S, 0.08 * S), 0.07, 0.02), matPlayBtn)
+  playBtn.position.set(px, btnY, 0.1)
+  playBtn.castShadow = true
+  playBtn.userData = { kind: 'playBtn', pressed: false, baseZ: 0.1, pressedZ: 0.035, glow: 0, baseEmissive: 0 }
+  group.add(playBtn)
+  interactive.push(playBtn)
+
+  const transport = new THREE.Mesh(new THREE.PlaneGeometry(0.15 * S, 0.15 * S), matTransport)
+  transport.position.set(0.005 * S, 0, 0.05) // triangle's mass sits left of centre, nudge it back
+  playBtn.add(transport)
 
   /* ── volume slider ── cream plate with a warm slot recessed through it, a proud ridged cap that slides ── */
   const plateShape = roundedRect(HOUSE_W, 0.21 * S, 0.085 * S)
@@ -1072,6 +1117,13 @@ export function createBezelAudio(
   const pickVolume = (localX: number) => Math.max(0, Math.min(1, (localX - leftX) / travel))
   setVolume(volume)
 
+  // Glyph follows the transport: pause bars while the track runs, a triangle when it's stopped. Both
+  // maps are non-null so swapping one in needs no shader rebuild.
+  function setPlaying(on: boolean) {
+    matTransport.map = on ? pauseTex : playTex
+    transport.position.x = on ? 0 : 0.005 * S // bars are symmetric, the triangle is not
+  }
+
   // Repaint to a skin: plate + caps take the body tone (still molded out of the shell), recesses are
   // shaded from it, and the accent lands on the note glyph, the level bar, and the press glow.
   function recolor(body: string, accent: string, metal: boolean, env: THREE.Texture | null) {
@@ -1079,6 +1131,7 @@ export function createBezelAudio(
     matShell.color.copy(base)
     shade(base, 0.06, matCap.color) // proud parts catch the light
     matBtn.color.copy(matCap.color)
+    matPlayBtn.color.copy(matCap.color)
     shade(base, -0.13, matRecess.color)
     shade(base, -0.2, matSlot.color)
     shade(base, -0.17, matGroove.color)
@@ -1091,6 +1144,7 @@ export function createBezelAudio(
     dress(matShell, 0.78)
     dress(matCap, 0.42)
     dress(matBtn, 0.55)
+    dress(matPlayBtn, 0.55)
     // The accent lands on two different surfaces, so each gets its own contrast pass: the note sits on
     // the proud cap, the level bar on the recessed slot floor a couple of stops darker.
     const noteInk = new THREE.Color(accent)
@@ -1098,19 +1152,23 @@ export function createBezelAudio(
     const fillInk = new THREE.Color(accent)
     legibleInk(fillInk, matSlot.color)
     matNote.color.copy(noteInk)
+    matTransport.color.copy(noteInk)
     matFill.color.copy(fillInk)
     matBtn.emissive.copy(noteInk)
+    matPlayBtn.emissive.copy(noteInk)
   }
 
   // The share-card shot mounts and tears down a whole scene per render, so the cluster owns its trash
   // like every other element factory here.
   function dispose() {
-    for (const m of [matShell, matRecess, matSlot, matCap, matGroove, matBtn, matFill, matNote]) m.dispose()
+    for (const m of [matShell, matRecess, matSlot, matCap, matGroove, matBtn, matPlayBtn, matFill, matNote, matTransport]) m.dispose()
     matNote.map?.dispose()
+    playTex.dispose()
+    pauseTex.dispose()
     group.traverse((o) => {
       if (o instanceof THREE.Mesh) o.geometry.dispose()
     })
   }
 
-  return { group, audioBtn, faderCap, faderHit: hit, setVolume, pickVolume, getVolume: () => volume, recolor, dispose }
+  return { group, audioBtn, playBtn, faderCap, faderHit: hit, setVolume, setPlaying, pickVolume, getVolume: () => volume, recolor, dispose }
 }

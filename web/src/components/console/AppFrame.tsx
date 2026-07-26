@@ -7,23 +7,51 @@ import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
-// iOS home-screen launches paint under the status bar but keep the layout viewport short by that
-// same inset, so 100dvh stops above the screen edge. Measure the shortfall instead of assuming it,
-// so the compensation (see .app-shell in styles.css) dies on its own if Apple ever fixes it.
-function useIOSStatusBarGap() {
+// env() only resolves in a real style, never as a parsed string, so measure it off a throwaway node.
+function readSafeTop() {
+  const el = document.createElement('div')
+  el.style.cssText =
+    'position:fixed;top:0;left:0;width:0;height:0;padding-top:env(safe-area-inset-top);visibility:hidden;pointer-events:none'
+  document.documentElement.appendChild(el)
+  const v = parseFloat(getComputedStyle(el).paddingTop) || 0
+  el.remove()
+  return v
+}
+
+// A translucent status bar paints the page from y=0 but, on some iOS versions, keeps the layout viewport
+// short by that same inset, so 100dvh stops above the screen edge and a dead strip sits at the bottom.
+// Publish the real screen height for styles.css. Two things this must not get wrong: it is an ABSOLUTE
+// height, since `100dvh + inset` double-counts wherever dvh already spans the screen, and it only fires
+// when the missing height IS the inset we paint under, so an iOS that already hands over the whole
+// screen keeps plain dvh instead of overflowing the frame and cropping the device's chin.
+function useIOSStandaloneViewport() {
   useIsoLayoutEffect(() => {
+    const root = document.documentElement
     const sync = () => {
       const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true
-      const gap = window.screen.height - window.innerHeight
-      // A status bar is at most ~62pt; anything larger is a rotated screen.height, not the bug.
-      document.documentElement.toggleAttribute('data-ios-inset-gap', standalone && gap > 0 && gap <= 80)
+      root.toggleAttribute('data-ios-standalone', standalone)
+      const screenH = window.screen.height
+      const short = screenH - window.innerHeight
+      const inset = standalone ? readSafeTop() : 0
+      // Portrait only: a rotated or stale screen.height would size the frame to the wrong axis.
+      const usable =
+        standalone && window.innerWidth <= window.innerHeight && inset > 0 && Math.abs(short - inset) <= 1
+      if (usable) {
+        root.style.setProperty('--app-vh', `${screenH}px`)
+        root.style.setProperty('--app-vshort', `${short}px`)
+      } else {
+        root.style.removeProperty('--app-vh')
+        root.style.removeProperty('--app-vshort')
+      }
     }
     sync()
     window.addEventListener('resize', sync)
     window.addEventListener('orientationchange', sync)
+    window.visualViewport?.addEventListener('resize', sync)
     return () => {
       window.removeEventListener('resize', sync)
       window.removeEventListener('orientationchange', sync)
+      window.visualViewport?.removeEventListener('resize', sync)
     }
   }, [])
 }
@@ -32,7 +60,7 @@ function useIOSStatusBarGap() {
 // `dimmed` is the landing door: fades the drifting logo field out and swaps in the deconstructed-device backdrop, so the handheld card reads as the hero; the card itself is untouched.
 export function AppFrame({ children, bg, dimmed = false }: { children: ReactNode; bg?: string; dimmed?: boolean }) {
   const style = bg ? { background: bg } : undefined
-  useIOSStatusBarGap()
+  useIOSStandaloneViewport()
   return (
     <div
       className="app-shell relative flex min-h-dvh w-full items-stretch justify-center overflow-hidden bg-black sm:items-center"

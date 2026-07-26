@@ -117,13 +117,12 @@ function AboutRow() {
   const navigate = useNavigate()
   const go = () => {
     prepareMenuTransition('forward')
-    void navigate({ to: '/menu/about', viewTransition: true })
+    void navigate({ to: '/menu/about' })
   }
   return (
     <div className="relative">
       <Link
         to="/menu/about"
-        viewTransition
         onClick={() => {
           prepareMenuTransition('forward')
           haptic('selection')
@@ -166,14 +165,14 @@ function StatsSection() {
   const editHandle = () => {
     prepareMenuTransition('forward')
     haptic('selection')
-    void navigate({ to: '/menu/username', viewTransition: true })
+    void navigate({ to: '/menu/username' })
   }
 
   // Share opens the share screen (preview + what-to-show controls), pushed like any other menu sub-page.
   const openShare = () => {
     prepareMenuTransition('forward')
     haptic('medium')
-    void navigate({ to: '/menu/share', viewTransition: true })
+    void navigate({ to: '/menu/share' })
   }
 
   if (q.isLoading) return <StatsCardSkeleton />
@@ -261,13 +260,12 @@ function NavTile({
     }
     prepareMenuTransition('forward')
     haptic('selection')
-    void navigate({ to, viewTransition: true })
+    void navigate({ to })
   }
   return (
     <div className="relative" onPointerDownCapture={() => preload(to)}>
       <Link
         to={to}
-        viewTransition={!launch}
         onClick={(e) => {
           if (launch && drawer) {
             e.preventDefault()
@@ -337,7 +335,6 @@ function AllAchievementsRow() {
     <div className="relative">
       <Link
         to="/menu/achievements"
-        viewTransition
         onClick={() => {
           prepareMenuTransition('forward')
           haptic('selection')
@@ -355,7 +352,7 @@ function AllAchievementsRow() {
         silent
         onTap={() => {
           prepareMenuTransition('forward')
-          void navigate({ to: '/menu/achievements', viewTransition: true })
+          void navigate({ to: '/menu/achievements' })
         }}
       />
     </div>

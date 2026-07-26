@@ -142,7 +142,7 @@ export function CustomizeStudio({
       {/* The floating device on a transparent canvas. Built hidden while the drawer slides off, holding
           the exact live app pose (introFromApp), then revealed in place and eased out into the studio. */}
       {ready && (
-        <div className="absolute inset-0" style={{ opacity: visible ? 1 : 0 }}>
+        <div className="console-stage" style={{ opacity: visible ? 1 : 0 }}>
           <ConsoleCanvas
             customize
             introFromApp

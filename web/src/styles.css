@@ -166,28 +166,41 @@
   }
 }
 
-/* ── iOS home-screen launch: give back the stolen status-bar height ─────
-   Under apple-mobile-web-app-status-bar-style: black-translucent, iOS paints the
-   page from y=0 (under the status bar) but keeps the layout viewport short by
-   exactly that inset, so 100dvh ends above the screen: the whole app rides up and
-   a dead strip of html background sits at the bottom. AppFrame flags the shortfall
-   only when it actually measures it, so this no-ops everywhere else. */
-html[data-ios-inset-gap] .app-shell {
-  min-height: calc(100dvh + env(safe-area-inset-top));
+/* ── iOS home-screen launch: run to the real screen height ──────────────
+   Under apple-mobile-web-app-status-bar-style: black-translucent the page paints from y=0, and on some
+   iOS versions the layout viewport is also short by the top inset, so 100dvh ends above the screen and
+   a dead strip of html background sits at the bottom. AppFrame measures the screen and publishes it as
+   --app-vh. It is an absolute height on purpose: `100dvh + inset` double-counts on the iOS versions
+   where dvh already spans the whole screen, which overflows the frame and crops the device's chin. */
+html[data-ios-standalone] .app-shell {
+  min-height: var(--app-vh, 100dvh);
 }
 
 /* Only the full-bleed phone frame; from sm up the card is aspect-locked (h-auto) and must stay that way. */
 @media (width < 40rem) {
-  html[data-ios-inset-gap] .app-frame {
-    height: calc(100dvh + env(safe-area-inset-top));
+  html[data-ios-standalone] .app-frame {
+    height: var(--app-vh, 100dvh);
   }
 }
 
-/* Same shortfall, but for surfaces that escape the frame: a `fixed inset-0` scrim resolves against
-   the short viewport, so it stops 59px above the screen and leaves an unblurred strip. Add
-   `viewport-fill` to any full-viewport fixed overlay; it's inert everywhere but an iOS home-screen launch. */
-html[data-ios-inset-gap] .viewport-fill {
-  bottom: calc(-1 * env(safe-area-inset-top));
+/* Same shortfall, but for surfaces that escape the frame: a `fixed inset-0` scrim resolves against the
+   short viewport, so it stops short of the screen and leaves an unblurred strip. Add `viewport-fill` to
+   any full-viewport fixed overlay; --app-vshort is 0 unless the viewport really is short, so this is
+   inert in a browser tab and on any iOS that hands over the whole screen. */
+html[data-ios-standalone] .viewport-fill {
+  bottom: calc(-1 * var(--app-vshort, 0px));
+}
+
+/* The device's box on a home-screen launch: dropped clear of the status bar, never grown to dodge it.
+   Milling the inset into the shell (a deeper forehead/chin) wrecks the device's proportions; the strip
+   behind the bar is just the frame's skin backdrop, a flat colour, so the app still owns the full screen.
+   The chin is deep enough for the home indicator as-is, so the bottom stays full-bleed.
+   Every ConsoleCanvas that has to match the live pose wears this: app, customize studio, onboarding.
+   One geometry everywhere or the customize handoff morphs mid-transition. 0 in a browser tab. */
+.console-stage {
+  position: absolute;
+  inset: 0;
+  top: env(safe-area-inset-top);
 }
 
 /* ── Native touch feel (the app shell only) ─────────────────────────────
@@ -887,7 +900,8 @@ html[data-ios-inset-gap] .viewport-fill {
 
 ::view-transition-group(menu-page) {
   overflow: clip;
-  animation-duration: 420ms;
+  /* --menu-slide is only ever set by the perf bisect panel; unset everywhere else. */
+  animation-duration: var(--menu-slide, 420ms);
   animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
@@ -895,6 +909,8 @@ html[data-ios-inset-gap] .viewport-fill {
 ::view-transition-old(menu-page),
 ::view-transition-new(menu-page) {
   animation-fill-mode: both;
+  animation-duration: var(--menu-slide, 420ms);
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
   mix-blend-mode: normal;
   transform-origin: center left;
 }

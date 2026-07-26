@@ -32,7 +32,7 @@ import type { PartId } from './customize'
 import { betLadder } from '@/lib/sui/config'
 import { useOverlayState } from '@/ui/Modal'
 import { SoundsDrawer } from './SoundsDrawer'
-import { getMusicVolume, setMusicVolume, subscribeAudio } from '@/lib/audio'
+import { getMusicVolume, isMusicPlaying, setMusicVolume, subscribeAudio, togglePlay } from '@/lib/audio'
 
 // Main / Action1 / Action2 / MenuTab / HomeTab, matching ConsoleShell's DOM equivalents.
 const BTN_HAPTIC: HapticPreset[] = ['rigid', 'medium', 'medium', 'selection', 'selection']
@@ -181,10 +181,12 @@ export default function ConsoleCanvas({
   const bezelAudioRef = useRef<ReturnType<typeof createBezelAudio> | null>(null)
   const pokeRenderRef = useRef<() => void>(() => {})
 
-  // Drawer's music slider moved -> slide the 3D fader cap to match (and request a frame to show it).
+  // Music state moved (drawer slider, transport, an OS interrupt) -> match the 3D fader cap and the
+  // play/pause glyph, then request a frame to show it.
   useEffect(() => {
     const apply = () => {
       bezelAudioRef.current?.setVolume(getMusicVolume())
+      bezelAudioRef.current?.setPlaying(isMusicPlaying())
       pokeRenderRef.current()
     }
     return subscribeAudio(apply)
@@ -992,13 +994,14 @@ export default function ConsoleCanvas({
       body.position.z,
     )
 
-    // Top-left bezel audio controls (press button + volume fader), modelled into the shell. Pressed/dragged
+    // Top-left bezel audio controls (sounds-drawer button + music play/pause + volume fader), modelled into the shell. Pressed/dragged
     // through the same raycast loop as the buttons. Built on every surface (live shell, dev playground,
     // customize studio, share-card shots) so there is one device everywhere; the studio and export just
     // never route taps into it (their pointer path is the turntable).
     const bezelAudio = createBezelAudio(device, interactive, wx, wy)
     bezelAudioRef.current = bezelAudio
     bezelAudio.setVolume(getMusicVolume()) // seed the cap from the saved music volume
+    bezelAudio.setPlaying(isMusicPlaying())
     pokeRenderRef.current = () => {
       dirty = true
     }
@@ -2690,7 +2693,7 @@ export default function ConsoleCanvas({
         setFaderFromPointer(false)
         return
       }
-      if (obj.userData.kind === 'audioBtn') {
+      if (obj.userData.kind === 'audioBtn' || obj.userData.kind === 'playBtn') {
         canvas.setPointerCapture(e.pointerId)
         obj.userData.pressed = true
         obj.userData.pressedAt = performance.now()
@@ -2854,12 +2857,13 @@ export default function ConsoleCanvas({
       if (active) {
         const btn = active
         const bi = bm.indexOf(btn)
-        const isAudioBtn = btn.userData.kind === 'audioBtn'
+        const kind = btn.userData.kind
+        const isBezelCap = kind === 'audioBtn' || kind === 'playBtn'
         active = null
         const elapsed = performance.now() - (btn.userData.pressedAt ?? 0)
         const delay = Math.max(0, MIN_PRESS_MS - elapsed)
         const t = setTimeout(() => {
-          if (isAudioBtn) audio.playSfx('pillRelease', 'menu')
+          if (isBezelCap) audio.playSfx('pillRelease', 'menu')
           else if (bi === 0) audio.playSfx('mainRelease', 'main')
           else if (bi === 1) audio.playSfx('actionRelease', 'action1')
           else if (bi === 2) audio.playSfx('actionRelease', 'action2')
@@ -2868,7 +2872,9 @@ export default function ConsoleCanvas({
           btn.userData.pressed = false
         }, delay)
         pressTimers.push(t)
-        if (isAudioBtn) openAudioModalRef.current?.()
+        // Still inside the pointerup gesture, which is the only moment iOS will start the music graph.
+        if (kind === 'audioBtn') openAudioModalRef.current?.()
+        else if (kind === 'playBtn') togglePlay()
       }
     }
 

@@ -5,15 +5,21 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import {
   FAST_MODE,
   PERF_ROWS,
+  SLIDE_DEFAULT_MS,
+  SLIDE_OPTIONS,
   isPerfPanelOpen,
   isPerfUnlocked,
   perfFps,
+  perfIdle,
   perfLastNav,
+  perfLastTap,
   perfOn,
+  perfSlideMs,
   perfVersion,
   setPerfFlag,
   setPerfFlags,
   setPerfPanelOpen,
+  setPerfSlideMs,
   subscribePerf,
 } from '@/lib/perfDebug'
 
@@ -24,32 +30,60 @@ function usePerf() {
 export function PerfDebug() {
   usePerf()
   if (!isPerfUnlocked()) return null
-  return (
-    <>
-      {perfOn('hud') && !isPerfPanelOpen() && <PerfHud />}
-      {isPerfPanelOpen() && <PerfPanel />}
-    </>
-  )
+  // Always visible once unlocked: a stripped app is not the real app, and forgetting a switch is off is
+  // how you end up chasing a bug you introduced.
+  const stripped = PERF_ROWS.filter((r) => perfOn(r.flag)).length
+  if (isPerfPanelOpen()) return <PerfPanel />
+  return <PerfHud stripped={stripped} />
 }
 
-// Live fps + the last nav's worst frame, so you can navigate with the panel closed and read it after.
-function PerfHud() {
+// Splits a tap into the three things that can own the wait: the main thread being blocked before we get
+// the event at all (input), the route commit (dom), and the slide (worst frame). Read it off the phone.
+function PerfHud({ stripped }: { stripped: number }) {
   const [, setBeat] = useState(0)
   useEffect(() => {
     const id = window.setInterval(() => setBeat((n) => n + 1), 250)
     return () => window.clearInterval(id)
   }, [])
-  const nav = perfLastNav()
+  const t = perfLastTap()
+  const idle = perfIdle()
   return (
     <button
       type="button"
       onClick={() => setPerfPanelOpen(true)}
-      className="fixed left-2 top-[max(0.5rem,env(safe-area-inset-top))] z-[60] rounded-lg bg-black/80 px-2 py-1 text-left font-mono text-[10px] leading-tight text-white/80 ring-1 ring-white/15"
+      className="fixed left-2 top-[max(0.5rem,env(safe-area-inset-top))] z-[60] rounded-lg bg-black/85 px-2 py-1.5 text-left font-mono text-[10px] leading-[1.4] text-white/70 ring-1 ring-white/15"
     >
-      <span className="text-white">{perfFps()} fps</span>
-      {nav && <span className="text-white/50"> · nav {nav.fps}fps worst {nav.worst}ms</span>}
+      <div>
+        <span className="text-white">{perfFps()} fps</span>
+        {idle && (
+          <>
+            {' · idle '}
+            <Ms v={idle.worst} bad={120} />
+          </>
+        )}
+        {stripped > 0 && <span className="font-bold text-brand-500"> · {stripped} OFF</span>}
+      </div>
+      {t ? (
+        <>
+          <div className="text-white">tap {t.what}</div>
+          <div>
+            input <Ms v={t.input} /> · click <Ms v={t.click} /> · dom{' '}
+            {t.dom < 0 ? <span className="text-white/40">none</span> : <Ms v={t.dom} />}
+          </div>
+          <div>
+            worst <Ms v={t.worst} bad={120} /> · {t.fps} fps
+          </div>
+        </>
+      ) : (
+        <div className="text-white/40">tap something</div>
+      )}
     </button>
   )
+}
+
+// Red once it is past the point you would feel it.
+function Ms({ v, bad = 100 }: { v: number; bad?: number }) {
+  return <span className={v >= bad ? 'font-bold text-down' : 'text-up'}>{v}ms</span>
 }
 
 function PerfPanel() {
@@ -84,7 +118,29 @@ function PerfPanel() {
         )}
       </div>
 
-      <div className="mt-2 divide-y divide-white/[0.07]">
+      <div className="mt-3">
+        <div className="text-[13px] font-semibold text-white">Slide length</div>
+        <div className="mt-0.5 font-mono text-[10px] text-white/40">
+          Pure feel. The slide starts on the frame after the tap, so this is the whole wait.
+        </div>
+        <div className="mt-2 flex gap-1.5">
+          {SLIDE_OPTIONS.map((ms) => (
+            <button
+              key={ms}
+              type="button"
+              onClick={() => setPerfSlideMs(ms)}
+              className={`flex-1 rounded-lg py-2 font-mono text-[11px] font-bold ${
+                perfSlideMs() === ms ? 'bg-brand-500 text-black' : 'bg-white/10 text-white/70'
+              }`}
+            >
+              {ms}
+              {ms === SLIDE_DEFAULT_MS ? '*' : ''}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-3 divide-y divide-white/[0.07]">
         {PERF_ROWS.map((row) => (
           <Row
             key={row.flag}
@@ -95,12 +151,6 @@ function PerfPanel() {
             onChange={(on) => setPerfFlag(row.flag, !on)}
           />
         ))}
-        <Row
-          label="Show HUD"
-          hint="Live fps chip, tap it to reopen this"
-          on={perfOn('hud')}
-          onChange={(on) => setPerfFlag('hud', on)}
-        />
       </div>
 
       <div className="mt-3 flex gap-2">

@@ -101,7 +101,7 @@ export function SendForm({ onClose }: { onClose?: () => void } = {}) {
       if (onClose) onClose()
       else {
         prepareMenuTransition('back')
-        void navigate({ to: '/menu', viewTransition: true })
+        void navigate({ to: '/menu' })
       }
     } catch (e) {
       haptic('error')

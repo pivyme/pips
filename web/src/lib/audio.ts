@@ -234,6 +234,10 @@ export function getMusicVolume(): number {
   return musicVolume
 }
 
+export function isMusicPlaying(): boolean {
+  return playing
+}
+
 // Scales the game stings only. Device SFX are fixed, see the header.
 export function setSfxVolume(v: number): void {
   v = clamp01(v)

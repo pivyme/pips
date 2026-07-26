@@ -14,6 +14,7 @@ import type { AnimationEvent, PointerEvent as ReactPointerEvent, ReactNode } fro
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { PerfDebug } from '@/components/menu/PerfDebug'
+import { perfSlideMs } from '@/lib/perfDebug'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 // Lets a menu item slide the drawer away before navigating (e.g. Customize's handoff), reusing the proven close animation instead of an unmount transition.
@@ -26,6 +27,94 @@ export function useMenuDrawer() {
 
 // Safety net only. Normal close navigation is driven by the sheet's animationend event.
 const CLOSE_FALLBACK_MS = 600
+
+/* ---- menu page slide ---------------------------------------------------------------------------
+   Native-style push/pop between /menu pages. This used to ride the View Transition API, which on iOS
+   costs one blocking frame of 713-840ms per nav (measured on device: input 10ms, route commit 24ms,
+   then a single 731ms frame, so the 420ms slide got 7-10fps). The same capture is 46ms on a desktop
+   GPU, which is why it only ever showed up on iPhone. Nothing about it was tunable, blur, edge shadow,
+   group clip, dim+scale and hiding the 3D console all measured identical.
+   So: no browser snapshot. The outgoing page is a detached clone (~1ms) parked under the incoming one,
+   and both ride the compositor on transform/opacity. This is not a second <Outlet>, it is inert DOM,
+   so the router never resolves it to the new route. */
+
+const SLIDE_EASE = 'cubic-bezier(0.32,0.72,0,1)'
+const EDGE_SHADOW = '-18px 0 42px rgba(0, 0, 0, 0.72)'
+
+let armedDir: 'forward' | 'back' | null = null
+let ghostEl: HTMLElement | null = null
+let ghostTimer = 0
+
+function dropGhost() {
+  window.clearTimeout(ghostTimer)
+  ghostTimer = 0
+  ghostEl?.remove()
+  ghostEl = null
+  armedDir = null
+}
+
+// Runs from the click handler, before navigate(), while the outgoing page is still the live one.
+export function armMenuSlide(direction: 'forward' | 'back'): void {
+  if (typeof document === 'undefined') return
+  dropGhost()
+  const host = document.querySelector<HTMLElement>('.menu-page-transition')
+  const live = host?.firstElementChild as HTMLElement | null
+  if (!host || !live) return
+  const clone = live.cloneNode(true) as HTMLElement
+  clone.setAttribute('inert', '')
+  clone.style.cssText =
+    'position:absolute;inset:0;overflow:hidden;pointer-events:none;background:#000;will-change:transform,opacity'
+  clone.style.zIndex = direction === 'back' ? '2' : '1'
+  host.appendChild(clone)
+  // overflow:hidden still scrolls programmatically, so a sticky header lands exactly where it was.
+  clone.scrollTop = live.scrollTop
+  // The bottom fade belongs to the page being left; the deferred updateFade below restores it.
+  const fade = host.lastElementChild as HTMLElement | null
+  if (fade && fade !== clone) fade.style.opacity = '0'
+  ghostEl = clone
+  armedDir = direction
+  ghostTimer = window.setTimeout(dropGhost, perfSlideMs() + 600) // nav blocked: never strand a copy
+}
+
+// Runs from the drawer's layout effect, once the new page has committed.
+function runMenuSlide(incoming: HTMLElement, reduced: boolean): void {
+  const dir = armedDir
+  const ghost = ghostEl
+  armedDir = null
+  if (!dir) return
+  if (reduced || !ghost || typeof incoming.animate !== 'function') {
+    dropGhost()
+    return
+  }
+  window.clearTimeout(ghostTimer)
+  ghostTimer = 0
+
+  const opts = { duration: perfSlideMs(), easing: SLIDE_EASE }
+  const rest = { transform: 'translateX(0) scale(1)', opacity: '1' }
+  const recede = { transform: 'translateX(-22%) scale(0.985)', opacity: '0.52' }
+  const offRight = { transform: 'translateX(100%)' }
+
+  incoming.style.position = 'relative'
+  incoming.style.zIndex = dir === 'back' ? '1' : '2'
+  incoming.style.willChange = 'transform, opacity'
+  // The shadow rides whichever layer owns the moving edge, so it paints into that layer once.
+  if (dir === 'forward') incoming.style.boxShadow = EDGE_SHADOW
+  else ghost.style.boxShadow = EDGE_SHADOW
+
+  incoming.animate(dir === 'forward' ? [offRight, rest] : [recede, rest], opts)
+  const out = ghost.animate(dir === 'forward' ? [rest, recede] : [rest, offRight], {
+    ...opts,
+    fill: 'both',
+  })
+  const clear = () => {
+    incoming.style.position = ''
+    incoming.style.zIndex = ''
+    incoming.style.willChange = ''
+    incoming.style.boxShadow = ''
+    dropGhost()
+  }
+  out.finished.then(clear, clear) // a cancelled animation rejects, and still has to clean up
+}
 
 export function MenuDrawer({
   children,
@@ -71,17 +160,30 @@ export function MenuDrawer({
     fade.style.opacity = el.scrollHeight - el.scrollTop - el.clientHeight > 24 ? '1' : '0'
   }, [])
 
+  // Fires once per nav, with the new page committed and not yet painted, which is exactly when the slide
+  // has to start. Everything that forces layout (scrollHeight, a ResizeObserver) is deferred a frame: by
+  // then the slide is already running and it costs nothing visible. The fade is a hint, a frame late is
+  // invisible.
   useLayoutEffect(() => {
     const scrollElement = scrollRef.current
-    if (scrollElement) scrollElement.scrollTop = scrollMemory.current[pathname] ?? 0
-    updateFade()
-    // Page height lands async (queries, images), so watch the boxes too, not just scroll events.
     if (!scrollElement) return
-    const ro = new ResizeObserver(updateFade)
-    ro.observe(scrollElement)
-    if (scrollElement.firstElementChild) ro.observe(scrollElement.firstElementChild)
-    return () => ro.disconnect()
-  }, [pathname, updateFade])
+    // A forward nav has no stored offset and a fresh element is already at 0, so skip the write entirely.
+    const top = scrollMemory.current[pathname] ?? 0
+    if (top) scrollElement.scrollTop = top
+    runMenuSlide(scrollElement, reduced)
+    const raf = requestAnimationFrame(() => {
+      updateFade()
+      // Page height lands async (queries, images), so watch the boxes too, not just scroll events.
+      ro = new ResizeObserver(updateFade)
+      ro.observe(scrollElement)
+      if (scrollElement.firstElementChild) ro.observe(scrollElement.firstElementChild)
+    })
+    let ro: ResizeObserver | undefined
+    return () => {
+      cancelAnimationFrame(raf)
+      ro?.disconnect()
+    }
+  }, [pathname, updateFade, reduced])
 
   const finishClose = useCallback(() => {
     const to = closeTargetRef.current

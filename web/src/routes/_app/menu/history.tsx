@@ -42,21 +42,34 @@ const networkName = (n?: string): string => (n ? (NETWORK_NAMES[n] ?? n) : '')
 const money = (value: string, absolute = false): string =>
   formatExactDecimal(value, { absolute })
 
+// Rows that can be on screen at once, generously. Everything past this mounts a frame later, see fullList.
+const VISIBLE_ROWS = 10
+
 const fmtMult = (n: number): string => `${n.toFixed(2).replace(/\.?0+$/, '')}x`
 const shortId = (d: string): string => `${d.slice(0, 6)}…${d.slice(-4)}`
+
+// Built once, not per call. `toLocaleString(locale, opts)` constructs a fresh Intl formatter every time,
+// which is one of the more expensive things you can do in a list row, and this page renders a lot of them.
+const PRICE_FMT = new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+const PRICE_FMT_SUB = new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 6 })
+const TIME_FMT = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'medium' })
+const WHEN_FMT = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+})
 
 const fmtPrice = (s?: string): string => {
   if (!s) return '—'
   const n = parseFloat(s)
   if (!Number.isFinite(n)) return '—'
-  const d = n >= 1 ? 2 : 6
-  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: d })}`
+  return `$${(n >= 1 ? PRICE_FMT : PRICE_FMT_SUB).format(n)}`
 }
-const fmtTime = (iso?: string): string => (iso ? new Date(iso).toLocaleString() : '—')
+const fmtTime = (iso?: string): string => (iso ? TIME_FMT.format(new Date(iso)) : '—')
 
 // Compact timestamp for the modal context line: "Jul 22, 5:27 AM".
-const fmtWhen = (iso?: string): string =>
-  iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
+const fmtWhen = (iso?: string): string => (iso ? WHEN_FMT.format(new Date(iso)) : '—')
 
 // What a losing ticket would have paid above cost: cost × multiplier − cost. FOMO beats an obvious -100%.
 const missedProfit = (p: PlayDTO): number => {
@@ -250,6 +263,16 @@ function HistoryPage() {
     if (!everDevnet && (q.data?.plays ?? []).some((p) => p.network === 'devnet')) setEverDevnet(true)
   }, [q.data, everDevnet])
 
+  // The push transition holds the screen frozen until React finishes committing this page, and this is the
+  // longest list in the menu. Mount only what can physically be on screen inside that window; the rest
+  // lands on the first frame of the slide, long before you could scroll to it.
+  const [fullList, setFullList] = useState(false)
+  useEffect(() => {
+    if (fullList) return
+    const raf = requestAnimationFrame(() => setFullList(true))
+    return () => cancelAnimationFrame(raf)
+  }, [fullList])
+
   // All settled plays feed the 7-day strip (game-filter-independent, it sits above the tabs); the list
   // below narrows by the active game pill.
   const allSettled = (q.data?.plays ?? []).filter((p) => SHOWN.has(p.status))
@@ -317,7 +340,7 @@ function HistoryPage() {
           <ScreenEmpty title="No plays yet" sub="Play your first game and it'll show up here." />
         ) : (
           <div className="flex flex-col gap-2.5">
-            {rows.map((p) => (
+            {(fullList ? rows : rows.slice(0, VISIBLE_ROWS)).map((p) => (
               <HistoryRow key={p.id} play={p} />
             ))}
           </div>

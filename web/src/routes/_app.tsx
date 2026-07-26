@@ -455,11 +455,11 @@ function AppLayout() {
         <ConsoleControlsProvider>
           {/* Hidden (not unmounted) while the studio owns the frame: its device starts at the identical
               app pose, so the swap is invisible, and no duplicate ghosts under the workshop fade-in.
-              Positioned so the device box can drop clear of the iOS status bar on a home-screen launch
-              (the inset is 0 in a browser tab); the card behind paints the same backdrop, so no seam. */}
+              console-stage drops the box clear of the iOS status bar on a home-screen launch (0 in a
+              browser tab); the card behind paints the same backdrop, so no seam. */}
           <div
-            className="absolute inset-0"
-            style={{ top: 'env(safe-area-inset-top)', visibility: showCustomizeStudio ? 'hidden' : undefined }}
+            className="console-stage"
+            style={{ visibility: showCustomizeStudio ? 'hidden' : undefined }}
           >
             <Console3DRoute
               theme={saved.resolved}

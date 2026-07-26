@@ -158,7 +158,7 @@ export function ThemePicker({
 
       {/* The floating device, repainting live from the chosen skin. Built invisible during pre-warm
           (introFromApp holds the app pose), then snapped in live and zoomed out; transparent canvas shows the workshop around it. */}
-      <div className="absolute inset-0" style={{ opacity: active ? 1 : 0 }}>
+      <div className="console-stage" style={{ opacity: active ? 1 : 0 }}>
         <ConsoleCanvas customize introFromApp active={active} theme={theme} outro={exiting} onOutroComplete={onDone} />
       </div>
 

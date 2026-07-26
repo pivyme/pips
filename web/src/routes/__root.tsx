@@ -42,7 +42,9 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
       { name: 'theme-color', content: '#000000' },
 
       // Standalone / "Add to Home Screen": full-screen launch, no browser chrome. black-translucent
-      // goes edge-to-edge under the status bar (the app already pads with env(safe-area-inset-*)).
+      // goes edge-to-edge under the status bar (the app already pads with env(safe-area-inset-*)), so the
+      // strip behind the bar is our own backdrop colour. The device box drops below it via .console-stage;
+      // never pay for the inset by growing the shell's forehead, that reads as a fat bezel.
       { name: 'apple-mobile-web-app-capable', content: 'yes' },
       { name: 'mobile-web-app-capable', content: 'yes' },
       { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },

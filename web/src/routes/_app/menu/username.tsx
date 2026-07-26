@@ -95,7 +95,7 @@ function UsernameScreen() {
       await refresh()
       haptic('success')
       prepareMenuTransition('back')
-      void navigate({ to: '/menu', viewTransition: true })
+      void navigate({ to: '/menu' })
     } catch (e) {
       setSaving(false)
       haptic('error')

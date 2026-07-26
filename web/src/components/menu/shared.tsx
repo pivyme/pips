@@ -6,14 +6,15 @@ import { Button } from '@/ui/Button'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
 import { parkDevice } from '@/components/console/controls'
+import { armMenuSlide } from '@/components/console/MenuDrawer'
 import { isPerfPanelOpen, perfMarkNav, perfOn, setPerfPanelOpen } from '@/lib/perfDebug'
 import { cnm } from '@/utils/style'
 
-// Runs before every menu nav: sets the slide direction, and parks the render loops hidden behind the
-// drawer so the snapshot + commit + slide get the frame to themselves. 420ms slide plus a little slack.
+// Runs before every menu nav: snapshots the outgoing page for the slide (see armMenuSlide) and parks
+// the render loops hidden behind the drawer so the commit + slide get the frame to themselves.
 export function prepareMenuTransition(direction: 'forward' | 'back') {
   if (typeof document === 'undefined') return
-  document.documentElement.dataset.menuTransition = direction
+  armMenuSlide(direction)
   if (!perfOn('noPark')) parkDevice(600)
   perfMarkNav()
 }
@@ -76,7 +77,7 @@ export function MenuHeader({
   const navigate = useNavigate()
   const goBack = () => {
     prepareMenuTransition('back')
-    void navigate({ to: '/menu', viewTransition: true })
+    void navigate({ to: '/menu' })
   }
   // Five quick taps on the title opens the perf bisect panel (lib/perfDebug.ts). Hidden on purpose.
   const taps = useRef({ n: 0, at: 0 })
@@ -95,7 +96,6 @@ export function MenuHeader({
         <div className="absolute left-4 top-1 h-12 w-12">
           <Link
             to="/menu"
-            viewTransition
             onClick={() => {
               prepareMenuTransition('back')
               haptic('selection')
@@ -108,12 +108,13 @@ export function MenuHeader({
           <HapticOverlay className="absolute inset-0 rounded-full" preset="selection" silent onTap={goBack} />
         </div>
       )}
+      {/* touch-manipulation so the hidden 5-tap unlock below isn't swallowed by iOS double-tap-zoom. */}
       <h1
         onClick={onTitleTap}
         className={
           showBack
-            ? 'absolute left-20 right-4 top-[14px] truncate select-none text-left text-[24px] font-black leading-none text-white'
-            : 'absolute left-4 right-4 top-[14px] truncate select-none text-left text-[28px] font-black leading-none text-white'
+            ? 'absolute left-20 right-4 top-[14px] truncate select-none touch-manipulation text-left text-[24px] font-black leading-none text-white'
+            : 'absolute left-4 right-4 top-[14px] truncate select-none touch-manipulation text-left text-[28px] font-black leading-none text-white'
         }
       >
         {title}

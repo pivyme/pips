@@ -19,7 +19,7 @@ export function BalanceCard() {
   const openActivity = () => {
     prepareMenuTransition('forward')
     haptic('selection')
-    void navigate({ to: '/menu/transactions', viewTransition: true })
+    void navigate({ to: '/menu/transactions' })
   }
 
   return (
@@ -29,7 +29,6 @@ export function BalanceCard() {
       <div className="absolute right-3 top-3 h-9 w-9">
         <Link
           to="/menu/transactions"
-          viewTransition
           aria-label="Wallet Activity"
           onClick={() => {
             prepareMenuTransition('forward')
@@ -85,7 +84,7 @@ function MoneyButton({
       haptic={primary ? 'medium' : 'selection'}
       onPress={() => {
         prepareMenuTransition('forward')
-        void navigate({ to, viewTransition: true })
+        void navigate({ to })
       }}
       aria-label={iconOnly ? label : undefined}
       className={iconOnly ? 'w-9 px-0' : undefined}
