@@ -57,6 +57,10 @@ model User {
 
   tzOffsetMin      Int?                        // JS getTimezoneOffset() at last login; localizes time-based achievements (null = UTC)
 
+  // ADMIN | KOL | BETA_TESTER, empty for normal users. Granted out-of-band by scripts/grant-role.ts;
+  // no user-facing route may ever write this. Read fresh per request so a revoke lands immediately.
+  specialRoles     String[]  @default([])
+
   walletSyncCheckpoint BigInt?                  // wallet-indexer high-water mark (last indexed checkpoint seq); null = never synced
   walletSyncedAt       DateTime?               // last successful index tick, for batch prioritization
 
@@ -290,4 +294,72 @@ model ErrorLog {
 
   @@index([errorCode])
   @@index([createdAt])
+}
+
+// Product analytics. Append-only, one row per discrete user action, name bound to the catalog
+// allowlist in src/config/analytics-catalog.ts. Identity and time are server-stamped, never read
+// from the client body. See bigdev/plans/cont/03-ADMIN-DASHBOARD.md §2.2.
+model Event {
+  id        String   @id @default(cuid())
+  name      String                          // namespaced, rejected at ingest if not in the catalog
+  userId    String?                         // server-stamped from the JWT
+  anonId    String?                         // client uuid, survives login so the pre-auth funnel joins
+  sessionId String                          // client-generated, rotates after 30m idle
+  props     Json?                           // depth 1, <=16 keys, <=2KB (§3.3)
+  platform  String                          // ios | android | desktop | pwa, derived from the UA
+  source    String                          // web | backend
+  release   String?
+  network   String
+  ts        DateTime @default(now())        // server clock
+
+  @@index([name, ts])
+  @@index([userId, ts])
+  @@index([sessionId, ts])
+}
+
+// One row per distinct bug, keyed by the §3.1 fingerprint. This is the "10 errors show as 1" table:
+// count is the true occurrence total, ErrorEvent only keeps the newest samples. Small, kept forever.
+model ErrorGroup {
+  fingerprint   String    @id
+  title         String
+  culprit       String?                       // src/services/plays.ts:235, or a worker name
+  kind          String                        // http | worker | chain | client | job
+  level         String                        // fatal | error | warn
+  count         Int       @default(0)
+  usersAffected Int       @default(0)
+  firstSeen     DateTime  @default(now())
+  lastSeen      DateTime  @default(now())
+  status        String    @default("open")    // open | ack | resolved | ignored
+  resolvedAt    DateTime?
+  firstRelease  String?
+  lastRelease   String?
+  notes         String?   @db.Text
+
+  samples       ErrorEvent[]
+
+  @@index([status, lastSeen])
+  @@index([level, lastSeen])
+}
+
+// Individual occurrences, capped at the newest N per fingerprint (retention.samples_per_group).
+// A bug that fires 10,000 times costs 1 group row plus N samples, not 10,000 rows.
+model ErrorEvent {
+  id          String     @id @default(cuid())
+  fingerprint String
+  group       ErrorGroup @relation(fields: [fingerprint], references: [fingerprint], onDelete: Cascade)
+  message     String                          // raw; only the normalized form feeds the hash
+  stack       String?    @db.Text
+  context     Json?                           // redacted, capped
+  userId      String?
+  sessionId   String?                         // the join key for "what the user was doing"
+  requestId   String?                         // Fastify request id, ties to the access log
+  method      String?
+  path        String?
+  playId      String?
+  release     String?
+  network     String?
+  createdAt   DateTime   @default(now())
+
+  @@index([fingerprint, createdAt])
+  @@index([playId])
 }
