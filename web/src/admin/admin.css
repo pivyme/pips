@@ -1,0 +1,301 @@
+/* Admin dashboard tokens and component classes. Scoped to [data-admin] and imported only from
+   src/admin/, never from the global @theme in styles.css: leaking these into the product would break the
+   encapsulation the whole folder exists for.
+
+   Dark only. Structure comes from hairline borders and typographic hierarchy, never from luminance steps
+   or shadows, and colour carries severity and nothing else. Every contrast figure below is a computed
+   WCAG value against #08090A. See bigdev/plans/cont/03-ADMIN-DASHBOARD.md §7.3. */
+
+[data-admin] {
+  /* Surfaces. The steps are deliberately tiny; the border does the structural work. */
+  --a-bg: #08090a;
+  --a-surface: #0f1011;
+  --a-surface-hover: #17181a;
+  --a-overlay: #1c1d1e;
+  --a-border: rgba(255, 255, 255, 0.08);
+  --a-border-strong: rgba(255, 255, 255, 0.12);
+
+  /* Text. Four tiers; the hierarchy is carried by these, not by size. */
+  --a-text: #f7f8f8; /* 18.73 AAA */
+  --a-text-2: #9ca3af; /* 7.85  AAA */
+  --a-text-3: #7a808d; /* 5.03  AA  */
+  --a-text-muted: #565b66; /* 2.93 fails AA: decorative only, never carries information */
+
+  /* Accent. Two tokens, because no single indigo works as both text and fill. */
+  --a-accent: #7c8cf8; /* 6.61 on base, AA, for text/icons/focus */
+  --a-accent-fill: #5e6ad2; /* 4.70 with white text, AA, for solid buttons */
+
+  /* Status. The only other colour in the system. */
+  --a-critical: #ff6166; /* 6.79 */
+  --a-warn: #ffb224; /* 11.05 */
+  --a-ok: #4cc38a; /* 9.00 */
+  --a-info: #62b0ff; /* 8.71 */
+
+  --a-radius: 6px;
+  --a-radius-sm: 4px;
+
+  background: var(--a-bg);
+  color: var(--a-text);
+  font-family: 'Inter Variable', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  /* Every number aligns in its column. The single highest-impact typographic choice on this surface. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+[data-admin] h1,
+[data-admin] h2,
+[data-admin] h3 {
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+/* Heavy type reads as marketing, and this is an instrument. */
+[data-admin] * {
+  font-weight: inherit;
+}
+
+.a-page-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.a-section-title {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.a-label {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--a-text-3);
+}
+
+.a-panel {
+  background: var(--a-surface);
+  border: 1px solid var(--a-border);
+  border-radius: var(--a-radius);
+  padding: 16px;
+}
+
+.a-panel-flush {
+  background: var(--a-surface);
+  border: 1px solid var(--a-border);
+  border-radius: var(--a-radius);
+  overflow: hidden;
+}
+
+.a-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.a-table th {
+  height: 32px;
+  padding: 0 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--a-text-3);
+  border-bottom: 1px solid var(--a-border);
+  white-space: nowrap;
+}
+
+.a-table td {
+  height: 32px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--a-border);
+  color: var(--a-text-2);
+}
+
+.a-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Numbers right, labels left, always. */
+.a-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--a-text);
+}
+
+.a-row {
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background-color 120ms ease-out;
+}
+
+.a-row:hover {
+  background: var(--a-surface-hover);
+}
+
+.a-row[aria-selected='true'] {
+  background: var(--a-surface-hover);
+  border-left-color: var(--a-accent);
+}
+
+/* Full-strength text on the same hue at 12% alpha. A solid fill shouts, and then red stops meaning
+   anything, which is the first thing to erode on a surface like this. */
+.a-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--a-radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.a-badge-critical {
+  color: var(--a-critical);
+  background: rgb(255 97 102 / 0.12);
+}
+.a-badge-warn {
+  color: var(--a-warn);
+  background: rgb(255 178 36 / 0.12);
+}
+.a-badge-ok {
+  color: var(--a-ok);
+  background: rgb(76 195 138 / 0.12);
+}
+.a-badge-info {
+  color: var(--a-info);
+  background: rgb(98 176 255 / 0.12);
+}
+.a-badge-neutral {
+  color: var(--a-text-3);
+  background: rgb(255 255 255 / 0.06);
+}
+
+.a-metric {
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  color: var(--a-text);
+}
+
+.a-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--a-radius-sm);
+  border: 1px solid var(--a-border-strong);
+  background: transparent;
+  color: var(--a-text-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+.a-btn:hover:not(:disabled) {
+  background: var(--a-surface-hover);
+  color: var(--a-text);
+}
+
+.a-btn:active:not(:disabled) {
+  background: var(--a-overlay);
+}
+
+.a-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.a-btn-primary {
+  background: var(--a-accent-fill);
+  border-color: var(--a-accent-fill);
+  color: #ffffff;
+}
+
+.a-btn-primary:hover:not(:disabled) {
+  background: #6b77dc;
+  color: #ffffff;
+}
+
+.a-select,
+.a-input {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--a-radius-sm);
+  border: 1px solid var(--a-border-strong);
+  background: var(--a-bg);
+  color: var(--a-text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+/* Keyboard-first, never outline: none. */
+[data-admin] :focus-visible {
+  outline: 2px solid rgb(124 140 248 / 0.6);
+  outline-offset: 1px;
+}
+
+.a-nav-item {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--a-radius-sm);
+  color: var(--a-text-2);
+  font-size: 13px;
+  text-decoration: none;
+  transition: background-color 120ms ease-out;
+}
+
+.a-nav-item:hover {
+  background: var(--a-surface-hover);
+  color: var(--a-text);
+}
+
+.a-nav-item[data-active='true'] {
+  background: var(--a-surface-hover);
+  color: var(--a-accent);
+}
+
+.a-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.a-pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--a-text-2);
+}
+
+/* The one frame that owns a shadow. */
+.a-overlay {
+  background: var(--a-overlay);
+  border: 1px solid var(--a-border-strong);
+  border-radius: var(--a-radius);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-admin] *,
+  [data-admin] *::before,
+  [data-admin] *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

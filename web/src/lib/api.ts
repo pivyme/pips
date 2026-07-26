@@ -28,6 +28,8 @@ export interface UserDTO {
   customAvatar: boolean // a custom upload is set (drives the remove-X in the profile editor)
   balance: string
   managerReady: boolean
+  // The caller's OWN roles, never another user's. ADMIN gates the dashboard entry point in the menu.
+  specialRoles?: string[]
   settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string; themeConfig?: ConsoleCustom | null }
 }
 

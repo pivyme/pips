@@ -9,9 +9,11 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AtChar123handleChar125RouteImport } from './routes/@{$handle}'
 import { Route as DevIndexRouteImport } from './routes/dev/index'
+import { Route as AdminIndexRouteImport } from './routes/admin/index'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as RCodeRouteImport } from './routes/r.$code'
 import { Route as DevSoundsRouteImport } from './routes/dev/sounds'
@@ -20,6 +22,9 @@ import { Route as DevDesignSystemV2RouteImport } from './routes/dev/design-syste
 import { Route as DevDesignSystemRouteImport } from './routes/dev/design-system'
 import { Route as DevConsoleTransparentRouteImport } from './routes/dev/console-transparent'
 import { Route as DevConsoleRouteImport } from './routes/dev/console'
+import { Route as AdminUsageRouteImport } from './routes/admin/usage'
+import { Route as AdminPerfRouteImport } from './routes/admin/perf'
+import { Route as AdminErrorsRouteImport } from './routes/admin/errors'
 import { Route as AppMenuIndexRouteImport } from './routes/_app/menu/index'
 import { Route as AppGamesIndexRouteImport } from './routes/_app/games/index'
 import { Route as AppMenuWithdrawRouteImport } from './routes/_app/menu/withdraw'
@@ -41,6 +46,11 @@ import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
 import { Route as AppGamesLineRiderRouteImport } from './routes/_app/games/line-rider'
 import { Route as AppGamesFlappyPiperRouteImport } from './routes/_app/games/flappy-piper'
 
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppRoute = AppRouteImport.update({
   id: '/_app',
   getParentRoute: () => rootRouteImport,
@@ -54,6 +64,11 @@ const DevIndexRoute = DevIndexRouteImport.update({
   id: '/dev/',
   path: '/dev/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRoute,
 } as any)
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
@@ -94,6 +109,21 @@ const DevConsoleRoute = DevConsoleRouteImport.update({
   id: '/dev/console',
   path: '/dev/console',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AdminUsageRoute = AdminUsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminPerfRoute = AdminPerfRouteImport.update({
+  id: '/perf',
+  path: '/perf',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminErrorsRoute = AdminErrorsRouteImport.update({
+  id: '/errors',
+  path: '/errors',
+  getParentRoute: () => AdminRoute,
 } as any)
 const AppMenuIndexRoute = AppMenuIndexRouteImport.update({
   id: '/menu/',
@@ -199,6 +229,10 @@ const AppGamesFlappyPiperRoute = AppGamesFlappyPiperRouteImport.update({
 export interface FileRoutesByFullPath {
   '/@{$handle}': typeof AtChar123handleChar125Route
   '/': typeof AppIndexRoute
+  '/admin': typeof AdminRouteWithChildren
+  '/admin/errors': typeof AdminErrorsRoute
+  '/admin/perf': typeof AdminPerfRoute
+  '/admin/usage': typeof AdminUsageRoute
   '/dev/console': typeof DevConsoleRoute
   '/dev/console-transparent': typeof DevConsoleTransparentRoute
   '/dev/design-system': typeof DevDesignSystemRoute
@@ -206,6 +240,7 @@ export interface FileRoutesByFullPath {
   '/dev/export': typeof DevExportRoute
   '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
+  '/admin/': typeof AdminIndexRoute
   '/dev/': typeof DevIndexRoute
   '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
@@ -230,6 +265,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/@{$handle}': typeof AtChar123handleChar125Route
+  '/admin/errors': typeof AdminErrorsRoute
+  '/admin/perf': typeof AdminPerfRoute
+  '/admin/usage': typeof AdminUsageRoute
   '/dev/console': typeof DevConsoleRoute
   '/dev/console-transparent': typeof DevConsoleTransparentRoute
   '/dev/design-system': typeof DevDesignSystemRoute
@@ -238,6 +276,7 @@ export interface FileRoutesByTo {
   '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
   '/': typeof AppIndexRoute
+  '/admin': typeof AdminIndexRoute
   '/dev': typeof DevIndexRoute
   '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
@@ -264,6 +303,10 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/@{$handle}': typeof AtChar123handleChar125Route
   '/_app': typeof AppRouteWithChildren
+  '/admin': typeof AdminRouteWithChildren
+  '/admin/errors': typeof AdminErrorsRoute
+  '/admin/perf': typeof AdminPerfRoute
+  '/admin/usage': typeof AdminUsageRoute
   '/dev/console': typeof DevConsoleRoute
   '/dev/console-transparent': typeof DevConsoleTransparentRoute
   '/dev/design-system': typeof DevDesignSystemRoute
@@ -272,6 +315,7 @@ export interface FileRoutesById {
   '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
   '/_app/': typeof AppIndexRoute
+  '/admin/': typeof AdminIndexRoute
   '/dev/': typeof DevIndexRoute
   '/_app/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/_app/games/line-rider': typeof AppGamesLineRiderRoute
@@ -299,6 +343,10 @@ export interface FileRouteTypes {
   fullPaths:
     | '/@{$handle}'
     | '/'
+    | '/admin'
+    | '/admin/errors'
+    | '/admin/perf'
+    | '/admin/usage'
     | '/dev/console'
     | '/dev/console-transparent'
     | '/dev/design-system'
@@ -306,6 +354,7 @@ export interface FileRouteTypes {
     | '/dev/export'
     | '/dev/sounds'
     | '/r/$code'
+    | '/admin/'
     | '/dev/'
     | '/games/flappy-piper'
     | '/games/line-rider'
@@ -330,6 +379,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/@{$handle}'
+    | '/admin/errors'
+    | '/admin/perf'
+    | '/admin/usage'
     | '/dev/console'
     | '/dev/console-transparent'
     | '/dev/design-system'
@@ -338,6 +390,7 @@ export interface FileRouteTypes {
     | '/dev/sounds'
     | '/r/$code'
     | '/'
+    | '/admin'
     | '/dev'
     | '/games/flappy-piper'
     | '/games/line-rider'
@@ -363,6 +416,10 @@ export interface FileRouteTypes {
     | '__root__'
     | '/@{$handle}'
     | '/_app'
+    | '/admin'
+    | '/admin/errors'
+    | '/admin/perf'
+    | '/admin/usage'
     | '/dev/console'
     | '/dev/console-transparent'
     | '/dev/design-system'
@@ -371,6 +428,7 @@ export interface FileRouteTypes {
     | '/dev/sounds'
     | '/r/$code'
     | '/_app/'
+    | '/admin/'
     | '/dev/'
     | '/_app/games/flappy-piper'
     | '/_app/games/line-rider'
@@ -397,6 +455,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AtChar123handleChar125Route: typeof AtChar123handleChar125Route
   AppRoute: typeof AppRouteWithChildren
+  AdminRoute: typeof AdminRouteWithChildren
   DevConsoleRoute: typeof DevConsoleRoute
   DevConsoleTransparentRoute: typeof DevConsoleTransparentRoute
   DevDesignSystemRoute: typeof DevDesignSystemRoute
@@ -409,6 +468,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app': {
       id: '/_app'
       path: ''
@@ -429,6 +495,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/dev/'
       preLoaderRoute: typeof DevIndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
     }
     '/_app/': {
       id: '/_app/'
@@ -485,6 +558,27 @@ declare module '@tanstack/react-router' {
       fullPath: '/dev/console'
       preLoaderRoute: typeof DevConsoleRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/admin/usage': {
+      id: '/admin/usage'
+      path: '/usage'
+      fullPath: '/admin/usage'
+      preLoaderRoute: typeof AdminUsageRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/perf': {
+      id: '/admin/perf'
+      path: '/perf'
+      fullPath: '/admin/perf'
+      preLoaderRoute: typeof AdminPerfRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/errors': {
+      id: '/admin/errors'
+      path: '/errors'
+      fullPath: '/admin/errors'
+      preLoaderRoute: typeof AdminErrorsRouteImport
+      parentRoute: typeof AdminRoute
     }
     '/_app/menu/': {
       id: '/_app/menu/'
@@ -679,9 +773,26 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface AdminRouteChildren {
+  AdminErrorsRoute: typeof AdminErrorsRoute
+  AdminPerfRoute: typeof AdminPerfRoute
+  AdminUsageRoute: typeof AdminUsageRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminErrorsRoute: AdminErrorsRoute,
+  AdminPerfRoute: AdminPerfRoute,
+  AdminUsageRoute: AdminUsageRoute,
+  AdminIndexRoute: AdminIndexRoute,
+}
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   AtChar123handleChar125Route: AtChar123handleChar125Route,
   AppRoute: AppRouteWithChildren,
+  AdminRoute: AdminRouteWithChildren,
   DevConsoleRoute: DevConsoleRoute,
   DevConsoleTransparentRoute: DevConsoleTransparentRoute,
   DevDesignSystemRoute: DevDesignSystemRoute,

@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { LogOut, Pencil } from 'lucide-react'
+import { Gauge, LogOut, Pencil } from 'lucide-react'
 import { useEffect, type ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
@@ -64,6 +64,7 @@ function MenuHome() {
         <div className="flex flex-col gap-1.5">
           <HowItWorksRow />
           <AboutRow />
+          <AdminRow />
         </div>
         <div className="mt-16 w-full">
           <Hw3DButton variant="danger" wide icon={LogOut} haptic="rigid" onPress={signOut}>
@@ -136,6 +137,32 @@ function AboutRow() {
           draggable={false}
         />
         <span className="flex-1 text-[17px] font-bold">About PIPS</span>
+        <span className="text-2xl text-text-3">›</span>
+      </Link>
+      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={go} />
+    </div>
+  )
+}
+
+// ADMIN only, and never prefetched (it stays out of MENU_ROUTES), so a normal user never sees the row and
+// never downloads the chunk. /admin lives outside _app, so this navigation tears the 3D console down.
+function AdminRow() {
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  if (!user?.specialRoles?.includes('ADMIN')) return null
+
+  const go = () => void navigate({ to: '/admin' })
+  return (
+    <div className="relative">
+      <Link
+        to="/admin"
+        onClick={() => haptic('selection')}
+        className="pointer-events-none surface-skeuo flex w-full items-center gap-3 rounded-card p-4 text-left transition-transform active:scale-[0.99]"
+      >
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/5 text-2xl">
+          <Gauge className="h-6 w-6 text-text-2" strokeWidth={2} />
+        </span>
+        <span className="flex-1 text-[17px] font-bold">Admin dashboard</span>
         <span className="text-2xl text-text-3">›</span>
       </Link>
       <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={go} />
