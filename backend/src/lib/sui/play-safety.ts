@@ -14,6 +14,7 @@ import {
 import { suiClient } from './client.ts';
 import { SPONSOR_ENABLED, sponsorAddress } from './sponsor.ts';
 import { cronIntervalMs, recordRun, registerWorker } from '../worker-registry.ts';
+import { captureError, registerSystemState } from '../analytics.ts';
 
 const SUI_TYPE = '0x2::sui::SUI';
 const MIST_PER_SUI = 1_000_000_000;
@@ -93,6 +94,15 @@ export function sponsorPaused(): { paused: boolean; reason: string } {
   return { paused: pauseState.paused, reason: pauseState.reason };
 }
 
+// Already-in-memory numbers the AI brief wants at error time. No chain read: this runs inside a failing
+// path and must stay free, so it reports the last monitored value and how stale it is.
+registerSystemState(() => ({
+  sponsor_sui: Number(pauseState.reserveSui.toFixed(4)),
+  sponsor_floor_sui: Math.max(SPONSOR_FLOOR_SUI, Number(PLAY_GAS_BUDGET) / MIST_PER_SUI),
+  sponsor_paused: pauseState.paused,
+  sponsor_checked_s_ago: pauseState.checkedAt ? Math.round((Date.now() - pauseState.checkedAt) / 1000) : -1,
+}));
+
 let lastReserveSui: number | null = null;
 
 async function readSponsorReserveSui(): Promise<number> {
@@ -109,6 +119,7 @@ export async function refreshSponsorPauseState(): Promise<void> {
     reserveSui = await readSponsorReserveSui();
   } catch (e) {
     console.warn('[play-safety] sponsor balance read failed, keeping prior pause state:', e instanceof Error ? e.message : e);
+    captureError(e, { kind: 'chain', level: 'warn', fingerprint: 'chain.sponsor_balance_read', title: 'Sponsor balance read failed, pause state held' });
     return;
   }
   pauseState.reserveSui = reserveSui;
@@ -131,6 +142,12 @@ export async function refreshSponsorPauseState(): Promise<void> {
     pauseState.paused = true;
     pauseState.reason = `sponsor reserve ${reserveSui.toFixed(3)} SUI below floor ${floorSui} SUI`;
     console.warn(`[play-safety] PAUSING new plays: ${pauseState.reason}. Fund ${sponsorAddress} with testnet SUI to resume.`);
+    // On the transition only, never every tick: the pause flag is what gates it.
+    captureError(new Error(pauseState.reason), {
+      kind: 'chain',
+      fingerprint: 'chain.sponsor_paused',
+      title: 'Plays paused, sponsor reserve below floor',
+    });
   } else if (!shouldPause && pauseState.paused) {
     pauseState.paused = false;
     pauseState.reason = '';

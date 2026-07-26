@@ -1,6 +1,8 @@
 // Tiny in-process registry of background workers (node-cron jobs, setInterval loops, the Binance socket):
 // health visibility at GET /health/ready, plus a coordinated stop on graceful shutdown. Each worker keeps its own isRunning guard untouched; this only records timing and holds a handle to stop the task.
 
+import { captureError } from './analytics.ts';
+
 export type WorkerHealth = {
   name: string;
   lastRunAt: number | null;
@@ -70,6 +72,9 @@ export function recordRun(name: string, ok: boolean, durationMs: number, error?:
     e.lastError = null;
   } else {
     e.lastError = error instanceof Error ? error.message : error != null ? String(error) : 'unknown error';
+    // Every registered worker reports through here, so this instruments all of them at once. Fire-and-
+    // forget by contract, so a failing capture never affects the tick that just failed.
+    captureError(error, { kind: 'worker', context: { worker: name, durationMs } });
   }
 }
 

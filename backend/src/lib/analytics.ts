@@ -1,12 +1,16 @@
-// Error fingerprinting, redaction, and payload caps. The whole point is that one bug shows up as ONE
-// group: our messages carry play ids, amounts, and object ids, so grouping on message text gives 400
-// issues for one bug (L-021). See bigdev/plans/cont/03-ADMIN-DASHBOARD.md §3.
+// Error fingerprinting, redaction, payload caps, and the one write path. The whole point is that one bug
+// shows up as ONE group: our messages carry play ids, amounts, and object ids, so grouping on message text
+// gives 400 issues for one bug (L-021). See bigdev/plans/cont/03-ADMIN-DASHBOARD.md §3.
 //
-// Nothing in this file touches the DB or throws. captureError() (the write path) lands in the next phase
-// and is built on these.
+// captureError() is never on the critical path: it returns void, swallows everything, and is never awaited.
 
 import { createHash } from 'node:crypto';
 
+import type { Prisma } from '../../prisma/generated/client.js';
+import { RELEASE } from '../config/release.ts';
+import { SUI_NETWORK } from '../config/main-config.ts';
+import { getSetting } from '../config/admin-settings.ts';
+import { prismaQuery } from './prisma.ts';
 import { grpcErrorText } from './sui/client.ts';
 
 export type ErrorKind = 'http' | 'worker' | 'chain' | 'client' | 'job';
@@ -342,4 +346,186 @@ export function capStack(stack?: string | null): string | null {
   if (!stack) return null;
   const scrubbed = scrubText(stack);
   return byteLen(scrubbed) <= MAX_STACK_BYTES ? scrubbed : Buffer.from(scrubbed, 'utf8').subarray(0, MAX_STACK_BYTES).toString('utf8');
+}
+
+// ---------------------------------------------------------------------------
+// captureError (§3.2), the one write path
+// ---------------------------------------------------------------------------
+
+// Break-glass override. Set only if analytics is somehow hurting prod and you cannot reach the dashboard
+// to flip the setting. Unset in normal operation, which is why it is the one env var this feature adds.
+export const ANALYTICS_OFF = process.env.PIPS_ANALYTICS_OFF === '1';
+
+// Cheap system state, sampled at error time rather than re-read at brief time. play-safety registers the
+// provider at boot so this module keeps no Sui imports beyond grpcErrorText and can never fail to load.
+type SystemStateFn = () => Record<string, unknown>;
+let systemState: SystemStateFn | null = null;
+
+export function registerSystemState(fn: SystemStateFn): void {
+  systemState = fn;
+}
+
+export interface CaptureOptions {
+  kind?: ErrorKind;
+  level?: ErrorLevel;
+  /** Manual fingerprint override, e.g. 'chain.sponsor_reservation_wedge'. */
+  fingerprint?: string;
+  title?: string;
+  code?: string | null;
+  /** Overrides err.message; handleError carries its own human message. */
+  message?: string;
+  stack?: string | null;
+  context?: Record<string, unknown> | null;
+  userId?: string | null;
+  sessionId?: string | null;
+  requestId?: string | null;
+  method?: string | null;
+  path?: string | null;
+  playId?: string | null;
+  release?: string | null;
+  network?: string | null;
+  /** Client reports carry their own capture time; everything else uses the server clock. */
+  source?: 'backend' | 'web';
+}
+
+// Fire-and-forget. Returns void so no call site can await it, and the whole body is guarded twice: once
+// here for anything thrown synchronously, once on the promise for anything the DB rejects. A locked Event
+// table must never break a play (§13 rule 1).
+export function captureError(err: unknown, opts: CaptureOptions = {}): void {
+  if (ANALYTICS_OFF) return;
+  try {
+    const p = writeCapture(err, opts).catch(() => {});
+    inflight.add(p);
+    void p.finally(() => inflight.delete(p));
+  } catch {
+    // unreachable in practice; the belt to writeCapture's braces
+  }
+}
+
+// In-flight captures, so shutdown can drain them (a crash capture is the one write worth waiting on) and
+// a test can observe the result of a fire-and-forget call.
+const inflight = new Set<Promise<void>>();
+
+export async function flushCaptures(): Promise<void> {
+  while (inflight.size) await Promise.all([...inflight]);
+}
+
+// Distinct-user tracking. The samples table is capped, so it cannot answer "have we seen this user on this
+// bug", and a per-group user table is not worth a fourth model. This process-local set is the increment
+// guard: exact within a process, and at worst it recounts a user once after a restart.
+const seenUsers = new Set<string>();
+
+async function writeCapture(err: unknown, opts: CaptureOptions): Promise<void> {
+  const rawMessage = opts.message ?? (err instanceof Error ? err.message : String(err ?? 'unknown error'));
+  const rawStack = opts.stack ?? (err instanceof Error ? err.stack : null);
+
+  const kind = opts.kind ?? 'job';
+  const cls = fingerprint({
+    kind,
+    message: rawMessage,
+    code: opts.code,
+    stack: rawStack,
+    fingerprint: opts.fingerprint,
+    title: opts.title,
+    level: opts.level,
+  });
+
+  const release = opts.release ?? RELEASE;
+  const network = opts.network ?? SUI_NETWORK;
+  const now = new Date();
+
+  const context = buildContext(opts.context);
+
+  const prior = await prismaQuery.errorGroup.findUnique({
+    where: { fingerprint: cls.fingerprint },
+    select: { status: true, title: true },
+  });
+
+  // A resolved bug firing again is a regression: reopen it and say so, because a silently reopened group
+  // reads as an old bug nobody has looked at.
+  const regression = prior?.status === 'resolved';
+  const status = regression || prior?.status === 'ack' ? 'open' : prior?.status;
+
+  const newUser = opts.userId ? !seenUsers.has(`${cls.fingerprint}|${opts.userId}`) : false;
+  if (newUser && opts.userId) {
+    if (seenUsers.size > 20_000) seenUsers.clear();
+    seenUsers.add(`${cls.fingerprint}|${opts.userId}`);
+  }
+
+  await prismaQuery.errorGroup.upsert({
+    where: { fingerprint: cls.fingerprint },
+    create: {
+      fingerprint: cls.fingerprint,
+      title: cls.title,
+      culprit: cls.culprit || null,
+      kind,
+      level: cls.level,
+      count: 1,
+      usersAffected: opts.userId ? 1 : 0,
+      firstSeen: now,
+      lastSeen: now,
+      firstRelease: release,
+      lastRelease: release,
+    },
+    update: {
+      count: { increment: 1 },
+      ...(newUser ? { usersAffected: { increment: 1 } } : {}),
+      lastSeen: now,
+      lastRelease: release,
+      ...(status && status !== prior?.status ? { status, resolvedAt: null } : {}),
+    },
+  });
+
+  await prismaQuery.errorEvent.create({
+    data: {
+      fingerprint: cls.fingerprint,
+      message: capMessage(rawMessage),
+      stack: capStack(rawStack),
+      context,
+      userId: opts.userId ?? null,
+      sessionId: opts.sessionId ?? null,
+      requestId: opts.requestId ?? null,
+      method: opts.method ?? null,
+      path: opts.path ?? null,
+      playId: opts.playId ?? null,
+      release,
+      network,
+    },
+  });
+
+  await pruneSamples(cls.fingerprint);
+
+  if (regression) {
+    const { alert } = await import('./alert.ts');
+    alert('critical', `regression: ${cls.title} fired again after being resolved`, { fingerprint: cls.fingerprint, release }, `regression:${cls.fingerprint}`);
+  }
+}
+
+// Redacted, capped, and stamped with whatever system state is cheap right now.
+function buildContext(context?: Record<string, unknown> | null): Prisma.InputJsonValue | undefined {
+  const base: Record<string, unknown> = { ...(context ?? {}) };
+  if (systemState) {
+    try {
+      Object.assign(base, systemState());
+    } catch {
+      // a broken provider must never cost us the error report
+    }
+  }
+  if (!Object.keys(base).length) return undefined;
+  const capped = capProps(redact(base));
+  return capped.ok ? (capped.props as Prisma.InputJsonValue) : undefined;
+}
+
+// The trick that makes 10,000 occurrences cost 21 rows: the group holds the true count, the samples table
+// holds only the newest N. Age-based retention (§9) is a backstop, this does the real work.
+async function pruneSamples(fp: string): Promise<void> {
+  const keep = await getSetting('retention.samples_per_group');
+  const stale = await prismaQuery.errorEvent.findMany({
+    where: { fingerprint: fp },
+    orderBy: { createdAt: 'desc' },
+    skip: keep,
+    select: { id: true },
+  });
+  if (!stale.length) return;
+  await prismaQuery.errorEvent.deleteMany({ where: { id: { in: stale.map((s) => s.id) } } });
 }

@@ -1,5 +1,6 @@
 import type { FastifyReply } from 'fastify';
 import { prismaQuery } from '../lib/prisma.ts';
+import { captureError } from '../lib/analytics.ts';
 import { IS_DEV } from '../config/main-config.ts';
 
 interface ErrorContext {
@@ -61,6 +62,20 @@ export const handleError = async (
       .catch((dbError: unknown) => {
         console.error('Failed to log error to database:', dbError);
       });
+
+    // Grouped capture for the dashboard. This one line covers every HTTP call site with no change at any
+    // of them. A 4xx is the caller's mistake, so it is counted at warn and never paged (§13 rule 7).
+    captureError(originalError, {
+      kind: 'http',
+      level: statusCode >= 500 ? 'error' : 'warn',
+      code: errorCode,
+      message,
+      context: { statusCode, ...(context ?? {}) },
+      userId,
+      requestId: request.id,
+      method: requestInfo.method,
+      path: requestInfo.path,
+    });
 
     // Log to console for development
     console.error(`[${errorCode}] ${message}`, {

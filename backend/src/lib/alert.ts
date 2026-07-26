@@ -3,16 +3,20 @@
 
 import { ALERT_WEBHOOK_URL, ALERT_DEDUPE_MS } from '../config/main-config.ts';
 
-// Last-sent timestamp per message string. Bounded below so a long-lived process emitting many distinct
-// messages can't grow it without limit.
+// Last-sent timestamp per dedupe key. Bounded below so a long-lived process emitting many distinct
+// keys can't grow it without limit.
 const lastSent = new Map<string, number>();
 
-export function alert(level: 'warn' | 'critical', message: string, context?: Record<string, unknown>): void {
+// `key` is the dedupe identity: a fingerprint or a detector key, never the message. Our messages carry
+// play ids and amounts, so every occurrence of one bug is a unique string and message-text dedupe silently
+// never fires (L-021). Callers with a genuinely static message can omit it.
+export function alert(level: 'warn' | 'critical', message: string, context?: Record<string, unknown>, key?: string): void {
   if (!ALERT_WEBHOOK_URL) return; // feature off: silent no-op
+  const dedupeKey = key ?? message;
   const now = Date.now();
-  const prev = lastSent.get(message);
-  if (prev != null && now - prev < ALERT_DEDUPE_MS) return; // throttle a repeating message
-  lastSent.set(message, now);
+  const prev = lastSent.get(dedupeKey);
+  if (prev != null && now - prev < ALERT_DEDUPE_MS) return; // throttle a repeating alert
+  lastSent.set(dedupeKey, now);
   if (lastSent.size > 500) {
     for (const [k, t] of lastSent) if (now - t >= ALERT_DEDUPE_MS) lastSent.delete(k);
   }

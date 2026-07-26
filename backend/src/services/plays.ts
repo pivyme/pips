@@ -28,6 +28,7 @@ import {
 import { rakeOf, revenueAddress } from '../lib/sui/house.ts';
 import { LOGGER_ENABLED } from '../lib/sui/logger.ts';
 import { alert } from '../lib/alert.ts';
+import { captureError } from '../lib/analytics.ts';
 import { checkPlayAllowed, recordPlay, clearPlay } from '../lib/sui/play-safety.ts';
 import { executeForUser, executeRealSettle, userContext } from '../lib/sui/execute.ts';
 import {
@@ -323,6 +324,7 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
     throw lastErr;
   } catch (e) {
     console.error(`[plays] real mint failed for ${playId}:`, e instanceof Error ? e.message : e);
+    captureError(e, { kind: 'chain', playId, userId: acct.id, context: { stage: 'mint' } });
     await commitPlay(playId, { status: 'error' }).catch(() => {});
     invalidateBal(acct.id);
   }
@@ -462,11 +464,22 @@ async function reconcileRealSettle(play: Play, wrapperId: string, orderId: bigin
     await commitPlay(play.id, { status: 'error', settledAt: new Date() });
     console.warn(`[Settle] real ${play.id} unsettleable (${unreadable ? 'market gone' : 'not settled'}); marked error`);
     // Real-mode give-up after the orphan window; alert so a human can look, since real chips are involved (L-008/L-011).
-    alert('critical', 'real play unsettleable after orphan window, marked error', { playId: play.id, reason: unreadable ? 'market gone' : 'not settled' });
+    captureError(err, {
+      kind: 'chain',
+      playId: play.id,
+      userId: play.userId,
+      fingerprint: 'chain.play_unsettleable',
+      title: 'Play unsettleable after the orphan window, marked error',
+      context: { reason: unreadable ? 'market gone' : 'not settled' },
+    });
+    alert('critical', 'real play unsettleable after orphan window, marked error', { playId: play.id, reason: unreadable ? 'market gone' : 'not settled' }, 'detector:play_unsettleable');
     return;
   }
   // Market not settled yet, or a transient tx failure: leave 'open' to retry on a later tick.
   console.error(`[Settle] real ${play.id} redeem_settled failed, will retry:`, err instanceof Error ? err.message : err);
+  // warn, not error: the retry is the design, and paging on a path that heals itself trains us to ignore
+  // the dashboard. The count is what tells us the retries stopped healing.
+  captureError(err, { kind: 'chain', level: 'warn', playId: play.id, userId: play.userId, context: { stage: 'redeem_settled' } });
 }
 
 // Gas saver: a settled position the frozen price puts a full tick outside its band pays 0 no matter what, so
@@ -491,6 +504,13 @@ async function settleOnePlayReal(play: Play, now: number): Promise<boolean> {
   const wrapperId = await wrapperIdForUser(play.userId);
   if (!wrapperId) {
     console.error(`[Settle] real ${play.id}: user has no wrapper; will retry`);
+    captureError(new Error('settle: user has no account wrapper'), {
+      kind: 'chain',
+      playId: play.id,
+      userId: play.userId,
+      fingerprint: 'chain.settle_no_wrapper',
+      title: 'Settle found no AccountWrapper for the play owner',
+    });
     return false;
   }
   const { orderId, quantityRaw } = realOrderOf(play);
@@ -530,6 +550,7 @@ export async function settleDuePlaysReal(): Promise<void> {
       if (await settleOnePlayReal(play, now)) redeems++;
     } catch (e) {
       console.error(`[Settle] real play ${play.id} settle failed:`, e instanceof Error ? e.message : e);
+      captureError(e, { kind: 'chain', playId: play.id, userId: play.userId, context: { stage: 'settle' } });
     }
   }
 }
@@ -661,5 +682,6 @@ export async function getPlay(userId: string, playId: string): Promise<PlayDTO |
 function asPlayError(e: unknown, code: PlayErrorCode, message: string): PlayError {
   if (e instanceof PlayError) return e;
   console.error('[plays]', message, e instanceof Error ? e.message : e);
+  captureError(e, { kind: 'chain', code, context: { stage: 'play', reason: message } });
   return new PlayError(code, message);
 }

@@ -17,6 +17,7 @@ import { Transaction, coinWithBalance } from '@mysten/sui/transactions';
 
 import { GAS_SPONSORSHIP_WALLET_PK, PLAY_GAS_BUDGET, SPONSOR_TOPUP_SUI } from '../../config/main-config.ts';
 import { suiClient } from './client.ts';
+import { captureError } from '../analytics.ts';
 
 // Same parser as the operator key (signer.ts): a suiprivkey envelope, or base64 (32-byte secret or a 33-byte flagged keystore entry).
 function loadKeypair(pk: string): Ed25519Keypair {
@@ -81,6 +82,12 @@ export async function ensureSponsorAccumulator(force = false): Promise<void> {
     const amount = want < affordable ? want : affordable;
     if (amount < PLAY_GAS_BUDGET) {
       console.warn(`[sponsor] accumulator empty and sponsor ${sponsorAddress} owned SUI (${owned}) too low to refill it; fund this wallet with testnet SUI`);
+      captureError(new Error('sponsor owned SUI too low to refill the gas accumulator'), {
+        kind: 'chain',
+        fingerprint: 'chain.sponsor_underfunded',
+        title: 'Sponsor wallet cannot fund one play of gas',
+        context: { owned_mist: String(owned), sponsor: sponsorAddress },
+      });
       return; // don't mark warmed: a later play retries once the wallet is funded
     }
     const tx = new Transaction();

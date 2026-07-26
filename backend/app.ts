@@ -11,6 +11,7 @@ import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
 import { prismaQuery } from './src/lib/prisma.ts';
 import { allWorkerHealth, stopAllWorkers } from './src/lib/worker-registry.ts';
 import { alert } from './src/lib/alert.ts';
+import { captureError } from './src/lib/analytics.ts';
 
 // Routes
 import { exampletRoute } from './src/routes/exampleRoutes.ts';
@@ -95,6 +96,9 @@ async function shutdown(signal: string): Promise<void> {
 
 function handleFatal(kind: string, err: unknown): void {
   console.error(`\n[FATAL] ${kind}:`, err instanceof Error ? (err.stack ?? err.message) : err);
+  // Capture before the alert: the webhook is opt-in and the process is about to exit, so the grouped row
+  // is the only durable record of a crash loop. Fire-and-forget, and shutdown's drain gives it time to land.
+  captureError(err, { kind: 'job', level: 'fatal', context: { fatal: kind } });
   // Notify a human before we exit: the container restart brings up a fresh process, but a crash loop is
   // invisible without this. No-op unless a webhook is configured; can't throw (would re-enter here).
   alert('critical', `process crashed (${kind}), restarting`, { error: err instanceof Error ? err.message : String(err) });

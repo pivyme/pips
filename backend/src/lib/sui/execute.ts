@@ -6,6 +6,7 @@ import { Transaction, SerialTransactionExecutor, TransactionDataBuilder } from '
 import type { User } from '../../../prisma/generated/client.js';
 import { AUTH_MODE, PLAY_GAS_BUDGET } from '../../config/main-config.ts';
 import { suiClient } from './client.ts';
+import { captureError } from '../analytics.ts';
 import { operatorKeypair, operatorAddress, settlementKeypair, settlementAddress, treasuryKeypair, treasuryAddress, revenueKeypair, revenueAddress } from './signer.ts';
 import { signSuiTxWithPrivy } from './privy.ts';
 import { loadCustodialKeypair } from './custodial.ts';
@@ -85,6 +86,8 @@ async function runViaExecutor(executor: SerialTransactionExecutor, tx: Transacti
     } catch (e) {
       if (!isStaleObjectError(e) || attempt >= maxRetries - 1) throw e;
       console.warn(`[exec] ${label}: stale object cache, resetting and retrying (${attempt + 1}/${maxRetries - 1})`);
+      // Expected under concurrency and self-healing, so warn: the count is the signal, not each occurrence.
+      captureError(e, { kind: 'chain', level: 'warn', fingerprint: 'chain.stale_object_retry', title: 'Stale object cache, rebuilt and retried', context: { label, attempt: attempt + 1 } });
       // Bounded (a wedged waitForLastTransaction can't hang the retry); failure to reset is non-fatal, the next build re-resolves against the node.
       await withTimeout(executor.resetCache(), 8_000, 'resetCache').catch(() => { });
       // Backoff grows with wide jitter so retries desync from a competing operator's ~2s rhythm instead of bunching, capped so a patient call stays bounded.
@@ -232,6 +235,7 @@ async function submitSponsored(txBytes: Uint8Array, signature: string | string[]
   } catch (e) {
     if (!SPONSOR_ENABLED || !isSponsorGasError(e)) throw e;
     console.warn('[sponsor] gas accumulator empty, topping up and retrying the play once');
+    captureError(e, { kind: 'chain', level: 'warn', fingerprint: 'chain.sponsor_accumulator_empty', title: 'Sponsor gas accumulator empty, refilled and retried' });
     await ensureSponsorAccumulator(true);
     return await submitAndConfirm(txBytes, signature, digest);
   }
