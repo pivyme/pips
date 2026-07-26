@@ -28,17 +28,22 @@ This is the **PIPS** backend (gamified trading on Sui via DeepBook Predict). Rea
 Runtime is **Bun**, not Node. Framework is **Fastify**. All scripts run via `bun`.
 
 ```bash
-bun dev              # Start with file watcher on :3780
-bun start            # Production start (no watch)
-bun run typecheck    # tsc --noEmit (the build loop's gate)
-bun test             # Run tests (*.test.ts: math, rng, achievements)
-bun run lint         # ESLint
-bun run db:push      # Push schema + regenerate client
-bun run db:pull      # Pull schema from existing DB
-bun run db:generate  # Regenerate Prisma client only
-bun run db:migrate   # Create a new migration
-bun run db:seed      # Seed the database (prisma/seed.ts)
+bun dev                     # Start with file watcher on :3780
+bun start                   # Production start (no watch)
+bun run typecheck           # tsc --noEmit (the build loop's gate)
+bun run lint                # ESLint. This one IS a gate, keep it green (root L-017)
+bun test                    # Bun's runner over colocated *.test.ts (math, rng, achievements, games, stats, play-bus, predict-real)
+bun run pips:post-deploy-check   # Smoke a deploy: config, chain reads, wallets
+bun run pips:proof          # Volume proof script
+bun run test:logger:e2e     # On-chain logger integration test (PIPS_E2E=1, hits the network)
+bun run db:push             # Push schema + regenerate client (USER runs this, never the loop)
+bun run db:pull             # Pull schema from existing DB
+bun run db:generate         # Regenerate Prisma client only
+bun run db:migrate          # Create a new migration
+bun run db:seed             # Seed the database (prisma/seed.ts)
 ```
+
+`bun --watch` does not reload on `.env` edits, restart the process by hand after changing one. A bare checkout cannot run `bun test` / typecheck / lint until you `bun run db:generate` and set `DATABASE_URL`, `JWT_SECRET`, and a throwaway `TESTING_WALLET_PK`, the boot fail-fast is deliberate (root L-019).
 
 Env is loaded by `dotenv.ts`, which is imported at the top of `index.ts` before any other module. Copy `.env.example` to `.env`. Required: `DATABASE_URL`, `JWT_SECRET`. Optional: `APP_PORT` (default 3780), `ALLOWED_ORIGIN` (required in production for CORS).
 
@@ -56,23 +61,33 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 ├── prisma/
 │   ├── schema.prisma        # Database schema
 │   └── seed.ts              # Seed data (bun run db:seed)
-├── scripts/                 # Diagnostics + benches: bench-lucky, bench-settle, bench-range, diag-pnl, diag-funding, verify-sponsor, gen-ops-wallets, wipe-history
+├── scripts/                 # Ops, diagnostics, benches. Run with `bun scripts/<name>.ts`
+│                            #   post-deploy-check, verify-sponsor, diag-pnl, diag-funding,
+│                            #   bench-lucky, bench-settle, bench-range, airdrop-dusdc,
+│                            #   migrate-achievements, backfill-emails, gen-ops-wallets, wipe-history
 ├── src/
 │   ├── config/main-config.ts    # Centralized env config (import from here, not process.env)
-│   ├── routes/              # Fastify plugins, grouped by prefix
-│   │   ├── authRoutes.ts    # /auth: dev login, privy/verify, me
-│   │   ├── gameRoutes.ts    # /games/* play, /plays/* confirm + cashout
-│   │   ├── menuRoutes.ts    # /stats, /achievements, /settings
-│   │   ├── streamRoutes.ts  # SSE: /stream/prices (fallback), /stream/plays/:id, /stream/live
+│   ├── routes/              # Fastify plugins, registered in app.ts
+│   │   ├── authRoutes.ts    # /auth: dev login, privy/verify, heal, me
+│   │   ├── gameRoutes.ts    # /games/* play + quotes, /plays/* confirm + cashout, /markets, /prices/history
+│   │   ├── menuRoutes.ts    # /stats, /achievements, /settings, minigame scores
+│   │   ├── leaderboardRoutes.ts # /leaderboard
+│   │   ├── walletRoutes.ts  # /wallet: balances, grant, withdraw, sync, request-dusdc faucet
+│   │   ├── depositRoutes.ts # /deposit: LI.FI multichain deposit (mainnet-gated)
+│   │   ├── referralRoutes.ts # /referral: codes, claims, revshare
+│   │   ├── avatarRoutes.ts  # POST + DELETE /avatar (S3 upload, fail-soft)
+│   │   ├── streamRoutes.ts  # SSE: /stream/prices (fallback), /stream/plays/:id, /stream/markets, /stream/live
 │   │   ├── wsRoutes.ts      # WS /ws: shared 10Hz displaySpot broadcast hub (the chart feed)
-│   │   ├── walletRoutes.ts  # /wallet: balances, withdraw, request-dusdc faucet
 │   │   └── exampleRoutes.ts # starter sample
 │   ├── services/            # Business logic, called by routes
-│   │   └── auth, games, plays, stats, achievements, rng, wallet (+ *.test.ts)
-│   ├── workers/             # node-cron jobs (isRunning guard)
+│   │   └── auth, games (+ games-base / games-real split), plays, stats, achievements,
+│   │       rng, wallet, leaderboard, referral (+ colocated *.test.ts)
+│   ├── workers/             # node-cron jobs (isRunning guard), tracked in worker-registry
 │   │   ├── market-sync.ts   # discovers the live 1m BTC markets from chain
 │   │   ├── settle.ts        # settles expired plays (redeem_settled)
 │   │   ├── price-warmer.ts  # keeps display-asset Pyth spot pre-warmed
+│   │   ├── wallet-indexer.ts # scans user addresses into the WalletTx ledger (presence-gated)
+│   │   ├── token-worker.ts  # warms the TokenInfo metadata/price cache off the request path
 │   │   └── errorLogCleanup.ts, depositCleanup.ts (mainnet)
 │   ├── middlewares/authMiddleware.ts
 │   ├── types/api.ts         # DTO contract (mirrors web/src/lib/api.ts)
@@ -83,10 +98,19 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │       ├── alert.ts         # Opt-in Discord/Slack webhook for unrecoverable events (no-op if PIPS_ALERT_WEBHOOK_URL unset)
 │       ├── pyth.ts          # Pyth price reads
 │       ├── price-cache.ts   # In-memory price cache
-│       ├── game-price.ts    # gameSpot: eased on-chain market spot (the chart feed)
+│       ├── game-price.ts    # gameSpot: eased on-chain market spot
 │       ├── binance-ws.ts    # Shared Binance aggTrade WS (chart MOTION, display-only, L-015)
 │       ├── price-bus.ts     # displaySpot: Binance motion EMA-pinned to the on-chain market spot
-│       └── sui/             # client, predict-real + config-real + deployed-real.testnet.json (Mysten's Predict), markets, math, signer, privy, dusdc, gas, sponsor, execute, config
+│       ├── price-history.ts # Rolling ~60s displaySpot ring, so every device draws the same pre-roll
+│       ├── markets-feed.ts  # ONE builder shared by GET /markets and /stream/markets
+│       ├── play-bus.ts      # In-process play-status bus: SSE pushes on commit, not on poll
+│       ├── lifi.ts          # The one LI.FI wrapper (routes never call li.quest directly)
+│       ├── s3.ts            # Bun S3Client over the shared DO Spaces bucket (avatars)
+│       └── sui/             # client, predict-real + config-real + deployed-real.testnet.json (Mysten's Predict),
+│                            #   markets, math, signer, privy, dusdc, gas, sponsor, execute, config,
+│                            #   play-safety (rate limit + sponsor floor, L-008), house (rake seam),
+│                            #   logger (PIPS attribution appended to the mint PTB), tokens,
+│                            #   walletAuth + custodial (wallet-connect login), wallet-ledger, wallet-history
 ```
 
 ---
@@ -168,58 +192,63 @@ export const adminRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, 
 };
 ```
 
-**Registration in `index.ts`:**
+**Registration lives in `app.ts`, not `index.ts`.** `index.ts` is a 4-line bootstrapper that loads env then dynamic-imports `app.ts`; every `fastify.register(...)` is in `app.ts`:
+
 ```ts
+// app.ts
 import { adminRoutes } from './src/routes/adminRoutes.ts';
-import { userRoutes } from './src/routes/userRoutes.ts';
 
 fastify.register(adminRoutes, { prefix: '/admin' });
-fastify.register(userRoutes, { prefix: '/user' });
 ```
 
 ---
 
 ## Worker Pattern (`src/workers/`)
 
-Workers use `node-cron` with an `isRunning` flag to prevent double execution:
+Workers use `node-cron` with an `isRunning` flag to prevent double execution, and report to the worker registry so `/health/ready` and graceful shutdown can see them. `settle.ts` is the reference:
 
 ```ts
 import cron from 'node-cron';
+import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
 
 let isRunning = false;
 
 const myTask = async (): Promise<void> => {
-  if (isRunning) {
-    console.log('[MyWorker] Previous run still active, skipping...');
-    return;
-  }
+  if (isRunning) return;                 // previous run still active
 
   isRunning = true;
+  const startedAt = Date.now();
+  let runErr: unknown = null;
   try {
     // Do work
-  } catch (error) {
-    console.error('[MyWorker] Error:', error);
+  } catch (err) {
+    runErr = err;
+    console.error('[MyWorker] tick error:', err instanceof Error ? err.message : err);
   } finally {
     isRunning = false;
+    recordRun('myWorker', !runErr, Date.now() - startedAt, runErr);
   }
 };
 
 export const startMyWorker = (): void => {
-  console.log('[MyWorker] Scheduled');
-  cron.schedule('*/5 * * * *', myTask); // Every 5 minutes
-  myTask(); // Optional: run immediately on startup
+  const task = cron.schedule('*/5 * * * *', myTask);
+  registerWorker('myWorker', task, cronIntervalMs('*/5 * * * *'));
+  myTask();                              // optional: run immediately on startup
 };
 ```
 
-**Register in `index.ts`:**
+A worker that skips `registerWorker` is invisible to readiness and never drains on shutdown. Never swallow a tick error silently, `recordRun` is what surfaces it.
+
+**Register in `app.ts`** (same file as the routes), and hand the task to the worker registry so `/health/ready` sees it and shutdown can drain it:
+
 ```ts
+// app.ts
 import { startMyWorker } from './src/workers/myWorker.ts';
 
-const start = async (): Promise<void> => {
-  startMyWorker();
-  // ...
-};
+startMyWorker();
 ```
+
+A worker's stop handle is structural (`{ stop: () => void | Promise<void> }`), so a cron task, a `setInterval` wrapper, and a socket closer all satisfy it (root L-018).
 
 ---
 
@@ -239,25 +268,7 @@ app.get('/profile', { preHandler: [authMiddleware] }, async (request: FastifyReq
 
 ## External Integrations (`src/lib/`)
 
-External service integrations go in `src/lib/`:
-
-```
-src/lib/
-├── prisma.ts       # Database
-└── sui/            # Sui client, signature verify, DeepBook Predict reads
-```
-
-Example structure:
-```ts
-// src/lib/sui/verify.ts
-import { verifyPersonalMessageSignature } from '@mysten/sui/verify';
-
-// Throws if the signature does not match `address`. Wrap in try/catch, a throw means auth failed.
-export const verifyWalletSignature = async (message: string, signature: string, address: string) => {
-  const bytes = new TextEncoder().encode(message);
-  return verifyPersonalMessageSignature(bytes, signature, { address });
-};
-```
+Every external service gets **one wrapper module in `src/lib/`, and routes and services call only that**. Predict goes through `sui/predict-real.ts`, LI.FI through `lifi.ts`, Spaces through `s3.ts`, Privy through `sui/privy.ts`, Pyth through `pyth.ts`. When a catalog moves, ids rotate, or mainnet lands, we touch one file. A route that reaches a vendor SDK directly is the thing this rule exists to prevent.
 
 ---
 
@@ -321,8 +332,8 @@ reply.code(200).send({
 | Add env variable | Add to `main-config.ts` |
 | Handle errors | Use `handleError()` from errorHandler |
 | Validate request body | Use `validateRequiredFields()` |
-| Add new route group | Create file in `src/routes/`, register in `index.ts` |
-| Add background job | Create file in `src/workers/`, use `isRunning` flag |
-| Add external integration | Create folder in `src/lib/` |
+| Add new route group | Create file in `src/routes/`, register in `app.ts` (not `index.ts`) |
+| Add background job | Create file in `src/workers/`, `isRunning` flag + `registerWorker`, start it in `app.ts` |
+| Add external integration | One wrapper module in `src/lib/`, callers never touch the vendor SDK |
 | Protect route | Add `{ preHandler: [authMiddleware] }` |
 | Lint | Run `bun run lint` |

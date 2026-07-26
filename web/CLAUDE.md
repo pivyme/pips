@@ -12,11 +12,11 @@ This is the **PIPS** frontend: the gamified trading console. PIPS makes trading 
 
 **v1 build:** frontend work is planned in [`../bigdev/plans/`](../bigdev/plans/). Read `06-GAMES.md` (the games + the 60fps chart, bound to the existing console controls), `07-DESIGN-SYSTEM.md` (screen states + verbatim copy; `../docs/DESIGN.md` is canonical), `05-SUI-PREDICT.md` (the thin client Predict wrapper), `LUCKY.md` §6 (dev + Privy auth, the current source of truth), `02-API.md` (the backend contract). The console shell, Knob, `useConsoleControls`, and `Illo` are already built, do not rebuild them.
 
-**Predict capability box (read before inventing a game mechanic):** the on-chain vocabulary is exactly two expiry-settled instruments, **binary up/down** and **vertical range**, both with live-bid early cash-out. No barrier/touch, no path-dependent or crash-style payoff, no in-Predict leverage, no fixed odds. The games (Lucky, Range, Line Rider, Candle Hop) all compose from those two. Full source-cited box in `../bigdev/plans/05-SUI-PREDICT.md` and the root [`../CLAUDE.md`](../CLAUDE.md).
+**Predict capability box (read before inventing a game mechanic):** the on-chain vocabulary is exactly two expiry-settled instruments, **binary up/down** and **vertical range**, both with live-bid early cash-out. No barrier/touch, no path-dependent or crash-style payoff, no fixed odds. Real Predict **does** have continuous `leverage: u64` (bounded by `max_admission_leverage`, probability-gated per strike, L-009), so a play's multiple is strike distance × leverage, never clamp it to 1. The three trading games (Lucky, Range, Moonshot) all compose from those two instruments; Line Rider and Flappy Piper are score-based minigames, not plays. Full source-cited box in `../bigdev/plans/05-SUI-PREDICT.md` and the root [`../CLAUDE.md`](../CLAUDE.md).
 
 ## PIPS frontend specifics
 
-**The UI is a device, not a dashboard.** Everything renders inside a persistent console shell with a swappable **Screen**. The physical controls (Main Action Button, Action Buttons 1/2, Knob, Menu/Games tabs) belong to the shell, but each game binds their behavior via a controls registration (`useConsoleControls()`). The shell exists in two forms: the real 3D **WebGL handheld** `ConsoleCanvas` (Three.js) and a CSS/DOM `ConsoleShell` fallback. The whole `/games` subtree (the hub + Lucky, Range, Line Rider, Candle Hop) runs on the 3D device, laid out for the L-shaped aperture; `ConsoleShell` is the fallback behind the menu. Use `web-haptics` for tactile feedback. Full spec and layout in [`../docs/DESIGN.md`](../docs/DESIGN.md). If a screen could pass for any other trading app, it is wrong.
+**The UI is a device, not a dashboard.** Everything renders inside a persistent console shell with a swappable **Screen**. The physical controls (Main Action Button, Action Buttons 1/2, Knob, Menu/Games tabs) belong to the shell, but each game binds their behavior via a controls registration (`useConsoleControls()`). The shell exists in two forms: the real 3D **WebGL handheld** `ConsoleCanvas` (Three.js) and a CSS/DOM `ConsoleShell` fallback. The whole `/games` subtree (the hub + Lucky, Range, Moonshot, Line Rider, Flappy Piper) runs on the 3D device, laid out for the L-shaped aperture; `ConsoleShell` is the fallback behind the menu. Use `web-haptics` for tactile feedback. Full spec and layout in [`../docs/DESIGN.md`](../docs/DESIGN.md). If a screen could pass for any other trading app, it is wrong.
 
 ### Menu drawer page transitions
 
@@ -25,8 +25,10 @@ The `/menu/*` routes use a native-style push/pop transition inside the persisten
 - Forward navigation pushes the new page in from the right over the current page. The old page recedes left, dims, and scales down slightly.
 - Back navigation reverses it: the current page slides right while the menu page is revealed underneath.
 - **Never use the View Transition API here, and never re-add TanStack Router's `viewTransition` option to a menu nav.** It cost one blocking frame of 713-840ms per nav on iOS (measured on device: input 10ms, route commit 24ms, then a single 731ms frame), because WebKit rasterizes two full-screen snapshots at DPR 3. The same capture is 46ms on a desktop GPU, which is why it only ever showed on iPhone. Nothing about it was tunable: blur, edge shadow, group clip, dim+scale and hiding the 3D console all measured identical.
-- The slide is hand-rolled in `MenuDrawer.tsx`. `armMenuSlide(direction)` runs from the click handler (via `prepareMenuTransition` in `components/menu/shared.tsx`), while the outgoing page is still live: it clones the drawer's scroll container into an inert ghost and parks it at `z-index: -1` under the live page. `runMenuSlide()` then runs in the drawer's `pathname` layout effect, once the new page has committed, and animates both layers with WAAPI on transform/opacity only.
-- Keep the ghost parked and hidden until the commit. It is a fresh layer, and its first frame is its coldest: cloned `<img>`s restart their load, so they get `decoding="sync"`, and the live layer is forced opaque so nothing shows through a page that is still resolving. Both of those exist because the ghost used to flash image-less over the real page.
+- The slide is hand-rolled in `MenuDrawer.tsx`. `armMenuSlide(direction)` runs from the click handler (via `prepareMenuTransition` in `components/menu/shared.tsx`), while the outgoing page is still live: it clones the drawer's scroll container into an inert ghost. `runMenuSlide()` fires from a MutationObserver on the container, in the same task as the DOM swap, and animates both layers with WAAPI on transform/opacity only. The drawer's `pathname` layout effect is only the backstop; it reads `resolvedLocation`, which lands ~40ms after the swap, and the new page paints at rest in that gap.
+- **Never put cloned `<img>`s in the ghost.** `cloneNode` restarts every image load on iOS (measured: all 35 still loading when the route commits), which is the "all images vanish" flash. The clone is shape-only, with measured inline sizes and `src`/`srcset` stripped; the commit observer then adopts the real outgoing DOM out of `removedNodes` and drops it into the ghost.
+- Both animations are created paused and held until frames are normal length. A WAAPI clock runs on time, not frames, so a long commit frame skips the slide forward instead of slowing it; created at the commit, the first visible frame was already 80% through.
+- **Nothing on a menu page may take focus on arrival.** `autoFocus` fires at the commit, while the page is still parked off-screen right: the browser scrolls to reveal the field and iOS raises the keyboard, resizing the viewport mid-slide. Use `afterMenuSlide()` from `MenuDrawer.tsx` (see `menu/username.tsx`).
 - Keep the full page, including its sticky header, inside `.menu-page-transition`. Do not animate separate route fragments.
 - Do not implement this with two live `<Outlet>` instances or keyed wrappers around the same `<Outlet>`. TanStack resolves both to the new route, causing duplicated pages during the overlap. The ghost is inert DOM, so the router never resolves it.
 - Every menu-hub link to a sub-screen and every menu back link must call `prepareMenuTransition` with the correct direction before navigating.
@@ -120,43 +122,59 @@ src/
 ├── routes/                   # File-based routes (TanStack Router)
 │   ├── __root.tsx            # Root providers, meta, query client
 │   ├── index.tsx             # Landing / sign-in door (outside the console shell)
+│   ├── @{$handle}.tsx        # Public profile by @username (shareable, outside the shell)
+│   ├── r.$code.tsx           # Referral landing, sets the code then redirects
 │   ├── dev/                  # ALL internal tooling/playground pages live here, hub at /dev
 │   │   ├── index.tsx         # The /dev hub: grid of every dev page. New dev page => add a card here
 │   │   ├── console.tsx       # 3D device playground with lil-gui (/dev/console)
 │   │   ├── console-transparent.tsx # "Clear" skin showcase (/dev/console-transparent)
-│   │   ├── design-system.tsx # Living UI-kit reference (/dev/design-system)
+│   │   ├── design-system.tsx / design-system-v2.tsx # Living UI-kit reference
 │   │   ├── export.tsx        # PNG asset dump of device/screens (/dev/export)
 │   │   └── sounds.tsx        # Sound lab: every bed + SFX audition bench (/dev/sounds)
 │   └── _app/                 # Pathless layout: everything "inside the device"
-│       ├── games/            # index, lucky, range, line-rider, candle-hop
-│       └── menu/             # index, stats, achievements, customize, settings
+│       ├── games/            # index (hub), lucky, range, moonshot (Predict plays)
+│       │                     #   + line-rider, flappy-piper (score-only minigames)
+│       └── menu/             # index, account, username, achievements, history, transactions,
+│                             #   leaderboard, share, referrals, deposit, withdraw, customize,
+│                             #   settings, about
 ├── components/
 │   ├── console/              # The device shell (the heart of the app)
 │   │   ├── ConsoleCanvas.tsx # 3D WebGL handheld (Three.js) + screen-cutout projection
 │   │   ├── ConsoleShell.tsx  # CSS/DOM shell (fallback behind the menu)
 │   │   ├── CustomizeStudio.tsx # Skin/theme workshop (/menu/customize)
 │   │   ├── AppFrame.tsx      # Phone-sized frame wrapper
-│   │   ├── MenuDrawer.tsx    # Menu as a drawer over the device
+│   │   ├── MenuDrawer.tsx    # Menu as a drawer over the device (owns the hand-rolled page slide)
+│   │   ├── LandingOverlay.tsx / Onboarding.tsx / tour.tsx # Door, first-run, guided tour
 │   │   ├── Knob.tsx          # The physical knob
 │   │   ├── controls.tsx      # useConsoleControls + provider (the binding registry)
 │   │   ├── consoleGeo.ts     # Three.js geometry for the device body
 │   │   ├── consoleElements.ts # Geometry/mesh factories for the physical controls
-│   │   ├── themes.ts         # Console skins/themes
-│   │   ├── consoleGui.ts / customizeGui.ts # lil-gui tuning panels (dev)
+│   │   ├── themes.ts / customize.ts # Console skins + the customize model
+│   │   ├── consoleGui.ts     # lil-gui tuning panel (dev)
+│   │   ├── AudioControl.tsx / SoundsDrawer.tsx # On-device audio bar + sound drawer
 │   │   └── consoleAudio.ts   # Console SFX
-│   ├── game/                 # Chart.tsx (live chart), screen.tsx, instruments.tsx, CoinCRT.tsx, flapEngine.ts (candle-hop), rideEngine.ts (line-rider)
-│   ├── menu/                 # StatsCard.tsx, shared.tsx
-│   └── elements/             # AnimateComponent (starter residue, currently unused)
-├── ui/                       # HeroUI v3 wrappers + Illo (Button, Card, Modal, TextField, Tooltip, Switch, LoadingIcon)
+│   ├── game/                 # Chart.tsx (live chart), screen.tsx (GameStage/GameReadout), gamePanels.tsx,
+│   │                         #   instruments.tsx, LivePrice.tsx, tradeConfirm.tsx, lucky/, range/,
+│   │                         #   MinigameBoard.tsx, flapEngine.ts (flappy-piper), rideEngine.ts (line-rider)
+│   ├── menu/                 # StatsCard, BalanceCard, MoneyModal, AchievementDetail, deposit/, shared.tsx
+│   ├── elements/             # AnimateComponent (starter residue, currently unused)
+│   └── *.tsx                 # App-surface singletons: Avatar, HapticOverlay, InstallGate, FaultScreen,
+│                             #   AchievementCelebration, ChipGrantCelebration, DepositLanded, GameIcon
+├── ui/                       # HeroUI v3 wrappers + Illo/Hardware3D (Button, Card, Modal, TextField, Tooltip, Switch, Alert, LoadingIcon)
 ├── lib/                      # Integrations + app logic
 │   ├── api.ts                # Typed backend client + SSE; the demo seam lives here
+│   ├── menuQueries.ts        # Shared menu queryOptions + prefetch (the menu is prefetch-driven, no loaders)
 │   ├── priceBus.ts           # Shared ref-counted WS to /ws for the chart (SSE + demo fallback)
 │   ├── auth.tsx              # Auth context (dev auto-login / Privy login)
 │   ├── privy.tsx             # Privy provider + login->wallet->verify bridge (privy mode)
+│   ├── activePlay.tsx        # Open-round restore across remount / hard refresh
 │   ├── demo.ts               # The ONE sanctioned in-memory sim (demo mode)
-│   ├── achievements.ts, haptics.ts, sound.ts, shareCard.ts, errors.ts, polyfills.ts
+│   ├── deposit/              # LI.FI multichain deposit (mainnet-gated)
+│   ├── shareCard.ts, playCard.ts, playerCard.ts, cardAssets.ts, consoleShot.tsx  # Share/PnL card rendering
+│   ├── achievements.ts, haptics.ts, sound.ts, audio.ts, avatar.ts, chipGrant.ts,
+│   │   presence.tsx, crowd.ts, referral.ts, errors.ts, platform.ts, polyfills.ts
 │   └── sui/                  # predict.ts (thin wrapper over the backend play API), config.ts (ids from env + /config)
-├── hooks/                    # useLocalStorage, useReducedMotion
+├── hooks/                    # useGameRound, useLiveMarkets, useDepositWatch, useLocalStorage, useReducedMotion, useThrottledValue
 ├── utils/                    # style.ts (cnm), format.ts, motion.ts
 ├── integrations/             # tanstack-query root provider
 └── config.ts, env.ts, router.tsx, styles.css
@@ -170,8 +188,10 @@ src/
 | `src/components/console/controls.tsx` | `useConsoleControls()` (a screen registers Main / Action 1·2 / Knob / status) + provider. The console binding contract |
 | `src/components/console/ConsoleCanvas.tsx` | The 3D WebGL handheld (Three.js): device body + screen-cutout projection (`screenExt`) behind the HTML screen layer |
 | `src/components/console/ConsoleShell.tsx` | The CSS/DOM console shell |
+| `src/components/console/MenuDrawer.tsx` | The menu drawer + the hand-rolled push/pop page slide (`armMenuSlide`/`runMenuSlide`). Never a View Transition, see above |
 | `src/components/game/Chart.tsx` | The live price chart on the screen |
 | `src/lib/api.ts` | Typed backend client + SSE streams; the demo-mode seam |
+| `src/lib/menuQueries.ts` | Shared menu `queryOptions` + `prefetchMenuData`. Menu routes have no loaders on purpose, they prefetch |
 | `src/lib/auth.tsx` | Auth context (dev auto-login + Privy login) |
 | `src/lib/privy.tsx` | Privy provider + login->embedded-Sui-wallet->session-signer->verify bridge (privy mode) |
 | `src/lib/demo.ts` | The in-memory mock for demo mode (the only sim) |
@@ -185,15 +205,17 @@ src/
 ## Commands
 
 ```bash
-bunx tsc --noEmit   # Typecheck gate (the build loop's baseline check)
-bun dev        # Start dev server on port 3200
-bun build      # Production build
-bun preview    # Preview production build
-bun lint       # Run ESLint
-bun format     # Run Prettier
-bun check      # Format + lint fix
-bun test       # Run Vitest tests
+bunx tsc --noEmit   # THE gate. Typecheck is what must stay green (the build loop's baseline check)
+bun dev             # Start dev server on port 3200
+bun run build       # Production build
+bun run preview     # Preview production build
+bun run test        # Vitest (jsdom + testing-library)
+bun run format      # Prettier
+bun run check       # Format + lint fix
+bun run lint        # ESLint (see the caveat below)
 ```
+
+Two footguns in that list. **`bun build` and `bun test` are Bun's own built-ins, not our scripts**, so always say `bun run build` / `bun run test` here or you silently invoke Bun's bundler and Bun's test runner instead of Vite and Vitest. And **`bun run lint` is pre-existing red on this package and is NOT a gate** (unlike the backend's, which is). Do not chase a clean lint run, and never rely on an eslint rule to enforce an architectural invariant here, nobody runs it. Enforcement goes in a check script wired next to `bunx tsc --noEmit` (root L-020). Vitest's "Vite server won't exit" line after a green run is noise, read the exit code.
 
 ## Development Guidelines
 
@@ -245,7 +267,8 @@ bun test       # Run Vitest tests
      footer={<Button onPress={state.close}>Close</Button>}
      size="md"            // xs | sm | md | lg | cover | full
      placement="center"   // auto | center | top | bottom
-     backdrop="opaque"    // opaque | blur | transparent
+     backdrop="blur"      // blur (default) | opaque | transparent. Stock HeroUI defaults to opaque,
+                          // which frosts nothing and reads cheap next to the app's own overlays.
      isDismissable
    >
      Body content
@@ -293,7 +316,8 @@ bun test       # Run Vitest tests
 
 - Routes are file-based in `src/routes/`; use `createFileRoute`. Root layout is `__root.tsx`.
 - `_app.tsx` is a **pathless layout route**: everything "inside the device" (games + menu) renders through one persistent console shell. The landing `/` lives outside it and owns the full viewport.
-- Games: `/games/{lucky,range,line-rider,candle-hop}`. Menu: `/menu/*` renders as a **drawer over** the device, not a screen inside it.
+- Games: `/games/{lucky,range,moonshot}` are the Predict plays, `/games/{line-rider,flappy-piper}` are score-only minigames. Menu: `/menu/*` renders as a **drawer over** the device, not a screen inside it.
+- A few routes live **outside** `_app` on purpose because they are public and shareable: `/` (the door), `/@handle` (public profile), `/r/$code` (referral landing). That is the only sanctioned reason to add a file at the routes root, everything internal goes under `dev/`.
 - Two shells: the whole `/games` subtree runs on the 3D WebGL handheld (`ConsoleCanvas`); the CSS `ConsoleShell` is the fallback. One `ConsoleCanvas` stays mounted across games↔menu so the WebGL scene builds once.
 
 ### Styling

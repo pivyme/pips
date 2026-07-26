@@ -24,6 +24,9 @@ type ModalProps = {
 }
 
 // Flat wrapper around HeroUI's Modal.Backdrop > Container > Dialog > Header/Body/Footer chain.
+// Backdrop defaults to blur, not HeroUI's flat `opaque`: every hand-rolled overlay in the app (the
+// achievement bloom, the celebrations) frosts what's behind it, and a modal that only dims reads cheap
+// against them. The presenting curve is retuned in styles.css; stock is a barely-visible 5% shrink.
 export function Modal({
   isOpen,
   onOpenChange,
@@ -33,7 +36,7 @@ export function Modal({
   children,
   size = 'md',
   placement = 'center',
-  backdrop = 'opaque',
+  backdrop = 'blur',
   scroll = 'inside',
   isDismissable = true,
   isKeyboardDismissDisabled,

@@ -6,8 +6,6 @@
   "scripts": {
     "start": "bun index.ts",
     "dev": "bun --watch index.ts",
-    "bootstrap": "bun scripts/bootstrap.ts",
-    "audit:accounting": "bun scripts/audit-accounting.ts",
     "pips:proof": "bun scripts/pips-volume-proof.ts",
     "pips:post-deploy-check": "bun scripts/post-deploy-check.ts",
     "test:logger:e2e": "PIPS_E2E=1 bun test src/lib/sui/logger.integration.test.ts",

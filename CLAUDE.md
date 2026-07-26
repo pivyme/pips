@@ -33,6 +33,8 @@ pips/
 │   ├── FLOW.md         App flow + navigation map (door, device, drawer)
 │   └── references/     Visual references (Not Boring Camera, console layout)
 ├── scripts/            Vendored-fork deploy scripts (localnet.sh etc), reference-only, not the run path
+├── bigdev/             Plans, wave TODOs, the autobuild/autocont/autoreview loops (gitignored)
+├── remotion/           Launch-video copy + timing reference, not a deliverable (gitignored)
 ├── .claude/
 │   └── progress.md     Living roadmap + build progress + quick reference
 ├── CLAUDE.md           This file (master context)

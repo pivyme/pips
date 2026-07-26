@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { Camera, X } from 'lucide-react'
 import { MenuScreen, prepareMenuTransition } from '@/components/menu/shared'
+import { afterMenuSlide } from '@/components/console/MenuDrawer'
 import { XBadgeGlyph } from '@/components/menu/BrandGlyphs'
 import { Avatar } from '@/components/Avatar'
 import { Hw3DButton } from '@/ui/Hardware3D'
@@ -27,6 +28,11 @@ function UsernameScreen() {
   const [saving, setSaving] = useState(false)
   const [avatarBusy, setAvatarBusy] = useState(false)
   const [avatarErr, setAvatarErr] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Never autoFocus: React fires it at the commit, while the page is still parked off-screen right, and
+  // the scroll-to-caret plus the iOS keyboard resizing the viewport tear the slide apart.
+  useEffect(() => afterMenuSlide(() => inputRef.current?.focus()), [])
 
   const trimmed = name.trim()
   const valid = HANDLE_RE.test(trimmed)
@@ -152,6 +158,7 @@ function UsernameScreen() {
           <div className="flex items-center gap-1">
             <span className="text-[28px] font-black leading-none text-text-3">@</span>
             <input
+              ref={inputRef}
               value={name}
               onChange={(e) => {
                 setName(e.target.value.replace(/\s/g, '').toLowerCase())
@@ -164,7 +171,6 @@ function UsernameScreen() {
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              autoFocus
               placeholder="yourname"
               aria-label="Handle"
               className="min-w-0 flex-1 bg-transparent text-[28px] font-extrabold tracking-tight text-text placeholder:text-text-3/40 focus:outline-none"

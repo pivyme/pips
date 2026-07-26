@@ -1500,18 +1500,39 @@ html[data-perf~='hideDevice'][data-drawer='open'] canvas {
   }
 }
 
-/* HeroUI modal: give open and close a matching, considered motion (the stock exit is a 100ms flash
-   against a 250ms open). Keyed on the data-entering/exiting presence react-aria sets; scoped to
-   duration + easing so the library's own fade+zoom keyframes still supply the movement. */
-.modal__backdrop[data-entering],
-.modal__container[data-entering] {
-  animation-duration: 240ms !important;
-  animation-timing-function: var(--ease-out-quart) !important;
+/* HeroUI modal (every app modal goes through ui/Modal.tsx). Keyed on the data-entering/exiting presence
+   react-aria sets. Stock opens with a 5% shrink and no travel, which reads as a pop rather than an
+   entrance, and its exit is a 100ms flash against a 250ms open; the movement itself comes from
+   tw-animate's shared enter/exit keyframes, so retuning their custom properties is the whole retune.
+   The blur variant is the app's own 24px, not HeroUI's lighter 12px, to match the hand-rolled overlays. */
+.modal__backdrop[data-entering] {
+  animation-duration: 260ms !important;
+  animation-timing-function: cubic-bezier(0.33, 0, 0.2, 1) !important;
 }
+/* Rises and settles with a touch of overshoot. Deliberately NOT one of the ease-out-quart/expo tokens:
+   those spend 50% of the distance in the first 11% of the time, and the two dead frames every CSS
+   animation starts with land inside that, so the card is already most of the way there on first paint. */
+.modal__container[data-entering] {
+  --tw-enter-scale: 0.94;
+  --tw-enter-translate-y: 18px;
+  animation-duration: 340ms !important;
+  animation-timing-function: cubic-bezier(0.34, 1.28, 0.64, 1) !important;
+}
+/* Dismiss is the same problem in reverse, and an ease-OUT is the wrong shape for it: on quart the
+   backdrop was 64% faded one frame in, over a 4% scale, so it read as a cut. Ease-in-out keeps the card
+   on screen long enough to see it leave, then takes it away. */
 .modal__backdrop[data-exiting],
 .modal__container[data-exiting] {
-  animation-duration: 200ms !important;
-  animation-timing-function: var(--ease-out-quart) !important;
+  animation-duration: 240ms !important;
+  animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1) !important;
+}
+.modal__container[data-exiting] {
+  --tw-exit-scale: 0.92;
+  --tw-exit-translate-y: 16px;
+}
+.modal__backdrop--blur {
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 }
 
 /* Privy login modal: theme/accentColor only set the base + accent, so Privy's derived neutral ramp

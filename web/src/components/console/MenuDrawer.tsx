@@ -86,6 +86,22 @@ function liveLayer(): HTMLElement | null {
   return (host?.firstElementChild as HTMLElement | null) ?? null
 }
 
+// Runs `fn` once the slide is off the screen (immediately if none is in flight). A page that focuses an
+// input on arrival needs this: focusing while the layer is still parked off-screen right makes the
+// browser scroll to reveal it and, on iOS, raises the keyboard, which resizes the viewport mid-slide.
+export function afterMenuSlide(fn: () => void): () => void {
+  let cancelled = false
+  const go = () => {
+    if (!cancelled) fn()
+  }
+  if (slideAnims.length) slideAnims[0].finished.then(go, go) // cancelled rejects, still means it's over
+  else if (armedDir) window.setTimeout(go, perfSlideMs() + 80) // armed, not yet playing
+  else go()
+  return () => {
+    cancelled = true
+  }
+}
+
 // Runs from the click handler, before navigate(), while the outgoing page is still the live one.
 export function armMenuSlide(direction: 'forward' | 'back'): void {
   if (typeof document === 'undefined') return
@@ -93,12 +109,14 @@ export function armMenuSlide(direction: 'forward' | 'back'): void {
   const host = document.querySelector<HTMLElement>('.menu-page-transition')
   const live = host?.firstElementChild as HTMLElement | null
   if (!host || !live) return
-  // Grab the fade before the clone lands, or lastElementChild is the clone.
-  const fade = host.lastElementChild as HTMLElement | null
   const clone = live.cloneNode(true) as HTMLElement
   clone.setAttribute('inert', '')
+  // Sized to the live layer's CLIENT box, not `inset:0`: it scrolls, so on any platform with classic
+  // scrollbars its content box is 6px narrower than its border box, and a clone that reclaims the gutter
+  // relays out 6px wider and re-centres everything the instant it appears.
   clone.style.cssText =
-    'position:absolute;inset:0;z-index:3;overflow:hidden;pointer-events:none;background:#000;opacity:0.01;will-change:transform,opacity'
+    `position:absolute;left:0;top:0;width:${live.clientWidth}px;height:${live.clientHeight}px;` +
+    'z-index:3;overflow:hidden;pointer-events:none;background:#000;opacity:0.01;will-change:transform,opacity'
   // Blanked, and sized from what they measure right now. A cloned <img> restarts its load from scratch
   // on iOS: measured on device, all 35 start at naturalWidth 0 and 29 are STILL loading 40ms later,
   // when the route commits and this becomes the visible layer. That is the image-less flash, and the
@@ -123,8 +141,6 @@ export function armMenuSlide(direction: 'forward' | 'back'): void {
   // are known to belong together: the swap below clamps the shared container against the new page and
   // fires a scroll event that React still attributes to the page being left.
   scrollMemory.set(window.location.pathname, savedScroll)
-  // The bottom fade belongs to the page being left; the deferred updateFade below restores it.
-  if (fade) fade.style.opacity = '0'
   ghostEl = clone
   armedDir = direction
   // React hands us the new page late: the drawer's pathname effect fired 41ms after the DOM actually
@@ -536,11 +552,12 @@ export function MenuDrawer({
               {children}
             </MenuDrawerContext.Provider>
           </div>
-          {/* Inside the host on purpose: it belongs to the page, and armMenuSlide hides it for the slide. */}
+          {/* Belongs to the drawer, not to a page, so it rides over both layers of a slide (hence z-10,
+              above the two the slide assigns) instead of being torn down and popped back in. */}
           <div
             ref={fadeRef}
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black to-transparent opacity-0 transition-opacity duration-300"
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-16 bg-gradient-to-t from-black to-transparent opacity-0 transition-opacity duration-300"
           />
         </div>
       </div>
