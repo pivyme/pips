@@ -35,6 +35,20 @@
   --a-ok: #34d399; /* 10.4 */
   --a-info: #5aa8ff; /* 8.0 */
 
+  /* Each status hue at 13% for badge and callout backgrounds. Defined once so a tint is never a raw
+     rgb() sitting in a component file, where nobody would ever find it again to change it. */
+  --a-critical-soft: rgb(255 90 77 / 0.13);
+  --a-warn-soft: rgb(255 178 36 / 0.13);
+  --a-ok-soft: rgb(52 211 153 / 0.13);
+  --a-info-soft: rgb(90 168 255 / 0.13);
+
+  /* Neutral layers: an icon well, a bar track, the floor under an inset block, and the drawer scrim. */
+  --a-tint: rgb(255 255 255 / 0.04);
+  --a-track: rgb(255 255 255 / 0.05);
+  --a-well: #080808;
+  --a-scrim: rgb(0 0 0 / 0.6);
+  --a-accent-glow: 0 0 8px rgb(255 192 22 / 0.45);
+
   --a-radius: 16px;
   --a-radius-sm: 10px;
   --a-radius-xs: 7px;
@@ -143,8 +157,11 @@
   border-bottom: none;
 }
 
-/* Numbers right, labels left, always. */
+/* Numbers right, labels left, always. Numeric columns hug their content so a wide screen gives the
+   slack to the name column instead of flinging every figure at the far rim. */
 .a-num {
+  width: 1%;
+  white-space: nowrap;
   text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--a-text);
@@ -195,19 +212,19 @@
 
 .a-badge-critical {
   color: var(--a-critical);
-  background: rgb(255 90 77 / 0.13);
+  background: var(--a-critical-soft);
 }
 .a-badge-warn {
   color: var(--a-warn);
-  background: rgb(255 178 36 / 0.13);
+  background: var(--a-warn-soft);
 }
 .a-badge-ok {
   color: var(--a-ok);
-  background: rgb(52 211 153 / 0.13);
+  background: var(--a-ok-soft);
 }
 .a-badge-info {
   color: var(--a-info);
-  background: rgb(90 168 255 / 0.13);
+  background: var(--a-info-soft);
 }
 .a-badge-accent {
   color: var(--a-accent);
@@ -317,8 +334,8 @@
   font-weight: 700;
   cursor: pointer;
   transition:
-    background-color 140ms ease-out,
-    color 140ms ease-out;
+    background-color 120ms ease-out,
+    color 120ms ease-out;
 }
 
 .a-seg-item:hover:not([data-active='true']) {
@@ -339,12 +356,27 @@
   padding: 0 10px;
   border-radius: var(--a-radius-xs);
   border: 1px solid var(--a-border-strong);
-  background: #0a0a09;
+  background-color: #0a0a09;
   color: var(--a-text);
   font-family: inherit;
   font-size: 12px;
   font-weight: 600;
   box-shadow: inset 0 1px 3px rgb(0 0 0 / 0.5);
+}
+
+/* The native select chrome is a light-mode widget and reads as a stray browser part on this surface,
+   so it gets our own chevron. */
+.a-select {
+  appearance: none;
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a8a8a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+
+.a-select option {
+  background: #0f0f0e;
+  color: var(--a-text);
 }
 
 .a-select:hover,
@@ -360,6 +392,31 @@
 
 /* ── Navigation ────────────────────────────────────────────────────────── */
 
+/* The rail sits a shade under the canvas so the content area reads as the lit surface. */
+.a-rail {
+  background: linear-gradient(180deg, #0b0b0a 0%, #060606 100%);
+  border-right: 1px solid var(--a-border);
+}
+
+/* The wordmark cartridge, same molded amber as the commit button. */
+.a-brandmark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #ffd550 0%, #ffc016 46%, #ef9f0a 100%);
+  color: #1a1200;
+  font-size: 15px;
+  font-weight: 900;
+  box-shadow:
+    inset 0 1.5px 0 rgb(255 255 255 / 0.55),
+    0 2px 0 rgb(86 55 0 / 0.7),
+    0 8px 18px -10px rgb(0 0 0 / 0.9);
+}
+
 .a-nav-item {
   position: relative;
   display: flex;
@@ -374,8 +431,8 @@
   text-decoration: none;
   white-space: nowrap;
   transition:
-    background-color 130ms ease-out,
-    color 130ms ease-out;
+    background-color 120ms ease-out,
+    color 120ms ease-out;
 }
 
 .a-nav-item:hover {
@@ -409,7 +466,7 @@
 .a-nav-icon {
   flex: none;
   color: var(--a-text-muted);
-  transition: color 130ms ease-out;
+  transition: color 120ms ease-out;
 }
 
 .a-nav-item:hover .a-nav-icon {
@@ -433,6 +490,22 @@
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--a-text-2);
+}
+
+/* An inset block cut into a panel: stacks, briefs, anything you read as raw text. */
+.a-well {
+  background: var(--a-well);
+  border: 1px solid var(--a-border);
+  border-radius: var(--a-radius-sm);
+  padding: 10px 12px;
+}
+
+/* A callout that has to be read before something irreversible happens. Tinted, never solid. */
+.a-callout-critical {
+  border: 1px solid var(--a-critical);
+  border-radius: var(--a-radius-sm);
+  background: var(--a-critical-soft);
+  padding: 12px;
 }
 
 .a-mono {

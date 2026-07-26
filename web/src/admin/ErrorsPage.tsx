@@ -2,13 +2,26 @@
 // a Copy AI brief button that is the whole reason this system is in-house.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Bug, CheckCircle2, ClipboardCopy, MousePointerClick } from 'lucide-react'
 import { useState } from 'react'
 
-import { BarChart, EmptyState, ErrorState, LevelBadge, LoadingState, Panel, StatusBadge, Trend, When } from './components/primitives'
+import {
+  BarChart,
+  EmptyState,
+  ErrorState,
+  LevelBadge,
+  LoadingState,
+  Panel,
+  PageHeader,
+  Segmented,
+  StatusBadge,
+  Trend,
+  When,
+} from './components/primitives'
 import { errorDetailQuery, errorsQuery, fetchBrief, setErrorStatus, type ErrorFilters } from './queries'
 import type { ErrorStatus } from './types'
 
-const STATUSES = ['open', 'ack', 'resolved', 'ignored', 'all']
+const STATUSES = ['open', 'ack', 'resolved', 'ignored', 'all'].map((v) => ({ value: v, label: v }))
 const LEVELS = ['', 'fatal', 'error', 'warn']
 const KINDS = ['', 'http', 'worker', 'chain', 'client', 'job']
 
@@ -18,26 +31,28 @@ export function ErrorsPage() {
   const list = useQuery(errorsQuery(filters))
 
   return (
-    <div className="flex flex-col gap-3">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="a-page-title">Errors</h1>
-        <div className="flex flex-wrap items-center gap-2">
-          <Select label="Status" value={filters.status} options={STATUSES} onChange={(status) => setFilters((f) => ({ ...f, status }))} />
-          <Select label="Level" value={filters.level} options={LEVELS} onChange={(level) => setFilters((f) => ({ ...f, level }))} />
-          <Select label="Kind" value={filters.kind} options={KINDS} onChange={(kind) => setFilters((f) => ({ ...f, kind }))} />
-        </div>
-      </header>
+    <div className="flex flex-col gap-4">
+      <PageHeader title="Errors" sub="Grouped by fingerprint, so a hundred occurrences of one bug are one row.">
+        <Segmented value={filters.status} options={STATUSES} onChange={(status) => setFilters((f) => ({ ...f, status }))} label="Status" />
+        <Select label="Level" value={filters.level} options={LEVELS} onChange={(level) => setFilters((f) => ({ ...f, level }))} />
+        <Select label="Kind" value={filters.kind} options={KINDS} onChange={(kind) => setFilters((f) => ({ ...f, kind }))} />
+      </PageHeader>
 
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,520px)]">
-        <Panel title={`${list.data?.groups.length ?? 0} groups`}>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,560px)]">
+        <Panel title="Groups" icon={Bug} note={list.data ? `${list.data.groups.length} in view` : undefined}>
           {list.isPending ? (
-            <LoadingState label="Loading error groups" />
+            <LoadingState label="Loading error groups" rows={6} />
           ) : list.isError ? (
             <ErrorState message="Could not load error groups" onRetry={() => void list.refetch()} />
           ) : !list.data.groups.length ? (
             <EmptyState
+              icon={CheckCircle2}
               title={filters.status === 'open' ? 'Nothing open' : `No ${filters.status} groups`}
-              hint={filters.status === 'open' ? 'Every captured bug is acknowledged, resolved, or ignored.' : 'Try a different status filter.'}
+              hint={
+                filters.status === 'open'
+                  ? 'Every captured bug is acknowledged, resolved, or ignored.'
+                  : 'Try a different status filter.'
+              }
             />
           ) : (
             <GroupTable groups={list.data.groups} selected={selected} onSelect={setSelected} />
@@ -88,9 +103,9 @@ function GroupTable({
                 }
               }}
             >
-              <td style={{ color: 'var(--a-text)' }}>
+              <td className="a-key" style={{ paddingTop: 6, paddingBottom: 6 }}>
                 <span className="line-clamp-1">{g.title}</span>
-                <span className="block text-[11px]" style={{ color: 'var(--a-text-3)' }}>
+                <span className="a-mono block" style={{ color: 'var(--a-text-muted)' }}>
                   {g.fingerprint}
                 </span>
               </td>
@@ -143,21 +158,21 @@ function Detail({ fingerprint }: { fingerprint: string | null }) {
 
   if (!fingerprint) {
     return (
-      <Panel title="Detail">
-        <EmptyState title="Select a group" hint="Its stack, samples, affected users, and AI brief show up here." />
+      <Panel title="Detail" icon={MousePointerClick}>
+        <EmptyState icon={MousePointerClick} title="Select a group" hint="Its stack, samples, affected users, and AI brief show up here." />
       </Panel>
     )
   }
   if (q.isPending) {
     return (
-      <Panel title="Detail">
-        <LoadingState label="Loading occurrence detail" />
+      <Panel title="Detail" icon={Bug}>
+        <LoadingState label="Loading occurrence detail" rows={7} />
       </Panel>
     )
   }
   if (q.isError) {
     return (
-      <Panel title="Detail">
+      <Panel title="Detail" icon={Bug}>
         <ErrorState message="Could not load this group" onRetry={() => void q.refetch()} />
       </Panel>
     )
@@ -169,8 +184,15 @@ function Detail({ fingerprint }: { fingerprint: string | null }) {
   return (
     <Panel
       title="Detail"
+      icon={Bug}
       action={
-        <button type="button" className="a-btn a-btn-primary" disabled={brief.isPending} onClick={() => brief.mutate(group.fingerprint)}>
+        <button
+          type="button"
+          className="a-btn a-btn-primary"
+          disabled={brief.isPending}
+          onClick={() => brief.mutate(group.fingerprint)}
+        >
+          <ClipboardCopy size={13} strokeWidth={2.5} />
           {copied ? 'Copied' : brief.isPending ? 'Building' : 'Copy AI brief'}
         </button>
       }
@@ -178,7 +200,7 @@ function Detail({ fingerprint }: { fingerprint: string | null }) {
       <div className="flex flex-col gap-4 p-4">
         <div>
           <h2 className="a-section-title">{group.title}</h2>
-          <p className="mt-1 text-[11px]" style={{ color: 'var(--a-text-3)' }}>
+          <p className="a-mono mt-1" style={{ color: 'var(--a-text-muted)' }}>
             {group.fingerprint}
           </p>
         </div>
@@ -187,6 +209,7 @@ function Detail({ fingerprint }: { fingerprint: string | null }) {
           <StatusBadge status={group.status} />
           <LevelBadge level={group.level} />
           <span className="a-badge a-badge-neutral">{group.kind}</span>
+          <span className="flex-1" />
           {(['ack', 'resolved', 'ignored'] as ErrorStatus[]).map((next) => (
             <button
               key={next}
@@ -201,42 +224,42 @@ function Detail({ fingerprint }: { fingerprint: string | null }) {
           ))}
         </div>
 
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
           <Field label="Occurrences" value={group.count.toLocaleString()} />
           <Field label="Users affected" value={group.usersAffected.toLocaleString()} />
+          <Field label="Network" value={newest?.network ?? 'unknown'} />
           <Field label="First release" value={group.firstRelease ?? 'unknown'} />
           <Field label="Last release" value={group.lastRelease ?? 'unknown'} />
           <Field label="Culprit" value={group.culprit ?? 'unknown'} />
-          <Field label="Network" value={newest?.network ?? 'unknown'} />
         </dl>
 
         <div>
-          <p className="a-label mb-1.5">Occurrences, last 24h (retained samples)</p>
+          <p className="a-label mb-2">Occurrences, last 24h (retained samples)</p>
           <BarChart data={occurrences} />
         </div>
 
         <div>
-          <p className="a-label mb-1.5">Message</p>
+          <p className="a-label mb-2">Message</p>
           <p className="a-pre">{newest?.message ?? group.title}</p>
         </div>
 
         {newest?.stack && (
           <div>
-            <p className="a-label mb-1.5">Stack, own-code frames marked</p>
+            <p className="a-label mb-2">Stack, own-code frames marked</p>
             <StackView stack={newest.stack} />
           </div>
         )}
 
         {!!users.length && (
           <div>
-            <p className="a-label mb-1.5">Affected users</p>
+            <p className="a-label mb-2">Affected users</p>
             <p style={{ color: 'var(--a-text-2)' }}>{users.map((u) => (u.username ? `@${u.username}` : u.id)).join(', ')}</p>
           </div>
         )}
 
         {!!plays.length && (
           <div>
-            <p className="a-label mb-1.5">Affected plays</p>
+            <p className="a-label mb-2">Affected plays</p>
             <p className="a-pre">{plays.map((p) => `${p.game} ${p.id} (${p.status})`).join('\n')}</p>
           </div>
         )}
@@ -245,15 +268,15 @@ function Detail({ fingerprint }: { fingerprint: string | null }) {
   )
 }
 
-// Own-code frames carry the accent, vendor frames recede. Rendered as text, never as HTML.
+// Own-code frames carry full contrast, vendor frames recede. Rendered as text, never as HTML.
 function StackView({ stack }: { stack: string }) {
   const lines = stack.split('\n').slice(0, 14)
   return (
-    <div className="a-pre">
+    <div className="a-pre a-well">
       {lines.map((line, i) => {
         const own = line.trim().startsWith('at ') && !line.includes('node_modules') && !line.includes('node:internal')
         return (
-          <div key={i} style={{ color: own ? 'var(--a-text)' : 'var(--a-text-3)' }}>
+          <div key={i} style={{ color: own ? 'var(--a-text)' : 'var(--a-text-muted)' }}>
             {own ? '> ' : '  '}
             {line.trim()}
           </div>
@@ -267,7 +290,7 @@ function Field({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <dt className="a-label">{label}</dt>
-      <dd className="truncate" style={{ color: 'var(--a-text)' }} title={value}>
+      <dd className="truncate" style={{ color: 'var(--a-text)', fontWeight: 600 }} title={value}>
         {value}
       </dd>
     </div>

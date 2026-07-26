@@ -234,8 +234,14 @@ const VALUE_SCRUBS: Array<[RegExp, string]> = [
   [/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[redacted-jwt]'],
   [/Bearer\s+\S+/gi, 'Bearer [redacted]'],
   // Suspicious-length base64: long enough to be a key, never a word or a Sui address (0x-prefixed hex
-  // is excluded by requiring a mixed-alphabet run).
-  [/\b(?=[A-Za-z0-9+/]{40,})(?=[^\s]*[A-Z])(?=[^\s]*[a-z])(?=[^\s]*\d)[A-Za-z0-9+/]{40,}={0,2}\b/g, '[redacted-key]'],
+  // is excluded by requiring a mixed-alphabet run). Every lookahead is bounded to the candidate run
+  // itself, never `[^\s]*`: an absolute stack path is a 40+ char run of [A-Za-z0-9/] and an unbounded
+  // digit lookahead was being satisfied by the trailing `:113:43`, so every long path on the dashboard
+  // came back as `/[redacted-key]-ws.ts`. Two digits, not one, so a path with a digit in a folder name
+  // stays readable while a random 40-char key (~6 digits) still matches.
+  // A trailing `\b` here would never fire after `=` (it is not a word char), leaving orphan padding
+  // behind, so the tail is a negative lookahead instead.
+  [/\b(?=(?:[A-Za-z0-9+/]*\d){2})(?=[A-Za-z0-9+/]*[A-Z])(?=[A-Za-z0-9+/]*[a-z])[A-Za-z0-9+/]{40,}={0,2}(?![A-Za-z0-9+/=])/g, '[redacted-key]'],
   [/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[redacted-email]'],
 ];
 

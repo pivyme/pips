@@ -32,7 +32,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Settings">
-      <button type="button" className="absolute inset-0 cursor-default" style={{ background: 'rgb(0 0 0 / 0.6)' }} onClick={onClose} aria-label="Close settings" />
+      <button type="button" className="absolute inset-0 cursor-default" style={{ background: 'var(--a-scrim)' }} onClick={onClose} aria-label="Close settings" />
       <div
         ref={panel}
         tabIndex={-1}
@@ -195,7 +195,7 @@ function ConfirmDelete({ preview, onCancel, onConfirm }: { preview: RetentionPre
   const matches = typed.trim() === expected
 
   return (
-    <div className="mt-2 flex flex-col gap-2 rounded-[var(--a-radius-sm)] border p-3" style={{ borderColor: 'var(--a-critical)', background: 'rgb(255 90 77 / 0.07)' }}>
+    <div className="a-callout-critical mt-2 flex flex-col gap-2">
       <span style={{ color: 'var(--a-critical)', fontWeight: 600 }}>
         {preview.current} to {preview.next} deletes {preview.deletes.toLocaleString('en-US')} {preview.noun}
       </span>

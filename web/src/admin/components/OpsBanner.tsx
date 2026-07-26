@@ -31,14 +31,16 @@ function Banner({ snapshot }: { snapshot: OpsSnapshot }) {
 
   return (
     <section className="a-panel-flush" style={{ borderColor: bad.length ? tone.color : undefined }}>
-      <header className="flex h-8 items-center justify-between border-b border-[var(--a-border)] px-3">
-        <span className="flex items-center gap-2">
-          <span className="inline-block h-2 w-2 rounded-full" style={{ background: tone.color }} aria-hidden />
-          <span className="a-label" style={{ color: tone.color }}>
+      <header className="a-panel-head">
+        <span className="flex items-center gap-2.5">
+          <span className="a-dot" style={{ background: tone.color, color: tone.color }} aria-hidden />
+          <span className="a-section-title" style={{ color: tone.color }}>
             {tone.label}
           </span>
           <span style={{ color: 'var(--a-text-3)', fontSize: 12 }}>
-            {bad.length ? `${bad.length} of ${snapshot.detectors.length} detectors firing` : `all ${snapshot.detectors.length} detectors clear`}
+            {bad.length
+              ? `${bad.length} of ${snapshot.detectors.length} detectors firing`
+              : `all ${snapshot.detectors.length} detectors clear`}
           </span>
         </span>
         <span style={{ color: 'var(--a-text-3)', fontSize: 12 }}>
@@ -60,13 +62,13 @@ function Banner({ snapshot }: { snapshot: OpsSnapshot }) {
 function Row({ detector }: { detector: DetectorStatus }) {
   const color = detector.level === 'critical' ? 'var(--a-critical)' : 'var(--a-warn)'
   return (
-    <li className="flex gap-3 border-b border-[var(--a-border)] px-3 py-2 last:border-b-0">
-      <span className="a-badge shrink-0" style={{ color, background: 'color-mix(in srgb, currentColor 12%, transparent)' }}>
+    <li className="flex gap-3 border-b border-[var(--a-border)] px-4 py-2.5 last:border-b-0">
+      <span className="a-badge mt-0.5 shrink-0" style={{ color, background: 'color-mix(in srgb, currentColor 13%, transparent)' }}>
         {detector.level}
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span style={{ color: 'var(--a-text)' }}>{detector.title}</span>
+          <span style={{ color: 'var(--a-text)', fontWeight: 600 }}>{detector.title}</span>
           <span className="a-num" style={{ color }}>
             {detector.display}
           </span>

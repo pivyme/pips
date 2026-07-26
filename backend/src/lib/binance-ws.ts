@@ -110,7 +110,10 @@ function connect(): void {
   sock.onerror = () => {
     // A handshake/transport error. onclose fires right after and drives the reconnect, so just count it.
     consecutiveFailures++;
-    recordRun('binance-ws', false, 0, new Error(`connect/transport error (${consecutiveFailures} in a row)`));
+    // The run count stays OUT of the message: normalize() deliberately keeps small numbers so Sui abort
+    // codes stay distinguishable, so an interpolated counter mints a fresh error group per reconnect
+    // (L-021). The group's own count is the number we actually wanted.
+    recordRun('binance-ws', false, 0, new Error('connect/transport error'));
     if (consecutiveFailures >= GEO_WARN_AFTER && !geoWarned) {
       geoWarned = true;
       console.warn(

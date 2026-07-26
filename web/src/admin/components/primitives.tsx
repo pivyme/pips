@@ -126,7 +126,7 @@ export function EmptyState({ title, hint, icon: Icon }: { title: string; hint?: 
       {Icon && (
         <span
           className="mb-1 flex h-11 w-11 items-center justify-center rounded-full"
-          style={{ background: 'rgb(255 255 255 / 0.04)', color: 'var(--a-text-muted)' }}
+          style={{ background: 'var(--a-tint)', color: 'var(--a-text-muted)' }}
         >
           <Icon size={19} strokeWidth={2.2} />
         </span>
@@ -180,7 +180,7 @@ export function Bar({
   return (
     <span
       className="block w-full overflow-hidden"
-      style={{ height, borderRadius: height / 2, background: 'rgb(255 255 255 / 0.05)' }}
+      style={{ height, borderRadius: height / 2, background: 'var(--a-track)' }}
       role="img"
       aria-label={`${Math.round(pct)}%`}
     >
@@ -190,7 +190,7 @@ export function Bar({
           width: `${pct}%`,
           borderRadius: height / 2,
           background: fill,
-          boxShadow: tone === 'accent' ? '0 0 8px rgb(255 192 22 / 0.45)' : undefined,
+          boxShadow: tone === 'accent' ? 'var(--a-accent-glow)' : undefined,
         }}
       />
     </span>
@@ -286,8 +286,10 @@ export function LatencyChart({
   data: Array<{ t: number; p50: number | null; p95: number | null }>
   height?: number
 }) {
+  // Two buckets, not two numbers: one bucket carries a p50 and a p95, and a single point draws nothing.
+  const filled = data.filter((d) => d.p50 != null || d.p95 != null)
+  if (filled.length < 2) return <EmptyState title="Not enough samples to plot" hint="One bucket is a number, not a line. Play again, or widen the window." />
   const values = data.flatMap((d) => [d.p50, d.p95]).filter((v): v is number => v != null)
-  if (values.length < 2) return <EmptyState title="Not enough samples in this window" hint="Play once, or widen the window." />
   const max = Math.max(1, ...values)
   const step = 100 / Math.max(1, data.length - 1)
   const y = (v: number) => height - 2 - (v / max) * (height - 4)

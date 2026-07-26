@@ -212,6 +212,24 @@ describe('redaction (§3.4)', () => {
     const sui = '0xf86d0f8b1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a31756';
     expect(scrubText(`wrapper ${sui} missing`)).toContain(sui);
   });
+
+  // Found on the live dashboard, where every worker stack read `at <anonymous> (/[redacted-key]-ws.ts:113:43)`.
+  // An absolute path is a 40+ char run of [A-Za-z0-9/], and the digit lookahead was unbounded, so the
+  // trailing `:113:43` satisfied it and the base64 rule swallowed the path. A mangled path is not a
+  // cosmetic problem: topOwnFrame is how a group is named and how an engineer finds the code.
+  it('keeps a long absolute stack path readable, since it is not a secret', () => {
+    const frame = '    at handler (/Users/kelvinadithya/Desktop/DEVELOPMENT/PIPS/backend/src/lib/binance-ws.ts:113:43)';
+    expect(scrubText(frame)).toBe(frame);
+    expect(scrubText(frame)).not.toContain('[redacted-key]');
+    // A digit in a folder name must not bring the false positive back.
+    const withDigit = '    at t (/home/deploy2/apps/pips-backend/src/services/plays.ts:88:7)';
+    expect(scrubText(withDigit)).toBe(withDigit);
+  });
+
+  it('still scrubs a real base64 key, including one with a slash in it', () => {
+    const key = 'aB3xK9mQ2vB7nP4tL6wZ8yR1cD5eF0gH/jK2lM4nO6pQ8rS=';
+    expect(scrubText(`loaded ${key} at boot`)).toBe('loaded [redacted-key] at boot');
+  });
 });
 
 describe('payload caps (§3.3)', () => {

@@ -44,10 +44,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   return (
     <div data-admin className="flex min-h-screen">
-      <nav
-        className="hidden w-[232px] shrink-0 flex-col justify-between border-r p-3 lg:flex"
-        style={{ background: 'linear-gradient(180deg, #0b0b0a 0%, #060606 100%)', borderColor: 'var(--a-border)' }}
-      >
+      {/* Pinned to the viewport, not to the page. Overview runs well past 100vh and a rail that scrolls
+          away takes the nav and the health dot with it. h-screen + self-start keeps flex from stretching
+          it to the full document height, which is what silently breaks sticky. */}
+      <nav className="a-rail sticky top-0 hidden h-screen w-[232px] shrink-0 flex-col justify-between self-start overflow-y-auto p-3 lg:flex">
         <div className="flex min-h-0 flex-col gap-1">
           <Brand />
           <span className="a-label mb-1 mt-4 px-3">Dashboard</span>
@@ -61,7 +61,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       {/* Mobile keeps the nav as a plain strip: Errors is the one page worth triaging from a phone. */}
       <div className="flex min-w-0 flex-1 flex-col">
         <div
-          className="flex items-center gap-1 overflow-x-auto border-b px-2 py-2 lg:hidden"
+          className="sticky top-0 z-20 flex items-center gap-1 overflow-x-auto border-b px-2 py-2 lg:hidden"
           style={{ background: 'var(--a-surface)', borderColor: 'var(--a-border)' }}
         >
           <HealthDot />
@@ -91,15 +91,7 @@ function Brand() {
   const q = useQuery(pingQuery())
   return (
     <div className="flex items-center gap-2.5 px-1 pt-1">
-      <span
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] text-[15px] font-black"
-        style={{
-          background: 'linear-gradient(180deg, #ffd550 0%, #ffc016 46%, #ef9f0a 100%)',
-          color: '#1a1200',
-          boxShadow: 'inset 0 1.5px 0 rgb(255 255 255 / 0.55), 0 2px 0 rgb(86 55 0 / 0.7), 0 8px 18px -10px rgb(0 0 0 / 0.9)',
-        }}
-        aria-hidden
-      >
+      <span className="a-brandmark" aria-hidden>
         P
       </span>
       <span className="flex min-w-0 flex-col">
