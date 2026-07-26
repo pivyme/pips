@@ -351,8 +351,8 @@ export const LUCKY_ROUND_MS: number = Number(process.env.PIPS_LUCKY_ROUND_MS) ||
 export const RANGE_MIN_ORACLE_LIFE_MS: number = Number(process.env.PIPS_RANGE_MIN_ORACLE_LIFE_MS) || 20_000;
 export const RANGE_MAX_ORACLE_LIFE_MS: number = Number(process.env.PIPS_RANGE_MAX_ORACLE_LIFE_MS) || 33_000;
 
-// Error Log Configuration
-export const ERROR_LOG_MAX_RECORDS: number = 10000;
+// Error Log Configuration. The retention size knob is NOT here: it is the `retention.error_days` setting
+// in config/admin-settings.ts, editable from the dashboard with no redeploy (L-022).
 export const ERROR_LOG_CLEANUP_INTERVAL: string = '0 * * * *'; // Every hour
 
 // Deposit tracking cleanup (mainnet only): an execute-quote opens a PENDING row before the user broadcasts,

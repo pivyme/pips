@@ -24,6 +24,7 @@ import { walletRoutes } from './src/routes/walletRoutes.ts';
 import { depositRoutes } from './src/routes/depositRoutes.ts';
 import { referralRoutes } from './src/routes/referralRoutes.ts';
 import { avatarRoutes } from './src/routes/avatarRoutes.ts';
+import { analyticsRoutes } from './src/routes/analyticsRoutes.ts';
 
 // Workers
 import { startErrorLogCleanupWorker } from './src/workers/errorLogCleanup.ts';
@@ -276,6 +277,9 @@ fastify.register(depositRoutes, { prefix: '/deposit' });
 fastify.register(referralRoutes, { prefix: '/referral' });
 fastify.register(avatarRoutes); // POST + DELETE /avatar
 fastify.register(streamRoutes, { prefix: '/stream' });
+// Analytics ingest (/a/*) + the ADMIN-gated dashboard reads (/admin/*). No prefix: the ingest paths are
+// deliberately bland and /admin/* must not collide with the unrelated POST /deposit/track.
+fastify.register(analyticsRoutes);
 // Price hub at /ws (no prefix): one shared 10Hz broadcast loop per asset, all users in lock-step.
 fastify.register(wsRoutes);
 

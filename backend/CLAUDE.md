@@ -149,7 +149,7 @@ return handleDatabaseError(reply, 'create user', originalError);
 return handleServerError(reply, originalError);
 ```
 
-Error logs are automatically capped at 10,000 records by the cleanup worker.
+Error logs are pruned by age by the cleanup worker, off the `retention.error_days` setting in `src/config/admin-settings.ts` (a DB-backed knob, not an env var).
 
 ---
 

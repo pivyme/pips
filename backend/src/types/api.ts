@@ -16,6 +16,7 @@ export interface UserDTO {
   walletAuthAddress?: string; // wallet-connect: the connected external wallet (login + default withdraw target)
   avatarUrl: string | null; // custom uploaded avatar, or null (the client renders the PIPS identicon)
   customAvatar: boolean; // a custom upload is set (drives the remove-X in the profile editor)
+  specialRoles: string[]; // the user's OWN roles (ADMIN gates the dashboard entry point); never another user's
   balance: string; // available DUSDC (wallet + manager cash), 2dp display, e.g. "983.50"
   managerReady: boolean; // PredictManager exists
   settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string; themeConfig: unknown | null };

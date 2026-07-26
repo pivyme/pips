@@ -1,6 +1,13 @@
+// Prunes the legacy ErrorLog table. Age-based off the `retention.error_days` setting, not count-based:
+// a count cap silently drops the oldest occurrence of a rare-but-critical bug the moment a noisy bug
+// floods the table, which is exactly backwards. See bigdev/plans/cont/03-ADMIN-DASHBOARD.md §9.
+//
+// ErrorLog itself survives one release for history, then this worker folds into workers/analytics.ts.
+
 import cron from 'node-cron';
 import { prismaQuery } from '../lib/prisma.ts';
-import { ERROR_LOG_MAX_RECORDS, ERROR_LOG_CLEANUP_INTERVAL } from '../config/main-config.ts';
+import { ERROR_LOG_CLEANUP_INTERVAL } from '../config/main-config.ts';
+import { getSetting } from '../config/admin-settings.ts';
 import { cronIntervalMs, recordRun, registerWorker } from '../lib/worker-registry.ts';
 
 let isRunning = false;
@@ -14,44 +21,14 @@ const cleanupErrorLogs = async (): Promise<void> => {
   isRunning = true;
   const startedAt = Date.now();
   let runErr: unknown = null;
-  console.log('[ErrorLogCleanup] Starting cleanup...');
 
   try {
-    // Type assertion for Prisma models - assumes errorLog model exists in schema
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const errorLogModel = (prismaQuery as any).errorLog as {
-      count: () => Promise<number>;
-      findMany: (args: { orderBy: { createdAt: 'asc' | 'desc' }; take: number; select: { id: true } }) => Promise<{ id: string }[]>;
-      deleteMany: (args: { where: { id: { in: string[] } } }) => Promise<{ count: number }>;
-    };
+    const days = await getSetting('retention.error_days');
+    const cutoff = new Date(Date.now() - days * 86_400_000);
 
-    const count = await errorLogModel.count();
+    const { count } = await prismaQuery.errorLog.deleteMany({ where: { createdAt: { lt: cutoff } } });
 
-    if (count > ERROR_LOG_MAX_RECORDS) {
-      const recordsToDelete = count - ERROR_LOG_MAX_RECORDS;
-
-      // Get IDs of oldest records to delete
-      const oldestRecords = await errorLogModel.findMany({
-        orderBy: { createdAt: 'asc' },
-        take: recordsToDelete,
-        select: { id: true },
-      });
-
-      const idsToDelete = oldestRecords.map((r) => r.id);
-
-      // Delete oldest records
-      await errorLogModel.deleteMany({
-        where: {
-          id: { in: idsToDelete },
-        },
-      });
-
-      console.log(
-        `[ErrorLogCleanup] Deleted ${recordsToDelete} old error logs (was ${count}, now ${ERROR_LOG_MAX_RECORDS})`
-      );
-    } else {
-      console.log(`[ErrorLogCleanup] No cleanup needed (${count}/${ERROR_LOG_MAX_RECORDS} records)`);
-    }
+    if (count > 0) console.log(`[ErrorLogCleanup] Deleted ${count} error logs older than ${days}d`);
   } catch (error) {
     runErr = error;
     console.error('[ErrorLogCleanup] Error during cleanup:', error);

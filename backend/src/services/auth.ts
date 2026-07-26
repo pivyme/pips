@@ -255,6 +255,8 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
     walletAuthAddress: user.walletAuthAddress ?? undefined,
     avatarUrl: effectiveAvatar(user),
     customAvatar: user.avatarUrl != null,
+    // Own roles only. Other users' roles are filtered to PUBLIC_ROLES before they leave the server.
+    specialRoles: user.specialRoles,
     balance: fromDusdcRaw(wallet + manager).toFixed(2),
     // The wrapper is created lazily + self-heals on the first play, so the account is always ready to play.
     managerReady: true,
