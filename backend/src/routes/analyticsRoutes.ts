@@ -16,6 +16,7 @@ import {
   ERROR_STATUSES,
   buildBrief,
   getErrorDetail,
+  countResolvedSince,
   listErrorGroups,
   opsStatus,
   overviewReport,
@@ -393,15 +394,20 @@ export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _op
   // Grouped errors. Default is open bugs newest-first, which is the triage order.
   app.get('/admin/errors', admin, async (request: FastifyRequest, reply: FastifyReply) => {
     const q = request.query as Record<string, string | undefined>;
-    const groups = await listErrorGroups({
-      status: q.status,
-      level: q.level,
-      kind: q.kind,
-      network: q.network,
-      release: q.release,
-      limit: q.limit ? Number(q.limit) : undefined,
-    });
-    return ok(reply, { groups });
+    const [groups, resolvedThisWeek] = await Promise.all([
+      listErrorGroups({
+        status: q.status,
+        level: q.level,
+        kind: q.kind,
+        network: q.network,
+        release: q.release,
+        limit: q.limit ? Number(q.limit) : undefined,
+      }),
+      // So an empty list can report progress instead of absence. "Nothing open" on its own reads the same
+      // whether the product is healthy or capture has quietly stopped working.
+      countResolvedSince(Date.now() - 7 * 86_400_000),
+    ]);
+    return ok(reply, { groups, resolvedThisWeek });
   });
 
   app.get('/admin/errors/:fingerprint', admin, async (request: FastifyRequest, reply: FastifyReply) => {

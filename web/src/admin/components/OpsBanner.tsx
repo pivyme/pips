@@ -18,9 +18,31 @@ const TONE: Record<string, { color: string; label: string }> = {
 }
 
 export function OpsBanner() {
-  const { data, isPending, error } = useQuery(opsQuery())
+  const { data, isPending, error, refetch } = useQuery(opsQuery())
 
-  if (isPending || error || !data) return null
+  if (isPending) return null
+  // A missing banner reads as "healthy" at a glance, which is the worst thing it could say when the
+  // health read itself is the thing that failed.
+  if (error || !data) {
+    return (
+      <section className="a-panel-flush" style={{ borderColor: 'var(--a-warn)' }}>
+        <header className="a-panel-head">
+          <span className="flex items-center gap-2.5">
+            <span className="a-dot" style={{ background: 'var(--a-warn)', color: 'var(--a-warn)' }} aria-hidden />
+            <span className="a-section-title" style={{ color: 'var(--a-warn)' }}>
+              Health unknown
+            </span>
+            <span style={{ color: 'var(--a-text-3)', fontSize: 12 }}>
+              The detector sweep could not be read, so treat every number below as unverified.
+            </span>
+          </span>
+          <button type="button" className="a-btn" onClick={() => void refetch()}>
+            Try again
+          </button>
+        </header>
+      </section>
+    )
+  }
   return <Banner snapshot={data} />
 }
 

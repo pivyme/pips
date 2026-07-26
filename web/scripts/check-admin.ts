@@ -1,4 +1,4 @@
-// Three invariants that only exist if they fail the gate the loop and CI actually run (L-020). `web`'s
+// Four invariants that only exist if they fail the gate the loop and CI actually run (L-020). `web`'s
 // eslint baseline is red and nobody runs it, so this sits next to `bunx tsc --noEmit` instead.
 //
 //   1. src/admin/** never mounts the device. One stray `three` import drags the whole 3D console into
@@ -6,6 +6,8 @@
 //   2. The web twins of SPECIAL_ROLES and the event catalog match the backend source of truth (A2).
 //   3. Colour lives in admin.css. A hex or rgb() in a component is a value nobody will find again when
 //      the palette moves, and it is how a two-token severity scheme quietly becomes eleven colours.
+//   4. Nothing renders HTML. Error messages and props carry attacker-controlled input, and this dashboard
+//      is where they get displayed, so `dangerouslySetInnerHTML` is banned outright rather than reviewed.
 //
 // The ban is on the DEVICE, not on the design system. Admin shares the app's palette, HeroUI wrappers,
 // hardware keys and icons on purpose, so it looks like the same product rather than a scaffold.
@@ -54,6 +56,9 @@ function specifiers(source: string): string[] {
 // have to name a var(), so the pattern below only ever flags a real hardcoded value.
 const RAW_COLOUR = /#[0-9a-fA-F]{3,8}\b|\brgba?\s*\(|\bhsla?\s*\(/;
 
+// Split so this file's own scanner never trips on the literal it is looking for.
+const RAW_HTML = 'dangerously' + 'SetInnerHTML';
+
 for (const file of walk(ADMIN_DIR)) {
   const source = readFileSync(file, 'utf8');
   for (const spec of specifiers(source)) {
@@ -64,6 +69,7 @@ for (const file of walk(ADMIN_DIR)) {
   source.split('\n').forEach((line, i) => {
     if (line.trim().startsWith('//') || line.trim().startsWith('*')) return;
     if (RAW_COLOUR.test(line)) failures.push(`${file}:${i + 1}: literal colour outside admin.css, use a --a-* token: ${line.trim().slice(0, 90)}`);
+    if (line.includes(RAW_HTML)) failures.push(`${file}:${i + 1}: ${RAW_HTML} in the admin surface, render it as text`);
   });
 }
 
@@ -111,4 +117,4 @@ if (failures.length) {
   process.exit(1);
 }
 
-console.log('check:admin passed: no device-shell imports in src/admin/, no literal colours, shared consts in sync');
+console.log('check:admin passed: no device-shell imports in src/admin/, no literal colours, no raw HTML, shared consts in sync');

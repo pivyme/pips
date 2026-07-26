@@ -68,7 +68,7 @@ export const errorsQuery = (f: ErrorFilters) =>
       if (f.status) q.set('status', f.status)
       if (f.level) q.set('level', f.level)
       if (f.kind) q.set('kind', f.kind)
-      return adminFetch<{ groups: ErrorGroupRow[] }>(`/admin/errors?${q.toString()}`)
+      return adminFetch<{ groups: ErrorGroupRow[]; resolvedThisWeek: number }>(`/admin/errors?${q.toString()}`)
     },
     refetchInterval: 30_000,
     retry: false,

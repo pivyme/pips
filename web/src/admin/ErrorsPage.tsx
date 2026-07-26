@@ -50,7 +50,7 @@ export function ErrorsPage() {
               title={filters.status === 'open' ? 'Nothing open' : `No ${filters.status} groups`}
               hint={
                 filters.status === 'open'
-                  ? 'Every captured bug is acknowledged, resolved, or ignored.'
+                  ? `Every captured bug is acknowledged, resolved, or ignored. ${resolvedCopy(list.data.resolvedThisWeek)}`
                   : 'Try a different status filter.'
               }
             />
@@ -63,6 +63,13 @@ export function ErrorsPage() {
       </div>
     </div>
   )
+}
+
+// An empty list should prove the pipeline is alive, not just report an absence: "nothing open" reads the
+// same whether the product is healthy or capture stopped working a week ago.
+function resolvedCopy(n: number): string {
+  if (!n) return 'Nothing resolved in the last 7 days either, so check that capture is still reporting.'
+  return `${n} group${n === 1 ? '' : 's'} resolved in the last 7 days.`
 }
 
 function GroupTable({

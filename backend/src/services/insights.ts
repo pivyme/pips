@@ -54,6 +54,11 @@ export interface ErrorListFilters {
 const DAY_MS = 86_400_000;
 
 // Grouped list. Default is open bugs, newest first, which is the triage order: what is broken now.
+/** Groups triaged to `resolved` since a cutoff. Turns an empty Errors list into evidence, not silence. */
+export async function countResolvedSince(sinceMs: number): Promise<number> {
+  return prismaQuery.errorGroup.count({ where: { status: 'resolved', resolvedAt: { gte: new Date(sinceMs) } } });
+}
+
 export async function listErrorGroups(f: ErrorListFilters): Promise<ErrorGroupRow[]> {
   const limit = Math.min(200, Math.max(1, f.limit ?? 100));
   const where: Record<string, unknown> = {};

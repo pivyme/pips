@@ -238,7 +238,10 @@ function WalletRow({ wallet }: { wallet: WalletBalance }) {
         {`${wallet.address.slice(0, 10)}...${wallet.address.slice(-6)}`}
       </td>
       <td className="a-num">{num(wallet.sui, 3)}</td>
-      <td className="a-num">{wallet.dusdc == null ? '' : num(wallet.dusdc, 2)}</td>
+      {/* A blank cell reads as zero. This wallet is not meant to hold chips, so say that. */}
+      <td className="a-num" style={wallet.dusdc == null ? { color: 'var(--a-text-muted)' } : undefined} title={wallet.dusdc == null ? 'Not a chip-holding wallet' : undefined}>
+        {wallet.dusdc == null ? 'n/a' : num(wallet.dusdc, 2)}
+      </td>
     </tr>
   )
 }
@@ -356,9 +359,22 @@ function PerfBody({ data }: { data: PerfReport }) {
       <Panel
         title="Workers"
         icon={Cpu}
-        note={stale ? `${stale} stale` : `all ${data.workers.length} running`}
-        action={<span className={`a-badge ${stale ? 'a-badge-critical' : 'a-badge-ok'}`}>{stale ? 'attention' : 'healthy'}</span>}
+        note={data.workers.length === 0 ? 'none registered' : stale ? `${stale} stale` : `all ${data.workers.length} running`}
+        action={
+          <span className={`a-badge ${data.workers.length === 0 || stale ? 'a-badge-critical' : 'a-badge-ok'}`}>
+            {data.workers.length === 0 ? 'nothing running' : stale ? 'attention' : 'healthy'}
+          </span>
+        }
       >
+        {data.workers.length === 0 ? (
+          // An empty worker table would otherwise read as "all clear" when it means settle, market sync,
+          // and retention are all dead.
+          <EmptyState
+            icon={Cpu}
+            title="No workers registered on this instance"
+            hint="Nothing is settling plays, syncing markets, or pruning analytics. Check the API logs for a boot failure."
+          />
+        ) : (
         <table className="a-table">
           <thead>
             <tr>
@@ -391,6 +407,7 @@ function PerfBody({ data }: { data: PerfReport }) {
             ))}
           </tbody>
         </table>
+        )}
       </Panel>
     </>
   )

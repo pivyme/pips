@@ -79,6 +79,8 @@ mock.module('../lib/prisma.ts', () => ({
   prismaQuery: {
     errorGroup: {
       findMany: async () => [GROUP],
+      // Feeds the "N resolved this week" line the empty Errors list shows instead of reporting an absence.
+      count: async () => 3,
       findUnique: async ({ where }: { where: { fingerprint: string } }) =>
         written.groups.has(where.fingerprint) ? { ...GROUP, fingerprint: where.fingerprint, status: 'open' } : GROUP,
       update: async () => GROUP,

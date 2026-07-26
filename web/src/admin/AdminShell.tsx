@@ -117,21 +117,24 @@ function HealthDot() {
   const q = useQuery(pingQuery())
   const ops = useQuery(opsQuery())
 
-  const worst = ops.data?.worst ?? 'ok'
-  const color = q.isPending
+  // An unreadable ops sweep is not the same as a clear one, so it dims to amber rather than staying green.
+  const worst = ops.isPending ? 'pending' : ops.isError || !ops.data ? 'unknown' : ops.data.worst
+  const color = q.isPending || worst === 'pending'
     ? 'var(--a-text-muted)'
     : q.isError || worst === 'critical'
       ? 'var(--a-critical)'
-      : worst === 'warn'
+      : worst === 'warn' || worst === 'unknown'
         ? 'var(--a-warn)'
         : 'var(--a-ok)'
-  const label = q.isPending
+  const label = q.isPending || worst === 'pending'
     ? 'Checking the API'
     : q.isError
       ? 'API unreachable or access revoked'
-      : worst === 'ok'
-        ? `Healthy (${q.data?.network})`
-        : `${worst === 'critical' ? 'Critical' : 'Degraded'}: see the Overview banner`
+      : worst === 'unknown'
+        ? 'Health unknown: the detector sweep could not be read'
+        : worst === 'ok'
+          ? `Healthy (${q.data?.network})`
+          : `${worst === 'critical' ? 'Critical' : 'Degraded'}: see the Overview banner`
   return <span className="a-dot" style={{ background: color, color }} title={label} aria-label={label} />
 }
 

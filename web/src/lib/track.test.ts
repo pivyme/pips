@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { EVENT_NAMES, flushTrack, queuedCount, queuedPayloads, resetTrackState, track } from './track'
+import { EVENT_NAMES, flushTrack, queuedCount, queuedPayloads, resetTrackState, sealedCount, track } from './track'
 
 const originalFetch = globalThis.fetch
 const realSubtle = globalThis.crypto.subtle
@@ -37,8 +37,14 @@ afterEach(() => {
 })
 
 // Waits for the per-event seal microtasks to settle. Sealing is deliberately off the call path, so
-// everything after track() has to give it a turn.
-const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+// everything after track() has to give it a turn. Polls the seam rather than yielding once: crypto.subtle
+// is genuinely async, and a single macrotask tick loses the race under parallel test load.
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 1))
+    if (queuedCount() === 0 || sealedCount() === queuedCount()) return
+  }
+}
 
 describe('returns void and never throws', () => {
   it('no-ops on an unknown name instead of queueing an unbounded label', () => {
@@ -172,6 +178,28 @@ describe('identity', () => {
     const ids = queuedPayloads().map((j) => (JSON.parse(j) as { anonId: string }).anonId)
     expect(ids[0]).toBe(ids[1])
     expect(localStorage.getItem('pips_anon')).toBe(ids[0])
+  })
+})
+
+// Demo is entered by a landing toggle that writes localStorage, not by rebuilding with an env var, so an
+// env-only check leaves every demo session posting fake plays into the real Event table and 401ing in the
+// console on the way. The gate has to read the same seam api.ts does.
+describe('demo mode', () => {
+  it('queues nothing and touches no network once the demo override is set', async () => {
+    localStorage.setItem('pips_demo', '1')
+    track('door.landing_view')
+    track('game.play_tap', { game: 'lucky' })
+    await settle()
+    flushTrack()
+    expect(queuedCount()).toBe(0)
+    expect(fetchCalls()).toHaveLength(0)
+  })
+
+  it('reports errors again once demo is switched back off', async () => {
+    localStorage.setItem('pips_demo', '0')
+    track('door.landing_view')
+    await settle()
+    expect(queuedCount()).toBe(1)
   })
 })
 

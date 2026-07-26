@@ -9,6 +9,7 @@
 
 import { env } from '@/env'
 import { getAuthToken } from '@/lib/api'
+import { isDemo } from '@/lib/demo'
 
 const ENDPOINT = '/a/err'
 const MAX_PER_SESSION = 20
@@ -80,7 +81,7 @@ export function reportedCount(): number {
 // Returns true when this error was actually sent. Never throws, never awaits on the caller's path.
 export function reportClientError(error: unknown, extra?: Record<string, string>): boolean {
   try {
-    if (env.VITE_DEMO_MODE === 'true') return false // the demo sim has no backend to report to
+    if (isDemo()) return false // the demo sim has no backend to report to, and the toggle is localStorage, not env
 
     const err = error instanceof Error ? error : null
     const message = (err?.message ?? String(error ?? 'unknown error')).slice(0, 500)

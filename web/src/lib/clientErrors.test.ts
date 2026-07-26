@@ -110,3 +110,22 @@ describe('never throws into the app', () => {
     expect(event.defaultPrevented).toBe(false)
   })
 })
+
+// Demo mode has no backend and no real session, so a demo throw must not post. The toggle lives in
+// localStorage (the landing switch), never in the env, so the gate has to read isDemo().
+describe('demo mode', () => {
+  afterEach(() => localStorage.removeItem('pips_demo'))
+
+  it('reports nothing while the demo override is on', () => {
+    localStorage.setItem('pips_demo', '1')
+    expect(reportClientError(new Error('demo boom'))).toBe(false)
+    expect(calls()).toBe(0)
+    expect(reportedCount()).toBe(0)
+  })
+
+  it('reports again once demo is switched off', () => {
+    localStorage.setItem('pips_demo', '0')
+    expect(reportClientError(new Error('real boom'))).toBe(true)
+    expect(calls()).toBe(1)
+  })
+})

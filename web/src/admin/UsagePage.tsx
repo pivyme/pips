@@ -13,7 +13,7 @@ import { Activity, CircleSlash, Compass, Filter, Gamepad2, ListTree, Users } fro
 import { useState } from 'react'
 
 import { GameIcon } from '@/components/GameIcon'
-import { Bar, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, Segmented } from './components/primitives'
+import { Bar, DesktopOnlyNotice, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, Segmented } from './components/primitives'
 import { usageQuery } from './queries'
 import type { UsageReport } from './types'
 
@@ -35,14 +35,7 @@ export function UsagePage() {
         <Segmented value={days} options={WINDOWS} onChange={setDays} label="Window in days" />
       </PageHeader>
 
-      <div className="lg:hidden">
-        <div className="a-panel">
-          <p className="a-section-title">Open this on a desktop</p>
-          <p className="mt-1" style={{ color: 'var(--a-text-2)' }}>
-            Usage is a dense table view built for 1280px and up. Errors is the one page that works from a phone.
-          </p>
-        </div>
-      </div>
+      <DesktopOnlyNotice page="Usage" />
 
       {isPending && (
         <Panel title="Counting events" icon={Activity}>

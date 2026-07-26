@@ -18,6 +18,7 @@
 
 import { env } from '@/env'
 import { getAuthToken } from '@/lib/api'
+import { isDemo } from '@/lib/demo'
 
 export const EVENT_NAMES = [
   'app.open',
@@ -277,8 +278,10 @@ function isStandalone(): boolean {
 }
 
 function enabled(): boolean {
-  // Demo mode has no backend to talk to, and a demo session is not a real user's behaviour anyway.
-  return env.VITE_DEMO_MODE !== 'true'
+  // Demo mode has no backend to talk to, and a demo session is not a real user's behaviour anyway. Read it
+  // through isDemo(), the same seam api.ts uses: the landing toggle writes localStorage, not the env, so an
+  // env-only check leaves every toggled-in demo session posting fake events into the real table.
+  return !isDemo()
 }
 
 export function flushTrack(useBeacon = false): void {
@@ -444,4 +447,9 @@ export function queuedCount(): number {
 /** Test seam: the queued payloads, so a case can prove WHICH events a full queue dropped. */
 export function queuedPayloads(): string[] {
   return queue.map((q) => q.json)
+}
+
+/** Test seam: how many queued events have finished sealing. Only a test waits on this; a flush never does. */
+export function sealedCount(): number {
+  return queue.filter((q) => q.bytes).length
 }
