@@ -24,10 +24,12 @@ The `/menu/*` routes use a native-style push/pop transition inside the persisten
 
 - Forward navigation pushes the new page in from the right over the current page. The old page recedes left, dims, and scales down slightly.
 - Back navigation reverses it: the current page slides right while the menu page is revealed underneath.
-- The transition uses TanStack Router's `viewTransition` option and the browser View Transition API. The drawer's scroll surface is named `menu-page` in `MenuDrawer.tsx`; direction is set with `prepareMenuTransition('forward' | 'back')` before navigation; animation keyframes live in `styles.css`.
-- Keep the full page, including its sticky header, inside the named transition surface. Do not animate separate route fragments.
-- Do not implement this with two live `<Outlet>` instances or keyed wrappers around the same `<Outlet>`. TanStack resolves both to the new route, causing duplicated pages during the overlap. Browser snapshots are required to preserve the real outgoing page.
-- Every menu-hub link to a sub-screen and every menu back link must enable `viewTransition` and set the correct direction first.
+- **Never use the View Transition API here, and never re-add TanStack Router's `viewTransition` option to a menu nav.** It cost one blocking frame of 713-840ms per nav on iOS (measured on device: input 10ms, route commit 24ms, then a single 731ms frame), because WebKit rasterizes two full-screen snapshots at DPR 3. The same capture is 46ms on a desktop GPU, which is why it only ever showed on iPhone. Nothing about it was tunable: blur, edge shadow, group clip, dim+scale and hiding the 3D console all measured identical.
+- The slide is hand-rolled in `MenuDrawer.tsx`. `armMenuSlide(direction)` runs from the click handler (via `prepareMenuTransition` in `components/menu/shared.tsx`), while the outgoing page is still live: it clones the drawer's scroll container into an inert ghost and parks it at `z-index: -1` under the live page. `runMenuSlide()` then runs in the drawer's `pathname` layout effect, once the new page has committed, and animates both layers with WAAPI on transform/opacity only.
+- Keep the ghost parked and hidden until the commit. It is a fresh layer, and its first frame is its coldest: cloned `<img>`s restart their load, so they get `decoding="sync"`, and the live layer is forced opaque so nothing shows through a page that is still resolving. Both of those exist because the ghost used to flash image-less over the real page.
+- Keep the full page, including its sticky header, inside `.menu-page-transition`. Do not animate separate route fragments.
+- Do not implement this with two live `<Outlet>` instances or keyed wrappers around the same `<Outlet>`. TanStack resolves both to the new route, causing duplicated pages during the overlap. The ghost is inert DOM, so the router never resolves it.
+- Every menu-hub link to a sub-screen and every menu back link must call `prepareMenuTransition` with the correct direction before navigating.
 - Keep the 420ms fluid easing, dark overlap shadow, and reduced-motion fallback unless the user explicitly requests a different feel.
 
 **Sui (verified mid 2026, reconfirm before coding):**
