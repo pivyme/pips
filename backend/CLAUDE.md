@@ -61,10 +61,10 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 ├── prisma/
 │   ├── schema.prisma        # Database schema
 │   └── seed.ts              # Seed data (bun run db:seed)
-├── scripts/                 # Ops, diagnostics, benches. Run with `bun scripts/<name>.ts`
-│                            #   post-deploy-check, verify-sponsor, diag-pnl, diag-funding,
-│                            #   bench-lucky, bench-settle, bench-range, airdrop-dusdc,
-│                            #   migrate-achievements, backfill-emails, gen-ops-wallets, wipe-history
+├── scripts/                 # Ops, diagnostics, benches, proofs. Run with `bun scripts/<name>.ts`
+│                            #   post-deploy-check, verify-sponsor, verify-admin, verify-analytics-offpath,
+│                            #   grant-role, diag-pnl, diag-funding, bench-lucky, bench-settle, bench-range,
+│                            #   airdrop-dusdc, migrate-achievements, backfill-emails, gen-ops-wallets, wipe-history
 ├── src/
 │   ├── config/main-config.ts    # Centralized env config (import from here, not process.env)
 │   ├── routes/              # Fastify plugins, registered in app.ts
@@ -170,6 +170,11 @@ track(userId, 'money.deposit_done', { props: { chain } });     // an event only 
 Both are fire-and-forget, both are impossible to throw, and neither is ever awaited on a request or play path. If a feature touches chain or money, also add a detector to the array in `services/insights.ts` with a **one-line runbook**: an alert without a runbook is a notification, not a tool. Expected aborts (admission failures, benign 409s) stay at `warn` and never page.
 
 Never dedupe, group, or alert on an interpolated message string: our messages carry play ids, amounts, and object ids, so every occurrence is unique and the dedupe silently never fires. Key off the fingerprint or the detector key (root L-021).
+
+Two proof scripts cover the claims a unit test structurally cannot make. Run both after touching the admin gate, the capture path, or the settings table:
+
+- `bun scripts/verify-admin.ts` needs the dev server up. Walks every registered `/admin/*` route against the real DB as anonymous, as a signed-in non-admin, and as an ADMIN, checks a brief is under 8KB, then revokes and proves the next request is already locked out.
+- `bun scripts/verify-analytics-offpath.ts` needs no server. Proves a play still commits under all three kill paths (`PIPS_ANALYTICS_OFF=1` in its own process, `analytics.enabled` false, the analytics tables rejecting) with nothing surfacing to the caller.
 
 **No route may ever write `specialRoles`.** Every user write uses an explicit field allowlist, forever. Roles are read fresh per request (never baked into the JWT, or a revoke waits for token expiry), and ADMIN is granted only by `bun scripts/grant-role.ts <userIdOrUsername> ADMIN`, script-only forever, so a compromised admin session cannot mint more admins. A non-admin hitting `/admin/*` gets **404, not 403**: do not confirm the surface exists.
 

@@ -50,7 +50,8 @@ const roundLog = (msg: string): void => console.log(`\x1b[33m${msg}\x1b[0m`);
 
 // Commit a play-row update, then notify the play bus, the single choke point for every status write
 // so the SSE push is never missed. Emit strictly after commit: emitting before would push the SSE a stale row.
-async function commitPlay(playId: string, data: Prisma.PlayUpdateInput): Promise<Play> {
+// Exported so scripts/verify-analytics-offpath.ts drives the real seam rather than a copy of it.
+export async function commitPlay(playId: string, data: Prisma.PlayUpdateInput): Promise<Play> {
   const updated = await prismaQuery.play.update({ where: { id: playId }, data });
   publishPlay(playId, updated); // hand the fresh row through so the SSE pushes it with no DB re-read
   return updated;
