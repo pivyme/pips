@@ -5,7 +5,7 @@ import { queryOptions } from '@tanstack/react-query'
 
 import { getAuthToken } from '@/lib/api'
 import { env } from '@/env'
-import type { AdminPing, ErrorDetail, ErrorGroupRow, ErrorStatus, OpsSnapshot, OverviewReport, PerfReport, SettingRow, UsageReport } from './types'
+import type { AdminPing, ErrorDetail, ErrorGroupRow, ErrorStatus, OpsSnapshot, OverviewReport, PerfReport, RetentionPreview, SettingRow, UsageReport } from './types'
 
 const BASE = env.VITE_API_URL
 
@@ -123,6 +123,12 @@ export const settingsQuery = () =>
 
 export function saveSetting(key: string, value: boolean | number, confirm?: string): Promise<{ key: string; value: boolean | number }> {
   return adminFetch('/admin/settings', { method: 'PATCH', body: JSON.stringify({ key, value, confirm }) })
+}
+
+// What a value would delete, before anything is deleted. The server recomputes at apply time anyway, so
+// this is the number a human reads, not the number that authorises the delete.
+export function previewSetting(key: string, value: number): Promise<RetentionPreview> {
+  return adminFetch<RetentionPreview>(`/admin/settings/preview?key=${encodeURIComponent(key)}&value=${value}`)
 }
 
 // The banner refreshes on its own: an ops page left open on a second monitor should go red without a

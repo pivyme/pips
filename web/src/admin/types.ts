@@ -158,6 +158,18 @@ export interface PerfReport {
   generatedAt: string
 }
 
+export interface RetentionPreview {
+  key: string
+  current: number
+  next: number
+  widening: boolean
+  deletes: number
+  oldest: string | null
+  newest: string | null
+  confirm: string | null
+  noun: string
+}
+
 export interface SettingRow {
   key: string
   type: string

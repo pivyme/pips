@@ -5,7 +5,10 @@
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 
 import { adminMiddleware } from '../middlewares/adminMiddleware.ts';
-import { allSettings, getSetting, isDestructive, isSettingKey, setSetting } from '../config/admin-settings.ts';
+import { allSettings, getSetting, isDestructive, isSettingKey, setSetting, validateSetting, type SettingKey } from '../config/admin-settings.ts';
+import { SPECIAL_ROLES, isSpecialRole } from '../config/roles.ts';
+import { alert } from '../lib/alert.ts';
+import { checkConfirm, countGroupSamples, previewRetention, purgeGroupSamples } from '../services/retention.ts';
 import { RATE_LIMIT_WINDOW, SUI_NETWORK } from '../config/main-config.ts';
 import { MAX_EVENTS_PER_REQUEST, isEventName, isPreAuthEvent, platformFrom } from '../config/analytics-catalog.ts';
 import { RELEASE } from '../config/release.ts';
@@ -224,24 +227,53 @@ function hasStandaloneHint(events: RawEvent[]): boolean {
 
 type Applied = { ok: true; value: boolean | number } | { ok: false; status: number; code: string; message: string };
 
-// One key per call, validated against the SETTINGS bounds, audited on every apply. Destructive keys carry
-// the extra confirm rules; there is deliberately no force flag, so the API cannot be driven destructively
-// by accident and neither can the UI.
+// One key per call, validated against the SETTINGS bounds, audited on every apply. There is deliberately
+// no force flag and no bypass: if the API cannot be driven destructively by accident, neither can the UI.
+//
+// Order matters. The bounds are checked BEFORE the confirm, so typing `1` into a retention field is
+// rejected outright rather than offered as something to confirm carefully. The floor exists so the worst
+// possible mistake still leaves a month of data to work from.
 async function applySettingChange(key: string, value: unknown, confirm: string | undefined, actorId: string | null): Promise<Applied> {
-  if (!isSettingKey(key) && !(await allSettings()).some((s) => s.key === key)) {
-    return { ok: false, status: 400, code: 'UNKNOWN_SETTING', message: 'unknown setting key' };
-  }
-  const destructive = isSettingKey(key) && isDestructive(key);
-  if (destructive && !confirm) {
-    return { ok: false, status: 400, code: 'CONFIRM_REQUIRED', message: 'this setting deletes rows, preview the change and type the confirmation first' };
+  const rows = await allSettings();
+  const row = rows.find((s) => s.key === key);
+  if (!row) return { ok: false, status: 400, code: 'UNKNOWN_SETTING', message: 'unknown setting key' };
+
+  const checked = validateSetting(key, value);
+  if (!checked.ok) return { ok: false, status: 400, code: 'INVALID_VALUE', message: checked.reason };
+
+  if (isSettingKey(key) && isDestructive(key)) {
+    const gate = await guardDestructive(key, checked.value as number, confirm);
+    if (gate) return gate;
   }
 
-  const before = (await allSettings()).find((s) => s.key === key)?.value ?? null;
-  const result = await setSetting(key, value);
+  const result = await setSetting(key, checked.value);
   if (!result.ok) return { ok: false, status: 400, code: 'INVALID_VALUE', message: result.reason };
 
-  track(actorId, 'admin.setting_change', { props: { key, from: String(before), to: String(result.value) } });
+  track(actorId, 'admin.setting_change', { props: { key, from: String(row.value), to: String(result.value) } });
   return { ok: true, value: result.value };
+}
+
+// The §9.1 confirm gate. Recomputes the count at apply time rather than trusting the preview, so a stale
+// number cannot be confirmed after a busy hour.
+async function guardDestructive(key: SettingKey, next: number, confirm: string | undefined): Promise<Applied | null> {
+  const preview = await previewRetention(key, next);
+  if (!preview) return null;
+  if (preview.widening) return null; // keeps more, deletes nothing, needs no ceremony
+
+  const verdict = checkConfirm(confirm, preview.deletes, preview.noun);
+  if (verdict.ok) {
+    // Deleting data is the one thing worth a ping even when it was entirely intentional.
+    alert('warn', `retention narrowed: ${key} ${preview.current} -> ${next}, ${preview.deletes} ${preview.noun} will be pruned`, undefined, `retention:${key}`);
+    return null;
+  }
+  if (verdict.reason === 'drift') {
+    return { ok: false, status: 409, code: 'PREVIEW_AGAIN', message: `the row count moved since your preview, preview again (now "${verdict.expected}")` };
+  }
+  const message =
+    verdict.reason === 'absent'
+      ? `this deletes ${preview.deletes} ${preview.noun}, confirm with "${verdict.expected}"`
+      : `confirmation does not match, type "${verdict.expected}"`;
+  return { ok: false, status: 400, code: 'CONFIRM_REQUIRED', message };
 }
 
 export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
@@ -331,6 +363,17 @@ export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _op
     return ok(reply, { settings: await allSettings() });
   });
 
+  // What a candidate value would delete, before anything is deleted: the exact count, the timestamp range
+  // it spans, and whether it is a widening (safe) or a narrowing (destructive, needs the typed confirm).
+  app.get('/admin/settings/preview', admin, async (request: FastifyRequest, reply: FastifyReply) => {
+    const q = request.query as { key?: string; value?: string };
+    const value = Number(q.value);
+    if (!q.key || !Number.isFinite(value)) return handleError(reply, 400, 'key and a numeric value are required', 'BAD_PREVIEW');
+    const preview = await previewRetention(q.key, Math.trunc(value));
+    if (!preview) return handleError(reply, 400, 'that setting does not delete anything, so it has no preview', 'NOT_DESTRUCTIVE');
+    return ok(reply, preview);
+  });
+
   // One key per call. A destructive key needs the §9.1 confirm, which has no bypass flag by design.
   app.patch('/admin/settings', admin, async (request: FastifyRequest, reply: FastifyReply) => {
     const body = (request.body ?? {}) as { key?: string; value?: unknown; confirm?: string };
@@ -378,6 +421,52 @@ export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _op
     const group = await setErrorStatus(fingerprint, body.status as ErrorStatus, body.notes);
     if (!group) return handleNotFoundError(reply, 'Error group');
     return ok(reply, { group });
+  });
+
+  // The one per-object destructive action in the whole dashboard, and it carries the same typed confirm.
+  // There is deliberately no path here to truncate a table, purge every group, wipe a user, or reset the
+  // database: bulk deletion happens only through retention, on a cron, under the floors above.
+  app.delete('/admin/errors/:fingerprint/samples', admin, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { fingerprint } = request.params as { fingerprint: string };
+    const q = request.query as { confirm?: string };
+    const actual = await countGroupSamples(fingerprint);
+    if (!actual) return handleNotFoundError(reply, 'Error samples');
+
+    const verdict = checkConfirm(q.confirm, actual, 'samples');
+    if (!verdict.ok) {
+      if (verdict.reason === 'drift') return handleError(reply, 409, `the count moved, confirm with "${verdict.expected}"`, 'PREVIEW_AGAIN');
+      return handleError(reply, 400, `this deletes ${actual} samples, confirm with "${verdict.expected}"`, 'CONFIRM_REQUIRED');
+    }
+
+    const deleted = await purgeGroupSamples(fingerprint);
+    track(request.user?.id ?? null, 'admin.setting_change', { props: { key: 'purge.group_samples', from: String(actual), to: '0' } });
+    alert('warn', `purged ${deleted} samples from error group ${fingerprint}`, undefined, `purge:${fingerprint}`);
+    return ok(reply, { fingerprint, deleted });
+  });
+
+  // Roles the API is allowed to move: never ADMIN, in either direction. ADMIN stays script-only (§2.1
+  // rule 3) so a compromised admin session cannot mint more admins or lock the team out.
+  app.patch('/admin/users/:id/roles', admin, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as { role?: string; grant?: boolean };
+    const role = typeof body.role === 'string' ? body.role.toUpperCase() : '';
+    if (!isSpecialRole(role)) return handleError(reply, 400, `role must be one of ${SPECIAL_ROLES.join(', ')}`, 'INVALID_ROLE');
+    if (role === 'ADMIN') {
+      return handleError(reply, 400, 'ADMIN is granted and revoked only by bun scripts/grant-role.ts, never through the API', 'ADMIN_IS_SCRIPT_ONLY');
+    }
+
+    const target = await prismaQuery.user.findUnique({ where: { id }, select: { id: true, username: true, specialRoles: true } });
+    if (!target) return handleNotFoundError(reply, 'User');
+
+    const grant = body.grant !== false;
+    const next = grant ? [...new Set([...target.specialRoles, role])] : target.specialRoles.filter((r) => r !== role);
+    if (next.length === target.specialRoles.length && grant === target.specialRoles.includes(role)) {
+      return ok(reply, { userId: target.id, specialRoles: target.specialRoles, changed: false });
+    }
+
+    await prismaQuery.user.update({ where: { id }, data: { specialRoles: next } });
+    track(request.user?.id ?? null, 'admin.role_change', { props: { target: target.username ?? target.id, role, action: grant ? 'grant' : 'revoke' } });
+    return ok(reply, { userId: target.id, specialRoles: next, changed: true });
   });
 
   // text/markdown, not JSON: the whole point is that it pastes straight into an AI.

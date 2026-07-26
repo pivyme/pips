@@ -29,7 +29,6 @@ import { avatarRoutes } from './src/routes/avatarRoutes.ts';
 import { analyticsRoutes } from './src/routes/analyticsRoutes.ts';
 
 // Workers
-import { startErrorLogCleanupWorker } from './src/workers/errorLogCleanup.ts';
 import { startAnalyticsWorker } from './src/workers/analytics.ts';
 import { startDepositCleanupWorker } from './src/workers/depositCleanup.ts';
 import { startSettleWorker } from './src/workers/settle.ts';
@@ -297,9 +296,8 @@ const start = async (): Promise<void> => {
     await waitForDb();
 
     // Start workers
-    startErrorLogCleanupWorker();
     // Deposit tracking rows only exist when cross-chain execution is on (mainnet), so the sweeper is dead
-    // weight anywhere else. The delete is idempotent, so like errorLogCleanup it runs on every instance.
+    // weight anywhere else. The delete is idempotent, so like retention it runs on every instance.
     if (BRIDGE_EXECUTE_ENABLED) startDepositCleanupWorker();
 
     // Confirm Mysten's configured Predict objects still exist before serving, so a Mysten redeploy shows

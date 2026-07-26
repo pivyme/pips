@@ -5,10 +5,12 @@
 // exist, and it cannot forget one that does.
 
 import { useQueryClient, useQuery } from '@tanstack/react-query'
+import { X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-import { saveSetting, settingsQuery } from '../queries'
-import type { SettingRow } from '../types'
+import { Hw3DToggle } from '@/ui/Hardware3D'
+import { previewSetting, saveSetting, settingsQuery } from '../queries'
+import type { RetentionPreview, SettingRow } from '../types'
 import { Badge, ErrorState, LoadingState } from './primitives'
 
 export function SettingsDrawer({ onClose }: { onClose: () => void }) {
@@ -37,9 +39,13 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
         className="a-overlay relative flex w-full max-w-[520px] flex-col overflow-hidden"
         style={{ borderRadius: 0, borderRight: 'none', borderTop: 'none', borderBottom: 'none' }}
       >
-        <header className="flex h-11 shrink-0 items-center justify-between border-b px-4" style={{ borderColor: 'var(--a-border)' }}>
-          <span className="a-section-title">Settings</span>
-          <button type="button" className="a-btn" onClick={onClose}>
+        <header className="flex h-14 shrink-0 items-center justify-between border-b px-4" style={{ borderColor: 'var(--a-border)' }}>
+          <div className="flex flex-col">
+            <span className="a-section-title">Settings</span>
+            <span style={{ color: 'var(--a-text-3)', fontSize: 12 }}>Live tunables, no redeploy</span>
+          </div>
+          <button type="button" className="a-btn" onClick={onClose} aria-label="Close settings">
+            <X size={14} strokeWidth={2.6} />
             Close
           </button>
         </header>
@@ -87,11 +93,14 @@ function SettingField({ row }: { row: SettingRow }) {
     setDraft(String(row.value))
   }, [row.value])
 
-  const apply = async (value: boolean | number) => {
+  const [pending, setPending] = useState<{ value: number; preview: RetentionPreview } | null>(null)
+
+  const apply = async (value: boolean | number, confirm?: string) => {
     setState({ kind: 'saving' })
     try {
-      await saveSetting(row.key, value)
+      await saveSetting(row.key, value, confirm)
       setState({ kind: 'saved' })
+      setPending(null)
       await client.invalidateQueries({ queryKey: ['admin', 'settings'] })
     } catch (e) {
       setState({ kind: 'error', message: e instanceof Error ? e.message : 'Could not save' })
@@ -99,13 +108,26 @@ function SettingField({ row }: { row: SettingRow }) {
     }
   }
 
+  // A destructive key never saves on blur. It previews first, and the modal makes you type the exact
+  // string the server issued. That is UX; the server recheck is the actual control.
   const onBlur = () => {
     const next = Number(draft)
     if (!Number.isFinite(next) || next === row.value) {
       setDraft(String(row.value))
       return
     }
-    void apply(next)
+    if (!row.destructive) {
+      void apply(next)
+      return
+    }
+    setState({ kind: 'saving' })
+    previewSetting(row.key, next)
+      .then((preview) => {
+        setState({ kind: 'idle' })
+        if (preview.widening) return apply(next)
+        setPending({ value: next, preview })
+      })
+      .catch((e: unknown) => setState({ kind: 'error', message: e instanceof Error ? e.message : 'Could not preview' }))
   }
 
   const range = row.min != null && row.max != null ? `${row.min} to ${row.max}` : null
@@ -115,7 +137,7 @@ function SettingField({ row }: { row: SettingRow }) {
     <div className="flex items-start gap-3 border-b px-4 py-2.5" style={{ borderColor: 'var(--a-border)' }}>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span style={{ color: 'var(--a-text)' }}>{row.label ?? row.key}</span>
+          <span style={{ color: 'var(--a-text)', fontWeight: 600 }}>{row.label ?? row.key}</span>
           {row.destructive && <Badge tone="warn">deletes rows</Badge>}
         </div>
         <span style={{ color: 'var(--a-text-3)', fontSize: 12 }}>
@@ -132,6 +154,7 @@ function SettingField({ row }: { row: SettingRow }) {
         {row.destructive && state.kind !== 'error' && (
           <span style={{ color: 'var(--a-text-3)', fontSize: 12 }}>Lowering this deletes rows, so it needs a typed confirmation.</span>
         )}
+        {pending && <ConfirmDelete preview={pending.preview} onCancel={() => setPending(null)} onConfirm={(c) => void apply(pending.value, c)} />}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
@@ -141,15 +164,12 @@ function SettingField({ row }: { row: SettingRow }) {
           </button>
         )}
         {row.type === 'bool' ? (
-          <button
-            type="button"
-            className={`a-btn ${row.value ? 'a-btn-primary' : ''}`}
-            onClick={() => void apply(!row.value)}
-            disabled={state.kind === 'saving'}
-            aria-pressed={row.value === true}
-          >
-            {row.value ? 'On' : 'Off'}
-          </button>
+          <Hw3DToggle
+            label={row.label ?? row.key}
+            isSelected={row.value === true}
+            isDisabled={state.kind === 'saving'}
+            onChange={(next) => void apply(next)}
+          />
         ) : (
           <input
             className="a-input w-[104px] text-right"
@@ -158,10 +178,43 @@ function SettingField({ row }: { row: SettingRow }) {
             onChange={(e) => setDraft(e.target.value)}
             onBlur={onBlur}
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-            disabled={state.kind === 'saving' || row.destructive}
+            disabled={state.kind === 'saving'}
             aria-label={row.key}
           />
         )}
+      </div>
+    </div>
+  )
+}
+
+// The type-to-confirm box. It shows what is about to go, how far back it reaches, and refuses to enable
+// the button until the string matches character for character.
+function ConfirmDelete({ preview, onCancel, onConfirm }: { preview: RetentionPreview; onCancel: () => void; onConfirm: (confirm: string) => void }) {
+  const [typed, setTyped] = useState('')
+  const expected = preview.confirm ?? ''
+  const matches = typed.trim() === expected
+
+  return (
+    <div className="mt-2 flex flex-col gap-2 rounded-[var(--a-radius-sm)] border p-3" style={{ borderColor: 'var(--a-critical)', background: 'rgb(255 90 77 / 0.07)' }}>
+      <span style={{ color: 'var(--a-critical)', fontWeight: 600 }}>
+        {preview.current} to {preview.next} deletes {preview.deletes.toLocaleString('en-US')} {preview.noun}
+      </span>
+      {preview.oldest && (
+        <span style={{ color: 'var(--a-text-3)', fontSize: 12 }}>
+          spanning {new Date(preview.oldest).toISOString().slice(0, 10)} to {new Date(preview.newest ?? preview.oldest).toISOString().slice(0, 10)}. This cannot be undone.
+        </span>
+      )}
+      <label className="flex flex-col gap-1" style={{ fontSize: 12, color: 'var(--a-text-2)' }}>
+        Type <span style={{ color: 'var(--a-text)', fontFamily: 'ui-monospace, monospace' }}>{expected}</span>
+        <input className="a-input" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={expected} autoComplete="off" spellCheck={false} />
+      </label>
+      <div className="flex gap-2">
+        <button type="button" className="a-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="button" className="a-btn a-btn-primary" disabled={!matches} onClick={() => onConfirm(expected)}>
+          Delete {preview.deletes.toLocaleString('en-US')} {preview.noun}
+        </button>
       </div>
     </div>
   )

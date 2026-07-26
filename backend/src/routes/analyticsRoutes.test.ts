@@ -72,6 +72,9 @@ export const written = {
 // Stored setting overrides, so the kill-switch test can flip `client_errors.enabled` off for real.
 const settingRows = new Map<string, string>();
 
+// The role the API is allowed to move, so the revoke rules can be watched to hold.
+let roleState: string[] = [];
+
 mock.module('../lib/prisma.ts', () => ({
   prismaQuery: {
     errorGroup: {
@@ -88,16 +91,20 @@ mock.module('../lib/prisma.ts', () => ({
     },
     errorEvent: {
       findMany: async ({ skip }: { skip?: number }) => (skip === undefined ? [SAMPLE] : []),
+      findFirst: async () => null,
       groupBy: async () => [],
       create: async ({ data }: { data: Record<string, unknown> }) => {
         written.samples.push(data);
         return data;
       },
-      deleteMany: async () => ({ count: 0 }),
-      count: async () => 0,
+      deleteMany: async () => ({ count: 1 }),
+      // Discriminated: a per-group count feeds the sample purge, an age-window count feeds the daily
+      // error budget, and they must not answer for each other.
+      count: async ({ where }: { where?: { fingerprint?: string } } = {}) => (where?.fingerprint ? 1 : 0),
     },
     event: {
       findMany: async () => [],
+      findFirst: async () => null,
       groupBy: async () => [],
       count: async () => 0,
       // The push runs synchronously at call time (an async body runs to its first await), so the row is
@@ -107,7 +114,15 @@ mock.module('../lib/prisma.ts', () => ({
         return { count: data.length };
       },
     },
-    user: { findMany: async () => [{ id: 'u_normal', username: 'normal', createdAt: new Date('2026-07-20T00:00:00Z') }], count: async () => 1 },
+    user: {
+      findMany: async () => [{ id: 'u_normal', username: 'normal', createdAt: new Date('2026-07-20T00:00:00Z') }],
+      findUnique: async ({ where }: { where: { id: string } }) => (where.id === 'u_normal' ? { id: 'u_normal', username: 'normal', specialRoles: roleState.slice() } : null),
+      update: async ({ data }: { data: { specialRoles: string[] } }) => {
+        roleState = data.specialRoles;
+        return { id: 'u_normal', specialRoles: roleState };
+      },
+      count: async () => 1,
+    },
     play: { findMany: async () => [], count: async () => 0 },
     deposit: { findMany: async () => [] },
     walletTx: { findMany: async () => [] },
@@ -122,6 +137,10 @@ mock.module('../lib/prisma.ts', () => ({
       },
     },
     errorLog: { create: async () => ({}) },
+    // The newest-N-per-fingerprint window function. No overflow in this fixture: these tests are about
+    // the gate's status codes, not the arithmetic, which retention.test.ts pins.
+    $queryRaw: async (strings: TemplateStringsArray) =>
+      strings.join(' ').includes('count(*)') ? [{ n: 0n, oldest: null, newest: null }] : [],
   },
 }));
 
@@ -176,13 +195,19 @@ type Call = (
 // Concrete params + a valid body per route, so an ADMIN really gets a 200 rather than a 404 for a missing
 // resource, which would make the gate look like it passed when it never ran.
 function concrete(url: string): string {
-  return url.replace(':fingerprint', encodeURIComponent(GROUP.fingerprint));
+  const path = url.replace(':fingerprint', encodeURIComponent(GROUP.fingerprint)).replace(':id', 'u_normal');
+  // Two routes need a query to do anything at all, and a walk that got a 400 here would be asserting the
+  // argument check rather than the gate.
+  if (url.endsWith('/settings/preview')) return `${path}?key=retention.event_days&value=90`;
+  if (url.endsWith('/samples')) return `${path}?confirm=${encodeURIComponent('delete 1 samples')}`;
+  return path;
 }
 
 function payload(method: string, url: string): Record<string, unknown> | undefined {
   if (method !== 'PATCH') return undefined;
   // A non-destructive key at its default: enough to prove the gate, and it changes nothing.
   if (url === '/admin/settings') return { key: 'rate.admin_max', value: 60 };
+  if (url.endsWith('/roles')) return { role: 'KOL', grant: true };
   return { status: 'ack' };
 }
 
@@ -192,6 +217,7 @@ beforeEach(() => {
   written.samples = [];
   written.events = [];
   settingRows.clear();
+  roleState = [];
   clearSettingsCache();
 });
 
@@ -587,6 +613,116 @@ describe('sealed ingest end to end (§4.4)', () => {
     expect(res.json()).toMatchObject({ error: { code: 'BAD_ENVELOPE' } });
     expect(written.events).toHaveLength(0);
 
+    await app.close();
+  });
+});
+
+describe('destructive guardrails (§9.1)', () => {
+  const patch = async (call: Call, body: Record<string, unknown>) => call('PATCH', '/admin/settings', { token: ADMIN_TOKEN, body });
+
+  it('rejects a below-floor retention outright, with no confirmation offered', async () => {
+    const { app, call } = await buildApp();
+    const res = await patch(call, { key: 'retention.event_days', value: 1, confirm: 'delete 0 events' });
+    expect(res.status).toBe(400);
+    expect(res.json()).toMatchObject({ error: { code: 'INVALID_VALUE' } });
+    await app.close();
+  });
+
+  it('rejects a narrowing change with no confirm at all', async () => {
+    const { app, call } = await buildApp();
+    const res = await patch(call, { key: 'retention.event_days', value: 90 });
+    expect(res.status).toBe(400);
+    expect(res.json()).toMatchObject({ error: { code: 'CONFIRM_REQUIRED' } });
+    await app.close();
+  });
+
+  it('rejects a mismatched confirmation, and there is no force flag to route around it', async () => {
+    const { app, call } = await buildApp();
+    for (const confirm of ['yes', 'delete everything', 'delete 0 plays']) {
+      const res = await patch(call, { key: 'retention.event_days', value: 90, confirm });
+      expect(`${confirm} -> ${res.status}`).toBe(`${confirm} -> 400`);
+    }
+    // And a force flag is simply not a thing the handler reads.
+    const forced = await patch(call, { key: 'retention.event_days', value: 90, force: true });
+    expect(forced.status).toBe(400);
+    await app.close();
+  });
+
+  it('answers 409 "preview again" when the confirmed count has drifted over 10%', async () => {
+    const { app, call } = await buildApp();
+    // The fixture has zero prunable events, so any non-trivial confirmed count is stale by definition.
+    const res = await patch(call, { key: 'retention.event_days', value: 90, confirm: 'delete 4200 events' });
+    expect(res.status).toBe(409);
+    expect(res.json()).toMatchObject({ error: { code: 'PREVIEW_AGAIN' } });
+    await app.close();
+  });
+
+  it('lets a widening change through with no confirmation, because it deletes nothing', async () => {
+    const { app, call } = await buildApp();
+    const res = await patch(call, { key: 'retention.event_days', value: 500 });
+    expect(res.status).toBe(200);
+    expect(res.json()).toMatchObject({ data: { key: 'retention.event_days', value: 500 } });
+    await app.close();
+  });
+
+  it('applies a narrowing change once the confirmation matches the recomputed count', async () => {
+    const { app, call } = await buildApp();
+    const preview = await call('GET', '/admin/settings/preview?key=retention.event_days&value=90', { token: ADMIN_TOKEN });
+    const { confirm, widening } = (preview.json() as { data: { confirm: string; widening: boolean } }).data;
+    expect(widening).toBe(false);
+
+    const res = await patch(call, { key: 'retention.event_days', value: 90, confirm });
+    expect(res.status).toBe(200);
+    await app.close();
+  });
+
+  it('has no preview for a setting that deletes nothing', async () => {
+    const { app, call } = await buildApp();
+    const res = await call('GET', '/admin/settings/preview?key=rate.admin_max&value=30', { token: ADMIN_TOKEN });
+    expect(res.status).toBe(400);
+    expect(res.json()).toMatchObject({ error: { code: 'NOT_DESTRUCTIVE' } });
+    await app.close();
+  });
+
+  it('needs the typed confirm to purge one group\'s samples too', async () => {
+    const { app, call } = await buildApp();
+    const bare = await call('DELETE', `/admin/errors/${encodeURIComponent(GROUP.fingerprint)}/samples`, { token: ADMIN_TOKEN });
+    expect(bare.status).toBe(400);
+
+    const confirmed = await call('DELETE', `/admin/errors/${encodeURIComponent(GROUP.fingerprint)}/samples?confirm=${encodeURIComponent('delete 1 samples')}`, {
+      token: ADMIN_TOKEN,
+    });
+    expect(confirmed.status).toBe(200);
+    await app.close();
+  });
+});
+
+describe('role changes (§9.1)', () => {
+  it('refuses to move ADMIN through the API, in either direction', async () => {
+    const { app, call } = await buildApp();
+    for (const grant of [true, false]) {
+      const res = await call('PATCH', '/admin/users/u_normal/roles', { token: ADMIN_TOKEN, body: { role: 'ADMIN', grant } });
+      expect(`grant=${grant} -> ${res.status}`).toBe(`grant=${grant} -> 400`);
+      expect(res.json()).toMatchObject({ error: { code: 'ADMIN_IS_SCRIPT_ONLY' } });
+    }
+    await app.close();
+  });
+
+  it('grants and revokes a non-ADMIN role', async () => {
+    const { app, call } = await buildApp();
+    const granted = await call('PATCH', '/admin/users/u_normal/roles', { token: ADMIN_TOKEN, body: { role: 'KOL', grant: true } });
+    expect(granted.json()).toMatchObject({ data: { specialRoles: ['KOL'] } });
+
+    const revoked = await call('PATCH', '/admin/users/u_normal/roles', { token: ADMIN_TOKEN, body: { role: 'KOL', grant: false } });
+    expect(revoked.json()).toMatchObject({ data: { specialRoles: [] } });
+    await app.close();
+  });
+
+  it('rejects a role that is not in SPECIAL_ROLES', async () => {
+    const { app, call } = await buildApp();
+    const res = await call('PATCH', '/admin/users/u_normal/roles', { token: ADMIN_TOKEN, body: { role: 'SUPERUSER', grant: true } });
+    expect(res.status).toBe(400);
+    expect(res.json()).toMatchObject({ error: { code: 'INVALID_ROLE' } });
     await app.close();
   });
 });

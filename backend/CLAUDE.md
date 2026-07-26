@@ -88,7 +88,8 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   │   ├── price-warmer.ts  # keeps display-asset Pyth spot pre-warmed
 │   │   ├── wallet-indexer.ts # scans user addresses into the WalletTx ledger (presence-gated)
 │   │   ├── token-worker.ts  # warms the TokenInfo metadata/price cache off the request path
-│   │   └── errorLogCleanup.ts, depositCleanup.ts (mainnet)
+│   │   ├── analytics.ts     # ops detectors, nightly digest, balance sweep, retention (the one analytics cron)
+│   │   └── depositCleanup.ts (mainnet)
 │   ├── middlewares/authMiddleware.ts
 │   ├── types/api.ts         # DTO contract (mirrors web/src/lib/api.ts)
 │   ├── utils/               # errorHandler, validationUtils, miscUtils, timeUtils
@@ -149,7 +150,7 @@ return handleDatabaseError(reply, 'create user', originalError);
 return handleServerError(reply, originalError);
 ```
 
-Error logs are pruned by age by the cleanup worker, off the `retention.error_days` setting in `src/config/admin-settings.ts` (a DB-backed knob, not an env var).
+Error logs are pruned by age by `services/retention.ts` (run hourly from the analytics worker), off the `retention.error_days` setting in `src/config/admin-settings.ts` (a DB-backed knob, not an env var). Retention is the only code here that deletes rows: chunked at 5k with a 50k per-run cap, hard floors clamped on read, and a typed confirm the server recomputes. There is deliberately no path to truncate a table, purge every group, wipe a user, or reset the DB.
 
 ---
 
