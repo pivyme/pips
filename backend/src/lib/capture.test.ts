@@ -160,19 +160,24 @@ describe('grouping (§2.3, §2.4)', () => {
     expect([...groups.values()][0]!.count).toBe(2);
   });
 
-  it('reopens a resolved group when it fires again', async () => {
+  it('reopens a resolved group when it fires again, and leaves the regression mark on it', async () => {
     captureError(new Error(ABORT()), { kind: 'chain' });
     await flushCaptures();
 
     const g = groups.get('chain.backing_unfunded')!;
     g.status = 'resolved';
-    g.resolvedAt = new Date();
+    const resolvedAt = new Date();
+    g.resolvedAt = resolvedAt;
 
     captureError(new Error(ABORT()), { kind: 'chain' });
     await flushCaptures();
 
-    expect(groups.get('chain.backing_unfunded')!.status).toBe('open');
-    expect(groups.get('chain.backing_unfunded')!.resolvedAt).toBeNull();
+    const after = groups.get('chain.backing_unfunded')!;
+    expect(after.status).toBe('open');
+    // resolvedAt is deliberately KEPT: `open` plus a resolvedAt is the only queryable trace that this
+    // group had been closed and came back, and that pair is exactly what the regression detector watches.
+    // Nulling it here would silently reopen the group as if it were an old bug nobody had looked at.
+    expect(after.resolvedAt).toEqual(resolvedAt);
   });
 
   it('leaves an ignored group ignored, so suppressed noise stays suppressed', async () => {

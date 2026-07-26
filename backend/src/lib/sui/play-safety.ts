@@ -94,6 +94,34 @@ export function sponsorPaused(): { paused: boolean; reason: string } {
   return { paused: pauseState.paused, reason: pauseState.reason };
 }
 
+export function sponsorFloorSui(): number {
+  return Math.max(SPONSOR_FLOOR_SUI, Number(PLAY_GAS_BUDGET) / MIST_PER_SUI);
+}
+
+// What the runway detector reads. It reuses the monitor's last balance rather than doing its own chain
+// read, so the detector costs nothing and can never disagree with the pause state.
+export function sponsorHealth(): {
+  enabled: boolean;
+  reserveSui: number;
+  floorSui: number;
+  paused: boolean;
+  burnSuiPerHour: number | null;
+  hoursLeft: number | null;
+  checkedAt: number;
+} {
+  const floorSui = sponsorFloorSui();
+  const usable = Math.max(0, pauseState.reserveSui - floorSui);
+  return {
+    enabled: SPONSOR_ENABLED && Boolean(sponsorAddress),
+    reserveSui: pauseState.reserveSui,
+    floorSui,
+    paused: pauseState.paused,
+    burnSuiPerHour: burnPerHour,
+    hoursLeft: burnPerHour && burnPerHour > 0 ? usable / burnPerHour : null,
+    checkedAt: pauseState.checkedAt,
+  };
+}
+
 // Already-in-memory numbers the AI brief wants at error time. No chain read: this runs inside a failing
 // path and must stay free, so it reports the last monitored value and how stale it is.
 registerSystemState(() => ({
@@ -104,6 +132,11 @@ registerSystemState(() => ({
 }));
 
 let lastReserveSui: number | null = null;
+let lastReserveAt = 0;
+// Smoothed burn, so one busy minute does not read as an emergency and one quiet minute does not read as
+// infinite runway. Null until two successful reads have been seen.
+let burnPerHour: number | null = null;
+const BURN_EMA_ALPHA = 0.3;
 
 async function readSponsorReserveSui(): Promise<number> {
   const bal = await suiClient.getBalance({ owner: sponsorAddress, coinType: SUI_TYPE });
@@ -131,12 +164,18 @@ export async function refreshSponsorPauseState(): Promise<void> {
     if (burn >= SPONSOR_BURN_WARN_SUI) {
       console.warn(`[play-safety] sponsor burned ${burn.toFixed(3)} SUI since last check (reserve now ${reserveSui.toFixed(3)} SUI)`);
     }
+    const elapsedH = (pauseState.checkedAt - lastReserveAt) / 3_600_000;
+    if (elapsedH > 0 && burn >= 0) {
+      const rate = burn / elapsedH;
+      burnPerHour = burnPerHour == null ? rate : burnPerHour + BURN_EMA_ALPHA * (rate - burnPerHour);
+    }
   }
   lastReserveSui = reserveSui;
+  lastReserveAt = pauseState.checkedAt;
 
   // The effective floor is never below one play's upfront gas reservation: below PLAY_GAS_BUDGET every
   // sponsored tx fails "Invalid withdraw reservation" outright, which must surface as the pause, not raw errors.
-  const floorSui = Math.max(SPONSOR_FLOOR_SUI, Number(PLAY_GAS_BUDGET) / MIST_PER_SUI);
+  const floorSui = sponsorFloorSui();
   const shouldPause = reserveSui < floorSui;
   if (shouldPause && !pauseState.paused) {
     pauseState.paused = true;

@@ -572,7 +572,9 @@ async function writeCapture(err: unknown, opts: CaptureOptions): Promise<void> {
       ...(newUser ? { usersAffected: { increment: 1 } } : {}),
       lastSeen: now,
       lastRelease: release,
-      ...(status && status !== prior?.status ? { status, resolvedAt: null } : {}),
+      // A regression keeps its resolvedAt: `open` with a resolvedAt is the only queryable trace that this
+      // group had been closed and came back, which is what detector 11 watches. Triaging it clears the mark.
+      ...(status && status !== prior?.status ? { status, ...(regression ? {} : { resolvedAt: null }) } : {}),
     },
   });
 

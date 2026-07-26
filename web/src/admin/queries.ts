@@ -5,7 +5,7 @@ import { queryOptions } from '@tanstack/react-query'
 
 import { getAuthToken } from '@/lib/api'
 import { env } from '@/env'
-import type { AdminPing, ErrorDetail, ErrorGroupRow, ErrorStatus, UsageReport } from './types'
+import type { AdminPing, ErrorDetail, ErrorGroupRow, ErrorStatus, OpsSnapshot, UsageReport } from './types'
 
 const BASE = env.VITE_API_URL
 
@@ -94,5 +94,16 @@ export const usageQuery = (days: number) =>
     queryKey: ['admin', 'usage', days],
     queryFn: () => adminFetch<UsageReport>(`/admin/usage?days=${days}`),
     staleTime: 60_000,
+    retry: false,
+  })
+
+// The banner refreshes on its own: an ops page left open on a second monitor should go red without a
+// reload. 30s matches the cron's cadence closely enough without polling for nothing.
+export const opsQuery = () =>
+  queryOptions({
+    queryKey: ['admin', 'ops'],
+    queryFn: () => adminFetch<OpsSnapshot>('/admin/ops'),
+    staleTime: 20_000,
+    refetchInterval: 30_000,
     retry: false,
   })

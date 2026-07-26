@@ -10,7 +10,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, type ReactNode } from 'react'
 
 import { useAuth } from '@/lib/auth'
-import { pingQuery } from './queries'
+import { opsQuery, pingQuery } from './queries'
 import './admin.css'
 
 const NAV = [
@@ -93,11 +93,27 @@ function isActive(pathname: string, to: string): boolean {
   return to === '/admin' ? p === '/admin' : p.startsWith(to)
 }
 
-// Green when the API answers as an admin, red when it does not. One dot is the whole "is it up" question.
+// One dot for "is it up and is it well". It carries the ops verdict too, because a green dot above a red
+// banner is the kind of small contradiction that teaches people not to trust either.
 function HealthDot() {
   const q = useQuery(pingQuery())
-  const color = q.isPending ? 'var(--a-text-muted)' : q.isError ? 'var(--a-critical)' : 'var(--a-ok)'
-  const label = q.isPending ? 'Checking the API' : q.isError ? 'API unreachable or access revoked' : `API healthy (${q.data?.network})`
+  const ops = useQuery(opsQuery())
+
+  const worst = ops.data?.worst ?? 'ok'
+  const color = q.isPending
+    ? 'var(--a-text-muted)'
+    : q.isError || worst === 'critical'
+      ? 'var(--a-critical)'
+      : worst === 'warn'
+        ? 'var(--a-warn)'
+        : 'var(--a-ok)'
+  const label = q.isPending
+    ? 'Checking the API'
+    : q.isError
+      ? 'API unreachable or access revoked'
+      : worst === 'ok'
+        ? `Healthy (${q.data?.network})`
+        : `${worst === 'critical' ? 'Critical' : 'Degraded'}: see the Overview banner`
   return <span className="a-dot" style={{ background: color }} title={label} aria-label={label} />
 }
 

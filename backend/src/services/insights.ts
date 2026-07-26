@@ -4,7 +4,16 @@
 // See bigdev/plans/cont/03-ADMIN-DASHBOARD.md §5 and §7.4.
 
 import { EVENT_NAMES } from '../config/analytics-catalog.ts';
+import { getTunable, registerTunable } from '../config/admin-settings.ts';
+import { EXPIRY_SAFETY_MS, TREASURY_MIN_DUSDC } from '../config/main-config.ts';
+import { alert } from '../lib/alert.ts';
 import { prismaQuery } from '../lib/prisma.ts';
+import { allWorkerHealth, isWorkerStale } from '../lib/worker-registry.ts';
+import { getDusdcBalance } from '../lib/sui/dusdc.ts';
+import { tradeableMarkets } from '../lib/sui/markets.ts';
+import { sponsorHealth } from '../lib/sui/play-safety.ts';
+import { TREASURY_ENABLED, treasuryAddress } from '../lib/sui/signer.ts';
+import { STUCK_PENDING_MS } from './plays.ts';
 
 export type ErrorStatus = 'open' | 'ack' | 'resolved' | 'ignored';
 export const ERROR_STATUSES: ErrorStatus[] = ['open', 'ack', 'resolved', 'ignored'];
@@ -641,4 +650,428 @@ export async function usageReport(windowDays: number): Promise<UsageReport> {
     cohorts: computeCohorts(users, activity),
     totalEvents: [...counts.values()].reduce((a, b) => a + b, 0),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Ops detectors (§6): the early-warning system behind the Overview banner
+// ---------------------------------------------------------------------------
+
+// One config array, one cron, one status row. Every detector carries a runbook, because an alert without
+// a one-line "what to do" is a notification, not a tool, and a team that gets notifications learns to
+// ignore the dashboard.
+//
+// Detectors 1-4 need no new instrumentation: Play.createdAt / openedAt / settledAt / expiry already exist
+// and are already populated.
+
+export type OpsLevel = 'ok' | 'warn' | 'critical';
+
+export interface DetectorReading {
+  /** null means not enough signal to judge, which is reported as ok rather than a guess. */
+  value: number | null;
+  detail?: string;
+}
+
+export interface Detector {
+  key: string;
+  title: string;
+  warn: number;
+  critical: number;
+  windowMs: number;
+  /** A LOWER reading is the bad one (runway hours, treasury cover, live markets). */
+  lowerIsWorse?: boolean;
+  runbook: string;
+  unit: string;
+  read: (now: number) => Promise<DetectorReading>;
+}
+
+export interface DetectorStatus {
+  key: string;
+  title: string;
+  level: OpsLevel;
+  value: number | null;
+  display: string;
+  warn: number;
+  critical: number;
+  runbook: string;
+  detail?: string;
+  checkedAt: string;
+}
+
+/** Below this many samples a rate is noise, so the detector abstains rather than paging on one bad play. */
+const MIN_RATE_SAMPLES = 5;
+
+export function percentile(values: number[], p: number): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  // Nearest-rank: with one sample every percentile is that sample, and an even count never averages two
+  // unrelated numbers into one that was never observed.
+  const rank = Math.ceil((p / 100) * sorted.length);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))]!;
+}
+
+// Pure, so the threshold logic is assertable without a database. A null reading is ok, never a guess.
+export function levelFor(d: Pick<Detector, 'warn' | 'critical' | 'lowerIsWorse'>, value: number | null): OpsLevel {
+  if (value == null || !Number.isFinite(value)) return 'ok';
+  if (d.lowerIsWorse) {
+    if (value <= d.critical) return 'critical';
+    return value <= d.warn ? 'warn' : 'ok';
+  }
+  if (value >= d.critical) return 'critical';
+  return value >= d.warn ? 'warn' : 'ok';
+}
+
+const MIN = 60_000;
+
+// Detector 12 needs to know how long the live-market set has been empty, which is a duration nothing
+// persists. One counter, reset the moment a market appears.
+let marketsEmptySince: number | null = null;
+
+export const DETECTORS: Detector[] = [
+  {
+    key: 'play_failure_rate',
+    title: 'Play failure rate',
+    warn: 5,
+    critical: 15,
+    windowMs: 15 * MIN,
+    unit: '%',
+    runbook: 'Open Errors filtered to kind=chain. A spike is usually a mint admission abort or a market that rolled without backing.',
+    read: async (now) => {
+      const since = new Date(now - 15 * MIN);
+      const [total, failed] = await Promise.all([
+        prismaQuery.play.count({ where: { createdAt: { gte: since } } }),
+        prismaQuery.play.count({ where: { createdAt: { gte: since }, status: 'error' } }),
+      ]);
+      if (total < MIN_RATE_SAMPLES) return { value: null, detail: `only ${total} plays in the window` };
+      return { value: round1((failed / total) * 100), detail: `${failed} of ${total} plays` };
+    },
+  },
+  {
+    key: 'stuck_pending',
+    title: 'Stuck pending plays',
+    warn: 3,
+    critical: 10,
+    windowMs: STUCK_PENDING_MS,
+    unit: ' plays',
+    runbook: 'The settle worker sweeps these to error on its own. If the count keeps climbing, the mint path is wedged: check the sponsor reserve and the gRPC endpoint.',
+    read: async (now) => {
+      const value = await prismaQuery.play.count({
+        where: { status: 'pending', createdAt: { lt: new Date(now - STUCK_PENDING_MS) } },
+      });
+      return { value, detail: `pending for over ${Math.round(STUCK_PENDING_MS / 1000)}s` };
+    },
+  },
+  {
+    key: 'mint_latency',
+    title: 'Mint latency p95',
+    warn: 4_000,
+    critical: 10_000,
+    windowMs: 30 * MIN,
+    unit: 'ms',
+    runbook: 'Slow mints are usually the fullnode, not us. Check gRPC round trips, then whether the sponsor accumulator is being re-warmed on every play.',
+    read: async (now) => {
+      const rows = await prismaQuery.play.findMany({
+        where: { createdAt: { gte: new Date(now - 30 * MIN) }, openedAt: { not: null } },
+        select: { createdAt: true, openedAt: true },
+      });
+      const ms = rows.map((r) => r.openedAt!.getTime() - r.createdAt.getTime());
+      return { value: percentile(ms, 95), detail: `${ms.length} mints, p50 ${percentile(ms, 50) ?? 0}ms` };
+    },
+  },
+  {
+    key: 'settle_lag',
+    title: 'Settle lag p95',
+    warn: 15_000,
+    critical: 60_000,
+    windowMs: 60 * MIN,
+    unit: 'ms',
+    runbook: 'Settlement is permissionless redeem_settled. A long lag means the settle worker is stale or the market has not been settled on chain yet. Check worker health first (L-014).',
+    read: async (now) => {
+      // Only expiry-settled plays: a cash-out closes before expiry and would read as a negative lag.
+      const rows = await prismaQuery.play.findMany({
+        where: { settledAt: { gte: new Date(now - 60 * MIN) }, status: { in: ['won', 'lost'] } },
+        select: { settledAt: true, expiry: true },
+      });
+      const ms = rows.map((r) => Math.max(0, r.settledAt!.getTime() - Number(r.expiry)));
+      return { value: percentile(ms, 95), detail: `${ms.length} settles, p50 ${percentile(ms, 50) ?? 0}ms` };
+    },
+  },
+  {
+    key: 'deposits_failing',
+    title: 'Deposits failing',
+    warn: 10,
+    critical: 25,
+    windowMs: 24 * 60 * MIN,
+    unit: '%',
+    runbook: 'Check LI.FI status for the affected chain. A stuck PENDING usually means the source tx never landed, not that we lost it.',
+    read: async (now) => {
+      // Only deposits old enough to have resolved, so a bridge still in flight is never counted as failing.
+      const rows = await prismaQuery.deposit.findMany({
+        where: { createdAt: { gte: new Date(now - DAY_MS), lt: new Date(now - 2 * 60 * MIN) } },
+        select: { status: true },
+      });
+      if (rows.length < 3) return { value: null, detail: `only ${rows.length} settled-age deposits` };
+      const bad = rows.filter((r) => r.status === 'FAILED' || r.status === 'PENDING').length;
+      return { value: round1((bad / rows.length) * 100), detail: `${bad} of ${rows.length} failed or still pending` };
+    },
+  },
+  {
+    key: 'sponsor_runway',
+    title: 'Sponsor runway',
+    warn: 12,
+    critical: 3,
+    lowerIsWorse: true,
+    windowMs: 0,
+    unit: 'h',
+    runbook: 'Send testnet SUI to the sponsor address printed in the boot log. Plays auto-resume on the next monitor tick.',
+    read: async () => {
+      const h = sponsorHealth();
+      if (!h.enabled) return { value: null, detail: 'sponsorship is off' };
+      // Already below the floor is the emergency itself, whatever the burn rate says.
+      if (h.paused || h.reserveSui < h.floorSui) {
+        return { value: 0, detail: `reserve ${h.reserveSui.toFixed(3)} SUI is under the ${h.floorSui} SUI floor, plays are paused` };
+      }
+      if (h.hoursLeft == null) return { value: null, detail: `reserve ${h.reserveSui.toFixed(3)} SUI, burn not measured yet` };
+      return { value: round1(h.hoursLeft), detail: `${h.reserveSui.toFixed(3)} SUI, burning ${h.burnSuiPerHour?.toFixed(3)} SUI/h` };
+    },
+  },
+  {
+    key: 'treasury_chips',
+    title: 'Treasury chips',
+    warn: 2,
+    critical: 1,
+    lowerIsWorse: true,
+    windowMs: 0,
+    unit: 'x min',
+    runbook: 'DUSDC is not mintable on a deployment we do not own (L-008). Transfer DUSDC to the treasury address by hand; grants and the faucet fail loudly until you do.',
+    read: async () => {
+      if (!TREASURY_ENABLED) return { value: null, detail: 'no treasury wallet configured' };
+      const balance = await getDusdcBalance(treasuryAddress);
+      const min = Math.max(1, TREASURY_MIN_DUSDC);
+      return { value: round1(balance / min), detail: `${balance.toFixed(2)} DUSDC against a ${min} minimum` };
+    },
+  },
+  {
+    key: 'worker_staleness',
+    title: 'Worker staleness',
+    warn: 1,
+    critical: 2,
+    windowMs: 0,
+    unit: '',
+    runbook: 'Check the Performance page for which worker stopped. settle or market-sync stale means plays stop resolving, so restart the process.',
+    read: async (now) => {
+      const stale = allWorkerHealth().filter((w) => isWorkerStale(w, now));
+      if (!stale.length) return { value: 0, detail: 'every worker is running on cadence' };
+      // A stale price-warmer is a warning; a stale settle or market-sync stops the product.
+      const criticalStale = stale.filter((w) => CRITICAL_WORKERS.has(w.name));
+      return {
+        value: criticalStale.length ? 2 : 1,
+        detail: `stale: ${stale.map((w) => w.name).join(', ')}`,
+      };
+    },
+  },
+  {
+    key: 'auth_failures',
+    title: 'Sign-in failures',
+    warn: 10,
+    critical: 30,
+    windowMs: 30 * MIN,
+    unit: '%',
+    runbook: 'Over 30% is usually a Privy outage rather than us. Check status.privy.io, then that PRIVY_APP_ID and the verification key are still right.',
+    read: async (now) => {
+      const since = new Date(now - 30 * MIN);
+      const [ok, fail] = await Promise.all([
+        prismaQuery.event.count({ where: { name: 'door.auth_ok', ts: { gte: since } } }),
+        prismaQuery.event.count({ where: { name: 'door.auth_fail', ts: { gte: since } } }),
+      ]);
+      const total = ok + fail;
+      if (total < MIN_RATE_SAMPLES) return { value: null, detail: `only ${total} sign-in attempts` };
+      return { value: round1((fail / total) * 100), detail: `${fail} of ${total} attempts` };
+    },
+  },
+  {
+    key: 'new_bug_shipped',
+    title: 'New bug shipped',
+    warn: 1,
+    critical: 2,
+    windowMs: 10 * MIN,
+    unit: '',
+    runbook: 'A brand new group already firing this often is almost always the release that just went out. Open it, copy the AI brief, and consider rolling back.',
+    read: async (now) => {
+      const fresh = await prismaQuery.errorGroup.findMany({
+        where: { firstSeen: { gte: new Date(now - 10 * MIN) }, count: { gt: 20 }, status: { not: 'ignored' } },
+        select: { title: true, level: true, count: true },
+        orderBy: { count: 'desc' },
+        take: 5,
+      });
+      if (!fresh.length) return { value: 0 };
+      return {
+        value: fresh.some((g) => g.level === 'fatal') ? 2 : 1,
+        detail: fresh.map((g) => `${g.title} (${g.count})`).join('; '),
+      };
+    },
+  },
+  {
+    key: 'regression',
+    title: 'Regression',
+    warn: 1,
+    critical: 1,
+    windowMs: 0,
+    unit: '',
+    runbook: 'A bug marked resolved is firing again. Open it: firstRelease against lastRelease tells you which deploy brought it back. Acking clears this.',
+    read: async () => {
+      // `open` with a resolvedAt still set is exactly "was closed, came back, nobody has triaged it".
+      const rows = await prismaQuery.errorGroup.findMany({
+        where: { status: 'open', resolvedAt: { not: null } },
+        select: { title: true },
+        take: 5,
+      });
+      return { value: rows.length, detail: rows.map((r) => r.title).join('; ') || undefined };
+    },
+  },
+  {
+    key: 'live_markets',
+    title: 'Live markets',
+    warn: 2,
+    critical: 10,
+    windowMs: 0,
+    unit: ' min at zero',
+    runbook: 'market-sync discovers the live 1m BTC markets from chain (L-006). Zero for minutes means discovery is failing or every market rolled at once; check the worker and the fullnode.',
+    read: async (now) => {
+      const live = tradeableMarkets(now, EXPIRY_SAFETY_MS).length;
+      if (live > 0) {
+        marketsEmptySince = null;
+        return { value: 0, detail: `${live} tradeable` };
+      }
+      marketsEmptySince ??= now;
+      return { value: round1((now - marketsEmptySince) / MIN), detail: 'no tradeable market right now' };
+    },
+  },
+];
+
+// A stale one of these stops the product, rather than just degrading it.
+const CRITICAL_WORKERS = new Set(['settle', 'market-sync']);
+
+// Detector thresholds are tunable from the settings drawer, so a noisy threshold is a UI edit rather than
+// a deploy. Registered from the array, so adding a detector never means remembering to add two knobs.
+for (const d of DETECTORS) {
+  const bound = (v: number) => ({ type: 'int' as const, def: Math.round(v), min: 0, max: Math.max(1000, Math.round(v * 100)) });
+  registerTunable(`detector.${d.key}.warn`, { ...bound(d.warn), label: `${d.title}: warn at` });
+  registerTunable(`detector.${d.key}.critical`, { ...bound(d.critical), label: `${d.title}: critical at` });
+}
+
+export interface OpsSnapshot {
+  checkedAt: string;
+  worst: OpsLevel;
+  detectors: DetectorStatus[];
+}
+
+const OPS_ROW_KEY = 'ops:status';
+const RANK: Record<OpsLevel, number> = { ok: 0, warn: 1, critical: 2 };
+
+// Pure, so the discipline that actually matters (fire on the TRANSITION, never every tick) can be
+// asserted without a database or a clock. A detector that pages every tick is how a team learns to
+// ignore alerts, which is worse than having no alerts at all.
+export function alertTransitions(
+  prev: Record<string, OpsLevel>,
+  next: DetectorStatus[]
+): Array<{ key: string; kind: 'critical' | 'recovered'; status: DetectorStatus }> {
+  const out: Array<{ key: string; kind: 'critical' | 'recovered'; status: DetectorStatus }> = [];
+  for (const s of next) {
+    const was = prev[s.key] ?? 'ok';
+    if (s.level === 'critical' && was !== 'critical') out.push({ key: s.key, kind: 'critical', status: s });
+    else if (was === 'critical' && s.level !== 'critical') out.push({ key: s.key, kind: 'recovered', status: s });
+  }
+  return out;
+}
+
+function display(d: Detector, r: DetectorReading): string {
+  if (r.value == null) return 'no signal';
+  return `${r.value}${d.unit}`;
+}
+
+/** The banner's data. Never throws: a broken detector reports itself and the sweep carries on. */
+export async function evaluateDetectors(now = Date.now()): Promise<OpsSnapshot> {
+  const prev = await readOpsLevels();
+  const checkedAt = new Date(now).toISOString();
+
+  const detectors: DetectorStatus[] = await Promise.all(
+    DETECTORS.map(async (d): Promise<DetectorStatus> => {
+      const [warn, critical] = await Promise.all([
+        getTunable(`detector.${d.key}.warn`, d.warn),
+        getTunable(`detector.${d.key}.critical`, d.critical),
+      ]);
+      const base = { key: d.key, title: d.title, warn, critical, runbook: d.runbook, checkedAt };
+      try {
+        const reading = await d.read(now);
+        const level = levelFor({ warn, critical, lowerIsWorse: d.lowerIsWorse }, reading.value);
+        return { ...base, level, value: reading.value, display: display(d, reading), detail: reading.detail };
+      } catch (e) {
+        // A detector that cannot read is not a healthy system, but it is not evidence of a fault either.
+        return { ...base, level: 'ok', value: null, display: 'unavailable', detail: e instanceof Error ? e.message : String(e) };
+      }
+    })
+  );
+
+  detectors.sort((a, b) => RANK[b.level] - RANK[a.level] || a.title.localeCompare(b.title));
+  const worst = detectors.reduce<OpsLevel>((w, d) => (RANK[d.level] > RANK[w] ? d.level : w), 'ok');
+
+  for (const t of alertTransitions(prev, detectors)) {
+    const s = t.status;
+    if (t.kind === 'critical') {
+      alert('critical', `${s.title} is critical: ${s.display}${s.detail ? ` (${s.detail})` : ''}. ${s.runbook}`, { detector: s.key, value: s.value }, `ops:${s.key}`);
+    } else {
+      alert('warn', `${s.title} recovered: ${s.display}`, { detector: s.key }, `ops:${s.key}:recovered`);
+    }
+  }
+
+  await writeOps({ checkedAt, worst, detectors });
+  return { checkedAt, worst, detectors };
+}
+
+/** The last evaluated snapshot, so a page load never runs twelve queries of its own. */
+export async function opsStatus(): Promise<OpsSnapshot> {
+  try {
+    const row = await prismaQuery.appConfig.findUnique({ where: { key: OPS_ROW_KEY } });
+    if (row) return JSON.parse(row.value) as OpsSnapshot;
+  } catch {
+    // fall through to the empty snapshot
+  }
+  return { checkedAt: new Date(0).toISOString(), worst: 'ok', detectors: [] };
+}
+
+async function readOpsLevels(): Promise<Record<string, OpsLevel>> {
+  const snap = await opsStatus();
+  return Object.fromEntries(snap.detectors.map((d) => [d.key, d.level]));
+}
+
+async function writeOps(snap: OpsSnapshot): Promise<void> {
+  const value = JSON.stringify(snap);
+  try {
+    await prismaQuery.appConfig.upsert({ where: { key: OPS_ROW_KEY }, create: { key: OPS_ROW_KEY, value }, update: { value } });
+  } catch (e) {
+    console.warn('[ops] could not persist the detector snapshot:', e instanceof Error ? e.message : e);
+  }
+}
+
+// The nightly digest: what appeared, what is loudest, and what nobody has looked at. Sent once a day so
+// the things that are not urgent enough to page still get seen.
+export async function buildNightlyDigest(now = Date.now()): Promise<string | null> {
+  const [fresh, loudest, stale] = await Promise.all([
+    prismaQuery.errorGroup.count({ where: { firstSeen: { gte: new Date(now - DAY_MS) } } }),
+    prismaQuery.errorGroup.findMany({
+      where: { status: { in: ['open', 'ack'] }, lastSeen: { gte: new Date(now - DAY_MS) } },
+      select: { title: true, count: true, level: true },
+      orderBy: { count: 'desc' },
+      take: 5,
+    }),
+    prismaQuery.errorGroup.count({ where: { status: 'open', firstSeen: { lt: new Date(now - 2 * DAY_MS) } } }),
+  ]);
+
+  if (!fresh && !loudest.length && !stale) return null;
+  const lines = [`${fresh} new error group(s) in the last 24h, ${stale} still open after 48h.`];
+  if (loudest.length) {
+    lines.push('Top by count:');
+    for (const g of loudest) lines.push(`  ${g.count}x [${g.level}] ${g.title}`);
+  }
+  return lines.join('\n');
 }

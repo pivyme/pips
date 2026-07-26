@@ -9,7 +9,7 @@ import { APP_PORT, IS_PROD, ALLOWED_ORIGIN, SHUTDOWN_TIMEOUT_MS, RATE_LIMIT_WIND
 import { NETWORK, PUBLIC_PREDICT_PACKAGE, PUBLIC_PREDICT_OBJECT, DUSDC_TYPE } from './src/lib/sui/config.ts';
 import { verifyRealDeployment } from './src/lib/sui/config-real.ts';
 import { prismaQuery } from './src/lib/prisma.ts';
-import { allWorkerHealth, stopAllWorkers } from './src/lib/worker-registry.ts';
+import { allWorkerHealth, isWorkerStale, stopAllWorkers } from './src/lib/worker-registry.ts';
 import { alert } from './src/lib/alert.ts';
 import { captureError } from './src/lib/analytics.ts';
 
@@ -29,6 +29,7 @@ import { analyticsRoutes } from './src/routes/analyticsRoutes.ts';
 
 // Workers
 import { startErrorLogCleanupWorker } from './src/workers/errorLogCleanup.ts';
+import { startAnalyticsWorker } from './src/workers/analytics.ts';
 import { startDepositCleanupWorker } from './src/workers/depositCleanup.ts';
 import { startSettleWorker } from './src/workers/settle.ts';
 import { startMarketSync } from './src/workers/market-sync.ts';
@@ -231,10 +232,7 @@ async function pingDb(timeoutMs = 2000): Promise<boolean> {
 fastify.get('/health/ready', { config: { rateLimit: false } }, async (_request: FastifyRequest, reply: FastifyReply) => {
   const now = Date.now();
   const dbOk = await pingDb();
-  const workers = allWorkerHealth().map((w) => ({
-    ...w,
-    stale: w.intervalMs != null && w.lastRunAt != null && now - w.lastRunAt > 3 * w.intervalMs,
-  }));
+  const workers = allWorkerHealth().map((w) => ({ ...w, stale: isWorkerStale(w, now) }));
   const degraded = !dbOk || workers.some((w) => w.stale);
   return reply.status(dbOk ? 200 : 503).send({
     success: dbOk,
@@ -338,6 +336,9 @@ const start = async (): Promise<void> => {
     // Records the rolling display-price window every chart seeds its pre-roll from, so the line behind the
     // leading edge is identical on every device instead of a per-client random walk.
     startPriceHistory();
+    // Evaluates the ops detectors behind the admin banner and sends the nightly error digest. Started last
+    // so its first sweep reads the workers above as already registered rather than reporting them missing.
+    startAnalyticsWorker();
     // Token metadata/price cache refresh (send picker + activity feed logos), off the request path.
     startTokenWorker();
     // Wallet activity indexer: presence-gated address scanner that records deposits/sends to the WalletTx

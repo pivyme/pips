@@ -4,15 +4,25 @@
 
 import { Link } from '@tanstack/react-router'
 
+import { OpsBanner } from './components/OpsBanner'
 import { DesktopOnlyNotice, Panel } from './components/primitives'
 
 export function OverviewPage() {
   return (
-    <Pending
-      title="Overview"
-      lead="The ten-second page: health banner, users, plays, money, and chain."
-      waitingOn="the ops detectors and the business aggregates"
-    />
+    <div className="flex flex-col gap-3">
+      <h1 className="a-page-title">Overview</h1>
+      <DesktopOnlyNotice page="Overview" />
+      <OpsBanner />
+      <Panel>
+        <div className="flex flex-col gap-2 p-4">
+          <p style={{ color: 'var(--a-text-2)' }}>Users, plays, money, and chain.</p>
+          <p style={{ color: 'var(--a-text-3)' }}>Waiting on the business aggregates. The health banner above is live.</p>
+          <Link to="/admin/errors" className="a-btn mt-1 w-fit">
+            Go to Errors
+          </Link>
+        </div>
+      </Panel>
+    </div>
   )
 }
 

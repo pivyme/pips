@@ -9,7 +9,7 @@ import { getSetting } from '../config/admin-settings.ts';
 import { RATE_LIMIT_WINDOW, SUI_NETWORK } from '../config/main-config.ts';
 import { MAX_EVENTS_PER_REQUEST, isEventName, isPreAuthEvent, platformFrom } from '../config/analytics-catalog.ts';
 import { RELEASE } from '../config/release.ts';
-import { ERROR_STATUSES, buildBrief, getErrorDetail, listErrorGroups, setErrorStatus, usageReport, type ErrorStatus } from '../services/insights.ts';
+import { ERROR_STATUSES, buildBrief, getErrorDetail, listErrorGroups, opsStatus, setErrorStatus, usageReport, type ErrorStatus } from '../services/insights.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 
 import { ANALYTICS_OFF, BUDGET_SAMPLE_RATE, captureError, capMessage, capProps, errorBudgetExceeded, eventBudgetExceeded, redact } from '../lib/analytics.ts';
@@ -269,6 +269,12 @@ export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _op
       return reply.status(202).send({ success: true, error: null, data: { accepted } });
     }
   );
+
+  // Ops: the last detector sweep, worst first. Read from the stored snapshot, never re-evaluated here, so
+  // a page load costs one row rather than twelve queries and cannot disagree with what already alerted.
+  app.get('/admin/ops', admin, async (_request: FastifyRequest, reply: FastifyReply) => {
+    return ok(reply, await opsStatus());
+  });
 
   // Usage: the ascending event list, the funnel, per-game conversion, menu ranks, and D1/D7.
   app.get('/admin/usage', admin, async (request: FastifyRequest, reply: FastifyReply) => {

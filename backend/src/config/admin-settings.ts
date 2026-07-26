@@ -22,7 +22,21 @@ export const SETTINGS = {
 } as const;
 
 export type SettingKey = keyof typeof SETTINGS;
-type SettingDef = (typeof SETTINGS)[SettingKey];
+type SettingDef = (typeof SETTINGS)[SettingKey] | DynamicDef;
+
+// Detector thresholds (§6) are declared by the detector itself in services/insights.ts, so adding a
+// detector stays one array entry and its two knobs come along. They share this module's storage, cache,
+// and read-clamp; they are just not in the literal above, which stays the typed product-knob list.
+type DynamicDef = { type: 'int'; def: number; min: number; max: number; label: string };
+const dynamic = new Map<string, DynamicDef>();
+
+export function registerTunable(key: string, def: DynamicDef): void {
+  dynamic.set(key, def);
+}
+
+function defOf(key: string): SettingDef | undefined {
+  return isSettingKey(key) ? SETTINGS[key] : dynamic.get(key);
+}
 
 // Value type per key, so getSetting('analytics.enabled') is boolean and getSetting('rate.admin_max') is number.
 export type SettingValue<K extends SettingKey> = (typeof SETTINGS)[K]['type'] extends 'bool' ? boolean : number;
@@ -54,8 +68,9 @@ function coerce(def: SettingDef, raw: unknown): unknown {
 
 // Validate a candidate write. Out-of-bounds is rejected outright rather than silently clamped, so the
 // dashboard tells you "no" instead of quietly storing something else.
-export function validateSetting(key: SettingKey, value: unknown): { ok: true; value: boolean | number } | { ok: false; reason: string } {
-  const def = SETTINGS[key];
+export function validateSetting(key: string, value: unknown): { ok: true; value: boolean | number } | { ok: false; reason: string } {
+  const def = defOf(key);
+  if (!def) return { ok: false, reason: 'unknown setting key' };
   if (def.type === 'bool') {
     if (typeof value !== 'boolean') return { ok: false, reason: 'expected a boolean' };
     return { ok: true, value };
@@ -71,9 +86,20 @@ export function validateSetting(key: SettingKey, value: unknown): { ok: true; va
 // Never hits the DB on a hot path: 30s in-memory cache, and a DB failure falls back to the code default
 // rather than throwing into a caller that only wanted a number.
 export async function getSetting<K extends SettingKey>(key: K): Promise<SettingValue<K>> {
-  const def = SETTINGS[key];
+  return read(key) as Promise<SettingValue<K>>;
+}
+
+/** A detector threshold, which is a registered tunable rather than one of the literal product knobs. */
+export async function getTunable(key: string, fallback: number): Promise<number> {
+  if (!dynamic.has(key)) return fallback;
+  return (await read(key)) as number;
+}
+
+async function read(key: string): Promise<boolean | number> {
+  const def = defOf(key);
+  if (!def) throw new Error(`getSetting: unknown key ${key}`);
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value as SettingValue<K>;
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value as boolean | number;
 
   let stored: unknown;
   try {
@@ -84,11 +110,11 @@ export async function getSetting<K extends SettingKey>(key: K): Promise<SettingV
   }
   const value = stored === undefined ? def.def : coerce(def, stored);
   cache.set(key, { value, at: Date.now() });
-  return value as SettingValue<K>;
+  return value as boolean | number;
 }
 
 export async function setSetting(key: string, value: unknown): Promise<{ ok: true; value: boolean | number } | { ok: false; reason: string }> {
-  if (!isSettingKey(key)) return { ok: false, reason: 'unknown setting key' };
+  if (!defOf(key)) return { ok: false, reason: 'unknown setting key' };
   const checked = validateSetting(key, value);
   if (!checked.ok) return checked;
 
@@ -102,22 +128,33 @@ export async function setSetting(key: string, value: unknown): Promise<{ ok: tru
   return checked;
 }
 
+export interface SettingRow {
+  key: string;
+  type: string;
+  def: boolean | number;
+  min?: number;
+  max?: number;
+  destructive: boolean;
+  value: boolean | number;
+  /** Set on a registered detector threshold, so the drawer can group them away from the product knobs. */
+  label?: string;
+}
+
 // All keys with their schema and current values, for the settings drawer.
-export async function allSettings(): Promise<
-  Array<{ key: SettingKey; type: string; def: boolean | number; min?: number; max?: number; destructive: boolean; value: boolean | number }>
-> {
-  const keys = Object.keys(SETTINGS) as SettingKey[];
+export async function allSettings(): Promise<SettingRow[]> {
+  const keys = [...(Object.keys(SETTINGS) as SettingKey[]), ...dynamic.keys()];
   return Promise.all(
     keys.map(async (key) => {
-      const def = SETTINGS[key];
+      const def = defOf(key)!;
       return {
         key,
         type: def.type,
         def: def.def,
         min: 'min' in def ? def.min : undefined,
         max: 'max' in def ? def.max : undefined,
-        destructive: isDestructive(key),
-        value: (await getSetting(key)) as boolean | number,
+        destructive: isSettingKey(key) && isDestructive(key),
+        value: await read(key),
+        ...('label' in def ? { label: def.label } : {}),
       };
     })
   );

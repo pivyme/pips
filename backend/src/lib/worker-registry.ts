@@ -83,6 +83,18 @@ export function allWorkerHealth(): WorkerHealth[] {
   return [...registry.values()].map(({ task: _task, ...h }) => h);
 }
 
+// A worker is only stale once it has been quiet for BOTH 3x its own cadence and a full minute. The minute
+// floor matters: market-sync runs every 2s and price-history every 500ms, and lastRunAt is stamped when a
+// tick FINISHES, so a single slow chain read trips a bare 3x rule. That is a false alarm on a healthy
+// system, and a monitor that cries wolf is the fastest way to teach everyone to ignore the dashboard.
+const STALE_FLOOR_MS = 60_000;
+
+export function isWorkerStale(w: Pick<WorkerHealth, 'intervalMs' | 'lastRunAt'>, now = Date.now()): boolean {
+  // A worker with no cadence (the Binance socket) or one that has not run yet is never stale.
+  if (w.intervalMs == null || w.lastRunAt == null) return false;
+  return now - w.lastRunAt > Math.max(3 * w.intervalMs, STALE_FLOOR_MS);
+}
+
 // Stops every registered task (graceful shutdown); best-effort so one failing task never blocks the rest. In-flight runs finish on their own via each worker's isRunning guard.
 export function stopAllWorkers(): void {
   for (const e of registry.values()) {

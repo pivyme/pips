@@ -76,3 +76,24 @@ export interface UsageReport {
   cohorts: Array<{ date: string; signups: number; d1: number; d7: number; d1Pct: number; d7Pct: number }>
   totalEvents: number
 }
+
+export type OpsLevel = 'ok' | 'warn' | 'critical'
+
+export interface DetectorStatus {
+  key: string
+  title: string
+  level: OpsLevel
+  value: number | null
+  display: string
+  warn: number
+  critical: number
+  runbook: string
+  detail?: string
+  checkedAt: string
+}
+
+export interface OpsSnapshot {
+  checkedAt: string
+  worst: OpsLevel
+  detectors: DetectorStatus[]
+}

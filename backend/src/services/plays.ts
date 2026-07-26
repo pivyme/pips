@@ -389,7 +389,7 @@ async function finalizeCashout(play: Play, payoutRaw: bigint, digest: string): P
 
 // A play whose background mint never completed (process died between persist and open/error) would sit 'pending' forever, so sweep any older than this to 'error'.
 // Threshold is well beyond a real mint's worst case, so a still-in-flight mint is never swept out from under itself.
-const STUCK_PENDING_MS = 60_000;
+export const STUCK_PENDING_MS = 60_000;
 async function sweepStuckPendings(): Promise<void> {
   const stuck = await prismaQuery.play.findMany({
     where: { status: 'pending', createdAt: { lt: new Date(Date.now() - STUCK_PENDING_MS) } },
