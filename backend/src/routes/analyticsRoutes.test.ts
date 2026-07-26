@@ -56,26 +56,52 @@ const SAMPLE = {
   createdAt: new Date('2026-07-26T14:00:00Z'),
 };
 
+// Writes the client-ingest test inspects. Reads stay static: those tests are about the gate, not the data.
+export const written = { groups: new Map<string, { count: number; kind: string; level: string }>(), samples: [] as Array<Record<string, unknown>> };
+
+// Stored setting overrides, so the kill-switch test can flip `client_errors.enabled` off for real.
+const settingRows = new Map<string, string>();
+
 mock.module('../lib/prisma.ts', () => ({
   prismaQuery: {
     errorGroup: {
       findMany: async () => [GROUP],
-      findUnique: async () => GROUP,
+      findUnique: async ({ where }: { where: { fingerprint: string } }) =>
+        written.groups.has(where.fingerprint) ? { ...GROUP, fingerprint: where.fingerprint, status: 'open' } : GROUP,
       update: async () => GROUP,
+      upsert: async ({ where, create }: { where: { fingerprint: string }; create: { kind: string; level: string } }) => {
+        const g = written.groups.get(where.fingerprint);
+        if (g) g.count += 1;
+        else written.groups.set(where.fingerprint, { count: 1, kind: create.kind, level: create.level });
+        return {};
+      },
     },
     errorEvent: {
-      findMany: async () => [SAMPLE],
+      findMany: async ({ skip }: { skip?: number }) => (skip === undefined ? [SAMPLE] : []),
       groupBy: async () => [],
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        written.samples.push(data);
+        return data;
+      },
+      deleteMany: async () => ({ count: 0 }),
+      count: async () => 0,
     },
     event: { findMany: async () => [] },
     user: { findMany: async () => [{ id: 'u_normal', username: 'normal' }] },
     play: { findMany: async () => [] },
-    appConfig: { findUnique: async () => null },
+    appConfig: {
+      findUnique: async ({ where }: { where: { key: string } }) => {
+        const value = settingRows.get(where.key);
+        return value === undefined ? null : { key: where.key, value };
+      },
+    },
     errorLog: { create: async () => ({}) },
   },
 }));
 
 const { analyticsRoutes } = await import('./analyticsRoutes.ts');
+const { flushCaptures } = await import('../lib/analytics.ts');
+const { clearSettingsCache } = await import('../config/admin-settings.ts');
 
 type Registered = { method: string; url: string };
 
@@ -128,6 +154,10 @@ function payload(method: string): Record<string, unknown> | undefined {
 
 beforeEach(() => {
   revoked = false;
+  written.groups.clear();
+  written.samples = [];
+  settingRows.clear();
+  clearSettingsCache();
 });
 
 describe('/admin/* access control (§7.5)', () => {
@@ -211,6 +241,75 @@ describe('the brief (§5)', () => {
     expect(res.text).toContain('Sponsor SUI: 0.84');
     // Own-code frames are marked so the reader (and the AI) knows which frames are ours.
     expect(res.text).toContain('> at commitPlay');
+
+    await app.close();
+  });
+});
+
+describe('client error ingest (§3.2 surface 5)', () => {
+  it('records an anonymous report as exactly one group with a usable stack', async () => {
+    const { app, call } = await buildApp();
+    const stack = 'TypeError: undefined is not an object\n    at LuckyScreen (https://playpips.fun/assets/lucky-abc.js:12:44)';
+
+    const res = await call('POST', '/a/err', {
+      body: { message: 'undefined is not an object (evaluating reel.length)', stack, sessionId: 's_1', release: 'a3f91c2', url: '/games/lucky', standalone: true },
+    });
+
+    expect(res.status).toBe(202);
+    await flushCaptures();
+
+    expect(written.groups.size).toBe(1);
+    const [group] = [...written.groups.values()];
+    expect(group.kind).toBe('client');
+    expect(written.samples).toHaveLength(1);
+    expect(String(written.samples[0].stack)).toContain('LuckyScreen');
+    // Anonymous is allowed here on purpose: a white screen before sign-in is what we were blind to.
+    expect(written.samples[0].userId).toBeNull();
+    expect(written.samples[0].release).toBe('a3f91c2');
+
+    await app.close();
+  });
+
+  it('attributes an authenticated report to the user from the token, not the body', async () => {
+    const { app, call } = await buildApp();
+    const res = await call('POST', '/a/err', {
+      token: USER_TOKEN,
+      body: { message: 'boom', sessionId: 's_2', userId: 'u_someone_else' },
+    });
+
+    expect(res.status).toBe(202);
+    await flushCaptures();
+    expect(written.samples[0].userId).toBe('u_normal');
+
+    await app.close();
+  });
+
+  // The kill switch exists because a client render loop is the top flood vector. It has to silence the
+  // write while still answering 202, or a flooding client starts retrying instead.
+  it('records nothing once client_errors.enabled is off, and still answers 202', async () => {
+    settingRows.set('setting:client_errors.enabled', 'false');
+    clearSettingsCache();
+
+    const { app, call } = await buildApp();
+    const res = await call('POST', '/a/err', { body: { message: 'boom while the switch is off', sessionId: 's_off' } });
+
+    expect(res.status).toBe(202);
+    expect(res.json()).toMatchObject({ data: { accepted: false } });
+    await flushCaptures();
+    expect(written.groups.size).toBe(0);
+    expect(written.samples).toHaveLength(0);
+
+    await app.close();
+  });
+
+  it('accepts and ignores a report with no message rather than erroring', async () => {
+    const { app, call } = await buildApp();
+    const res = await call('POST', '/a/err', { body: { sessionId: 's_3' } });
+
+    expect(res.status).toBe(202);
+    expect(res.json()).toMatchObject({ data: { accepted: false } });
+    await flushCaptures();
+    expect(written.groups.size).toBe(0);
 
     await app.close();
   });

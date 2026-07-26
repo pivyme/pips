@@ -10,7 +10,52 @@ import { RATE_LIMIT_WINDOW, SUI_NETWORK } from '../config/main-config.ts';
 import { ERROR_STATUSES, buildBrief, getErrorDetail, listErrorGroups, setErrorStatus, type ErrorStatus } from '../services/insights.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 
+import { captureError, capMessage, errorBudgetExceeded } from '../lib/analytics.ts';
+import { userFromToken } from '../services/auth.ts';
+
 const ok = <T>(reply: FastifyReply, data: T): FastifyReply => reply.status(200).send({ success: true, error: null, data });
+
+// Server stamps identity, time, network, and release; the client's body only supplies the error itself.
+// Returns whether the report was recorded, which is what the kill switch and the daily budget gate.
+async function ingestClientError(request: FastifyRequest): Promise<boolean> {
+  const body = (request.body ?? {}) as Record<string, unknown>;
+  const message = typeof body.message === 'string' ? body.message.trim() : '';
+  if (!message) return false;
+
+  if (!(await getSetting('client_errors.enabled'))) return false;
+  if (await errorBudgetExceeded()) return false;
+
+  // Optional: an anonymous report is the whole point of this endpoint, so a missing or bad token is not
+  // an error, it just means the row carries no userId.
+  const header = request.headers.authorization;
+  const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  const user = token ? await userFromToken(token).catch(() => null) : null;
+
+  captureError(new Error(capMessage(message)), {
+    kind: 'client',
+    stack: typeof body.stack === 'string' ? body.stack : null,
+    userId: user?.id ?? null,
+    sessionId: typeof body.sessionId === 'string' ? body.sessionId.slice(0, 64) : null,
+    requestId: request.id,
+    path: typeof body.url === 'string' ? body.url.slice(0, 200) : null,
+    release: typeof body.release === 'string' ? body.release.slice(0, 40) : null,
+    context: {
+      platform: platformFrom(request.headers['user-agent'], body.standalone === true),
+      source: typeof body.source === 'string' ? body.source.slice(0, 40) : 'unknown',
+    },
+  });
+
+  return true;
+}
+
+// UA cannot tell an iOS standalone PWA from iOS Safari, so the client sends a boolean hint. A hint is not
+// identity, so trusting it is fine; missing it just loses the PWA split.
+function platformFrom(ua: string | undefined, standalone: boolean): string {
+  const s = (ua ?? '').toLowerCase();
+  if (/iphone|ipad|ipod/.test(s)) return standalone ? 'pwa' : 'ios';
+  if (/android/.test(s)) return standalone ? 'pwa' : 'android';
+  return standalone ? 'pwa' : 'desktop';
+}
 
 export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
   // The dashboard's own bucket, read live off the setting so tuning it is a UI edit, not a deploy.
@@ -32,6 +77,18 @@ export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _op
       },
     });
   });
+
+  // Client error reports. Anonymous is allowed on purpose: a white screen before sign-in is exactly the
+  // failure we were blind to, and the client already dedupes to one report per fingerprint per session.
+  // Always 202 past the rate limiter, so a broken client never sees an analytics failure.
+  app.post(
+    '/a/err',
+    { config: { rateLimit: { max: () => getSetting('rate.track_anon_max'), timeWindow: RATE_LIMIT_WINDOW } } },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const accepted = await ingestClientError(request);
+      return reply.status(202).send({ success: true, error: null, data: { accepted } });
+    }
+  );
 
   // Grouped errors. Default is open bugs newest-first, which is the triage order.
   app.get('/admin/errors', admin, async (request: FastifyRequest, reply: FastifyReply) => {

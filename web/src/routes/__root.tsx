@@ -3,12 +3,14 @@ import {
   Scripts,
   createRootRouteWithContext,
 } from '@tanstack/react-router'
+import { useEffect } from 'react'
 import { Toaster } from 'react-hot-toast'
 import { ErrorPage, NotFoundPage } from '../components/FaultScreen'
 import appCss from '../styles.css?url'
 import type { QueryClient } from '@tanstack/react-query'
 import { AuthProvider } from '@/lib/auth'
 import { AppPrivyProvider } from '@/lib/privy'
+import { installClientErrorHooks, reportClientError } from '@/lib/clientErrors'
 
 interface MyRouterContext {
   queryClient: QueryClient
@@ -25,7 +27,13 @@ const OG_IMAGE_ALT = "PIPS, the world's first virtual gamified trading console"
 
 export const Route = createRootRouteWithContext<MyRouterContext>()({
   notFoundComponent: () => <NotFoundPage />,
-  errorComponent: ({ error, reset }) => <ErrorPage error={error} reset={reset} />,
+  // The router's boundary IS the root ErrorBoundary: it already renders the product's error screen rather
+  // than a white page, so capture here and keep that screen. Reporting is fire-and-forget and deduped per
+  // session, so a render loop cannot flood the endpoint.
+  errorComponent: ({ error, reset }) => {
+    reportClientError(error, { source: 'boundary' })
+    return <ErrorPage error={error} reset={reset} />
+  },
   head: () => ({
     meta: [
       { charSet: 'utf-8' },
@@ -87,6 +95,10 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 })
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+  // Installed once, as early as the document exists, so a throw during the first render of any route is
+  // still caught. Idempotent, and it never preventDefaults, so the browser console still shows the error.
+  useEffect(installClientErrorHooks, [])
+
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>

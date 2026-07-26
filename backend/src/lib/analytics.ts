@@ -406,6 +406,33 @@ export function captureError(err: unknown, opts: CaptureOptions = {}): void {
 // a test can observe the result of a fire-and-forget call.
 const inflight = new Set<Promise<void>>();
 
+// Daily row budget for error samples. On breach we stop recording and say so once, loudly: silently
+// dropping is how a dashboard ends up under-reporting and looking healthy. Counted at most once a minute
+// so the check itself is never the expensive part.
+let budgetAt = 0;
+let budgetHit = false;
+
+export async function errorBudgetExceeded(): Promise<boolean> {
+  const now = Date.now();
+  if (now - budgetAt < 60_000) return budgetHit;
+  budgetAt = now;
+  try {
+    const max = await getSetting('analytics.error_daily_max');
+    const since = new Date(now - 86_400_000);
+    const used = await prismaQuery.errorEvent.count({ where: { createdAt: { gte: since } } });
+    const wasHit = budgetHit;
+    budgetHit = used >= max;
+    if (budgetHit && !wasHit) {
+      const { alert } = await import('./alert.ts');
+      alert('critical', 'error sample budget exhausted, new samples are being dropped', { used, max }, 'budget:error_daily_max');
+    }
+  } catch {
+    // A failed budget read must not become a reason to stop recording errors.
+    budgetHit = false;
+  }
+  return budgetHit;
+}
+
 export async function flushCaptures(): Promise<void> {
   while (inflight.size) await Promise.all([...inflight]);
 }
