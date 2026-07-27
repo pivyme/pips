@@ -736,6 +736,22 @@ const MIN = 60_000;
 // persists. One counter, reset the moment a market appears.
 let marketsEmptySince: number | null = null;
 
+// A process restart must not rewind that clock: an in-memory-only counter reads green through a real
+// outage, because a redeploy or a crash loop keeps starting the count over. The persisted snapshot is
+// already written every tick, so the first empty tick after a restart resumes from what it recorded.
+async function marketsEmptyStart(now: number): Promise<number> {
+  if (marketsEmptySince != null) return marketsEmptySince;
+  let priorMin = 0;
+  try {
+    const prior = (await opsStatus()).detectors.find((d) => d.key === 'live_markets');
+    if (typeof prior?.value === 'number' && prior.value > 0) priorMin = prior.value;
+  } catch {
+    // no readable snapshot: start the clock now rather than fail the tick
+  }
+  marketsEmptySince = now - priorMin * MIN;
+  return marketsEmptySince;
+}
+
 export const DETECTORS: Detector[] = [
   {
     key: 'play_failure_rate',
@@ -952,8 +968,8 @@ export const DETECTORS: Detector[] = [
         marketsEmptySince = null;
         return { value: 0, detail: `${live} tradeable` };
       }
-      marketsEmptySince ??= now;
-      return { value: round1((now - marketsEmptySince) / MIN), detail: 'no tradeable market right now' };
+      const since = await marketsEmptyStart(now);
+      return { value: round1((now - since) / MIN), detail: 'no tradeable market right now' };
     },
   },
 ];

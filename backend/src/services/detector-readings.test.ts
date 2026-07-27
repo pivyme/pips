@@ -18,6 +18,7 @@ const db = {
   deposits: [] as Array<{ status: string; createdAt: Date }>,
   events: [] as Array<{ name: string; ts: Date }>,
   groups: [] as Array<Record<string, unknown>>,
+  opsSnapshot: null as string | null,
 };
 
 const matches = (row: Record<string, unknown>, where: Record<string, unknown> | undefined): boolean => {
@@ -52,7 +53,7 @@ mock.module('../lib/prisma.ts', () => ({
     deposit: table(() => db.deposits as unknown as Array<Record<string, unknown>>),
     event: table(() => db.events as unknown as Array<Record<string, unknown>>),
     errorGroup: table(() => db.groups),
-    appConfig: { findUnique: async () => null, upsert: async () => ({}) },
+    appConfig: { findUnique: async () => (db.opsSnapshot ? { value: db.opsSnapshot } : null), upsert: async () => ({}) },
   },
 }));
 
@@ -93,7 +94,8 @@ beforeEach(() => {
   db.deposits = [];
   db.events = [];
   db.groups = [];
-  sponsor = { enabled: true, reserveSui: 10, floorSui: 0.5, paused: false, burnSuiPerHour: 0.5, hoursLeft: 19, checkedAt: NOW };
+  db.opsSnapshot = null;
+  sponsor ={ enabled: true, reserveSui: 10, floorSui: 0.5, paused: false, burnSuiPerHour: 0.5, hoursLeft: 19, checkedAt: NOW };
   treasuryDusdc = 50;
   workers = [];
   liveMarkets = 3;
@@ -354,5 +356,19 @@ describe('live_markets (minutes at zero: warn 2, critical 10)', () => {
     // One market coming back resets the clock, so a recovery does not stay red.
     liveMarkets = 1;
     expect(await grade('live_markets')).toEqual({ level: 'ok', value: 0 });
+  });
+
+  it('resumes the clock from the persisted snapshot, so a restart cannot rewind a real outage', async () => {
+    liveMarkets = 1;
+    await grade('live_markets'); // clear the in-memory counter, standing in for a fresh process
+    db.opsSnapshot = JSON.stringify({
+      checkedAt: new Date(NOW).toISOString(),
+      worst: 'critical',
+      detectors: [{ key: 'live_markets', level: 'critical', value: 620 }],
+    });
+
+    liveMarkets = 0;
+    // Without the resume this reads 0 minutes and the banner goes green through a 10-hour outage.
+    expect(await grade('live_markets')).toEqual({ level: 'critical', value: 620 });
   });
 });
