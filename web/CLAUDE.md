@@ -92,6 +92,8 @@ Its guarantees are the implementation's job, so no call site ever has to think a
 
 Rules that are not negotiable: **never `await track()`**, never call it in a render body (an effect or a handler), and **never track continuous data**. No price ticks, no frames, no scroll, no mouse. If it fires more than once per user action it is not an event. For a scrubbed control (a knob, a stake ladder), use `trackSettled()`, which debounces to the value the user landed on. For a screen that can re-mount in a loop (the crash boundary is the one that bit us), use `trackOnce()`, which fires a given name and props at most once per session. Adding an event means adding it to `backend/src/config/analytics-catalog.ts` **and** the typed twin in `track.ts`, or ingest rejects it with a 400.
 
+The dashboard's visual system is written up in [`src/admin/DESIGN.md`](./src/admin/DESIGN.md): tokens, the three-plane material model, every component class verbatim, the `.hw3d-*` hardware kit, and the four hand-rolled SVG charts. Read it before adding a panel or a control there.
+
 **`src/admin/` is sealed off from the DEVICE, not from the design system.** Everything admin (pages, queries, types, primitives, tokens) lives in that one folder, and the dashboard wears the product's skin: pure black canvas, molded `surface-skeuo`-style panels, the amber `brand-500` accent, up/down green/red, Gabarito with mono uppercase micro-labels over big tabular numbers. It uses the app's own primitives, the `@/ui/*` HeroUI wrappers, the `Hw3D*` hardware keys, lucide icons, `GameIcon`. What makes it different is posture, not palette: it is dense, desktop-first, and tabular, an instrument you read rather than a device you play.
 
 - Nothing in `src/admin/**` imports from `src/components/console`, `src/components/game`, `three`, `gsap`, or `@/lib/sound`. Those mount a renderer or drag a megabyte of scene code onto a page made of tables. Admin tokens live in `src/admin/admin.css` scoped to `[data-admin]`, never in the global `@theme` in `styles.css`.
@@ -151,6 +153,8 @@ src/
 │   │   ├── design-system.tsx / design-system-v2.tsx # Living UI-kit reference
 │   │   ├── export.tsx        # PNG asset dump of device/screens (/dev/export)
 │   │   └── sounds.tsx        # Sound lab: every bed + SFX audition bench (/dev/sounds)
+│   ├── admin.tsx             # /admin gate + shell route, a SIBLING of _app so no WebGL ever mounts
+│   ├── admin/                # index (overview), errors, usage, perf: thin shells over src/admin/
 │   └── _app/                 # Pathless layout: everything "inside the device"
 │       ├── games/            # index (hub), lucky, range, moonshot (Predict plays)
 │       │                     #   + line-rider, flappy-piper (score-only minigames)
@@ -180,6 +184,13 @@ src/
 │   ├── elements/             # AnimateComponent (starter residue, currently unused)
 │   └── *.tsx                 # App-surface singletons: Avatar, HapticOverlay, InstallGate, FaultScreen,
 │                             #   AchievementCelebration, ChipGrantCelebration, DepositLanded, GameIcon
+├── admin/                    # The whole dashboard, sealed off from the device (see the section above)
+│   ├── AdminShell.tsx        # Rail + mobile strip + the ops banner
+│   ├── pages.tsx             # Overview + Performance; ErrorsPage.tsx, UsagePage.tsx are their own files
+│   ├── components/           # primitives.tsx (Panel/Metric/Table/charts), OpsBanner, SettingsDrawer
+│   ├── queries.ts / types.ts # queryOptions + the wire types
+│   ├── admin.css             # Admin tokens, scoped to [data-admin], never the global @theme
+│   └── DESIGN.md             # The dashboard's design system, read before adding a panel
 ├── ui/                       # HeroUI v3 wrappers + Illo/Hardware3D (Button, Card, Modal, TextField, Tooltip, Switch, Alert, LoadingIcon)
 ├── lib/                      # Integrations + app logic
 │   ├── api.ts                # Typed backend client + SSE; the demo seam lives here
@@ -191,6 +202,8 @@ src/
 │   ├── demo.ts               # The ONE sanctioned in-memory sim (demo mode)
 │   ├── deposit/              # LI.FI multichain deposit (mainnet-gated)
 │   ├── shareCard.ts, playCard.ts, playerCard.ts, cardAssets.ts, consoleShot.tsx  # Share/PnL card rendering
+│   ├── track.ts              # The analytics client: track / trackSettled / trackOnce + the sealed envelope
+│   ├── clientErrors.ts       # Window error hooks, one report per fingerprint per session
 │   ├── achievements.ts, haptics.ts, sound.ts, audio.ts, avatar.ts, chipGrant.ts,
 │   │   presence.tsx, crowd.ts, referral.ts, errors.ts, platform.ts, polyfills.ts
 │   └── sui/                  # predict.ts (thin wrapper over the backend play API), config.ts (ids from env + /config)
@@ -226,6 +239,7 @@ src/
 
 ```bash
 bunx tsc --noEmit   # THE gate. Typecheck is what must stay green (the build loop's baseline check)
+bun run check:admin # Also a gate: admin encapsulation + shared consts in sync with the backend
 bun dev             # Start dev server on port 3200
 bun run build       # Production build
 bun run preview     # Preview production build

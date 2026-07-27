@@ -32,7 +32,8 @@ bun dev                     # Start with file watcher on :3780
 bun start                   # Production start (no watch)
 bun run typecheck           # tsc --noEmit (the build loop's gate)
 bun run lint                # ESLint. This one IS a gate, keep it green (root L-017)
-bun test                    # Bun's runner over colocated *.test.ts (math, rng, achievements, games, stats, play-bus, predict-real)
+bun test                    # Bun's runner over colocated *.test.ts (math, rng, achievements, games, stats,
+                            #   play-bus, predict-real, analytics capture/redaction, envelope, ingest, insights)
 bun run pips:post-deploy-check   # Smoke a deploy: config, chain reads, wallets
 bun run pips:proof          # Volume proof script
 bun run test:logger:e2e     # On-chain logger integration test (PIPS_E2E=1, hits the network)
@@ -66,7 +67,12 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │                            #   grant-role, diag-pnl, diag-funding, bench-lucky, bench-settle, bench-range,
 │                            #   airdrop-dusdc, migrate-achievements, backfill-emails, gen-ops-wallets, wipe-history
 ├── src/
-│   ├── config/main-config.ts    # Centralized env config (import from here, not process.env)
+│   ├── config/
+│   │   ├── main-config.ts   # Centralized env config (import from here, not process.env)
+│   │   ├── admin-settings.ts # DB-backed non-secret tunables: default + bounds, clamped on read (L-022)
+│   │   ├── analytics-catalog.ts # EVENT_NAMES, the allowlist. Twin of web/src/lib/track.ts
+│   │   ├── roles.ts         # specialRoles helpers + the last-ADMIN floor (fails closed)
+│   │   └── release.ts       # Build-stamped release string, never hand-typed
 │   ├── routes/              # Fastify plugins, registered in app.ts
 │   │   ├── authRoutes.ts    # /auth: dev login, privy/verify, heal, me
 │   │   ├── gameRoutes.ts    # /games/* play + quotes, /plays/* confirm + cashout, /markets, /prices/history
@@ -78,10 +84,13 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   │   ├── avatarRoutes.ts  # POST + DELETE /avatar (S3 upload, fail-soft)
 │   │   ├── streamRoutes.ts  # SSE: /stream/prices (fallback), /stream/plays/:id, /stream/markets, /stream/live
 │   │   ├── wsRoutes.ts      # WS /ws: shared 10Hz displaySpot broadcast hub (the chart feed)
+│   │   ├── analyticsRoutes.ts # POST /a/e ingest (sealed envelope) + every ADMIN-gated /admin/* read
 │   │   └── exampleRoutes.ts # starter sample
 │   ├── services/            # Business logic, called by routes
 │   │   └── auth, games (+ games-base / games-real split), plays, stats, achievements,
-│   │       rng, wallet, leaderboard, referral (+ colocated *.test.ts)
+│   │       rng, wallet, leaderboard, referral, insights (dashboard reports + the 12 ops
+│   │       detectors), retention (age-based prune + the destructive confirm gate)
+│   │       (+ colocated *.test.ts)
 │   ├── workers/             # node-cron jobs (isRunning guard), tracked in worker-registry
 │   │   ├── market-sync.ts   # discovers the live 1m BTC markets from chain
 │   │   ├── settle.ts        # settles expired plays (redeem_settled)
@@ -90,12 +99,16 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   │   ├── token-worker.ts  # warms the TokenInfo metadata/price cache off the request path
 │   │   ├── analytics.ts     # ops detectors, nightly digest, balance sweep, retention (the one analytics cron)
 │   │   └── depositCleanup.ts (mainnet)
-│   ├── middlewares/authMiddleware.ts
+│   ├── middlewares/          # authMiddleware, adminMiddleware (ADMIN or 404, never 403)
 │   ├── types/api.ts         # DTO contract (mirrors web/src/lib/api.ts)
 │   ├── utils/               # errorHandler, validationUtils, miscUtils, timeUtils
 │   └── lib/
 │       ├── prisma.ts        # Database client (pg adapter, PIPS_DB_POOL_MAX pool ceiling)
-│       ├── worker-registry.ts # Tracks every cron/interval worker for /health/ready + coordinated shutdown
+│       ├── worker-registry.ts # Tracks every cron/interval worker for /health/ready + coordinated shutdown.
+│       │                    #   isWorkerStale() is the ONE staleness rule, shared with the detector (L-026)
+│       ├── analytics.ts     # captureError + track: fingerprinting, redaction, caps. Cannot throw, never awaited
+│       ├── envelope.ts      # Opens the client's sealed ingest envelope (native crypto.subtle, no deps)
+│       ├── route-latency.ts # In-memory route timing rings behind the Performance page
 │       ├── alert.ts         # Opt-in Discord/Slack webhook for unrecoverable events (no-op if PIPS_ALERT_WEBHOOK_URL unset)
 │       ├── pyth.ts          # Pyth price reads
 │       ├── price-cache.ts   # In-memory price cache
@@ -203,18 +216,14 @@ app.post('/register', async (request, reply) => {
 
 Routes are grouped by prefix. Each route file exports a Fastify plugin:
 
-**Route file (`src/routes/adminRoutes.ts`):**
+**Route file (`src/routes/referralRoutes.ts`):**
 ```ts
 import type { FastifyInstance, FastifyPluginCallback, FastifyRequest, FastifyReply } from 'fastify';
 import { authMiddleware } from '../middlewares/authMiddleware.ts';
 
-export const adminRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
-  app.post('/login', async (request: FastifyRequest, reply: FastifyReply) => {
-    // Handler for POST /admin/login
-  });
-
-  app.get('/users', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
-    // Protected route: GET /admin/users
+export const referralRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, done) => {
+  app.get('/code', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    // Protected route: GET /referral/code
   });
 
   done();
@@ -225,10 +234,12 @@ export const adminRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, 
 
 ```ts
 // app.ts
-import { adminRoutes } from './src/routes/adminRoutes.ts';
+import { referralRoutes } from './src/routes/referralRoutes.ts';
 
-fastify.register(adminRoutes, { prefix: '/admin' });
+fastify.register(referralRoutes, { prefix: '/referral' });
 ```
+
+The `/admin/*` and `/a/e` surfaces are the exception to the one-prefix-per-file shape: they all live in `analyticsRoutes.ts`, registered with no prefix (each path is declared in full) so the gate and the ingest route stay in one readable file. Every `/admin/*` handler takes `preHandler: adminMiddleware`, never `authMiddleware` alone.
 
 ---
 
@@ -358,11 +369,13 @@ reply.code(200).send({
 
 | Task | Solution |
 |------|----------|
-| Add env variable | Add to `main-config.ts` |
+| Add env variable | Only if it is a secret or boot-critical. Otherwise it is a setting: `admin-settings.ts` (L-022) |
+| Add a tunable | `admin-settings.ts`: one const with default + bounds, clamped on read, no env, no redeploy |
 | Handle errors | Use `handleError()` from errorHandler |
 | Validate request body | Use `validateRequiredFields()` |
 | Add new route group | Create file in `src/routes/`, register in `app.ts` (not `index.ts`) |
 | Add background job | Create file in `src/workers/`, `isRunning` flag + `registerWorker`, start it in `app.ts` |
 | Add external integration | One wrapper module in `src/lib/`, callers never touch the vendor SDK |
-| Protect route | Add `{ preHandler: [authMiddleware] }` |
+| Protect route | Add `{ preHandler: [authMiddleware] }`, or `adminMiddleware` for an `/admin/*` read |
+| Track a new event | Add the name to `analytics-catalog.ts` AND `web/src/lib/track.ts`, then `track()` at 4 moments |
 | Lint | Run `bun run lint` |
