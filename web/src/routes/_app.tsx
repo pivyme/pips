@@ -30,6 +30,7 @@ import { GAME_ROUTES, MENU_ROUTES, prefetchRoutes } from '@/lib/menuQueries'
 import { isMobile } from '@/lib/platform'
 import { LoadingIcon } from '@/ui/LoadingIcon'
 import { haptic } from '@/lib/haptics'
+import { warmUiSfx } from '@/lib/uiSfx'
 import { api } from '@/lib/api'
 import { LivePresenceProvider } from '@/lib/presence'
 import { ActivePlayProvider } from '@/lib/activePlay'
@@ -317,6 +318,8 @@ function AppLayout() {
   useEffect(() => {
     if (phase !== 'app') return
     prefetchRoutes(router, [...MENU_ROUTES, ...GAME_ROUTES])
+    // ~18KB of UI one-shots, same idea: the first menu tap should not be the one that pays for them.
+    warmUiSfx()
   }, [phase, router])
 
   // Boot warm for the share card's console shot: once the app settles, prime the (usually IDB-cached)

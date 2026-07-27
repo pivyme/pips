@@ -102,10 +102,11 @@ The dashboard's visual system lives in [`../docs/DESIGN-SYSTEM.md`](../docs/DESI
 
 ## Game audio
 
-All game sound is **hand-built WebAudio, zero asset files**. Two files, two jobs:
+All game sound is **hand-built WebAudio, zero asset files**. Three buses, three jobs, one shared `AudioContext` (`src/lib/audioContext.ts`, so iOS only ever unlocks one):
 
 - **`src/lib/sound.ts`** is the per-game musical layer: the looping beds and the one-shot stings (spin, lock, win, lose, cash-out). This is where new game audio goes.
 - **`src/components/console/consoleAudio.ts`** is the physical device SFX (button/knob/roller), sample-based, owned by the shell. Leave it alone unless you are changing a control's feel.
+- **`src/lib/uiSfx.ts`** is the app-surface chrome: `uiSfx('tap' | 'toggleOn' | 'toggleOff' | 'swipe' | 'disabled')`. Already wired into the primitives, so a new menu button, toggle or dead key gets it for free: `HapticOverlay`, `Hw3DButton`/`Hw3DIconButton`/`Hw3DToggle`, `ui/Button`, `ui/Switch`, and the console preset rail. **Call it directly only for a control that goes through none of those.** Samples never repeat back to back, a repeat inside 40ms is dropped, and playback starts past the decoded onset so codec priming never delays a click. Levels are set in `FAMILIES`; assets live in `public/sounds/ui-sfx` with the originals in `sfx-src/ui-sfx` (re-encode line is in the file header). Anything that renders a disabled control uses `aria-disabled`, never the `disabled` attribute, or the click never arrives and the reject sound cannot fire.
 
 **The quality bar (this is the whole point, keep it).** The house sound is "clean, warm, not 8-bit, never intrusive." It comes from a few hard rules:
 

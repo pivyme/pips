@@ -1,28 +1,27 @@
 // One sound instance for the whole app: a tiny WebAudio synth (no asset files), mirrors haptics.ts's
 // no-op-when-off pattern. Fires only after a user gesture, so autoplay policy is never hit.
+// The sampled UI chrome (menu taps, toggles) is a separate bus, see uiSfx.ts.
 
-let ctx: AudioContext | null = null
+import { audioContext, ensureRunning } from './audioContext'
+import { setUiSfxEnabled } from './uiSfx'
+
 let enabled = true
 
 type Sound = 'win' | 'lose'
 
-function audio(): AudioContext | null {
-  if (typeof window === 'undefined') return null
-  const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-  if (!Ctx) return null
-  // A backgrounded standalone PWA can leave the context 'closed' forever; drop it and rebuild fresh.
-  if (ctx && ctx.state === 'closed') {
-    ctx = null
-    synthBus = null
-  }
-  if (!ctx) ctx = new Ctx()
-  return ctx
-}
+// The context every node in this module hangs off. The stop paths read it directly so tearing a bed
+// down never spins a context up.
+let ctx: AudioContext | null = null
 
-// iOS Safari has a non-standard 'interrupted' state beyond the spec's suspended/running/closed
-// enum; checking only for 'suspended' left it silently stuck. Treat anything but 'running' as needing a resume.
-function ensureRunning(ac: AudioContext): void {
-  if (ac.state !== 'running') ac.resume().catch(() => {})
+function audio(): AudioContext | null {
+  const ac = audioContext()
+  // A backgrounded standalone PWA can leave the context 'closed' forever; audioContext() then hands
+  // back a fresh one, and the bus built on the dead graph went down with it.
+  if (ac !== ctx) {
+    synthBus = null
+    ctx = ac
+  }
+  return ac
 }
 
 // Master gain for all synth voices; lifted to match consoleAudio.ts's full-scale device SFX.
@@ -52,6 +51,7 @@ const GAME_BEDS_ENABLED = false
 // Driven by the user's Sound setting; when off, every call no-ops and running BGM cuts immediately.
 export function setSoundEnabled(value: boolean): void {
   enabled = value
+  setUiSfxEnabled(value) // the UI chrome bus is separate but answers to the same one switch
   if (!value) {
     stopBgm()
     stopLuckyBgm()

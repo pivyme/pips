@@ -296,7 +296,7 @@ html[data-ios-standalone] .viewport-fill {
       0 2px 0 rgba(71, 45, 0, 0.65),
       0 10px 20px -18px rgba(0, 0, 0, 1);
   }
-  .btn-primary:active {
+  .btn-primary:not([aria-disabled='true']):active {
     transform: scale(0.97);
   }
 
@@ -311,7 +311,7 @@ html[data-ios-standalone] .viewport-fill {
       0 2px 0 rgba(76, 9, 6, 0.72),
       0 10px 20px -18px rgba(0, 0, 0, 1);
   }
-  .btn-danger:active {
+  .btn-danger:not([aria-disabled='true']):active {
     transform: scale(0.97);
   }
 
@@ -615,7 +615,7 @@ html[data-ios-standalone] .viewport-fill {
       background 170ms ease,
       filter 160ms ease;
   }
-  .hw3d-key:not(:disabled):hover {
+  .hw3d-key:not(:disabled):not([aria-disabled='true']):hover {
     transform: translateY(-1px);
     box-shadow:
       inset 0 1.5px 0.5px rgba(255, 255, 255, 0.46),
@@ -625,7 +625,7 @@ html[data-ios-standalone] .viewport-fill {
       0 0 0 1px rgba(245, 166, 35, 0.6),
       0 0 11px -1px rgba(245, 166, 35, 0.38);
   }
-  .hw3d-key:not(:disabled):active {
+  .hw3d-key:not(:disabled):not([aria-disabled='true']):active {
     transform: translateY(1.5px);
     background:
       radial-gradient(130% 84% at 50% -16%, rgba(255, 255, 255, 0.09) 0%, transparent 58%),
@@ -639,7 +639,7 @@ html[data-ios-standalone] .viewport-fill {
     outline: 2px solid rgba(245, 166, 35, 0.6);
     outline-offset: 2px;
   }
-  .hw3d-key:disabled {
+  .hw3d-key:is(:disabled, [aria-disabled='true']) {
     cursor: not-allowed;
     filter: saturate(0.7) brightness(0.8);
     opacity: 0.55;
@@ -671,7 +671,7 @@ html[data-ios-standalone] .viewport-fill {
       0 6px 14px -3px rgba(0, 0, 0, 0.6),
       0 0 11px -3px rgba(245, 166, 35, 0.36);
   }
-  .hw3d-key-primary:not(:disabled):hover {
+  .hw3d-key-primary:not(:disabled):not([aria-disabled='true']):hover {
     transform: translateY(-1px);
     filter: brightness(1.05);
     box-shadow:
@@ -681,7 +681,7 @@ html[data-ios-standalone] .viewport-fill {
       0 10px 20px -4px rgba(0, 0, 0, 0.6),
       0 0 20px -2px rgba(245, 166, 35, 0.6);
   }
-  .hw3d-key-primary:not(:disabled):active {
+  .hw3d-key-primary:not(:disabled):not([aria-disabled='true']):active {
     transform: translateY(1.5px);
     filter: none;
     background: linear-gradient(180deg, #e6a415 0%, #cf8f0f 60%, #b87c0c 100%);
@@ -704,7 +704,7 @@ html[data-ios-standalone] .viewport-fill {
       0 6px 14px -3px rgba(0, 0, 0, 0.6),
       0 0 11px -3px rgba(255, 108, 90, 0.4);
   }
-  .hw3d-key-danger:not(:disabled):hover {
+  .hw3d-key-danger:not(:disabled):not([aria-disabled='true']):hover {
     transform: translateY(-1px);
     filter: brightness(1.05);
     box-shadow:
@@ -714,7 +714,7 @@ html[data-ios-standalone] .viewport-fill {
       0 10px 20px -4px rgba(0, 0, 0, 0.62),
       0 0 20px -2px rgba(255, 108, 90, 0.6);
   }
-  .hw3d-key-danger:not(:disabled):active {
+  .hw3d-key-danger:not(:disabled):not([aria-disabled='true']):active {
     transform: translateY(1.5px);
     filter: none;
     background: linear-gradient(180deg, #dd4b3c 0%, #c23528 60%, #a02a1e 100%);
@@ -755,7 +755,7 @@ html[data-ios-standalone] .viewport-fill {
       box-shadow 160ms ease,
       background 160ms ease;
   }
-  .hw3d-cap:hover {
+  .hw3d-cap:not([aria-disabled='true']):hover {
     transform: translateY(-0.5px);
     box-shadow:
       inset 0 1px 1px rgba(255, 255, 255, 0.28),
@@ -764,7 +764,7 @@ html[data-ios-standalone] .viewport-fill {
       0 0 0 1px rgba(245, 166, 35, 0.33),
       0 0 14px rgba(245, 166, 35, 0.27);
   }
-  .hw3d-cap:active {
+  .hw3d-cap:not([aria-disabled='true']):active {
     transform: translateY(1.5px);
     background: radial-gradient(
       120% 120% at 50% 70%,
@@ -781,9 +781,9 @@ html[data-ios-standalone] .viewport-fill {
     outline-offset: 3px;
   }
   /* Dead key: flat in its socket, no dome, no press. */
-  .hw3d-cap:disabled,
-  .hw3d-cap:disabled:hover,
-  .hw3d-cap:disabled:active {
+  .hw3d-cap:is(:disabled, [aria-disabled='true']),
+  .hw3d-cap:is(:disabled, [aria-disabled='true']):hover,
+  .hw3d-cap:is(:disabled, [aria-disabled='true']):active {
     cursor: default;
     transform: none;
     background: radial-gradient(120% 120% at 50% 30%, #202226 0%, #16171a 100%);
@@ -806,7 +806,7 @@ html[data-ios-standalone] .viewport-fill {
       inset 0 -1px 0 rgba(255, 255, 255, 0.05);
     transition: transform 120ms var(--ease-out-quart);
   }
-  .hw3d-toggle:not(:disabled):active {
+  .hw3d-toggle:not(:disabled):not([aria-disabled='true']):active {
     transform: scale(0.98);
   }
   .hw3d-toggle:focus-visible {
@@ -880,7 +880,7 @@ html[data-ios-standalone] .viewport-fill {
     background: #f5a623;
     box-shadow: 0 0 6px #f5a623;
   }
-  .hw3d-toggle:disabled {
+  .hw3d-toggle:is(:disabled, [aria-disabled='true']) {
     cursor: not-allowed;
     opacity: 0.5;
   }

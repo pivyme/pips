@@ -15,6 +15,7 @@
 
 import { useSyncExternalStore } from 'react'
 import { setSynthSfxVolume, sharedAudioContext } from './sound'
+import { setUiSfxVolume } from './uiSfx'
 
 const BGM_SRC = '/sounds/PIPS_BGM.mp3'
 
@@ -238,13 +239,14 @@ export function isMusicPlaying(): boolean {
   return playing
 }
 
-// Scales the game stings only. Device SFX are fixed, see the header.
+// Scales the game stings and the UI chrome (menu taps, toggles). Device SFX are fixed, see the header.
 export function setSfxVolume(v: number): void {
   v = clamp01(v)
   if (v === sfxVolume) return
   sfxVolume = v
   persist(SFX_KEY, sfxVolume)
   setSynthSfxVolume(sfxVolume)
+  setUiSfxVolume(sfxVolume)
   emit()
 }
 
@@ -303,9 +305,10 @@ export function useAudioState(): AudioSnapshot {
   return useSyncExternalStore(subscribeAudio, () => snapshot, () => snapshot)
 }
 
-// Seed the sting bus with the persisted volume at import time (before its gain node exists, the
-// setter just stashes the scale and applies it when the node is first created).
+// Seed both SFX buses with the persisted volume at import time (before their gain nodes exist, the
+// setters just stash the scale and apply it when the node is first created).
 setSynthSfxVolume(sfxVolume)
+setUiSfxVolume(sfxVolume)
 
 // Same foreground re-arm sound.ts does for the synth bus: if the shared context died while we were
 // backgrounded, the music graph goes with it, so rebuild before the next tap finds it silent.

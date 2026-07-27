@@ -1,4 +1,5 @@
 import { Switch as HeroSwitch } from '@heroui/react'
+import { uiSfx } from '@/lib/uiSfx'
 import { cnm } from '@/utils/style'
 
 // Flat wrapper over HeroUI v3's compound Switch (react-aria under the hood, accessible and keyboard driven).
@@ -18,7 +19,10 @@ export function Switch({
     <HeroSwitch
       aria-label={label}
       isSelected={isSelected}
-      onChange={onChange}
+      onChange={(v) => {
+        uiSfx(v ? 'toggleOn' : 'toggleOff')
+        onChange(v)
+      }}
       isDisabled={isDisabled}
       className={cnm('inline-flex shrink-0', isDisabled && 'opacity-60')}
     >

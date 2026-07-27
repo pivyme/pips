@@ -10,6 +10,8 @@
 import { cnm } from '@/utils/style'
 import { haptic } from '@/lib/haptics'
 import type { HapticPreset } from '@/lib/haptics'
+import { uiSfx } from '@/lib/uiSfx'
+import type { UiSfxName } from '@/lib/uiSfx'
 
 export function HapticOverlay({
   preset = 'selection',
@@ -18,6 +20,9 @@ export function HapticOverlay({
   // Set when onTap already calls haptic() itself (e.g. a shared close/submit handler) so we don't double
   // the Android vibrate call.
   silent,
+  // The click sound. Defaults to the tap under every app-surface button; pass another name when the
+  // target is really a toggle, or null where the handler plays its own (the console preset rail).
+  sfx = 'tap',
   className,
   style,
 }: {
@@ -25,6 +30,7 @@ export function HapticOverlay({
   onTap: () => void
   disabled?: boolean
   silent?: boolean
+  sfx?: UiSfxName | null
   className?: string
   style?: React.CSSProperties
 }) {
@@ -33,10 +39,16 @@ export function HapticOverlay({
       type="button"
       aria-hidden="true"
       tabIndex={-1}
-      disabled={disabled}
+      // aria-disabled, not disabled: a disabled button swallows the click outright, and a dead control
+      // that answers with nothing at all is exactly what the reject sound is here to fix.
+      aria-disabled={disabled || undefined}
       onClick={() => {
-        if (disabled) return
+        if (disabled) {
+          uiSfx('disabled')
+          return
+        }
         if (!silent) haptic(preset)
+        if (sfx) uiSfx(sfx)
         onTap()
       }}
       className={cnm('block cursor-pointer appearance-none border-0 bg-transparent p-0 outline-none', className)}

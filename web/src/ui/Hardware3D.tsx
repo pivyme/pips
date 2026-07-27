@@ -3,6 +3,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { HapticPreset } from '@/lib/haptics'
 import { haptic } from '@/lib/haptics'
+import { uiSfx } from '@/lib/uiSfx'
 import { cnm } from '@/utils/style'
 
 const AMBER = '#f5a623'
@@ -56,10 +57,16 @@ export function Hw3DButton({
   return (
     <button
       type="button"
-      disabled={off}
+      // aria-disabled rather than disabled, here and on the parts below: a disabled button never
+      // receives the click, so a dead key could not answer with the reject sound. Styling keys off both.
+      aria-disabled={off || undefined}
       onClick={() => {
-        if (off) return
+        if (off) {
+          uiSfx('disabled')
+          return
+        }
         haptic(hapticPreset)
+        uiSfx('tap')
         onPress?.()
       }}
       className={cnm(
@@ -106,10 +113,14 @@ export function Hw3DIconButton({
       <button
         type="button"
         aria-label={label}
-        disabled={disabled}
+        aria-disabled={disabled || undefined}
         onClick={() => {
-          if (disabled) return
+          if (disabled) {
+            uiSfx('disabled')
+            return
+          }
           haptic('selection')
+          uiSfx('tap')
           onPress?.()
         }}
         className="hw3d-cap"
@@ -294,9 +305,14 @@ export function Hw3DToggle({
       role="switch"
       aria-checked={isSelected}
       aria-label={label}
-      disabled={isDisabled}
+      aria-disabled={isDisabled || undefined}
       onClick={() => {
+        if (isDisabled) {
+          uiSfx('disabled')
+          return
+        }
         haptic('selection')
+        uiSfx(isSelected ? 'toggleOff' : 'toggleOn')
         onChange(!isSelected)
       }}
       className={cnm('hw3d-toggle', className)}

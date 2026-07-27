@@ -11,6 +11,7 @@ import type { ConsoleTheme } from './themes'
 import { GLOW_PALETTE, PALETTE, hasOverrides, resolveTheme } from './customize'
 import type { ConsoleCustom, PartId } from './customize'
 import { haptic } from '@/lib/haptics'
+import { uiSfx } from '@/lib/uiSfx'
 import { track } from '@/lib/track'
 import { requestDeviceTiltPermission } from '@/lib/deviceTilt'
 import { HapticOverlay } from '@/components/HapticOverlay'
@@ -329,7 +330,12 @@ export function ThemeRail({
           key={t.id}
           theme={t}
           selected={t.id === selectedId}
-          onPress={() => onSelect(t.id)}
+          onPress={() => {
+            // The whole device reskins, so it gets the swipe rather than a tap. Only on a real change:
+            // re-tapping the card you are already wearing changes nothing and should sound like nothing.
+            if (t.id !== selectedId) uiSfx('swipe')
+            onSelect(t.id)
+          }}
         />
       ))}
     </div>
