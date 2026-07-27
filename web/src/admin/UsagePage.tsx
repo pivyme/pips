@@ -68,11 +68,11 @@ function Report({ report, days }: { report: UsageReport; days: number }) {
   return (
     <div className="flex flex-col gap-4">
       <Summary report={report} days={days} />
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
         <Funnel report={report} />
         <Games report={report} />
       </div>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
         <Cohorts report={report} />
         <MenuSections report={report} />
       </div>
@@ -177,7 +177,7 @@ function Games({ report }: { report: UsageReport }) {
               <div className="flex items-baseline justify-between gap-3">
                 <span className="flex min-w-0 items-center gap-2" style={{ color: 'var(--a-text)' }}>
                   <GameIcon game={g.game} size={15} />
-                  <span className="truncate font-semibold capitalize">{g.game}</span>
+                  <span className="truncate font-semibold capitalize">{g.game.replace(/-/g, ' ')}</span>
                 </span>
                 <span className="flex shrink-0 items-baseline gap-2.5" style={{ color: 'var(--a-text-3)', fontSize: 12 }}>
                   {g.opens.toLocaleString()} opens
@@ -294,7 +294,7 @@ function Events({ report, days }: { report: UsageReport; days: number }) {
   const max = Math.max(1, ...used.map((e) => e.count))
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+    <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <Panel
         title="Events in use"
         icon={Activity}

@@ -38,7 +38,8 @@ export function ErrorsPage() {
         <Select label="Kind" value={filters.kind} options={KINDS} onChange={(kind) => setFilters((f) => ({ ...f, kind }))} />
       </PageHeader>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,560px)]">
+      {/* items-start: a three-row list next to a long detail should not stretch into 800px of empty panel. */}
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,560px)]">
         <Panel title="Groups" icon={Bug} note={list.data ? `${list.data.groups.length} in view` : undefined}>
           {list.isPending ? (
             <LoadingState label="Loading error groups" rows={6} />
@@ -110,9 +111,11 @@ function GroupTable({
                 }
               }}
             >
-              <td className="a-key" style={{ paddingTop: 6, paddingBottom: 6 }}>
-                <span className="line-clamp-1">{g.title}</span>
-                <span className="a-mono block" style={{ color: 'var(--a-text-muted)' }}>
+              {/* Truncate, not line-clamp: a title is often one unbroken token (`module::function::code`),
+                  and line-clamp has nothing to wrap on, so it collapses to the first word. */}
+              <td className="a-key a-cell-fill" style={{ paddingTop: 6, paddingBottom: 6 }} title={g.title}>
+                <span className="block truncate">{g.title}</span>
+                <span className="a-mono block truncate" style={{ color: 'var(--a-text-muted)' }}>
                   {g.fingerprint}
                 </span>
               </td>

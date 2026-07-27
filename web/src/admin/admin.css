@@ -157,10 +157,8 @@
   border-bottom: none;
 }
 
-/* Numbers right, labels left, always. Numeric columns hug their content so a wide screen gives the
-   slack to the name column instead of flinging every figure at the far rim. */
+/* Numbers right, labels left, always. */
 .a-num {
-  width: 1%;
   white-space: nowrap;
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -168,10 +166,26 @@
   font-weight: 600;
 }
 
+/* Numeric columns hug their content so a wide screen gives the slack to the name column instead of
+   flinging every figure at the far rim. Cells only: on a flex item `width: 1%` becomes the automatic
+   minimum size, so the number keeps its nowrap width and paints straight over its neighbour. */
+td.a-num,
+th.a-num {
+  width: 1%;
+}
+
 /* The primary cell in a row: the thing you scan for. */
 .a-key {
   color: var(--a-text);
   font-weight: 600;
+}
+
+/* The column that absorbs the leftover width and truncates instead of widening the table. An auto-layout
+   table sizes columns to content, so one long fingerprint or module path pushes the numbers off the panel
+   and out of reach. `max-width: 0` opts this cell out of that measurement. */
+.a-cell-fill {
+  width: 100%;
+  max-width: 0;
 }
 
 .a-row {
@@ -446,8 +460,9 @@
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05);
 }
 
-/* The active marker is an amber bar on the rail, the same cue the menu drawer uses. */
-.a-nav-item[data-active='true']::before {
+/* The active marker is an amber bar on the rail, the same cue the menu drawer uses. Rail only: the mobile
+   strip lays the same items out horizontally, where a left-edge bar lands on top of the previous tab. */
+.a-rail .a-nav-item[data-active='true']::before {
   content: '';
   position: absolute;
   left: -12px;

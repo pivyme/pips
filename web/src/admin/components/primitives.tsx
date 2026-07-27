@@ -243,8 +243,10 @@ export function Metric({
       <span className="a-metric truncate" style={color ? { color } : undefined}>
         {value}
       </span>
+      {/* The hint carries the denominator, and it truncates on a narrow tile, so a plain-text one keeps a
+          tooltip. Without it "1180 of 1284 wallets read, 104 timed out" reads as "1180 of 1284 wallets read". */}
       {hint != null && (
-        <span style={{ color: 'var(--a-text-3)', fontSize: 12 }} className="truncate">
+        <span style={{ color: 'var(--a-text-3)', fontSize: 12 }} className="truncate" title={typeof hint === 'string' ? hint : undefined}>
           {hint}
         </span>
       )}

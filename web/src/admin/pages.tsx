@@ -27,7 +27,8 @@ import type { OverviewReport, PerfReport, WalletBalance } from './types'
 const num = (n: number | null | undefined, digits = 0): string =>
   n == null ? '--' : n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
 
-const usd = (n: number | null | undefined): string => (n == null ? '--' : `$${num(n, 2)}`)
+// Sign outside the symbol: "$-1,284.62" is not how anyone writes a loss.
+const usd = (n: number | null | undefined): string => (n == null ? '--' : `${n < 0 ? '-' : ''}$${num(Math.abs(n), 2)}`)
 const pct = (n: number | null | undefined): string => (n == null ? '--' : `${num(n, 1)}%`)
 const ms = (n: number | null | undefined): string => (n == null ? '--' : `${num(Math.round(n))}ms`)
 
@@ -103,7 +104,7 @@ function OverviewBody({ data }: { data: OverviewReport }) {
         />
       </Section>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid items-start gap-4 xl:grid-cols-2">
         <Panel title="Plays per game" icon={Gamepad2} note="7 days">
           {plays.byGame.length === 0 ? (
             <EmptyState
@@ -170,7 +171,7 @@ function OverviewBody({ data }: { data: OverviewReport }) {
             )
           }
         />
-        <Metric label="Withdrawals" value={num(money.withdrawals.count)} hint={`${num(money.withdrawals.amount, 2)} sent out`} />
+        <Metric label="Withdrawals" value={num(money.withdrawals.count)} hint={`${usd(money.withdrawals.amount)} sent out`} />
         <Metric label="Faucet out" value={usd(money.faucetOut)} hint="DUSDC via the faucet" />
         <Metric label="Grants out" value={usd(money.grantOut)} hint="starter and top-up chips" />
         <Metric
@@ -344,7 +345,9 @@ function PerfBody({ data }: { data: PerfReport }) {
             <tbody>
               {data.routes.map((r) => (
                 <tr key={r.route}>
-                  <td className="a-key a-mono">{r.route}</td>
+                  <td className="a-key a-mono a-cell-fill truncate" title={r.route}>
+                    {r.route}
+                  </td>
                   <td className="a-num">{num(r.n)}</td>
                   <td className="a-num">{ms(r.p50)}</td>
                   <td className="a-num">{ms(r.p95)}</td>
