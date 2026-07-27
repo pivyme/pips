@@ -2,10 +2,11 @@
 // the first ADMIN through an admin-only UI, and keeping ADMIN out of the API means a compromised admin
 // session cannot mint more admins. See bigdev/plans/cont/03-ADMIN-DASHBOARD.md §2.1 rule 3 and §9.1.
 //
-//   cd backend && bun scripts/grant-role.ts <userIdOrUsername> <ROLE> [--revoke]
+//   cd backend && bun scripts/grant-role.ts <idOrUsernameOrAddressOrEmail> <ROLE> [--revoke]
 //
 // Examples:
 //   bun scripts/grant-role.ts kelvin ADMIN
+//   bun scripts/grant-role.ts kelvin@example.com ADMIN
 //   bun scripts/grant-role.ts kelvin BETA_TESTER --revoke
 
 import '../dotenv.ts';
@@ -18,7 +19,7 @@ const [target, roleArg, ...rest] = process.argv.slice(2);
 const revoke = rest.includes('--revoke');
 
 if (!target || !roleArg) {
-  console.error('usage: bun scripts/grant-role.ts <userIdOrUsername> <ROLE> [--revoke]');
+  console.error('usage: bun scripts/grant-role.ts <idOrUsernameOrAddressOrEmail> <ROLE> [--revoke]');
   console.error(`roles: ${SPECIAL_ROLES.join(', ')}`);
   process.exit(1);
 }
@@ -29,15 +30,24 @@ if (!isSpecialRole(role)) {
   process.exit(1);
 }
 
-const user = await prismaQuery.user.findFirst({
-  where: { OR: [{ id: target }, { username: target }, { address: target }] },
-  select: { id: true, username: true, address: true, specialRoles: true },
+// Email is not unique in the schema, so match every candidate and refuse a tie rather than let findFirst
+// pick one: granting ADMIN to the wrong one of two accounts is silent and hard to notice.
+const matches = await prismaQuery.user.findMany({
+  where: { OR: [{ id: target }, { username: target }, { address: target }, { email: { equals: target, mode: 'insensitive' } }] },
+  select: { id: true, username: true, address: true, email: true, specialRoles: true },
 });
 
-if (!user) {
-  console.error(`no user matched "${target}" (tried id, username, address)`);
+if (matches.length === 0) {
+  console.error(`no user matched "${target}" (tried id, username, address, email)`);
   process.exit(1);
 }
+if (matches.length > 1) {
+  console.error(`"${target}" matched ${matches.length} users, refusing to guess. Re-run with the id:`);
+  for (const m of matches) console.error(`  ${m.id}  @${m.username ?? '(no username)'}  ${m.email ?? '(no email)'}`);
+  process.exit(1);
+}
+
+const user = matches[0]!;
 
 const has = user.specialRoles.includes(role);
 if (revoke && !has) {

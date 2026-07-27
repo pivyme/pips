@@ -49,6 +49,13 @@ describe('normalize (§3.1)', () => {
     expect(normalize('abort 0 stake 1500000')).toBe(normalize('abort 0 stake 2750000'));
   });
 
+  it('collapses a countdown without touching abort codes', () => {
+    // Six faucet-cooldown rows produced six groups before this: the seconds survive the 3+ digit rule.
+    expect(normalize('Faucet on cooldown. Try again in 35s.')).toBe(normalize('Faucet on cooldown. Try again in 5s.'));
+    expect(normalize('timed out after 250ms')).toBe(normalize('timed out after 900ms'));
+    expect(normalize('assert_backing abort 0')).not.toBe(normalize('assert_backing abort 3'));
+  });
+
   it('percent-decodes first, so an encoded gRPC message matches its decoded twin', () => {
     const encoded = 'MoveAbort%20%28MoveLocation%20%7B%20name%3A%20expiry_cash%20%7D%2C%200%29';
     expect(normalize(encoded)).toBe(normalize('MoveAbort (MoveLocation { name: expiry_cash }, 0)'));
@@ -68,6 +75,13 @@ describe('topOwnFrame (§3.1)', () => {
       '    at handler (/app/backend/src/routes/gameRoutes.ts:88:5)',
     ].join('\n');
     expect(topOwnFrame(stack)).toBe('src/services/plays.ts:235 commitPlay');
+  });
+
+  it('gives one frame for the container and the laptop, so a bug does not split by host', () => {
+    const frame = (path: string) => ['Error: boom', `    at verify (${path}:46:7)`].join('\n');
+    // The container runs out of /src/app; a dev runs it from a checkout.
+    expect(topOwnFrame(frame('/src/app/src/middlewares/authMiddleware.ts'))).toBe('src/middlewares/authMiddleware.ts:46 verify');
+    expect(topOwnFrame(frame('/Users/dev/PIPS/backend/src/middlewares/authMiddleware.ts'))).toBe('src/middlewares/authMiddleware.ts:46 verify');
   });
 
   it('falls back to the top frame when every frame is vendor code', () => {

@@ -35,6 +35,9 @@ export function normalize(message: string): string {
   s = s.replace(/\bc[a-z0-9]{20,30}\b/g, '<id>');
   // 4. standalone numbers of 3+ digits (amounts, timestamps, raw balances)
   s = s.replace(/\b\d{3,}\b/g, '<n>');
+  // 4b. any number carrying a time unit ("try again in 35s"). Short counts survive step 4 so abort codes
+  //     stay distinct, but a countdown in a user-facing message split one cooldown into six groups.
+  s = s.replace(/\b\d+(ms|s|m|h|d)\b/g, '<n>$1');
   // 5. quoted strings
   s = s.replace(/"[^"]*"/g, '<str>').replace(/'[^']*'/g, '<str>');
   // 6. collapse whitespace (already lowercased by grpcErrorText)
@@ -55,11 +58,16 @@ export function topOwnFrame(stack?: string | null): string {
 }
 
 // "at commitPlay (/abs/path/backend/src/services/plays.ts:235:11)" -> "src/services/plays.ts:235 commitPlay"
+//
+// The leading `.*` is GREEDY on purpose, so it backtracks to the LAST src/ or scripts/ segment. The
+// container runs out of /src/app, and a non-greedy match latched onto that first `src/` and kept the
+// rest, so prod reported `src/app/src/middlewares/auth.ts` where local reported `src/middlewares/auth.ts`:
+// one bug, two fingerprints, split by where it happened to run.
 function trimFrame(frame: string): string {
   const m = /^at\s+(?:async\s+)?([^\s(]+)?\s*\(?([^\s()]+?):(\d+):\d+\)?$/.exec(frame);
   if (!m) return frame.replace(/^at\s+/, '').slice(0, 200);
   const [, fn, file, line] = m;
-  const short = (file ?? '').replace(/^.*?((?:backend|web)\/)?(src\/|scripts\/)/, '$2');
+  const short = (file ?? '').replace(/^.*((?:backend|web)\/)?(src\/|scripts\/)/, '$2');
   return `${short}:${line}${fn && fn !== short ? ` ${fn}` : ''}`;
 }
 
