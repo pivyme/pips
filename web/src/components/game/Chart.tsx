@@ -202,6 +202,7 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
   const target = useRef<number>(0)
   const display = useRef<number>(0)
   const seeded = useRef(false) // first-tick guard; a ref not state, so onTick reads it live and seeds exactly once
+  const frozenPushT = useRef(0) // last time a flat point was appended while frozen, so the trailing line keeps scrolling instead of evaporating
   const prerollEnd = useRef(0) // perf-time where the pre-roll ends and real ticks begin, so the pre-roll can be swapped out later
   const realPast = useRef(false) // the pre-roll is the server's recorded window, not the synthetic warm-up
   const range = useRef<{ min: number; max: number }>({ min: 0, max: 1 })
@@ -789,6 +790,13 @@ export function Chart({ asset, overlays, height, className, onPrice, livePriceRe
       // Settled: pull the tip onto the on-chain RESULT. onTick holds target while frozen, so this wins.
       const pin = settlePin()
       if (pin != null) target.current = pin
+      // Frozen and not yet settled: onTick (below) stops feeding points, so keep the trailing line scrolling
+      // flat at the held price instead of it evaporating off-screen while we wait on the settle tx to land.
+      else if (frozenRef.current && now - frozenPushT.current > 200) {
+        frozenPushT.current = now
+        points.current.push({ t: now, p: target.current })
+        if (points.current.length > 600) points.current.splice(0, points.current.length - 600)
+      }
       const d = display.current
       display.current = d + (target.current - d) * k
       paint(now)

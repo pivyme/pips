@@ -65,7 +65,8 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 ├── scripts/                 # Ops, diagnostics, benches, proofs. Run with `bun scripts/<name>.ts`
 │                            #   post-deploy-check, verify-sponsor, verify-admin, verify-analytics-offpath,
 │                            #   grant-role, diag-pnl, diag-funding, bench-lucky, bench-settle, bench-range,
-│                            #   airdrop-dusdc, migrate-achievements, backfill-emails, gen-ops-wallets, wipe-history
+│                            #   airdrop-dusdc, migrate-achievements, backfill-emails, gen-ops-wallets, wipe-history,
+│                            #   read-user-chips
 ├── src/
 │   ├── config/
 │   │   ├── main-config.ts   # Centralized env config (import from here, not process.env)
