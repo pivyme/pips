@@ -20,7 +20,6 @@ import {
   Sparkles,
   Vibrate,
   Volume2,
-  X,
   Zap,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -749,18 +748,8 @@ function ClaimRow({ amount, status, date }: { amount: string; status: 'paid' | '
 function FormatModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange: (open: boolean) => void }) {
   const [anon, setAnon] = useState(false)
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="sm" placement="center" className="border border-line bg-[#161615]">
-      <button
-        type="button"
-        onClick={() => onOpenChange(false)}
-        aria-label="Close"
-        className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.06] text-white/70 transition-transform active:scale-90"
-      >
-        <X className="h-[18px] w-[18px]" strokeWidth={2.6} />
-      </button>
-      <h2 className="pr-10 text-[19px] font-black leading-none text-white">Link format</h2>
-      <p className="mt-2 text-[15px] leading-snug text-text-3">Pick how your invite link looks.</p>
-      <div className="mt-5 flex flex-col gap-2">
+    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="sm" placement="center" title="Link format" description="Pick how your invite link looks.">
+      <div className="flex flex-col gap-2">
         <FormatRow label="Use My Username" sub="playpips.fun/@you" selected={!anon} onTap={() => setAnon(false)} />
         <FormatRow label="Anonymous" sub="playpips.fun/r/CODE" selected={anon} onTap={() => setAnon(true)} />
       </div>
@@ -952,7 +941,7 @@ function PlayDetailModal({ play, isOpen, onOpenChange }: { play: HistPlay; isOpe
   const [showDetails, setShowDetails] = useState(false)
   const positive = play.positive
   const tone = positive ? 'text-up' : 'text-down'
-  const title = play.status === 'cashed_out' ? 'Cashed out' : positive ? 'Profit' : 'Rekt'
+  const title = play.status === 'cashed_out' ? 'Cashed Out' : positive ? 'Profit' : 'Rekt'
   const detailRows: Array<[string, string]> = [
     ['Duration', '30s'],
     ['Multiplier', play.line.split('· ')[1] ?? '—'],
@@ -962,18 +951,8 @@ function PlayDetailModal({ play, isOpen, onOpenChange }: { play: HistPlay; isOpe
     ['Payout', play.headline.replace('-', '')],
   ]
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="md" placement="center" className="border border-line bg-[#161615]">
-      <button
-        type="button"
-        onClick={() => onOpenChange(false)}
-        aria-label="Close"
-        className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.06] text-white/70 transition-transform active:scale-90"
-      >
-        <X className="h-[18px] w-[18px]" strokeWidth={2.6} />
-      </button>
-      <h2 className="pr-10 font-sans text-[22px] font-black uppercase leading-none text-white">{title}</h2>
-
-      <div className="mt-4 flex flex-col gap-3 pb-1">
+    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="md" placement="center" title={title}>
+      <div className="flex flex-col gap-3 pb-1">
         {/* Hero: outcome-tinted skeuo plate, big PnL, three stat cells. */}
         <div
           className="rounded-card px-4 py-5 text-center"

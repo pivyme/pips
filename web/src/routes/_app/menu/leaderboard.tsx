@@ -265,7 +265,7 @@ function YourRankFooter({ you, board }: { you: GlobalLeaderboard['you']; board: 
   const name = user?.username ?? 'You'
   const rgb = board === 'gainers' ? '52,211,153' : '255,90,77'
   return (
-    <div className="sticky bottom-4 z-20">
+    <div className="sticky bottom-4 z-20 isolate" data-pinned-footer>
       <div
         className="relative flex items-center gap-3 rounded-2xl px-3.5 py-3"
         style={{

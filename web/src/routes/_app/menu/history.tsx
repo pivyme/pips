@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ExternalLink, Loader2, Share2, X } from 'lucide-react'
+import { ChevronDown, ExternalLink, Loader2, Share2 } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { GameIcon } from '@/components/GameIcon'
@@ -487,7 +487,7 @@ function PlayDetailModal({
   const entry = parseFloat(play.entryValue ?? '0')
   const roi = entry > 0 ? (pnl / entry) * 100 : 0
   const tone = positive ? 'text-up' : 'text-down'
-  const title = play.status === 'cashed_out' ? 'Cashed out' : positive ? 'Profit' : 'Rekt'
+  const title = play.status === 'cashed_out' ? 'Cashed Out' : positive ? 'Profit' : 'Rekt'
   const { asset } = headOf(play)
 
   // A fresh open always starts collapsed.
@@ -496,18 +496,8 @@ function PlayDetailModal({
   }, [isOpen])
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="md" placement="center" className="border border-line bg-[#161615]">
-      <button
-        type="button"
-        onClick={() => onOpenChange(false)}
-        aria-label="Close"
-        className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.06] text-white/70 transition-transform active:scale-90"
-      >
-        <X className="h-[18px] w-[18px]" strokeWidth={2.6} />
-      </button>
-      <h2 className="pr-10 font-sans text-[22px] font-black uppercase leading-none text-white">{title}</h2>
-
-      <div className="mt-4 flex flex-col gap-3 pb-1">
+    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="md" placement="center" title={title}>
+      <div className="flex flex-col gap-3 pb-1">
         {/* Hero: the play at a glance, on a quiet outcome-tinted skeuo plate (deep green win, deep red loss).
             Inner shadows only, no border, no glow, keeps it modern. */}
         <div
@@ -633,20 +623,15 @@ function PlayShareModal({ play, isOpen, onOpenChange }: { play: PlayDTO; isOpen:
   }
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="md" placement="center" className="border border-line bg-[#161615]">
-      {/* Own header (matches the referrals modal): app-style Gabarito heading + a top-right close button. */}
-      <button
-        type="button"
-        onClick={() => onOpenChange(false)}
-        aria-label="Close"
-        className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.06] text-white/70 transition-transform active:scale-90"
-      >
-        <X className="h-[18px] w-[18px]" strokeWidth={2.6} />
-      </button>
-      <h2 className="pr-10 font-sans text-[22px] font-black leading-none text-white">Share PnL</h2>
-      <p className="mt-2 text-[14px] leading-snug text-text-3">Turn this play into a card to share.</p>
-
-      <div className="mt-5 flex flex-col gap-4 pb-1">
+    <Modal
+      isOpen={isOpen}
+      onOpenChange={onOpenChange}
+      size="md"
+      placement="center"
+      title="Share PnL"
+      description="Turn this play into a card to share."
+    >
+      <div className="flex flex-col gap-4 pb-1">
         <div className="relative aspect-[16/9] w-full overflow-hidden rounded-md bg-black/50 ring-1 ring-white/10">
           {url ? (
             <img src={url} alt="Your play as a shareable card" className="h-full w-full object-contain" />

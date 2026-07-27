@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowDownLeft, ArrowUpRight, ChevronRight, Copy, ExternalLink, X } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, ChevronRight, Copy, ExternalLink } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { MenuScreen, ScreenEmpty, ScreenError } from '@/components/menu/shared'
 import { CoinLogo } from '@/components/menu/deposit/CoinLogo'
@@ -202,18 +202,9 @@ function TxDetailModal({ row, isOpen, onOpenChange }: { row: WalletTxDTO; isOpen
   }
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="md" placement="center" className="border border-line bg-[#161615]">
-      <button
-        type="button"
-        onClick={() => onOpenChange(false)}
-        aria-label="Close"
-        className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.06] text-white/70 transition-transform active:scale-90"
-      >
-        <X className="h-[18px] w-[18px]" strokeWidth={2.6} />
-      </button>
-
-      {/* Header: glyph + coin badge, kind + time, signed amount hero. */}
-      <div className="flex items-center gap-3 pr-10">
+    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="md" placement="center" title={kindTitle(row)}>
+      {/* Glyph + coin badge, time, signed amount hero. */}
+      <div className="flex items-center gap-3">
         <div className="relative shrink-0">
           <span
             className={cnm(
@@ -230,10 +221,7 @@ function TxDetailModal({ row, isOpen, onOpenChange }: { row: WalletTxDTO; isOpen
             className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[#161615]"
           />
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-[17px] font-extrabold">{kindTitle(row)}</div>
-          <div className="mt-0.5 text-[12px] text-text-3">{when}</div>
-        </div>
+        <div className="min-w-0 flex-1 text-[13px] text-text-3">{when}</div>
       </div>
 
       <div className={cnm('tnum mt-4 text-[32px] font-black leading-none', isIn ? 'text-up' : 'text-text')}>

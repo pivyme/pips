@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Check, Copy, ExternalLink, MoreHorizontal, X } from 'lucide-react'
+import { Check, Copy, ExternalLink, MoreHorizontal } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { MenuScreen, ScreenError } from '@/components/menu/shared'
 import { Modal, useOverlayState } from '@/ui/Modal'
@@ -255,20 +255,10 @@ function ReferralsScreen() {
         onOpenChange={fmt.setOpen}
         size="sm"
         placement="center"
-        className="border border-line bg-[#161615]"
+        title="Link format"
+        description="Pick how your invite link looks."
       >
-        {/* Own header (not the wrapper's muted .modal__heading) so it reads like the app's headers. */}
-        <button
-          type="button"
-          onClick={() => fmt.close()}
-          aria-label="Close"
-          className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.06] text-white/70 transition-transform active:scale-90"
-        >
-          <X className="h-[18px] w-[18px]" strokeWidth={2.6} />
-        </button>
-        <h2 className="pr-10 text-[19px] font-black leading-none text-white">Link format</h2>
-        <p className="mt-2 text-[15px] leading-snug text-text-3">Pick how your invite link looks.</p>
-        <div className="mt-5 flex flex-col gap-2">
+        <div className="flex flex-col gap-2">
           <FormatRow
             label="Use My Username"
             sub={hasUsername ? `playpips.fun/@${info?.username ?? ''}` : 'Set a username to use this'}

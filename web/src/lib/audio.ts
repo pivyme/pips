@@ -101,37 +101,53 @@ export function subscribeAudio(cb: () => void): () => void {
   }
 }
 
-// iOS makes HTMLMediaElement.volume read-only, so the fader moved and nothing happened on a phone.
-// When the element refuses a volume write we hand it to a WebAudio gain node, which does respond.
-// Desktop keeps the plain element volume and never builds a graph.
-let elVolumeWorks = true
+// A gain node is the fader on every platform, because on an iPhone the element's own `volume` is not
+// one. WebKit locks it (HTMLMediaElement.cpp, m_volumeLocked, on for the small-screen idiom): the
+// setter stores the value and queues a task that reverts it, and never touches the player. So a
+// synchronous read-back returns exactly what you wrote and any probe built on one reports success
+// while the output stays at full scale. Measured on iOS 26.4: write 0.37, read 0.370, read again a
+// task later, 1.000. That probe is why the fader moved nothing on a phone. The element is only the
+// fader when there is no WebAudio at all.
 let musicSrc: MediaElementAudioSourceNode | null = null
 let musicGain: GainNode | null = null
 let graphCtx: AudioContext | null = null
+let noGraph = false
 
 // musicVolume is the fader position (0..1); the output only ever hears it through the ceiling.
 function applyVolume(): void {
   const level = musicVolume * MUSIC_CEILING
-  if (el && elVolumeWorks) el.volume = level
-  if (musicGain && graphCtx) musicGain.gain.setTargetAtTime(level, graphCtx.currentTime, 0.015)
+  if (musicGain && graphCtx) {
+    musicGain.gain.setTargetAtTime(level, graphCtx.currentTime, 0.015)
+    return
+  }
+  if (el) el.volume = level // pre-graph, and the only fader left if the graph never builds
 }
 
 // An element can only ever be handed to one MediaElementAudioSourceNode, so this runs once, on the
 // first play, which is inside a gesture and therefore when iOS lets the context start.
 function ensureGraph(a: HTMLAudioElement): void {
-  if (elVolumeWorks || musicSrc) return
+  if (musicSrc || noGraph) return
   const ac = sharedAudioContext()
-  if (!ac) return
+  if (!ac) {
+    noGraph = true
+    return
+  }
   try {
     musicSrc = ac.createMediaElementSource(a)
   } catch {
-    elVolumeWorks = true // no graph to be had; leave the element playing rather than muting it
+    noGraph = true // no graph to be had; leave the element playing rather than muting it
     return
   }
   musicGain = ac.createGain()
   musicGain.gain.value = musicVolume * MUSIC_CEILING
   musicSrc.connect(musicGain).connect(ac.destination)
   graphCtx = ac
+  a.volume = 1 // the gain node is the fader now, the element hands it the full signal
+  // The music now plays THROUGH the context, so a suspend or an iOS 'interrupted' silences it while
+  // the element still reads as playing. Pull it back up rather than leave a dead transport.
+  ac.addEventListener('statechange', () => {
+    if (ac.state !== 'running' && ac.state !== 'closed' && el && !el.paused) ac.resume().catch(() => {})
+  })
 }
 
 // A backgrounded iOS PWA can close the shared context for good, and the element is welded to that
@@ -145,6 +161,7 @@ function recoverGraph(): void {
   musicSrc = null
   musicGain = null
   graphCtx = null
+  noGraph = false // a fresh element gets a fresh shot at a source node
   const a = ensureEl()
   if (!a) return
   const seek = () => {
@@ -200,11 +217,7 @@ function ensureEl(): HTMLAudioElement | null {
   const a = new Audio()
   a.preload = 'auto'
   a.loop = true // the end runs straight back to the top
-  // Probe rather than sniff the UA: a browser that keeps `volume` read-only reads back its own value.
-  const probe = 0.37
-  a.volume = probe
-  elVolumeWorks = Math.abs(a.volume - probe) < 0.01
-  a.volume = elVolumeWorks ? musicVolume * MUSIC_CEILING : 1 // the gain node is the fader otherwise
+  a.volume = musicVolume * MUSIC_CEILING // holds until ensureGraph hands the fader to the gain node
   // play/pause events (not our own calls) drive the flag, so an OS interrupt stays in sync
   a.addEventListener('play', () => {
     if (!playing) {

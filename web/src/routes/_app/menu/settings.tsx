@@ -18,12 +18,12 @@ export const Route = createFileRoute('/_app/menu/settings')({
 
 type Settings = UserDTO['settings']
 // Only the boolean toggles live here; the skin (settings.theme) is set in the Customize studio.
-type Key = 'sound' | 'haptics' | 'reducedMotion' | 'confirmTrades'
+// Reduced motion is hidden here for now (still wired through auth -> ConsoleCanvas, just no toggle).
+type Key = 'sound' | 'haptics' | 'confirmTrades'
 
 const ROWS: Array<{ key: Key; label: string; desc: string }> = [
   { key: 'sound', label: 'Sound', desc: 'Beeps and wins' },
   { key: 'haptics', label: 'Haptics', desc: 'Buzz on taps and wins' },
-  { key: 'reducedMotion', label: 'Reduced motion', desc: 'Calmer animations' },
   { key: 'confirmTrades', label: 'Confirm trades', desc: 'Double-tap to place a play' },
 ]
 

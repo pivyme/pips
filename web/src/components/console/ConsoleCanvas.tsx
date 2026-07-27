@@ -28,6 +28,7 @@ import type { HapticPreset } from '@/lib/haptics'
 import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
 import { isDeviceParked } from './controls'
 import { themeBackdrop, type ConsoleTheme } from './themes'
+import { setSplashDeviceBox } from './splash'
 import type { PartId } from './customize'
 import { betLadder } from '@/lib/sui/config'
 import { useOverlayState } from '@/ui/Modal'
@@ -204,6 +205,8 @@ export default function ConsoleCanvas({
     let buildDisposed = false
     let buildIdleId = 0
     let disposeScene: (() => void) | null = null
+    // App and studio each mount a device, so each publishes its silhouette under its own key.
+    const splashSource = customize ? 'studio' : 'app'
 
     // Expression, not a hoisted declaration, so the post-guard non-null narrowing of canvas/hint holds inside.
     const buildSteps = function* () {
@@ -2180,6 +2183,7 @@ export default function ConsoleCanvas({
       // Keep the solid back on through the whole spin and only drop it once we're basically front-on,
       // so it doesn't pop while the device is still angled. By then it's occluded anyway.
       backPanel.visible = !outroActive || easeInOutCubic(outroT) < 0.9
+      publishDeviceBox()
     }
 
     // Export tool: a dead front-on frame at slider zero, device pose driven purely by the x/y sliders (x=pitch, y=yaw), applied to the deck pivot so the back panel reads when spun. No float, no orbit, no intro.
@@ -2202,6 +2206,99 @@ export default function ConsoleCanvas({
       deck.rotation.set(er?.x ?? 0, er?.y ?? 0, 0)
       // Keep the solid back on so the embossed back panel reads once the device is spun around.
       backPanel.visible = true
+    }
+
+    // The device's silhouette in CSS px, published for the splash overlay's scatter area. Four corner
+    // projections, no DOM writes, refreshed wherever the pose is placed (app + studio each own a slot).
+    const boxScratch = new THREE.Vector3()
+    const boxRect = { el: null as unknown as HTMLElement, x: 0, y: 0, w: 0, h: 0, parts: {} }
+    // Per-part anchors, so a part-tab pick bursts on the control it just repainted instead of over the
+    // whole device. Mutated in place every publish, never reallocated (this runs per animating frame).
+    const anchor = () => ({ x: 0, y: 0, rx: 0, ry: 0 })
+    const partAnchors: Record<string, Array<{ x: number; y: number; rx: number; ry: number }>> = {
+      play: [anchor()],
+      buttons: [anchor(), anchor()],
+      glow: [anchor(), anchor()],
+      knob: [anchor()],
+      wheel: [anchor()],
+    }
+    // Corners come in the device-local, DEVICE_Z-baked convention the button/pocket helpers already use.
+    function fillAnchor(
+      a: { x: number; y: number; rx: number; ry: number },
+      corners: Array<THREE.Vector3>,
+    ) {
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity
+      for (const v of corners) {
+        const n = boxScratch
+          .set(v.x, v.y, v.z - DEVICE_Z)
+          .applyMatrix4(device.matrixWorld)
+          .project(camera)
+        const x = (n.x * 0.5 + 0.5) * viewW
+        const y = (-n.y * 0.5 + 0.5) * viewH
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+      a.x = (minX + maxX) / 2
+      a.y = (minY + maxY) / 2
+      a.rx = (maxX - minX) / 2
+      a.ry = (maxY - minY) / 2
+    }
+    const pocketScratch = [0, 1, 2, 3].map(() => new THREE.Vector3())
+    function pocketCorners(pk: { px: number; py: number; w: number; h: number }) {
+      const cx = wx(pk.px)
+      const cy = wy(pk.py)
+      const z = DEVICE_Z + 0.2 // pocket front face, same plane projectPocket uses
+      pocketScratch[0].set(cx - pk.w / 2, cy - pk.h / 2, z)
+      pocketScratch[1].set(cx + pk.w / 2, cy - pk.h / 2, z)
+      pocketScratch[2].set(cx + pk.w / 2, cy + pk.h / 2, z)
+      pocketScratch[3].set(cx - pk.w / 2, cy + pk.h / 2, z)
+      return pocketScratch
+    }
+    function publishDeviceBox() {
+      const el = rootRef.current
+      if (!el || viewW === 0 || viewH === 0) return
+      device.updateWorldMatrix(true, false)
+      const cy = bodyCy(screenExt)
+      const hh = (BODY_H + screenExt) / 2
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity
+      for (const [lx, ly] of [
+        [-3.1, cy - hh],
+        [3.1, cy - hh],
+        [3.1, cy + hh],
+        [-3.1, cy + hh],
+      ]) {
+        const n = boxScratch.set(lx, ly, 0).applyMatrix4(device.matrixWorld).project(camera)
+        const x = (n.x * 0.5 + 0.5) * viewW
+        const y = (-n.y * 0.5 + 0.5) * viewH
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+      // 0 = PLAY, 1/2 = the action caps (which also carry the glow screens).
+      fillAnchor(partAnchors.play[0], buttonWorldCorners(0))
+      fillAnchor(partAnchors.buttons[0], buttonWorldCorners(1))
+      fillAnchor(partAnchors.buttons[1], buttonWorldCorners(2))
+      fillAnchor(partAnchors.glow[0], buttonWorldCorners(1))
+      fillAnchor(partAnchors.glow[1], buttonWorldCorners(2))
+      fillAnchor(partAnchors.knob[0], pocketCorners(knobPocket))
+      fillAnchor(partAnchors.wheel[0], pocketCorners(numberWheelPocket))
+
+      boxRect.el = el
+      boxRect.x = minX
+      boxRect.y = minY
+      boxRect.w = maxX - minX
+      boxRect.h = maxY - minY
+      boxRect.parts = partAnchors
+      setSplashDeviceBox(splashSource, boxRect)
     }
 
     // Project the device's L-shaped screen cutout to CSS px and glue the HTML screen layer onto it. Extracted from resize() so the LIVE arc can re-run it every animating frame (the camera moves).
@@ -2285,6 +2382,7 @@ export default function ConsoleCanvas({
       el.style.clipPath = `polygon(${clip})`
 
       projectButtonOverlay()
+      publishDeviceBox()
     }
 
     // The 4 corners of button i in the same device-local, DEVICE_Z-baked convention as screenWorldPts,
@@ -3504,6 +3602,7 @@ export default function ConsoleCanvas({
 
     return () => {
       buildDisposed = true
+      setSplashDeviceBox(splashSource, null)
       flushBuildRef.current = () => {}
       if (buildIdleId) {
         const w = window as Window & { cancelIdleCallback?: (id: number) => void }

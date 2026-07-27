@@ -10,6 +10,7 @@ import { THEMES, THEME_BY_ID } from './themes'
 import type { ConsoleTheme } from './themes'
 import { GLOW_PALETTE, PALETTE, hasOverrides, resolveTheme } from './customize'
 import type { ConsoleCustom, PartId } from './customize'
+import { LineSplashLayer, lineSplash } from './splash'
 import { haptic } from '@/lib/haptics'
 import { uiSfx } from '@/lib/uiSfx'
 import { track } from '@/lib/track'
@@ -110,6 +111,9 @@ export function CustomizeStudio({
     haptic('selection')
     track('custom.skin_preview', { skin: id })
     setDraft({ preset: id }) // preset tap resets all overrides
+    // The whole device just changed colour, so throw the new skin off it as a scatter of hairlines.
+    const t = THEME_BY_ID[id]
+    if (t) lineSplash({ source: 'studio', colors: [t.main, t.knob, '#ffffff'] })
     // iOS gates motion access behind a tap; this tap is as good as any, and it's what makes the
     // gold's reflection sweep react to the phone in hand instead of sitting static.
     if (THEME_BY_ID[id]?.metallic) void requestDeviceTiltPermission()
@@ -119,6 +123,9 @@ export function CustomizeStudio({
     if (exiting) return
     haptic('selection')
     setDraft((d) => ({ ...d, parts: { ...d.parts, [part]: i } }))
+    // A part pick bursts on that control (body has no anchor, so it scatters like a skin swap).
+    const hex = (part === 'glow' ? GLOW_PALETTE : PALETTE)[i]?.hex
+    if (hex) lineSplash({ source: 'studio', part, colors: [hex], power: 0.9 })
   }
 
   const commit = () => {
@@ -166,6 +173,9 @@ export function CustomizeStudio({
           />
         </div>
       )}
+
+      {/* Splash sits over the device (z 10) and under the chrome (z 30), so the lines cross the body. */}
+      <LineSplashLayer source="studio" className="z-20" />
 
       {/* Chrome on top. The device area stays click-through so drags spin it; only the controls grab. */}
       <div className="pointer-events-none absolute inset-0 z-30 flex flex-col">

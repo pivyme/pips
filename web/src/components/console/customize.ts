@@ -49,14 +49,20 @@ export const GLOW_PALETTE = [
   { name: 'Lime', hex: '#cfe84e' }, // 11
 ] as const
 
+export function luminance(hex: string): number {
+  const h = hex.replace('#', '')
+  if (h.length !== 6) return 1
+  const r = parseInt(h.slice(0, 2), 16) / 255
+  const g = parseInt(h.slice(2, 4), 16) / 255
+  const b = parseInt(h.slice(4, 6), 16) / 255
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
 // Same perceived-luminance rule as the canvas's actionInk (ConsoleCanvas ~784), CSS-side.
 export function contrastInk(hex: string, dark = '#373737', light = '#e8e6df'): string {
   const h = hex.replace('#', '')
   if (h.length !== 6) return light
-  const r = parseInt(h.slice(0, 2), 16) / 255
-  const g = parseInt(h.slice(2, 4), 16) / 255
-  const b = parseInt(h.slice(4, 6), 16) / 255
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.58 ? dark : light
+  return luminance(hex) > 0.58 ? dark : light
 }
 
 export function hasOverrides(c: ConsoleCustom): boolean {

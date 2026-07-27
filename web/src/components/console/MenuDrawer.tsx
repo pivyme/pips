@@ -295,12 +295,16 @@ export function MenuDrawer({
   }, [])
 
   // Bottom fade: hints there's content clipped below the fold, gone once fully scrolled. Styled straight on the node, no per-scroll re-render.
+  // A page with its own pinned footer (e.g. the leaderboard's "Your Rank" plate, marked
+  // `data-pinned-footer`) skips it: there's nothing hidden below that footer to hint at, and the
+  // fade was darkening straight into it.
   const fadeRef = useRef<HTMLDivElement>(null)
   const updateFade = useCallback(() => {
     const el = scrollRef.current
     const fade = fadeRef.current
     if (!el || !fade) return
-    fade.style.opacity = el.scrollHeight - el.scrollTop - el.clientHeight > 24 ? '1' : '0'
+    const hasPinnedFooter = el.querySelector('[data-pinned-footer]') !== null
+    fade.style.opacity = !hasPinnedFooter && el.scrollHeight - el.scrollTop - el.clientHeight > 24 ? '1' : '0'
   }, [])
 
   // Fires once per nav, on resolvedLocation, which lands well after the Outlet has swapped, so the slide
