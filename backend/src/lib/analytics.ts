@@ -117,13 +117,30 @@ interface MoveAbortParts {
   code: string;
 }
 
-// MoveAbort(MoveLocation { module: ModuleId { address: <addr>, name: expiry_cash },
+// Two shapes reach us and both must parse, or every distinct abort collapses into one useless group.
+// Rust debug: MoveAbort(MoveLocation { module: ModuleId { address: <addr>, name: expiry_cash },
 //   function: 12, instruction: 41, function_name: assert_backing }, 0)
+// gRPC json:  {"$kind":"MoveAbort","message":"MoveAbort in 3rd command, abort code: 1, in
+//   '<addr>::predict_account::position_opened_at_ms' (instruction 16)","MoveAbort":{"abortCode":"1",
+//   "location":{"module":"predict_account","functionName":"position_opened_at_ms"}}}
 export function parseMoveAbort(decoded: string): MoveAbortParts | null {
   if (!decoded.includes('moveabort')) return null;
-  const module = /name:\s*([a-z0-9_]+)/.exec(decoded)?.[1] ?? 'unknown';
-  const fn = /function_name:\s*([a-z0-9_]+)/.exec(decoded)?.[1] ?? 'unknown';
-  const code = /,\s*(\d+)\s*\)\s*$/.exec(decoded.trim())?.[1] ?? /\}\s*,\s*(\d+)/.exec(decoded)?.[1] ?? '0';
+  // The quoted '<addr>::module::function' path is the one part of the json shape that is prose, not
+  // structure, so it survives a wire-format change and backs up the explicit keys.
+  const path = /'0x[0-9a-f]+::([a-z0-9_]+)::([a-z0-9_]+)'/.exec(decoded);
+  const module =
+    /name:\s*([a-z0-9_]+)/.exec(decoded)?.[1] ?? /"module"\s*:\s*"([a-z0-9_]+)"/.exec(decoded)?.[1] ?? path?.[1] ?? 'unknown';
+  const fn =
+    /function_name:\s*([a-z0-9_]+)/.exec(decoded)?.[1] ??
+    /"functionname"\s*:\s*"([a-z0-9_]+)"/.exec(decoded)?.[1] ??
+    path?.[2] ??
+    'unknown';
+  const code =
+    /"abortcode"\s*:\s*"?(\d+)"?/.exec(decoded)?.[1] ??
+    /abort code:\s*(\d+)/.exec(decoded)?.[1] ??
+    /,\s*(\d+)\s*\)\s*$/.exec(decoded.trim())?.[1] ??
+    /\}\s*,\s*(\d+)/.exec(decoded)?.[1] ??
+    '0';
   return { module, fn, code };
 }
 

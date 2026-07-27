@@ -13,10 +13,12 @@ import {
   capStack,
   fingerprint,
   normalize,
+  parseMoveAbort,
   redact,
   scrubText,
   topOwnFrame,
 } from './analytics.ts';
+import { grpcErrorText } from './sui/client.ts';
 
 const ABORT = (module: string, fn: string, code: number, extra = '') =>
   `MoveAbort(MoveLocation { module: ModuleId { address: 0xdb3ef5a5aabbccdd112233445566778899aabbccddeeff00112233445566446e, name: ${module} }, ` +
@@ -116,6 +118,48 @@ describe('the five known Sui classes collapse to their fingerprint (§3.1)', () 
     expect(prem.fingerprint).toBe('chain.mint_admission_premium');
     // Expected behaviour: we retry at 1x by design, so this must never page.
     for (const f of [lev, prob, prem]) expect(f.level).toBe('warn');
+  });
+});
+
+describe('the gRPC json abort shape parses like the rust debug one (§3.1)', () => {
+  // Captured verbatim off testnet: a redeem_live against an already-closed position. Only the rust
+  // debug shape was covered before, so every real abort landed as "unknown::unknown 0", one group
+  // for every distinct chain bug.
+  const LIVE =
+    'play failed: {"success":false,"error":{"$kind":"MoveAbort","message":"MoveAbort in 3rd command, ' +
+    "abort code: 1, in '0xdb3ef5a5129920e59c9b2ae25a77eddb48acd0e1c6307b97073f0e076016446e::predict_account" +
+    '::position_opened_at_ms\' (instruction 16)","command":2,"MoveAbort":{"abortCode":"1","location":' +
+    '{"package":"0xdb3ef5a5129920e59c9b2ae25a77eddb48acd0e1c6307b97073f0e076016446e","module":' +
+    '"predict_account","function":9,"instruction":16,"functionName":"position_opened_at_ms"}}}}';
+
+  it('reads module, function, and code out of the json shape', () => {
+    // classifySui parses the grpcErrorText form (percent-decoded + lowercased), not the normalized one.
+    const a = parseMoveAbort(grpcErrorText(LIVE));
+    expect(a).toEqual({ module: 'predict_account', fn: 'position_opened_at_ms', code: '1' });
+  });
+
+  it('two different aborts no longer share one fingerprint', () => {
+    const a = fingerprint({ kind: 'chain', message: LIVE });
+    const b = fingerprint({ kind: 'chain', message: LIVE.replaceAll('position_opened_at_ms', 'assert_owner') });
+    expect(a.title).toBe('MoveAbort predict_account::position_opened_at_ms 1');
+    expect(a.fingerprint).not.toBe(b.fingerprint);
+  });
+
+  it('the same abort still collapses to one fingerprint across occurrences', () => {
+    const a = fingerprint({ kind: 'chain', message: LIVE });
+    const b = fingerprint({ kind: 'chain', message: LIVE.replace('3rd command', '5th command') });
+    expect(a.fingerprint).toBe(b.fingerprint);
+  });
+
+  it('settle abort 1 is recognised in the json shape, not just the rust one', () => {
+    const settle = LIVE.replaceAll('position_opened_at_ms', 'redeem_settled');
+    expect(fingerprint({ kind: 'chain', message: settle }).fingerprint).toBe('chain.settle_already_redeemed');
+  });
+
+  it('a percent-encoded json abort groups with its decoded twin', () => {
+    const a = fingerprint({ kind: 'chain', message: LIVE });
+    const b = fingerprint({ kind: 'chain', message: encodeURIComponent(LIVE) });
+    expect(a.fingerprint).toBe(b.fingerprint);
   });
 });
 
