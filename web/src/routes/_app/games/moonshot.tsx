@@ -12,7 +12,7 @@ import {
   LiveVerdictPanel,
   ResultOverlay,
 } from '@/components/game/gamePanels'
-import { GameScreen, ScreenMessage, Cell } from '@/components/game/screen'
+import { GameScreen, ScreenMessage, SCREEN_STATES, Cell } from '@/components/game/screen'
 import { TradeConfirmSheet, useTradeConfirm } from '@/components/game/tradeConfirm'
 import { LivePrice } from '@/components/game/LivePrice'
 import { useConsoleControls } from '@/components/console/controls'
@@ -392,7 +392,7 @@ function MoonshotScreen() {
       return
     }
     if (!canPlay) {
-      toast.error('No live market right now. Try again in a sec.', { id: 'no-market' })
+      toast.error('No game running right now. Try again in a sec.', { id: 'no-market' })
       return
     }
     clearResetTimer()
@@ -596,11 +596,11 @@ function MoonshotScreen() {
           <div className="shimmer h-24 w-2/3" />
         </div>
       ) : marketsError ? (
-        <ScreenMessage title="Could not load markets" />
+        <ScreenMessage {...SCREEN_STATES.marketsError} />
       ) : playsPaused && phase === 'idle' ? (
-        <ScreenMessage title="Plays paused" hint="Topping up gas" />
+        <ScreenMessage {...SCREEN_STATES.playsPaused} />
       ) : noLiveMarket ? (
-        <ScreenMessage title="No live markets right now." />
+        <ScreenMessage {...SCREEN_STATES.noMarket} />
       ) : (
         <div className="relative flex h-full flex-col">
           {/* HEADER — market + live price (left), balance / expiry countdown (right). */}

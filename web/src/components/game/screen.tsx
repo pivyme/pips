@@ -92,13 +92,35 @@ export function Cell({ label, value }: { label: string; value: ReactNode }) {
 }
 
 // In-device empty/error/stale message: no RETRY button (the screen isn't clickable), the markets query auto-polls and clears this the instant a market returns.
-// Passive pulse only (docs/SCREEN.md style: flat black, amber status dot, mono uppercase copy).
-export function ScreenMessage({ title, hint = 'Reconnecting' }: { title: string; hint?: string }) {
+// Passive pulse only (docs/SCREEN.md style: flat black, amber status dot, mono uppercase copy). `body` stays sentence case, it's the one place on the screen that gets to be a sentence.
+export function ScreenMessage({ title, body, hint = 'Reconnecting' }: { title: string; body?: string; hint?: string }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
       <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500" />
-      <p className="font-mono text-[13px] font-bold uppercase tracking-[0.16em] text-text-2">{title}</p>
-      <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-text-3">{hint}</p>
+      {/* Three steps of brightness, and all three stay on the bare token classes so the screen surface's CRT glow (styles.css) still matches them. */}
+      <p className="font-mono text-[13px] font-bold uppercase tracking-[0.16em] text-text">{title}</p>
+      {body && <p className="max-w-[38ch] font-mono text-[11.5px] font-medium leading-[1.6] text-text-2">{body}</p>}
+      <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-text-3">{hint}</p>
     </div>
   )
 }
+
+// The three ways a game screen goes dark, worded once so the copy can't drift between Lucky, Range and Moonshot.
+// Plain words only: each one says what broke, that it is not the player's fault, and that their balance is fine. "No live markets" on its own just reads as "the app is broken".
+export const SCREEN_STATES = {
+  noMarket: {
+    title: 'No games running',
+    body: "PIPS plays run on DeepBook Predict, and it isn't opening any rounds right now. Your balance is safe and nothing was charged.",
+    hint: 'Check back in a bit',
+  },
+  marketsError: {
+    title: "Can't connect",
+    body: "We can't reach DeepBook Predict, the service PIPS plays run on. It's a connection problem on our side, not your account. Your balance is safe.",
+    hint: 'Retrying',
+  },
+  playsPaused: {
+    title: 'Plays paused',
+    body: "We're topping up the wallet that covers network fees for your plays. Your balance wasn't charged, and plays come back as soon as that's done.",
+    hint: 'Back in a moment',
+  },
+} as const

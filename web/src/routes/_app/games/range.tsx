@@ -11,7 +11,7 @@ import { Chart, type ChartGeometry } from '@/components/game/Chart'
 import { GameLeaderboardOverlay } from '@/components/game/GameLeaderboardOverlay'
 import { InstructionOverlay } from '@/components/game/gamePanels'
 import { LivePrice } from '@/components/game/LivePrice'
-import { Cell, GameScreen, ScreenMessage } from '@/components/game/screen'
+import { Cell, GameScreen, ScreenMessage, SCREEN_STATES } from '@/components/game/screen'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
 import { usePlayResolutionWatch } from '@/hooks/useGameRound'
@@ -505,7 +505,7 @@ function RangeScreen() {
       return
     }
     if (!canPlay) {
-      toast.error('No live market right now. Try again in a sec.', { id: 'range-no-market' })
+      toast.error('No game running right now. Try again in a sec.', { id: 'range-no-market' })
       return
     }
     if (positionsRef.current.filter(isLive).length >= MAX_POSITIONS) {
@@ -728,9 +728,9 @@ function RangeScreen() {
           <div className="shimmer h-24 w-2/3" />
         </div>
       ) : marketsError ? (
-        <ScreenMessage title="Could not load markets" />
+        <ScreenMessage {...SCREEN_STATES.marketsError} />
       ) : blankScreen ? (
-        <ScreenMessage title={playsPaused ? 'Plays paused' : 'No live markets right now.'} hint={playsPaused ? 'Topping up gas' : 'Reconnecting'} />
+        <ScreenMessage {...(playsPaused ? SCREEN_STATES.playsPaused : SCREEN_STATES.noMarket)} />
       ) : (
         <div className="relative flex h-full flex-col">
           {/* HEADER: market + live price (left), balance / shared buzzer (right). */}

@@ -12,7 +12,7 @@ import {
   LiveVerdictPanel,
   ResultOverlay,
 } from '@/components/game/gamePanels'
-import { GameScreen, ScreenMessage, Cell } from '@/components/game/screen'
+import { GameScreen, ScreenMessage, SCREEN_STATES, Cell } from '@/components/game/screen'
 import { TradeConfirmSheet, useTradeConfirm } from '@/components/game/tradeConfirm'
 import { LivePrice } from '@/components/game/LivePrice'
 import { Chart } from '@/components/game/Chart'
@@ -392,7 +392,7 @@ function LuckyScreen() {
       return
     }
     if (!canPlay) {
-      toast.error('No live market right now. Try again in a sec.', { id: 'no-market' })
+      toast.error('No game running right now. Try again in a sec.', { id: 'no-market' })
       return
     }
     clearResetTimer()
@@ -570,11 +570,11 @@ function LuckyScreen() {
           <div className="shimmer h-24 w-2/3" />
         </div>
       ) : marketsError ? (
-        <ScreenMessage title="Something slipped" />
+        <ScreenMessage {...SCREEN_STATES.marketsError} />
       ) : playsPaused && phase === 'idle' ? (
-        <ScreenMessage title="Plays paused" hint="Topping up gas" />
+        <ScreenMessage {...SCREEN_STATES.playsPaused} />
       ) : noLiveMarket ? (
-        <ScreenMessage title="Market catching up" />
+        <ScreenMessage {...SCREEN_STATES.noMarket} />
       ) : (
         <div className="relative flex h-full flex-col">
           {/* HEADER: persistent price/balance context; the deal zone (wheels, then dealt strip) sits below it. */}
