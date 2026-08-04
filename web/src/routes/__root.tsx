@@ -12,15 +12,15 @@ import type { QueryClient } from '@tanstack/react-query'
 import { AuthProvider } from '@/lib/auth'
 import { AppPrivyProvider } from '@/lib/privy'
 import { installClientErrorHooks, reportClientError } from '@/lib/clientErrors'
+import { SITE_URL } from '@/config'
 import { installTrack, isPwaLaunch, track } from '@/lib/track'
 
 interface MyRouterContext {
   queryClient: QueryClient
 }
 
-// Hardcoded prod origin. Social crawlers (Telegram especially) need absolute image
-// URLs, so og:image/twitter:image point at the live domain, never a relative path.
-const SITE_URL = 'https://playpips.fun'
+// Social crawlers (Telegram especially) need absolute image URLs, so og:image/twitter:image point at
+// the canonical domain from config, never a relative path.
 const OG_IMAGE = `${SITE_URL}/pips-og.jpg`
 const OG_TITLE = "World's First Virtual Gamified Trading Console"
 const OG_DESC =
