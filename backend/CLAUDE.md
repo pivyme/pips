@@ -10,7 +10,7 @@
 
 This is the **PIPS** backend (gamified trading on Sui via DeepBook Predict). Read the root [`../CLAUDE.md`](../CLAUDE.md) for product and Sui stack context. Its job: auth (Privy + a dev auto-login), game engine, settlement, market discovery, and server-signing the user's plays (`@privy-io/node` `rawSign` under a session signer; dev = the testing wallet).
 
-**The chain is Mysten's official DeepBook Predict**, on `testnet` (default) or `mainnet` via `SUI_NETWORK`. All Predict code lives in `src/lib/sui/predict-real.ts` + `config-real.ts`: per-owner `AccountWrapper`, internal-balance mint/redeem, discovery via direct chain reads, `redeem_settled` at expiry. The record is the committed `src/lib/sui/deployed-real.testnet.json` (read via `config-real.ts`, ids re-fetched from chain, never hand-copied). Binding rules are **L-005..L-012** in the root `CLAUDE.md ## Learnings`, read them before touching Predict. Never hardcode ids. (The vendored fork under `../contracts/` and the `../scripts/localnet.sh` deploy front door remain on disk for reference only, not the run path.)
+**The chain is Mysten's official DeepBook Predict**, on `testnet` (default) or `mainnet` via `SUI_NETWORK`. All Predict code lives in `src/lib/sui/predict-real.ts` + `config-real.ts`: per-owner `AccountWrapper`, internal-balance mint/redeem, discovery via direct chain reads, `redeem_settled_permissionless` at expiry. The record is the committed `src/lib/sui/deployed-real.testnet.json` (read via `config-real.ts`, ids re-fetched from chain, never hand-copied). Binding rules are **L-005..L-012** in the root `CLAUDE.md ## Learnings`, read them before touching Predict. Never hardcode ids. (The vendored fork under `../contracts/` and the `../scripts/localnet.sh` deploy front door remain on disk for reference only, not the run path.)
 
 **v1 build:** planned in [`../bigdev/plans/`](../bigdev/plans/). Read `05-SUI-PREDICT.md` (the Predict capability box + wrappers) and `cont/01-PREDICT-TESTNET.md` (the real-path spec), `02-API.md` (routes + SSE streams), `03-DATABASE.md` (schema + seed), `LUCKY.md` §6 (dev + Privy auth, the current source of truth; `04-AUTH.md` keeps the JWT plumbing + onboarding). All Sui ids come from config, never hardcode.
 
@@ -94,7 +94,7 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   │       (+ colocated *.test.ts)
 │   ├── workers/             # node-cron jobs (isRunning guard), tracked in worker-registry
 │   │   ├── market-sync.ts   # discovers the live 1m BTC markets from chain
-│   │   ├── settle.ts        # settles expired plays (redeem_settled)
+│   │   ├── settle.ts        # settles expired plays (redeem_settled_permissionless)
 │   │   ├── price-warmer.ts  # keeps display-asset Pyth spot pre-warmed
 │   │   ├── wallet-indexer.ts # scans user addresses into the WalletTx ledger (presence-gated)
 │   │   ├── token-worker.ts  # warms the TokenInfo metadata/price cache off the request path
