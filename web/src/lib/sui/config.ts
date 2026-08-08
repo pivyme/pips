@@ -15,9 +15,9 @@ export const PREDICT_ID = env.VITE_PREDICT_OBJECT_ID ?? ''
 export let DUSDC_TYPE = env.VITE_DUSDC_TYPE ?? ''
 
 // Stake band the backend enforces per play, defaulted synchronously so the bet wheel is right on
-// first render (real Predict floors at ~$1 min-net-premium -> 1.5..3); /config overrides it.
+// first render (real Predict floors at ~$1 min-net-premium -> 1.5..25); /config overrides it, demo keeps it.
 let STAKE_MIN = 1.5
-let STAKE_MAX = 3
+let STAKE_MAX = 25
 
 // House rake (backend house.ts): a real play sizes off `net = stake - rake`, kept here so previews show the true
 // NET max payout instead of over-promising. 0 until /config says otherwise (always 0 in demo); MIN_NET is the skip-rake floor.
