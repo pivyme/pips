@@ -121,7 +121,7 @@ function SpinWheel({
           else {
             raf.current = 0
             setLanded(pick)
-            haptic('rigid')
+            haptic(last ? 'high' : 'mid') // the last reel resolves the tier, so it lands heavier
             slotLock(index, last)
           }
         }

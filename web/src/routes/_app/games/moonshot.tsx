@@ -25,7 +25,7 @@ import {
   useRestoreOpenPlay,
   useRoundCountdown,
 } from '@/hooks/useGameRound'
-import { haptic } from '@/lib/haptics'
+import { haptic, hapticPattern } from '@/lib/haptics'
 // Aliased: this file already destructures a `track` from useActivePlay (the open-round tracker).
 import { track as trackEvent, trackSettled } from '@/lib/track'
 import {
@@ -138,6 +138,7 @@ function MoonshotScreen() {
   const livePriceRef = useRef(0)
   const onTargetRef = useRef<boolean | null>(null) // mirrors onTarget so the rAF only re-renders on a real flip
   const wasOnTarget = useRef<boolean | null>(null) // last state, for the crossing haptic
+  const lastCrossRef = useRef(0) // gates the crossing haptic to one per 400ms, mirrors range.tsx (B10)
 
   const { liveAssets, noLiveMarket, playsPaused, isLoading: marketsLoading, isError: marketsError } = useLiveMarkets()
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
@@ -259,7 +260,7 @@ function MoonshotScreen() {
       })
       setPhase('result')
       stopMoonshotBgm() // cut the bed so the resolve sting lands over silence
-      haptic(final.status === 'lost' ? 'error' : 'success')
+      hapticPattern(final.status === 'lost' ? 'lose' : final.status === 'cashed_out' ? 'cashOut' : 'win')
       if (final.status === 'won') moonshotWin()
       else if (final.status === 'cashed_out') moonshotCashout()
       else moonshotLose()
@@ -373,7 +374,13 @@ function MoonshotScreen() {
       const now = p > 0 ? (playSide === 'up' ? p >= strike : p <= strike) : null
       if (now !== onTargetRef.current) {
         onTargetRef.current = now
-        if (wasOnTarget.current != null && wasOnTarget.current !== now) haptic('selection')
+        if (wasOnTarget.current != null && wasOnTarget.current !== now) {
+          const t = performance.now()
+          if (t - lastCrossRef.current > 400) {
+            lastCrossRef.current = t
+            haptic('low')
+          }
+        }
         wasOnTarget.current = now
         setOnTarget(now)
       }
@@ -400,7 +407,6 @@ function MoonshotScreen() {
     setLockPrice(null)
     setOverlay('none')
     setPhase('placing')
-    haptic('heavy')
     moonshotFire()
     trackEvent('game.play_tap', { game: 'moonshot', stake, tier: `${side}${reach}` })
     const tapAt = Date.now()
@@ -418,7 +424,6 @@ function MoonshotScreen() {
         status: p.status,
       })
       setPhase('open')
-      haptic('selection')
     } catch (e) {
       trackEvent('game.play_error', { game: 'moonshot', code: errorCode(e) })
       toastError(e)
@@ -447,7 +452,7 @@ function MoonshotScreen() {
     if (!liveHold || !play) return
     trackEvent('game.cashout_tap', { game: 'moonshot' })
     setPhase('cashing')
-    haptic('rigid')
+    // No haptic: CASH OUT is `main` relabeled, already covered by ConsoleCanvas's overlayPress (B13).
     const started = Date.now()
     try {
       const { play: p } = await cashOut(play.id)
@@ -472,7 +477,7 @@ function MoonshotScreen() {
 
   const dismissResult = useCallback(() => {
     clearResetTimer()
-    haptic('selection')
+    // No haptic: bound to main/action1/action2 while isResult, all three already buzz on press.
     setPhase('idle')
   }, [])
 
@@ -480,7 +485,7 @@ function MoonshotScreen() {
   // grant is on cooldown or the treasury is dry, so a broke player is never a dead-end.
   const topUp = useTopUp()
   const goTopUp = useCallback(() => {
-    haptic('rigid')
+    // No haptic: TOP UP is `main` relabeled, already covered by overlayPress.
     void topUp()
   }, [topUp])
 
@@ -491,7 +496,7 @@ function MoonshotScreen() {
       const now = AIM_LADDER[Math.min(next, AIM_LADDER.length - 1)]
       if ((prev >= 0) !== (now >= 0)) {
         moonshotFlip()
-        haptic('rigid')
+        haptic('mid')
       }
       setAimIdx(next)
     },
@@ -502,7 +507,7 @@ function MoonshotScreen() {
   const cycleAsset = useCallback(() => {
     if (phase !== 'idle' && phase !== 'placing') return
     if (liveAssets.length < 2) return
-    haptic('selection')
+    // No haptic: bound to action2, already covered by overlayPress.
     setPinnedAsset((cur) => {
       const i = cur ? liveAssets.indexOf(cur) : -1
       return liveAssets[(i + 1) % liveAssets.length]
@@ -511,7 +516,7 @@ function MoonshotScreen() {
 
   // The left cap is the same info rotary as Range: game -> how to -> leaderboard -> game; the label names where the NEXT press lands.
   const rotateInfo = useCallback(() => {
-    haptic('selection')
+    // No haptic: bound to action1, already covered by overlayPress.
     setOverlay((o) => (o === 'none' ? 'howto' : o === 'howto' ? 'board' : 'none'))
   }, [])
   const infoLabel = overlay === 'none' ? 'HOW TO' : overlay === 'howto' ? 'RANKS' : 'GAME'

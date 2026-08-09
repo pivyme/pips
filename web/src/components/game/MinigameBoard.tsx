@@ -50,6 +50,13 @@ export function useMinigameLeaderboard(game: Minigame): {
   }
 }
 
+// The one outcome haptic pattern for a finished run: `achievement` on a genuine new best (beats your own
+// best AND is now rank #1 globally, which only the server can determine, see MinigameSubmit.isBest),
+// `lose` otherwise. Shared so Flappy and Line Rider fire the identical decision instead of drifting.
+export function minigameOutcomePattern(result: Pick<MinigameSubmit, 'isBest'>): 'achievement' | 'lose' {
+  return result.isBest ? 'achievement' : 'lose'
+}
+
 export function MinigameBoard({ rows }: { rows: LeaderboardScoreEntry[] }) {
   if (rows.length === 0) {
     return <div className="font-mono text-[13px] uppercase tracking-[0.14em] text-text-3">No scores yet. Set the first.</div>

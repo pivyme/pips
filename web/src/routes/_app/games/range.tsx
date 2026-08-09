@@ -15,7 +15,7 @@ import { Cell, GameScreen, ScreenMessage, SCREEN_STATES } from '@/components/gam
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useLiveMarkets } from '@/hooks/useLiveMarkets'
 import { usePlayResolutionWatch } from '@/hooks/useGameRound'
-import { haptic } from '@/lib/haptics'
+import { haptic, hapticPattern } from '@/lib/haptics'
 // Aliased so the three game screens read the same way (lucky/moonshot collide with useActivePlay's track).
 import { track as trackEvent, trackSettled } from '@/lib/track'
 import { rangeBuzzer, rangeCross, rangeLose, rangeWin, startRangeBgm, stopRangeBgm } from '@/lib/sound'
@@ -363,7 +363,7 @@ function RangeScreen() {
       const t = performance.now()
       if ((entered || exited) && t - lastTick > 400) {
         lastTick = t
-        haptic(exited ? 'rigid' : 'selection')
+        haptic('low')
       }
       // Board armed = every still-LIVE zone paying (frozen settling zones don't gate the sound).
       const allIn = tracked.size > 0 && [...tracked].every((k) => next.has(k))
@@ -398,10 +398,10 @@ function RangeScreen() {
   }, [soonestExpiry, nowMs])
 
   const ping = useCallback((won: boolean) => {
-    haptic(won ? 'success' : 'error')
     const t = Date.now()
     if (t - lastPingRef.current < 200) return // debounce a buzzer wave into one sting, not a cacophony
     lastPingRef.current = t
+    hapticPattern(won ? 'win' : 'lose')
     if (won) rangeWin()
     else rangeLose()
   }, [])
@@ -526,7 +526,6 @@ function RangeScreen() {
     const placing: Position = { key, slot, status: 'placing', asset, stake, multiplier: idleMult }
     setPositions((prev) => [...prev, placing])
     setSelfPlaceSignal((s) => s + 1) // your own coin-pop, same primitive as the crowd
-    haptic('heavy')
     trackEvent('game.play_tap', { game: 'range', stake, tier: String(tierView.tier) })
     const tapAt = Date.now()
     try {
@@ -554,7 +553,6 @@ function RangeScreen() {
             : p,
         ),
       )
-      haptic('selection')
       void refresh()
     } catch (e) {
       setPositions((prev) => prev.filter((p) => p.key !== key))
@@ -572,22 +570,23 @@ function RangeScreen() {
   // grant is on cooldown or the treasury is dry, so a broke player is never a dead-end.
   const topUp = useTopUp()
   const goTopUp = useCallback(() => {
-    haptic('rigid')
+    // No haptic: TOP UP is `main` relabeled, already covered by ConsoleCanvas's overlayPress (B13).
     void topUp()
   }, [topUp])
   const cycleAsset = useCallback(() => {
     if (lockedAsset) {
+      // A real rejection: distinct "why" beyond the generic press ack overlayPress already gave, keep it.
       haptic('error')
       toast('Asset locked while positions are open.', { id: 'range-lock' })
       return
     }
-    haptic('selection')
+    // No haptic on the success path: bound to action2, already covered by overlayPress.
     if (!assets.length) return
     const i = assets.indexOf(activeAsset)
     setSelectedAsset(assets[(i + 1) % assets.length])
   }, [assets, activeAsset, lockedAsset])
   const rotateInfo = useCallback(() => {
-    haptic('selection')
+    // No haptic: bound to action1, already covered by overlayPress.
     setOverlay((o) => (o === 'none' ? 'howto' : o === 'howto' ? 'board' : 'none'))
   }, [])
   const infoLabel = overlay === 'none' ? 'HOW TO' : overlay === 'howto' ? 'RANKS' : 'GAME'
