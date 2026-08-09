@@ -564,6 +564,57 @@ export async function simulateMint(p: {
   }
 }
 
+// Pre-tap pricing without touching chips: expiry_market::quote_mint is `public` precisely for devInspect
+// pre-trade pricing, so a read-only PTB (load_live_pricer -> quote_mint -> the quote getters) returns the
+// terms a mint of the same shape would get. Unlike simulateMint this needs no wrapper, no deposit and no
+// funded sender, so it is the cheap instrument for fitting the chain's implied vol.
+// Null when the band aborts admission, which is itself the answer: that strike is unmintable.
+export async function quoteMint(p: {
+  marketId: string;
+  lowerTick: bigint;
+  higherTick: bigint;
+  maxPremiumRaw: bigint;
+  leverage1e9: bigint;
+  sender?: string; // irrelevant to a checks-disabled read (quote_mint touches no account), defaults to the market id
+}): Promise<{ entryProbability1e9: bigint; quantityRaw: bigint; allInCostRaw: bigint } | null> {
+  try {
+    const tx = new Transaction();
+    const pricer = buildLoadPricer(tx, p.marketId);
+    const quote = tx.moveCall({
+      target: realTarget(REAL_PREDICT_PACKAGE, 'expiry_market', 'quote_mint'),
+      arguments: [
+        tx.object(p.marketId),
+        tx.object(REAL_PROTOCOL_CONFIG_ID),
+        pricer,
+        tx.pure.u64(p.lowerTick),
+        tx.pure.u64(p.higherTick),
+        tx.pure.u64(p.maxPremiumRaw),
+        tx.pure.u64(POSITION_LOT_SIZE),
+        tx.pure.bool(false), // budget-sized, exactly like mint_exact_amount, so a clean quote means a clean mint
+        tx.pure.u64(p.leverage1e9),
+        tx.object(REAL_CLOCK),
+      ],
+    });
+    for (const fn of ['entry_probability', 'quantity', 'all_in_cost']) {
+      tx.moveCall({ target: realTarget(REAL_PREDICT_PACKAGE, 'expiry_market', fn), arguments: [quote] });
+    }
+    const r = await simulateRead(tx, p.sender ?? p.marketId, `quote_mint failed (${p.marketId})`);
+    return {
+      entryProbability1e9: decodeU64(r[2]?.returnValues?.[0]?.bcs ?? null),
+      quantityRaw: decodeU64(r[3]?.returnValues?.[0]?.bcs ?? null),
+      allInCostRaw: decodeU64(r[4]?.returnValues?.[0]?.bcs ?? null),
+    };
+  } catch (e) {
+    // Null means the CHAIN refused this band. A transport failure is not an answer about the strike, so let
+    // it propagate rather than let a flaky fullnode read as "every strike is unmintable".
+    if (isMoveAbort(e)) return null;
+    throw e;
+  }
+}
+
+// A Move abort in either shape the fullnode emits: the rust debug form and the gRPC json form (L-028).
+const isMoveAbort = (e: unknown): boolean => /MoveAbort|abort code|abortCode/i.test(grpcErrorText(e));
+
 export function parseMint(events: RealEvent[]): MintResult {
   const e = events.find((x) => x.type.endsWith(OrderMintedSuffix));
   if (!e?.parsedJson) throw new Error('missing OrderMinted event');
@@ -655,6 +706,9 @@ export type RealMarketEconomics = {
   admissionTickSizeRaw: bigint; // coarser mint-boundary step (BTC 1e9 = $1)
   maxLeverage1e9: bigint; // max_admission_leverage (BTC 3e9 = 3.0x)
   liquidationLtv1e9: bigint; // liquidation_ltv (BTC 0.85e9)
+  // Window before expiry where admitted_leverage_cap() short-circuits to exactly 1x. Defaults to ONE HOUR
+  // on testnet, so every 1m market we route to is always inside it: any leverage > 1x aborts code 6.
+  noLeverageWindowMs: bigint;
 };
 
 type MarketJson = {
@@ -667,12 +721,22 @@ type MarketJson = {
 // Read the PoolVault's live market id vector, flat under expiry_accounting.active_expiry_markets.
 // 7-29 changed the entry from a bare id to { expiry_market_id, expiry_ms }; both shapes are accepted so
 // a re-vendor either way keeps discovery working.
-type ActiveMarketEntry = string | { expiry_market_id?: string };
-export async function readActiveMarketIds(): Promise<string[]> {
+type ActiveMarketEntry = string | { expiry_market_id?: string; expiry_ms?: string | number };
+
+/** A vault entry: the market id plus its expiry, which since 7-29 is readable without fetching the market. */
+export type ActiveMarket = { marketId: string; expiryMs: number };
+
+export async function readActiveMarkets(): Promise<ActiveMarket[]> {
   const res = await suiClient.core.getObject({ objectId: REAL_POOL_VAULT_ID, include: { json: true } });
   const j = res.object?.json as { expiry_accounting?: { active_expiry_markets?: ActiveMarketEntry[] } } | undefined;
   const entries = j?.expiry_accounting?.active_expiry_markets ?? [];
-  return entries.map((e) => (typeof e === 'string' ? e : (e?.expiry_market_id ?? ''))).filter(Boolean);
+  return entries
+    .map((e) => (typeof e === 'string' ? { marketId: e, expiryMs: 0 } : { marketId: e?.expiry_market_id ?? '', expiryMs: Number(e?.expiry_ms ?? 0) }))
+    .filter((e) => e.marketId);
+}
+
+export async function readActiveMarketIds(): Promise<string[]> {
+  return (await readActiveMarkets()).map((e) => e.marketId);
 }
 
 // Coarse read of one ExpiryMarket from its json; null if the object is gone (rare mid-roll race).
@@ -694,10 +758,25 @@ export async function readMarketCoarse(marketId: string): Promise<RealMarketCoar
   }
 }
 
-// devInspect the 4 economic getters for one market in a single simulate round trip.
+// Every one of these is fixed for the life of a market, so one read per market id is enough. Bounded by the
+// vault's own active set (single digits) plus whatever rolled off, so a plain map with a size cap can't grow unbounded.
+const economicsCache = new Map<string, RealMarketEconomics>();
+const ECONOMICS_CACHE_MAX = 500;
+
+// devInspect the economic getters for one market in a single simulate round trip. Cached: this is the
+// most expensive read in discovery (a simulate, not a getObject) and its answer never changes.
 export async function readMarketEconomics(marketId: string): Promise<RealMarketEconomics> {
+  const hit = economicsCache.get(marketId);
+  if (hit) return hit;
+  const fresh = await fetchMarketEconomics(marketId);
+  if (economicsCache.size >= ECONOMICS_CACHE_MAX) economicsCache.clear();
+  economicsCache.set(marketId, fresh);
+  return fresh;
+}
+
+async function fetchMarketEconomics(marketId: string): Promise<RealMarketEconomics> {
   const tx = new Transaction();
-  for (const fn of ['tick_size', 'admission_tick_size', 'max_admission_leverage', 'liquidation_ltv']) {
+  for (const fn of ['tick_size', 'admission_tick_size', 'max_admission_leverage', 'liquidation_ltv', 'no_leverage_window_ms']) {
     tx.moveCall({ target: realTarget(REAL_PREDICT_PACKAGE, 'expiry_market', fn), arguments: [tx.object(marketId)] });
   }
   // Any sender works for a checks-disabled read; the market id is a valid on-chain address to use.
@@ -707,6 +786,7 @@ export async function readMarketEconomics(marketId: string): Promise<RealMarketE
     admissionTickSizeRaw: decodeU64(r[1]?.returnValues?.[0]?.bcs ?? null),
     maxLeverage1e9: decodeU64(r[2]?.returnValues?.[0]?.bcs ?? null),
     liquidationLtv1e9: decodeU64(r[3]?.returnValues?.[0]?.bcs ?? null),
+    noLeverageWindowMs: decodeU64(r[4]?.returnValues?.[0]?.bcs ?? null),
   };
 }
 

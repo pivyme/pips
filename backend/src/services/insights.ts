@@ -11,6 +11,7 @@ import { prismaQuery } from '../lib/prisma.ts';
 import { routeSamples } from '../lib/route-latency.ts';
 import { allWorkerHealth, isWorkerStale } from '../lib/worker-registry.ts';
 import { sleep } from '../utils/miscUtils.ts';
+import { tzAddDays, tzDayStart, tzIsoDay } from '../utils/timeUtils.ts';
 import { DUSDC_TYPE } from '../lib/sui/config.ts';
 import { getDusdcBalance } from '../lib/sui/dusdc.ts';
 import { getSuiBalanceRaw } from '../lib/sui/gas.ts';
@@ -565,7 +566,8 @@ export interface CohortRow {
 // window, measured from the START OF THEIR SIGNUP DAY so every cohort member shares one clock.
 export function computeCohorts(
   users: Array<{ id: string; createdAt: Date }>,
-  activity: Array<{ userId: string | null; ts: Date }>
+  activity: Array<{ userId: string | null; ts: Date }>,
+  tz = 'UTC'
 ): CohortRow[] {
   const active = new Map<string, Date[]>();
   for (const a of activity) {
@@ -577,8 +579,8 @@ export function computeCohorts(
 
   const cohorts = new Map<string, { signups: number; d1: number; d7: number }>();
   for (const user of users) {
-    const day = dayStart(user.createdAt);
-    const key = isoDay(user.createdAt);
+    const day = dayStart(user.createdAt, tz);
+    const key = isoDay(user.createdAt, tz);
     const row = cohorts.get(key) ?? { signups: 0, d1: 0, d7: 0 };
     row.signups += 1;
     const stamps = active.get(user.id) ?? [];
@@ -597,12 +599,14 @@ function inWindow(at: Date, from: number): boolean {
   return t >= from && t < from + DAY_MS;
 }
 
-function dayStart(d: Date): number {
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+// Defaults to UTC so a cron, which has no reader, keeps cutting server days. Reader-facing reports pass
+// the dashboard's own zone: a UTC day bucket reads 7 hours off the day a human in Jakarta means.
+function dayStart(d: Date, tz = 'UTC'): number {
+  return tzDayStart(d.getTime(), tz);
 }
 
-function isoDay(d: Date): string {
-  return d.toISOString().slice(0, 10);
+function isoDay(d: Date, tz = 'UTC'): string {
+  return tzIsoDay(d.getTime(), tz);
 }
 
 function pct(n: number, of: number): number {
@@ -632,7 +636,7 @@ export interface UsageReport {
 // Every name in the catalog appears, zero-count ones included, because a feature with NO events is the most
 // rarely used thing we have and it belongs at the very top of an ascending list. Without it the list only
 // ranks what is already working.
-export async function usageReport(windowDays: number): Promise<UsageReport> {
+export async function usageReport(windowDays: number, tz = 'UTC'): Promise<UsageReport> {
   const since = new Date(Date.now() - windowDays * DAY_MS);
   const funnelNames = FUNNEL_STEPS.map((s) => s.event).filter((n): n is string => !!n);
 
@@ -658,7 +662,7 @@ export async function usageReport(windowDays: number): Promise<UsageReport> {
     funnel: computeFunnel(funnelEvents, plays.map((p) => p.userId)),
     games: computeGameConversion(gameEvents),
     menu: computeMenuSections(menuEvents),
-    cohorts: computeCohorts(users, activity),
+    cohorts: computeCohorts(users, activity, tz),
     totalEvents: [...counts.values()].reduce((a, b) => a + b, 0),
   };
 }
@@ -1198,12 +1202,19 @@ function roundTo(n: number, digits: number): number {
 }
 
 /** Per-day counts over a window, zero-filled so a sparkline never implies a gap was a quiet day. */
-export function dailySeries(dates: Date[], days: number, now: number): Array<{ t: number; n: number }> {
-  const start = dayStart(new Date(now)) - (days - 1) * DAY_MS;
-  const out = Array.from({ length: days }, (_, i) => ({ t: start + i * DAY_MS, n: 0 }));
+export function dailySeries(dates: Date[], days: number, now: number, tz = 'UTC'): Array<{ t: number; n: number }> {
+  // Bucket starts are walked one calendar day at a time, so a DST day (23h or 25h) still advances exactly one.
+  const starts: number[] = [];
+  let cursor = dayStart(new Date(now), tz);
+  for (let i = 0; i < days; i++) {
+    starts.unshift(cursor);
+    cursor = tzAddDays(cursor, -1, tz);
+  }
+  const out = starts.map((t) => ({ t, n: 0 }));
+  const index = new Map(starts.map((t, i) => [t, i]));
   for (const d of dates) {
-    const i = Math.floor((dayStart(d) - start) / DAY_MS);
-    if (i >= 0 && i < days) out[i]!.n += 1;
+    const i = index.get(dayStart(d, tz));
+    if (i != null) out[i]!.n += 1;
   }
   return out;
 }
@@ -1383,10 +1394,11 @@ export interface OverviewReport {
   generatedAt: string;
 }
 
-export async function overviewReport(now = Date.now()): Promise<OverviewReport> {
-  const todayStart = new Date(dayStart(new Date(now)));
+export async function overviewReport(now = Date.now(), tz = 'UTC'): Promise<OverviewReport> {
+  // "Today" is the reader's today. Gas burned today stays the cron's UTC figure and says so in its hint.
+  const todayStart = new Date(dayStart(new Date(now), tz));
   const weekAgo = new Date(now - 7 * DAY_MS);
-  const fortnight = new Date(dayStart(new Date(now)) - 13 * DAY_MS);
+  const fortnight = new Date(tzAddDays(dayStart(new Date(now), tz), -13, tz));
 
   const [total, newToday, new7d, onboarded, returning, dauRows, wauRows, windowPlays, todayPlays, playDates, errorDates, deposits, withdrawals, grants, balances] =
     await Promise.all([
@@ -1459,12 +1471,14 @@ export async function overviewReport(now = Date.now()): Promise<OverviewReport> 
       plays: dailySeries(
         playDates.map((p) => p.createdAt),
         14,
-        now
+        now,
+        tz
       ),
       errors: dailySeries(
         errorDates.map((e) => e.createdAt),
         14,
-        now
+        now,
+        tz
       ),
     },
     generatedAt: new Date(now).toISOString(),

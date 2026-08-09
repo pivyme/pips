@@ -28,17 +28,32 @@ const liveClients = new Set<{ send: (data: unknown) => void }>();
 
 // userId-keyed online set (ref-counted: a user can have multiple tabs/sessions). The wallet-indexer scans
 // only online users, so idle app = ~0 external calls (§12c). One process serves every client, so this is the global set.
-const onlineUsers = new Map<string, number>();
+// `since` is the first session's connect time, so a second tab does not reset how long they have been here.
+const onlineUsers = new Map<string, { sessions: number; since: number }>();
 export function onlineUserIds(): string[] {
   return [...onlineUsers.keys()];
 }
+
+// Who is online, with session count + arrival time. Read by the admin dashboard's live panel.
+export function onlinePresence(): Array<{ userId: string; sessions: number; since: number }> {
+  return [...onlineUsers].map(([userId, p]) => ({ userId, sessions: p.sessions, since: p.since }));
+}
+
+// Open connections, not distinct people: two tabs count twice. This is what the product's "N ONLINE" ticker shows.
+export function liveSessionCount(): number {
+  return liveClients.size;
+}
+
 function presenceEnter(userId: string): void {
-  onlineUsers.set(userId, (onlineUsers.get(userId) ?? 0) + 1);
+  const p = onlineUsers.get(userId);
+  if (p) p.sessions += 1;
+  else onlineUsers.set(userId, { sessions: 1, since: Date.now() });
 }
 function presenceLeave(userId: string): void {
-  const n = (onlineUsers.get(userId) ?? 0) - 1;
-  if (n <= 0) onlineUsers.delete(userId);
-  else onlineUsers.set(userId, n);
+  const p = onlineUsers.get(userId);
+  if (!p) return;
+  p.sessions -= 1;
+  if (p.sessions <= 0) onlineUsers.delete(userId);
 }
 
 function broadcastOnline(): void {

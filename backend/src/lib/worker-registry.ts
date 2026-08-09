@@ -58,7 +58,9 @@ export function registerWorker(name: string, task: Stoppable, intervalMs: number
 
 // Records the outcome of one worker run, cheap enough to call on every tick. A run recorded for a name
 // never registered still shows up in health (no stop handle), so a worker can report liveness even if it registers its stop handle elsewhere.
-export function recordRun(name: string, ok: boolean, durationMs: number, error?: unknown): void {
+// opts lets a worker mark an expected failure (upstream backpressure, not a bug) so it lands as one warn
+// group instead of an error group counting every tick.
+export function recordRun(name: string, ok: boolean, durationMs: number, error?: unknown, opts?: { level?: 'warn' | 'error'; fingerprint?: string; title?: string }): void {
   let e = registry.get(name);
   if (!e) {
     e = { name, task: { stop: () => {} }, intervalMs: null, lastRunAt: null, lastSuccessAt: null, lastError: null, lastDurationMs: null };
@@ -74,7 +76,7 @@ export function recordRun(name: string, ok: boolean, durationMs: number, error?:
     e.lastError = error instanceof Error ? error.message : error != null ? String(error) : 'unknown error';
     // Every registered worker reports through here, so this instruments all of them at once. Fire-and-
     // forget by contract, so a failing capture never affects the tick that just failed.
-    captureError(error, { kind: 'worker', context: { worker: name, durationMs } });
+    captureError(error, { kind: 'worker', level: opts?.level, fingerprint: opts?.fingerprint, title: opts?.title, context: { worker: name, durationMs } });
   }
 }
 

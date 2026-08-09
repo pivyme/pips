@@ -12,6 +12,7 @@ import { transferDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { treasuryAddress, TREASURY_ENABLED } from '../lib/sui/signer.ts';
 import { generateCustodialWallet } from '../lib/sui/custodial.ts';
 import { readUserChipsRaw } from '../lib/sui/predict-real.ts';
+import { resolveSpendable } from '../lib/sui/spendable.ts';
 import { fromDusdcRaw, toDusdcRaw, DUSDC_TYPE } from '../lib/sui/config.ts';
 import { recordWalletTx } from '../lib/sui/wallet-ledger.ts';
 import { alert } from '../lib/alert.ts';
@@ -246,15 +247,20 @@ export function userIdFromToken(token: string): string | null {
   }
 }
 
+// Wallet DUSDC plus the wrapper's internal chips. The failure policy (fail soft to the last known total
+// rather than 500 /me on a rate-limited read) lives in resolveSpendable.
+async function spendableRaw(user: User): Promise<bigint> {
+  const [wallet, manager] = await Promise.allSettled([
+    getDusdcBalanceRaw(user.address),
+    readUserChipsRaw(user.address, user.predictWrapperId),
+  ]);
+  return resolveSpendable(user.address, wallet, manager);
+}
+
 // Fresh public view of a user, including the live on-chain DUSDC balance. Chips live in the wallet
 // (onboarding mint) and migrate into the PredictManager as plays run, so spendable balance is the sum of both.
 export async function toUserDTO(user: User): Promise<UserDTO> {
-  const [wallet, manager] = await Promise.all([
-    getDusdcBalanceRaw(user.address),
-    // Chips live in the wrapper's internal balance (0 until the first play creates it). Tolerate a
-    // vanished object as 0 here instead of 500ing /me mid-session.
-    readUserChipsRaw(user.address, user.predictWrapperId).catch(() => 0n),
-  ]);
+  const spendable = await spendableRaw(user);
   return {
     id: user.id,
     address: user.address,
@@ -268,7 +274,7 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
     customAvatar: user.avatarUrl != null,
     // Own roles only. Other users' roles are filtered to PUBLIC_ROLES before they leave the server.
     specialRoles: user.specialRoles,
-    balance: fromDusdcRaw(wallet + manager).toFixed(2),
+    balance: fromDusdcRaw(spendable).toFixed(2),
     // The wrapper is created lazily + self-heals on the first play, so the account is always ready to play.
     managerReady: true,
     settings: {

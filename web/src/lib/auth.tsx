@@ -95,6 +95,10 @@ const managerLost = (u: UserDTO): boolean => !isDemo() && !u.managerReady
 // Backoff after a failed heal, so a player hammering PLAY doesn't reopen the overlay on every tap.
 const HEAL_BACKOFF_MS = 15_000
 
+// Floor between balance refreshes, whatever triggered them. Short enough that coming back to the tab
+// still feels live, long enough that rapid tab switching can't storm the chain reads behind /me.
+const REFRESH_MIN_GAP_MS = 5_000
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading')
   const [user, setUser] = useState<UserDTO | null>(null)
@@ -285,16 +289,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // deposits, another tab, background settlement); each refresh reads wallet + manager cash from chain.
   useEffect(() => {
     if (status !== 'authed' || isDemo()) return
-    const onFocus = () => void refresh()
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') void refresh()
+    // focus and visibilitychange both fire on a single tab switch, so every alt-tab used to cost two
+    // /me round trips (and each one reads the chain twice). Coalesce them: one refresh per gap, minimum.
+    let lastAt = 0
+    const tick = () => {
+      const now = Date.now()
+      if (now - lastAt < REFRESH_MIN_GAP_MS) return
+      lastAt = now
+      void refresh()
     }
-    const interval = window.setInterval(() => void refresh(), 30_000)
-    window.addEventListener('focus', onFocus)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tick()
+    }
+    const interval = window.setInterval(tick, 30_000)
+    window.addEventListener('focus', tick)
     document.addEventListener('visibilitychange', onVisible)
     return () => {
       window.clearInterval(interval)
-      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('focus', tick)
       document.removeEventListener('visibilitychange', onVisible)
     }
   }, [status, refresh])

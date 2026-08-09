@@ -137,6 +137,35 @@ export interface OverviewReport {
   generatedAt: string
 }
 
+export interface LiveRow {
+  id: string
+  username: string | null
+  displayName: string
+  avatarUrl: string | null
+  address: string
+  /** Holding an open stream connection right now. False means "was here, tab is closed". */
+  live: boolean
+  sessions: number
+  since: number | null
+  lastSeenAt: number
+  doing: string
+  platform: string | null
+  plays: number
+  /** DUSDC committed in the window. */
+  staked: number
+  pnl: number
+}
+
+export interface LiveReport {
+  online: { users: number; sessions: number }
+  windowMin: number
+  rows: LiveRow[]
+  truncated: number
+  playsPerMinute: Array<{ t: number; n: number }>
+  window: { players: number; plays: number; staked: number }
+  generatedAt: string
+}
+
 export interface LatencyPoint {
   t: number
   n: number

@@ -25,7 +25,9 @@ import {
   usageReport,
   type ErrorStatus,
 } from '../services/insights.ts';
+import { liveReport } from '../services/live.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
+import { safeTimeZone } from '../utils/timeUtils.ts';
 
 import { ANALYTICS_OFF, BUDGET_SAMPLE_RATE, captureError, capMessage, capProps, errorBudgetExceeded, eventBudgetExceeded, redact, track } from '../lib/analytics.ts';
 import { CLOCK_SKEW_MS, issueSession, open, unframe } from '../lib/envelope.ts';
@@ -348,8 +350,15 @@ export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _op
 
   // Overview: users, plays, money, chain, and the two sparklines. Total user balances come from the
   // 15-minute cron's stored row, never a per-request chain sweep.
-  app.get('/admin/overview', admin, async (_request: FastifyRequest, reply: FastifyReply) => {
-    return ok(reply, await overviewReport());
+  // `tz` is the reader's IANA zone: day buckets cut there, or a chart at GMT+7 is 7 hours off the day it names.
+  app.get('/admin/overview', admin, async (request: FastifyRequest, reply: FastifyReply) => {
+    const tz = safeTimeZone((request.query as { tz?: string }).tz);
+    return ok(reply, await overviewReport(Date.now(), tz));
+  });
+
+  // Live: who has the app open right now, plus a 30-minute activity tail so a restart does not read zero.
+  app.get('/admin/live', admin, async (_request: FastifyRequest, reply: FastifyReply) => {
+    return ok(reply, await liveReport());
   });
 
   // Performance: mint latency, settle lag, per-route p95 off the in-memory access ring, worker health.
@@ -386,9 +395,9 @@ export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _op
 
   // Usage: the ascending event list, the funnel, per-game conversion, menu ranks, and D1/D7.
   app.get('/admin/usage', admin, async (request: FastifyRequest, reply: FastifyReply) => {
-    const q = request.query as { days?: string };
+    const q = request.query as { days?: string; tz?: string };
     const days = Math.min(90, Math.max(1, Number(q.days) || 30));
-    return ok(reply, await usageReport(days));
+    return ok(reply, await usageReport(days, safeTimeZone(q.tz)));
   });
 
   // Grouped errors. Default is open bugs newest-first, which is the triage order.

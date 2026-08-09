@@ -125,6 +125,30 @@
 
 /* ── Tables ────────────────────────────────────────────────────────────── */
 
+/* Every table lives in one of these. A dense table has a width below which it stops being a table and
+   starts being a pile, and on a phone that is most of them: scroll sideways rather than crush the
+   columns into each other. The min-width is a custom property so a narrow table can opt down. */
+.a-scroll-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.a-scroll-x > .a-table {
+  min-width: var(--a-table-min, 640px);
+}
+
+/* A scrolled-out column is invisible, so say the table scrolls. Desktop has the width and never needs it. */
+.a-scroll-hint {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .a-scroll-hint {
+    display: inline;
+  }
+}
+
 .a-table {
   width: 100%;
   border-collapse: collapse;
@@ -600,5 +624,43 @@ th.a-num {
   [data-admin] *::after {
     transition: none !important;
     animation: none !important;
+  }
+}
+
+/* ── Phone ─────────────────────────────────────────────────────────────── */
+
+/* The dashboard is desktop-first and stays that way, but it is read on a phone, so give the small
+   viewport its own density instead of a shrunk copy of the desktop one. Tables handle themselves via
+   .a-scroll-x; everything here is the chrome around them. */
+@media (max-width: 640px) {
+  [data-admin] {
+    font-size: 12.5px;
+  }
+
+  .a-panel {
+    padding: 12px;
+  }
+
+  .a-panel-head {
+    min-height: 40px;
+    padding: 8px 12px;
+  }
+
+  /* Two tiles across, so a phone is not one 30px number per screenful. */
+  .a-metric {
+    font-size: 22px;
+  }
+
+  .a-metric-sm {
+    font-size: 17px;
+  }
+
+  .a-page-title {
+    font-size: 21px;
+  }
+
+  .a-table th,
+  .a-table td {
+    padding: 0 10px;
   }
 }

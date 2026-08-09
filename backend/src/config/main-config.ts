@@ -290,9 +290,11 @@ export const REFERRAL_MIN_CLAIM_USD: number = Number(process.env.PIPS_REFERRAL_M
 // Real-mode (testnet) strike sizing. A mint aborts if the strike's entry probability leaves [min, max]_entry_probability;
 // a fixed-% strike sits several sigma OTM on a 20-60s BTC market, so we size it as z(p)*sigma instead (sigma = annual vol scaled by sqrt(time to expiry), p = the tier's target win prob). Band edges are unreadable pre-mint (L-012), so these stay conservative.
 export const REAL_BTC_ANNUAL_VOL: number = Number(process.env.PIPS_REAL_BTC_ANNUAL_VOL) || 0.55;
-// Floor on the target win probability we ask for (above the chain's unreadable min_entry_probability). Caps how
-// far OTM a high tier may sit; multiplier tops out near 1/this before leverage.
-export const REAL_STRIKE_MIN_PROB: number = Number(process.env.PIPS_REAL_STRIKE_MIN_PROB) || 0.06;
+// Floor on the target win probability we ask for. The chain's own min_entry_probability is hard-floored at 0.01
+// (strike_exposure_config), so this sits above it with room for the surface to move between quote and mint.
+// Caps how far OTM a high tier may sit; multiplier tops out near 1/this. At 0.06 a 25x reach could only ever
+// price ~16x, so the ladder's top rungs were unreachable by construction.
+export const REAL_STRIKE_MIN_PROB: number = Number(process.env.PIPS_REAL_STRIKE_MIN_PROB) || 0.03;
 // Absolute guard cap on the strike offset (fraction of spot), in case the vol estimate runs hot.
 export const REAL_STRIKE_MAX_OFFSET_FRAC: number = Number(process.env.PIPS_REAL_STRIKE_MAX_OFFSET_FRAC) || 0.006;
 // Binary games (LUCKY, MOONSHOT) split each tier between leverage (clamped to the market cap) and OTM distance
@@ -332,6 +334,10 @@ export const SETTLE_CRON: string = process.env.PIPS_SETTLE_CRON || '*/1 * * * * 
 // Market discovery cadence: learns the live 1m BTC market set from chain and refreshes its spot for the
 // chart. Sync near real time (~2s) or the served line lags the market the strike is priced/settled against.
 export const MARKET_SYNC_CRON: string = process.env.PIPS_MARKET_SYNC_CRON || '*/2 * * * * *';
+// How often that tick also re-reads the market SET (vault + per-market coarse), as opposed to just the
+// spot. 1m markets roll once a minute, so rediscovering every 2s spent most of the fullnode's per-IP
+// budget re-learning a set that had not changed.
+export const MARKET_DISCOVERY_MS: number = Number(process.env.PIPS_MARKET_DISCOVERY_MS) || 6000;
 // Cap on-chain redeems per settle tick so a backlog drains gradually instead of monopolizing the settle
 // executor. The rest carry over to the next tick.
 export const SETTLE_MAX_REDEEMS_PER_TICK: number = Number(process.env.PIPS_SETTLE_MAX_REDEEMS_PER_TICK) || 6;

@@ -13,7 +13,7 @@ import { Activity, CircleSlash, Compass, Filter, Gamepad2, ListTree, Users } fro
 import { useState } from 'react'
 
 import { GameIcon } from '@/components/GameIcon'
-import { Bar, DesktopOnlyNotice, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, Segmented } from './components/primitives'
+import { Bar, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, Segmented, TableScroll } from './components/primitives'
 import { usageQuery } from './queries'
 import type { UsageReport } from './types'
 
@@ -35,7 +35,6 @@ export function UsagePage() {
         <Segmented value={days} options={WINDOWS} onChange={setDays} label="Window in days" />
       </PageHeader>
 
-      <DesktopOnlyNotice page="Usage" />
 
       {isPending && (
         <Panel title="Counting events" icon={Activity}>
@@ -94,7 +93,7 @@ function Summary({ report, days }: { report: UsageReport; days: number }) {
   const playRate = opens > 0 ? (plays / opens) * 100 : null
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       <Metric icon={Activity} label="Events" value={report.totalEvents.toLocaleString()} hint={`tracked in ${days} days`} />
       <Metric
         icon={ListTree}
@@ -216,7 +215,7 @@ function Cohorts({ report }: { report: UsageReport }) {
   }
   return (
     <Panel title="Retention" icon={Users} note="D1 and D7 by signup day">
-      <div className="max-h-[300px] overflow-y-auto">
+      <div className="a-scroll-x max-h-[300px] overflow-y-auto">
         <table className="a-table">
           <thead>
             <tr>
@@ -257,7 +256,7 @@ function MenuSections({ report }: { report: UsageReport }) {
   const max = Math.max(1, ...report.menu.map((m) => m.count))
   return (
     <Panel title="Menu sections" icon={Compass} note="most opened first">
-      <div className="max-h-[300px] overflow-y-auto">
+      <div className="a-scroll-x max-h-[300px] overflow-y-auto">
         <table className="a-table">
           <thead>
             <tr>
@@ -307,6 +306,7 @@ function Events({ report, days }: { report: UsageReport; days: number }) {
           )
         }
       >
+        <TableScroll minWidth={520}>
         <table className="a-table">
           <thead>
             <tr>
@@ -327,6 +327,7 @@ function Events({ report, days }: { report: UsageReport; days: number }) {
             ))}
           </tbody>
         </table>
+        </TableScroll>
       </Panel>
 
       <Panel title="Never fired" icon={CircleSlash} note={`${unused.length} of ${report.events.length} catalog names`}>
