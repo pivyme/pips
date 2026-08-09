@@ -37,7 +37,15 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
         ref={panel}
         tabIndex={-1}
         className="a-overlay relative flex w-full max-w-[520px] flex-col overflow-hidden"
-        style={{ borderRadius: 0, borderRight: 'none', borderTop: 'none', borderBottom: 'none' }}
+        style={{
+          borderRadius: 0,
+          borderRight: 'none',
+          borderTop: 'none',
+          borderBottom: 'none',
+          // Full-height panel: its header owns the viewport top, so it carries the notch inset itself.
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+        }}
       >
         <header className="flex h-14 shrink-0 items-center justify-between border-b px-4" style={{ borderColor: 'var(--a-border)' }}>
           <div className="flex flex-col">

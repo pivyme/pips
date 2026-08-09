@@ -80,8 +80,11 @@ export interface UsageReport {
 export interface WalletBalance {
   name: string
   address: string
-  sui: number
+  /** null means the chain read failed, which is not the same as an empty wallet. */
+  sui: number | null
   dusdc: number | null
+  /** Whether this wallet is meant to hold chips at all, so "n/a" never masks a failed read. */
+  chips: boolean
 }
 
 export interface BalanceSnapshot {
@@ -90,7 +93,7 @@ export interface BalanceSnapshot {
   userCount: number
   partial?: string
   wallets: WalletBalance[]
-  gasBurnedToday: number
+  gasBurnedToday: number | null
 }
 
 export interface OverviewReport {
@@ -126,7 +129,7 @@ export interface OverviewReport {
   chain: {
     liveMarkets: number
     wallets: WalletBalance[]
-    gasBurnedToday: number
+    gasBurnedToday: number | null
     costPerPlaySui: number | null
     network: string
   }

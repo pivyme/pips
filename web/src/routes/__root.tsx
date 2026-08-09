@@ -128,6 +128,8 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body className="bg-canvas text-text antialiased">
         <Toaster
           position="top-center"
+          // Fixed to the viewport top, so on iOS it lands under the clock without the notch inset.
+          containerStyle={{ top: 'max(16px, calc(env(safe-area-inset-top) + 8px))' }}
           toastOptions={{
             style: {
               background: 'var(--color-surface)',

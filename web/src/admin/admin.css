@@ -529,6 +529,44 @@ th.a-num {
   letter-spacing: -0.01em;
 }
 
+/* Copyable address. The icon sits dim until you approach the row, so a table of these does not read as a
+   row of buttons, and the hit target still covers the whole thing. */
+.a-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border-radius: var(--a-radius-sm);
+  margin: -2px -5px;
+  padding: 2px 5px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+.a-copy:hover {
+  background: var(--a-surface-2);
+  color: var(--a-text);
+}
+
+.a-copy .a-copy-icon {
+  flex-shrink: 0;
+  color: var(--a-text-muted);
+  transition: color 120ms ease-out;
+}
+
+.a-copy:hover .a-copy-icon {
+  color: var(--a-accent);
+}
+
+.a-copy:focus-visible {
+  outline: 2px solid var(--a-accent);
+  outline-offset: 1px;
+}
+
 /* The one frame that owns a shadow. */
 .a-overlay {
   background: linear-gradient(180deg, #151513 0%, #0e0e0d 100%), #101010;
