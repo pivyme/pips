@@ -2,9 +2,13 @@
 // average; this one answers "is anyone here", which is the question you actually open the tab for.
 //
 // Two tiers on purpose. LIVE means an open connection, which is exact but in-memory, so a deploy wipes it.
-// The rest are people who played in the last 30 minutes, read from Postgres, which is what keeps the panel
-// from reading "0 online" thirty seconds after a restart while people are mid-round.
+// The rest are people who played inside the selected window, read from Postgres, which is what keeps the
+// panel from reading "0 online" thirty seconds after a restart while people are mid-round.
+//
+// The window moves the TAIL, never the presence: LIVE is an open socket whatever the picker says, and a
+// player's device and current activity are read on their own clocks, not the window's.
 
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Radio } from 'lucide-react'
 
@@ -12,32 +16,48 @@ import { Avatar } from '@/components/Avatar'
 import { liveQuery } from '../queries'
 import type { LiveReport, LiveRow } from '../types'
 import { TimeSeriesChart } from './charts'
-import { Badge, EmptyState, ErrorState, LoadingState, Panel, TableScroll } from './primitives'
+import { Badge, EmptyState, ErrorState, LoadingState, Panel, Segmented, TableScroll } from './primitives'
 
 const usd = (n: number): string => `$${n.toFixed(2)}`
 const plain = (n: number): string => String(Math.round(n))
 
 const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+
+const WINDOWS = [
+  { value: 30, label: '30m' },
+  { value: 60, label: '1h' },
+  { value: 1440, label: '24h' },
+  { value: 10080, label: '7d' },
+]
+
+const windowLabel = (min: number): string => WINDOWS.find((w) => w.value === min)?.label ?? `${min}m`
+
+const bucketLabel = (ms: number): string => (ms === MINUTE ? 'minute' : ms === HOUR ? 'hour' : `${Math.round(ms / MINUTE)} min`)
+
+/** Compact duration. Days matter once the window is a week: "here 71h" is not a reading anyone parses. */
+function span(ms: number): string {
+  const mins = Math.floor(Math.max(0, ms) / MINUTE)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  return hours < 48 ? `${hours}h` : `${Math.floor(hours / 24)}d`
+}
 
 function ago(ms: number, now: number): string {
   const d = Math.max(0, now - ms)
-  if (d < MINUTE) return 'just now'
-  const mins = Math.floor(d / MINUTE)
-  if (mins < 60) return `${mins}m ago`
-  return `${Math.floor(mins / 60)}h ago`
+  return d < MINUTE ? 'just now' : `${span(d)} ago`
 }
 
 function held(since: number, now: number): string {
-  const mins = Math.floor(Math.max(0, now - since) / MINUTE)
-  if (mins < 1) return 'just arrived'
-  if (mins < 60) return `here ${mins}m`
-  return `here ${Math.floor(mins / 60)}h`
+  const d = Math.max(0, now - since)
+  return d < MINUTE ? 'just arrived' : `here ${span(d)}`
 }
 
 export function LivePanel() {
-  const { data, isPending, error, refetch } = useQuery(liveQuery())
+  const [minutes, setMinutes] = useState(1440)
+  const { data, isPending, error, refetch } = useQuery(liveQuery(minutes))
 
-  const note = data ? `last ${data.windowMin} min · refreshes every 5s` : 'last 30 min'
+  const note = `last ${windowLabel(minutes)} · refreshes every ${minutes <= 60 ? '5s' : '15s'}`
 
   return (
     <Panel
@@ -45,9 +65,10 @@ export function LivePanel() {
       icon={Radio}
       note={note}
       action={
-        data ? (
-          <span className="a-dot" style={{ background: 'var(--a-ok)', color: 'var(--a-ok)' }} aria-hidden />
-        ) : null
+        <span className="flex items-center gap-3">
+          <Segmented value={minutes} options={WINDOWS} onChange={setMinutes} label="Time window" />
+          {data ? <span className="a-dot" style={{ background: 'var(--a-ok)', color: 'var(--a-ok)' }} aria-hidden /> : null}
+        </span>
       }
     >
       {isPending ? (
@@ -66,6 +87,8 @@ export function LivePanel() {
 function Body({ data }: { data: LiveReport }) {
   const now = Date.parse(data.generatedAt)
   const { online, window: w } = data
+  const win = windowLabel(data.windowMin)
+  const bucket = bucketLabel(data.bucketMs)
 
   return (
     <>
@@ -85,21 +108,21 @@ function Body({ data }: { data: LiveReport }) {
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-            <MiniStat label="Players" value={String(w.players)} hint={`in ${data.windowMin}m`} />
-            <MiniStat label="Plays" value={String(w.plays)} hint={`in ${data.windowMin}m`} />
+            <MiniStat label="Players" value={String(w.players)} hint={`in ${win}`} />
+            <MiniStat label="Plays" value={String(w.plays)} hint={`in ${win}`} />
             <MiniStat label="Staked" value={usd(w.staked)} hint="DUSDC" />
           </div>
         </div>
 
         <div className="flex min-w-0 flex-col gap-2">
-          <span className="a-label">Plays per minute</span>
+          <span className="a-label">Plays per {bucket}</span>
           <TimeSeriesChart
-            series={[{ name: 'Plays', tone: 'accent', points: data.playsPerMinute.map((p) => ({ t: p.t, v: p.n })) }]}
+            series={[{ name: 'Plays', tone: 'accent', points: data.playsSeries.map((p) => ({ t: p.t, v: p.n })) }]}
             kind="bar"
-            unit="minute"
+            unit={data.unit}
             height={132}
             format={plain}
-            label={`Plays per minute over the last ${data.windowMin} minutes, ${w.plays} in total`}
+            label={`Plays per ${bucket} over the last ${win}, ${w.plays} in total`}
           />
         </div>
       </div>
@@ -107,7 +130,7 @@ function Body({ data }: { data: LiveReport }) {
       {data.rows.length === 0 ? (
         <EmptyState
           title="No one in the app right now"
-          hint={`Nobody has an open session, and nobody has played in the last ${data.windowMin} minutes. That is a real zero, not a failed read.`}
+          hint={`Nobody has an open session, and nobody has played in the last ${win}. That is a real zero, not a failed read.`}
         />
       ) : (
         <>
@@ -133,7 +156,8 @@ function Body({ data }: { data: LiveReport }) {
           </TableScroll>
           <p className="px-4 py-2.5" style={{ color: 'var(--a-text-3)', fontSize: 12 }}>
             {data.truncated > 0 ? `Showing ${data.rows.length} of ${data.rows.length + data.truncated}. ` : ''}
-            LIVE is an open app session. The rest played in the last {data.windowMin} minutes.
+            LIVE is an open app session, held since the last restart, so a tab left open all day still counts. The rest
+            played in the last {win}.
             <span className="a-scroll-hint"> Scroll the table sideways for the numbers.</span>
           </p>
         </>
@@ -180,8 +204,13 @@ function Row({ row, now }: { row: LiveRow; now: number }) {
         )}
       </td>
       <td>
+        {/* An idle player is only readable with the age attached: "IDLE 3h" is a fact, bare "IDLE" next to
+            a 3h session looks like a broken read. */}
         <span className="a-mono" style={{ whiteSpace: 'nowrap' }}>
           {row.doing}
+          {row.doing === 'IDLE' && row.lastActiveAt != null && (
+            <span style={{ color: 'var(--a-text-muted)' }}> {span(now - row.lastActiveAt)}</span>
+          )}
         </span>
       </td>
       <td className="a-num">{row.plays}</td>

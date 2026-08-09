@@ -121,12 +121,14 @@ export const overviewQuery = () => {
 
 // The one genuinely live read. 5s is fast enough to feel like "right now" and still only 12 calls a
 // minute against the 60/min admin bucket.
-export const liveQuery = () =>
+// Presence is the reason this refreshes fast, and presence does not care about the window. A day or a week
+// of plays is a heavier aggregate though, so the wide ranges poll slower rather than hammering the DB.
+export const liveQuery = (minutes: number) =>
   queryOptions({
-    queryKey: ['admin', 'live'],
-    queryFn: () => adminFetch<LiveReport>('/admin/live'),
+    queryKey: ['admin', 'live', minutes],
+    queryFn: () => adminFetch<LiveReport>(`/admin/live?minutes=${minutes}`),
     staleTime: 4_000,
-    refetchInterval: 5_000,
+    refetchInterval: minutes <= 60 ? 5_000 : 15_000,
     retry: false,
   })
 

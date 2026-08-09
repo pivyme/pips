@@ -25,7 +25,7 @@ import {
   usageReport,
   type ErrorStatus,
 } from '../services/insights.ts';
-import { liveReport } from '../services/live.ts';
+import { liveReport, normalizeWindowMin } from '../services/live.ts';
 import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { safeTimeZone } from '../utils/timeUtils.ts';
 
@@ -357,8 +357,9 @@ export const analyticsRoutes: FastifyPluginCallback = (app: FastifyInstance, _op
   });
 
   // Live: who has the app open right now, plus a 30-minute activity tail so a restart does not read zero.
-  app.get('/admin/live', admin, async (_request: FastifyRequest, reply: FastifyReply) => {
-    return ok(reply, await liveReport());
+  app.get('/admin/live', admin, async (request: FastifyRequest, reply: FastifyReply) => {
+    const q = request.query as { minutes?: string };
+    return ok(reply, await liveReport(normalizeWindowMin(q.minutes)));
   });
 
   // Performance: mint latency, settle lag, per-route p95 off the in-memory access ring, worker health.

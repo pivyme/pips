@@ -125,7 +125,7 @@ mock.module('../lib/prisma.ts', () => ({
       },
       count: async () => 1,
     },
-    play: { findMany: async () => [], count: async () => 0 },
+    play: { findMany: async () => [], groupBy: async () => [], count: async () => 0 },
     deposit: { findMany: async () => [] },
     walletTx: { findMany: async () => [] },
     appConfig: {
@@ -139,10 +139,12 @@ mock.module('../lib/prisma.ts', () => ({
       },
     },
     errorLog: { create: async () => ({}) },
-    // The newest-N-per-fingerprint window function. No overflow in this fixture: these tests are about
-    // the gate's status codes, not the arithmetic, which retention.test.ts pins.
+    // Two raw queries reach here: retention's newest-N-per-fingerprint window function and the live
+    // panel's play buckets. Keyed on the table, not on count(*), which both of them contain. No overflow
+    // in this fixture: these tests are about the gate's status codes, not the arithmetic, which
+    // retention.test.ts and live.test.ts pin.
     $queryRaw: async (strings: TemplateStringsArray) =>
-      strings.join(' ').includes('count(*)') ? [{ n: 0n, oldest: null, newest: null }] : [],
+      strings.join(' ').includes('"ErrorEvent"') ? [{ n: 0n, oldest: null, newest: null }] : [],
   },
 }));
 

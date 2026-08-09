@@ -1,22 +1,41 @@
 // Who is in the app right now. Two tiers, deliberately: the in-memory presence set (exact, instant, but
-// wiped by every restart) plus a 30-minute activity tail read from Postgres, so a deploy does not make
+// wiped by every restart) plus a database activity tail over a selectable window, so a deploy does not make
 // the dashboard read zero while people are mid-round. Feeds GET /admin/live.
+//
+// Two things are read on their OWN clock, not the window's, because the window is a reporting range and
+// they are facts about a person: what someone is doing expires in minutes, and their device does not
+// expire at all. Deriving either from "did they emit an event inside the selected window" is what made a
+// quiet player read as IDLE on an unknown device.
 
+import { Prisma } from '../../prisma/generated/client.js';
 import { prismaQuery } from '../lib/prisma.ts';
 import { liveSessionCount, onlinePresence } from '../routes/streamRoutes.ts';
 
-export const LIVE_WINDOW_MS = 30 * 60_000;
 const MINUTE_MS = 60_000;
 const MAX_ROWS = 100;
 const DUSDC_UNIT = 1_000_000; // 6dp, per L-011
-const MAX_EVENT_SCAN = 400;
+
+/** Windows the panel offers, in minutes. Anything else falls back to the default rather than being honoured. */
+export const LIVE_WINDOWS_MIN = [30, 60, 1440, 10_080] as const;
+export const DEFAULT_LIVE_WINDOW_MIN = 1440;
+
+// "Doing" is what someone is on NOW: a 24h window must not report this morning's play as current activity.
+const ACTIVITY_TTL_MS = 5 * MINUTE_MS;
+
+// Device is a property of the player, so it is read over a week regardless of window. Bounded on purpose:
+// an unbounded per-user lookup walks a heavy player's entire event history on every 5s refresh.
+const PLATFORM_HORIZON_MS = 7 * 24 * 60 * MINUTE_MS;
 
 const SETTLED_STATUSES = new Set(['won', 'lost', 'cashed_out']);
+
+export type LiveChartUnit = 'minute' | 'hour';
 
 export interface LivePresenceRow {
   userId: string;
   sessions: number;
   since: number;
+  /** Derived from the stream connection's own UA, so a live row always knows the device. */
+  platform: string | null;
 }
 export interface LiveUserRow {
   id: string;
@@ -25,13 +44,14 @@ export interface LiveUserRow {
   avatarUrl: string | null;
   address: string;
 }
-export interface LivePlayRow {
+/** One (user, status) rollup out of the Play groupBy. The window is aggregated in SQL, never row by row. */
+export interface LivePlayAgg {
   userId: string;
-  game: string;
   status: string;
+  plays: number;
   entryCost: bigint;
-  pnl: bigint | null;
-  createdAt: Date;
+  pnl: bigint;
+  lastAt: number;
 }
 export interface LiveOpenPlay {
   userId: string;
@@ -58,6 +78,8 @@ export interface LiveRow {
   /** When their first still-open session connected. null once they are only in the activity tail. */
   since: number | null;
   lastSeenAt: number;
+  /** Last thing they actually did, at any age. null = nothing on record, which is not the same as idle now. */
+  lastActiveAt: number | null;
   doing: string;
   platform: string | null;
   plays: number;
@@ -70,10 +92,13 @@ export interface LiveRow {
 export interface LiveReport {
   online: { users: number; sessions: number };
   windowMin: number;
+  /** Width of one bar in playsSeries. The axis is told what it is looking at instead of guessing. */
+  bucketMs: number;
+  unit: LiveChartUnit;
   rows: LiveRow[];
   /** Rows past the cap. Reported, never dropped silently. */
   truncated: number;
-  playsPerMinute: Array<{ t: number; n: number }>;
+  playsSeries: Array<{ t: number; n: number }>;
   window: { players: number; plays: number; staked: number };
   generatedAt: string;
 }
@@ -81,15 +106,35 @@ export interface LiveReport {
 const dusdc = (raw: bigint): number => Number(raw) / DUSDC_UNIT;
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
-/** Per-minute counts across the window, zero-filled so a quiet minute reads as 0 rather than as a gap. */
-export function minuteSeries(dates: Date[], now: number, windowMs: number = LIVE_WINDOW_MS): Array<{ t: number; n: number }> {
-  const buckets = Math.max(1, Math.round(windowMs / MINUTE_MS));
-  const end = Math.floor(now / MINUTE_MS) * MINUTE_MS;
-  const start = end - (buckets - 1) * MINUTE_MS;
-  const out = Array.from({ length: buckets }, (_, i) => ({ t: start + i * MINUTE_MS, n: 0 }));
-  for (const d of dates) {
-    const i = Math.floor((d.getTime() - start) / MINUTE_MS);
-    if (i >= 0 && i < buckets) out[i]!.n += 1;
+/** Only a window we offer. A stray query string reads as the default rather than as a custom range. */
+export function normalizeWindowMin(minutes: unknown): number {
+  const n = Number(minutes);
+  return (LIVE_WINDOWS_MIN as readonly number[]).includes(n) ? n : DEFAULT_LIVE_WINDOW_MIN;
+}
+
+/** Bar width per window, chosen so every range lands between 30 and ~170 bars. */
+export function bucketMsFor(windowMin: number): number {
+  if (windowMin <= 60) return MINUTE_MS;
+  if (windowMin <= 1440) return 15 * MINUTE_MS;
+  return 60 * MINUTE_MS;
+}
+
+export const chartUnitFor = (windowMin: number): LiveChartUnit => (windowMin <= 60 ? 'minute' : 'hour');
+
+/** Zero-filled bars across the window, so a quiet bucket reads as 0 rather than as a gap. */
+export function fillBuckets(
+  counts: Array<{ t: number; n: number }>,
+  now: number,
+  windowMs: number,
+  bucketMs: number,
+): Array<{ t: number; n: number }> {
+  const total = Math.max(1, Math.round(windowMs / bucketMs));
+  const end = Math.floor(now / bucketMs) * bucketMs;
+  const start = end - (total - 1) * bucketMs;
+  const out = Array.from({ length: total }, (_, i) => ({ t: start + i * bucketMs, n: 0 }));
+  for (const c of counts) {
+    const i = Math.floor((c.t - start) / bucketMs);
+    if (i >= 0 && i < total) out[i]!.n += c.n;
   }
   return out;
 }
@@ -141,9 +186,9 @@ export function describeActivity(name: string, props: unknown): string {
 export interface AssembleInput {
   presence: LivePresenceRow[];
   users: LiveUserRow[];
-  plays: LivePlayRow[];
+  plays: LivePlayAgg[];
   openPlays: LiveOpenPlay[];
-  /** Newest first. */
+  /** Newest first, at most one per user. */
   events: LiveEventRow[];
   now: number;
 }
@@ -157,10 +202,10 @@ export function assembleRows(input: AssembleInput): { rows: LiveRow[]; truncated
   const agg = new Map<string, { plays: number; staked: bigint; pnl: bigint; lastAt: number }>();
   for (const p of plays) {
     const e = agg.get(p.userId) ?? { plays: 0, staked: 0n, pnl: 0n, lastAt: 0 };
-    e.plays += 1;
+    e.plays += p.plays;
     e.staked += p.entryCost;
-    if (SETTLED_STATUSES.has(p.status)) e.pnl += p.pnl ?? 0n;
-    e.lastAt = Math.max(e.lastAt, p.createdAt.getTime());
+    if (SETTLED_STATUSES.has(p.status)) e.pnl += p.pnl;
+    e.lastAt = Math.max(e.lastAt, p.lastAt);
     agg.set(p.userId, e);
   }
 
@@ -184,8 +229,11 @@ export function assembleRows(input: AssembleInput): { rows: LiveRow[]; truncated
     const ev = lastEvent.get(id);
     const open = openByUser.get(id);
 
-    const lastSeenAt = p ? now : Math.max(a?.lastAt ?? 0, ev?.ts.getTime() ?? 0);
-    const doing = open ? `IN PLAY · ${open.game.toUpperCase()}` : ev ? describeActivity(ev.name, ev.props) : 'IDLE';
+    const lastActiveAt = Math.max(a?.lastAt ?? 0, ev?.ts.getTime() ?? 0) || null;
+    const lastSeenAt = p ? now : (lastActiveAt ?? 0);
+    // An event older than the TTL is history, not an activity: it names the device, never the doing.
+    const current = ev && now - ev.ts.getTime() <= ACTIVITY_TTL_MS ? ev : null;
+    const doing = open ? `IN PLAY · ${open.game.toUpperCase()}` : current ? describeActivity(current.name, current.props) : 'IDLE';
 
     rows.push({
       id: user.id,
@@ -197,8 +245,9 @@ export function assembleRows(input: AssembleInput): { rows: LiveRow[]; truncated
       sessions: p?.sessions ?? 0,
       since: p?.since ?? null,
       lastSeenAt,
+      lastActiveAt,
       doing,
-      platform: ev?.platform ?? null,
+      platform: ev?.platform ?? p?.platform ?? null,
       plays: a?.plays ?? 0,
       staked: round2(dusdc(a?.staked ?? 0n)),
       pnl: round2(dusdc(a?.pnl ?? 0n)),
@@ -209,23 +258,63 @@ export function assembleRows(input: AssembleInput): { rows: LiveRow[]; truncated
   return { rows: rows.slice(0, MAX_ROWS), truncated: Math.max(0, rows.length - MAX_ROWS) };
 }
 
-export async function liveReport(now: number = Date.now()): Promise<LiveReport> {
-  const since = new Date(now - LIVE_WINDOW_MS);
+/** Plays per bar, bucketed in SQL. A week of plays must never be pulled row by row to be counted. */
+async function playBuckets(since: Date, bucketMs: number): Promise<Array<{ t: number; n: number }>> {
+  // bucketMs is one of our own constants off the window allowlist, never client input.
+  const width = Prisma.raw(String(Math.round(bucketMs)));
+  const rows = await prismaQuery.$queryRaw<Array<{ t: bigint; n: bigint }>>`
+    SELECT (floor(extract(epoch from "createdAt") * 1000 / ${width}) * ${width})::bigint AS t, count(*)::bigint AS n
+    FROM "Play"
+    WHERE "createdAt" >= ${since}
+    GROUP BY 1
+  `;
+  return rows.map((r) => ({ t: Number(r.t), n: Number(r.n) }));
+}
+
+/** The newest event per user, one row each. A global newest-N starves everyone behind the busiest player. */
+async function latestEvents(ids: string[], floor: Date): Promise<LiveEventRow[]> {
+  if (!ids.length) return [];
+  return prismaQuery.$queryRaw<LiveEventRow[]>`
+    SELECT DISTINCT ON ("userId") "userId", name, props, ts, platform
+    FROM "Event"
+    WHERE "userId" IN (${Prisma.join(ids)}) AND ts >= ${floor}
+    ORDER BY "userId", ts DESC
+  `;
+}
+
+export async function liveReport(windowMin: number = DEFAULT_LIVE_WINDOW_MIN, now: number = Date.now()): Promise<LiveReport> {
+  const win = normalizeWindowMin(windowMin);
+  const windowMs = win * MINUTE_MS;
+  const bucketMs = bucketMsFor(win);
+  const since = new Date(now - windowMs);
   const presence = onlinePresence();
 
-  // Served by @@index([createdAt]) and @@index([status, expiry]).
-  const [plays, openPlays] = await Promise.all([
-    prismaQuery.play.findMany({
+  // Served by @@index([createdAt]) and @@index([status, expiry]). The rollup is one groupBy, so a wide
+  // window costs the same round trip as a narrow one.
+  const [grouped, openPlays, buckets] = await Promise.all([
+    prismaQuery.play.groupBy({
+      by: ['userId', 'status'],
       where: { createdAt: { gte: since } },
-      select: { userId: true, game: true, status: true, entryCost: true, pnl: true, createdAt: true },
+      _count: { _all: true },
+      _sum: { entryCost: true, pnl: true },
+      _max: { createdAt: true },
     }),
     prismaQuery.play.findMany({ where: { status: 'open' }, select: { userId: true, game: true, expiry: true } }),
+    playBuckets(since, bucketMs),
   ]);
+
+  const plays: LivePlayAgg[] = grouped.map((g) => ({
+    userId: g.userId,
+    status: g.status,
+    plays: g._count._all,
+    entryCost: g._sum.entryCost ?? 0n,
+    pnl: g._sum.pnl ?? 0n,
+    lastAt: g._max.createdAt?.getTime() ?? 0,
+  }));
 
   const ids = [...new Set([...presence.map((p) => p.userId), ...plays.map((p) => p.userId)])];
 
-  // Event has no relation to User, so both of these are id-scoped reads joined in memory. Never scan Event
-  // by a bare ts range: there is no lone ts index and the table is retained for a year.
+  // Event has no relation to User, so both of these are id-scoped reads joined in memory.
   const [users, events] = await Promise.all([
     ids.length
       ? prismaQuery.user.findMany({
@@ -233,33 +322,29 @@ export async function liveReport(now: number = Date.now()): Promise<LiveReport> 
           select: { id: true, username: true, displayName: true, avatarUrl: true, address: true },
         })
       : Promise.resolve([]),
-    ids.length
-      ? prismaQuery.event.findMany({
-          where: { userId: { in: ids }, ts: { gte: since } },
-          orderBy: { ts: 'desc' },
-          take: MAX_EVENT_SCAN,
-          select: { userId: true, name: true, props: true, ts: true, platform: true },
-        })
-      : Promise.resolve([]),
+    latestEvents(ids, new Date(now - Math.max(windowMs, PLATFORM_HORIZON_MS))),
   ]);
 
   const { rows, truncated } = assembleRows({ presence, users, plays, openPlays, events, now });
 
   let staked = 0n;
-  for (const p of plays) staked += p.entryCost;
+  let played = 0;
+  for (const p of plays) {
+    staked += p.entryCost;
+    played += p.plays;
+  }
 
   return {
     online: { users: presence.length, sessions: liveSessionCount() },
-    windowMin: Math.round(LIVE_WINDOW_MS / 60_000),
+    windowMin: win,
+    bucketMs,
+    unit: chartUnitFor(win),
     rows,
     truncated,
-    playsPerMinute: minuteSeries(
-      plays.map((p) => p.createdAt),
-      now,
-    ),
+    playsSeries: fillBuckets(buckets, now, windowMs, bucketMs),
     window: {
       players: new Set(plays.map((p) => p.userId)).size,
-      plays: plays.length,
+      plays: played,
       staked: round2(dusdc(staked)),
     },
     generatedAt: new Date(now).toISOString(),

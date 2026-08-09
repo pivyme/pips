@@ -148,6 +148,8 @@ export interface LiveRow {
   sessions: number
   since: number | null
   lastSeenAt: number
+  /** Last thing they actually did, at any age. null = nothing on record, not the same as idle now. */
+  lastActiveAt: number | null
   doing: string
   platform: string | null
   plays: number
@@ -159,9 +161,12 @@ export interface LiveRow {
 export interface LiveReport {
   online: { users: number; sessions: number }
   windowMin: number
+  /** Width of one bar in playsSeries, so the axis is told what it shows instead of guessing. */
+  bucketMs: number
+  unit: 'minute' | 'hour'
   rows: LiveRow[]
   truncated: number
-  playsPerMinute: Array<{ t: number; n: number }>
+  playsSeries: Array<{ t: number; n: number }>
   window: { players: number; plays: number; staked: number }
   generatedAt: string
 }

@@ -1,10 +1,12 @@
 // SSE streams: the game chart price feed and a live PnL feed per open play.
 // EventSource can't set headers, so auth is a JWT in the query (`?t=`); both validate before hijacking, so auth failures still return a normal JSON envelope.
 
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 
 import type { Play } from '../../prisma/generated/client.js';
 import { handleError } from '../utils/errorHandler.ts';
+import { authMiddleware } from '../middlewares/authMiddleware.ts';
 import { PLAY_STREAM_INTERVAL_MS } from '../config/main-config.ts';
 import { userFromToken } from '../services/auth.ts';
 import { displaySpot } from '../lib/price-bus.ts';
@@ -13,6 +15,7 @@ import { buildMarketsPayload, liveSetSignature } from '../lib/markets-feed.ts';
 import { getLiveMarkCached, toPlayDTO } from '../services/plays.ts';
 import { prismaQuery } from '../lib/prisma.ts';
 import { PYTH_FEED_IDS } from '../lib/pyth.ts';
+import { platformFrom } from '../config/analytics-catalog.ts';
 
 const TERMINAL = new Set(['won', 'lost', 'cashed_out', 'error']);
 
@@ -22,47 +25,98 @@ const SETTLING_POLL_MS = 1000;
 // Presence keepalive: the feed only pushes on join/leave, so without this an idle proxy drops the socket; also self-heals a client that missed a broadcast.
 const LIVE_HEARTBEAT_MS = 25_000;
 
-// Live presence: one connection per open app session (held at the app shell, so it spans home/games/menu, not just Home).
-// Broadcast count on every join/leave for the "N ONLINE" ticker; one process serves every client, so this Set is the global count.
-const liveClients = new Set<{ send: (data: unknown) => void }>();
+// Live presence: one connection per open app session (held at the app shell, so it spans home/games/menu,
+// not just Home). One process serves every client, so this map is the global set.
+//
+// A socket close is the fast path out, not the only one. A tab that dies without a clean disconnect (phone
+// sleeps, network switches, a proxy holding the connection open) never fires `close`, and the session used
+// to sit here as LIVE until the next restart, which is how the dashboard grew a row idle for three hours.
+// So each session also has to be claimed: the client pings, and a session that stops pinging is swept and
+// its socket ended, which the browser answers with EventSource's own reconnect. Being frozen in a
+// background tab therefore reads as gone, which is what "online now" is supposed to mean.
+const PRESENCE_TTL_MS = 150_000; // ~3 missed client pings, wide enough for a throttled background timer
+const PRESENCE_SWEEP_MS = 30_000;
+// A session that has never pinged is a tab on a bundle from before the ping existed, so it gets the old
+// socket-lifetime behaviour bounded instead of being cut every 2.5 minutes and reconnect-looping. Doubles
+// as the floor if the client's ping ever breaks: presence goes stale, never blank.
+const UNCLAIMED_TTL_MS = 20 * 60_000;
 
-// userId-keyed online set (ref-counted: a user can have multiple tabs/sessions). The wallet-indexer scans
-// only online users, so idle app = ~0 external calls (§12c). One process serves every client, so this is the global set.
-// `since` is the first session's connect time, so a second tab does not reset how long they have been here.
-const onlineUsers = new Map<string, { sessions: number; since: number }>();
+interface LiveSession {
+  userId: string;
+  platform: string | null;
+  since: number;
+  lastPingAt: number;
+  claimed: boolean;
+  send: (data: unknown) => void;
+  end: () => void;
+}
+const liveSessions = new Map<string, LiveSession>();
+let presenceSweeper: ReturnType<typeof setInterval> | null = null;
+
 export function onlineUserIds(): string[] {
-  return [...onlineUsers.keys()];
+  return [...new Set([...liveSessions.values()].map((s) => s.userId))];
 }
 
-// Who is online, with session count + arrival time. Read by the admin dashboard's live panel.
-export function onlinePresence(): Array<{ userId: string; sessions: number; since: number }> {
-  return [...onlineUsers].map(([userId, p]) => ({ userId, sessions: p.sessions, since: p.since }));
+// Who is online, with session count, arrival time and the device the connection came from. Read by the
+// admin dashboard's live panel, where an open session whose device is unknown is a read we got wrong.
+// `since` is the oldest still-open session, so a second tab does not reset how long they have been here.
+export function onlinePresence(): Array<{ userId: string; sessions: number; since: number; platform: string | null }> {
+  const byUser = new Map<string, { userId: string; sessions: number; since: number; platform: string | null }>();
+  for (const s of liveSessions.values()) {
+    const p = byUser.get(s.userId);
+    if (!p) byUser.set(s.userId, { userId: s.userId, sessions: 1, since: s.since, platform: s.platform });
+    else {
+      p.sessions += 1;
+      p.since = Math.min(p.since, s.since);
+      if (s.platform) p.platform = s.platform; // the newest connection wins the device
+    }
+  }
+  return [...byUser.values()];
 }
 
 // Open connections, not distinct people: two tabs count twice. This is what the product's "N ONLINE" ticker shows.
 export function liveSessionCount(): number {
-  return liveClients.size;
+  return liveSessions.size;
 }
 
-function presenceEnter(userId: string): void {
-  const p = onlineUsers.get(userId);
-  if (p) p.sessions += 1;
-  else onlineUsers.set(userId, { sessions: 1, since: Date.now() });
+/** Refresh a session's claim. Returns false for an unknown or someone else's session id. */
+export function presencePing(sessionId: string, userId: string): boolean {
+  const s = liveSessions.get(sessionId);
+  if (!s || s.userId !== userId) return false;
+  s.lastPingAt = Date.now();
+  s.claimed = true;
+  return true;
 }
-function presenceLeave(userId: string): void {
-  const p = onlineUsers.get(userId);
-  if (!p) return;
-  p.sessions -= 1;
-  if (p.sessions <= 0) onlineUsers.delete(userId);
+
+// Ends the socket rather than only forgetting it, so the client is told to reconnect instead of holding a
+// stream nobody counts. Runs only while someone is connected.
+function ensurePresenceSweeper(): void {
+  if (presenceSweeper) return;
+  presenceSweeper = setInterval(() => {
+    const now = Date.now();
+    let dropped = 0;
+    for (const [id, s] of liveSessions) {
+      if (now - s.lastPingAt < (s.claimed ? PRESENCE_TTL_MS : UNCLAIMED_TTL_MS)) continue;
+      liveSessions.delete(id);
+      dropped += 1;
+      s.end();
+    }
+    if (dropped) broadcastOnline();
+    if (liveSessions.size === 0 && presenceSweeper) {
+      clearInterval(presenceSweeper);
+      presenceSweeper = null;
+    }
+  }, PRESENCE_SWEEP_MS);
+  (presenceSweeper as { unref?: () => void }).unref?.();
 }
 
 function broadcastOnline(): void {
-  const payload = { online: liveClients.size };
-  for (const c of liveClients) {
+  const payload = { online: liveSessions.size };
+  for (const s of liveSessions.values()) {
     try {
-      c.send(payload);
+      s.send(payload);
     } catch {
-      // Dead socket; its close handler prunes it from the set.
+      // Dead socket; its close handler prunes it from the map.
     }
   }
 }
@@ -148,16 +202,17 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
   });
 
   // Live presence: one connection per app session (held at the app shell, so a player stays counted mid-game, not just on Home). Drives the "N ONLINE" ticker; count pushes on join/leave.
+  // Every frame carries the session id, so a client that reconnects always knows which session to keep claiming.
   app.get('/live', async (request: FastifyRequest, reply: FastifyReply) => {
     const { t } = request.query as { t?: string };
     const user = t ? await userFromToken(t) : null;
     if (!user) return handleError(reply, 401, 'Invalid stream token', 'INVALID_TOKEN');
 
     const { send, onClose } = openStream(reply, request);
-    const client = { send };
-    liveClients.add(client);
-    presenceEnter(user.id); // mark this user online for the presence-gated wallet indexer
-    broadcastOnline(); // newcomer is in the set, so this also primes the new connection
+    const sid = randomUUID();
+    // No standalone hint on an EventSource request, so an iOS PWA reads as ios here; an analytics event,
+    // when there is one, refines it to pwa.
+    const platform = platformFrom(request.headers['user-agent'], false);
 
     let closed = false;
     let heartbeat: ReturnType<typeof setInterval>;
@@ -165,18 +220,47 @@ export const streamRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts,
       if (closed) return;
       closed = true;
       clearInterval(heartbeat);
-      liveClients.delete(client);
-      presenceLeave(user.id);
+      liveSessions.delete(sid);
       broadcastOnline();
     };
+    const end = (): void => {
+      cleanup();
+      try {
+        reply.raw.end();
+      } catch {
+        // Socket already gone; nothing to end.
+      }
+    };
+
+    // mark this user online for the presence-gated wallet indexer
+    liveSessions.set(sid, {
+      userId: user.id,
+      platform,
+      since: Date.now(),
+      lastPingAt: Date.now(),
+      claimed: false,
+      send: (d) => send({ ...(d as object), sid }),
+      end,
+    });
+    ensurePresenceSweeper();
+    broadcastOnline(); // newcomer is in the map, so this also primes the new connection
+
     heartbeat = setInterval(() => {
       try {
-        send({ online: liveClients.size });
+        send({ online: liveSessions.size, sid });
       } catch {
         cleanup();
       }
     }, LIVE_HEARTBEAT_MS);
     onClose(cleanup);
+  });
+
+  // The client's claim on its session. Without it a socket nobody is behind counts as a person, which is
+  // how "LIVE, here 3h, idle" rows appeared. Cheap by design: one small POST a minute per open session.
+  app.post('/live/ping', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { sid } = (request.body ?? {}) as { sid?: string };
+    const alive = !!sid && presencePing(sid, request.user!.id);
+    return reply.code(200).send({ success: true, error: null, data: { alive } });
   });
 
   // Live markets feed: tradeable set + sponsor-pause, pushed on change (replaces the per-client GET /markets
