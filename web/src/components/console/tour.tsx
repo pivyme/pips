@@ -16,6 +16,7 @@ import {
 } from 'react'
 import type { ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { haptic } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
@@ -230,7 +231,10 @@ function TourOverlay({ onClose }: { onClose: () => void }) {
       else if (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         next()
-      } else if (e.key === 'ArrowLeft') setI((n) => Math.max(n - 1, 0))
+      } else if (e.key === 'ArrowLeft') {
+        haptic('selection')
+        setI((n) => Math.max(n - 1, 0))
+      }
     }
     window.addEventListener('keydown', on)
     return () => window.removeEventListener('keydown', on)
@@ -264,7 +268,6 @@ function TourOverlay({ onClose }: { onClose: () => void }) {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: reduced ? 0.14 : 0.28, ease: EASE }}
-      onPointerDown={next}
     >
       <svg width={vp.w} height={vp.h} className="pointer-events-none absolute inset-0">
         <defs>
@@ -305,6 +308,16 @@ function TourOverlay({ onClose }: { onClose: () => void }) {
           }}
         />
       </svg>
+
+      {/* Tap anywhere to advance, the same iOS-tick mechanism as Next/Skip below. `next()` already fires
+          its own haptic per step, so this stays silent. Caption renders after it in the DOM and covers
+          its own footprint, so a tap on Next/Skip lands on that overlay instead and never reaches this
+          one underneath, no double advance.
+          `scrim` because nothing under this overlay scrolls: without it a loose or slow tap fails the
+          overlay's scroll-safety gate and never arms the switch, while iOS's own tap recognizer still
+          delivers the click, so the tour advances in silence. Next/Skip are small aimed targets on the
+          strict gate, where a drag off them must not act at all. */}
+      <HapticOverlay className="absolute inset-0" scrim silent onTap={next} />
 
       <Caption
         step={step}
@@ -377,7 +390,6 @@ function Caption({
       initial={reduced ? { opacity: 0 } : { opacity: 0, y: placeBelow || finale ? 10 : -10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: reduced ? 0.15 : 0.36, ease: EASE, delay: reduced ? 0 : 0.06 }}
-      onPointerDown={(e) => e.stopPropagation()}
     >
       {/* TE panel: flat true-black, hairline rules, one amber accent. No card, no blur. */}
       <div className="relative bg-black shadow-[0_16px_50px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.14]">
@@ -419,19 +431,15 @@ function Caption({
 
         <div className="mt-2.5 h-px w-full bg-white/[0.16]" />
         <div className="flex items-center justify-between px-4 py-2.5">
-          <button
-            type="button"
-            onPointerDown={(e) => {
-              e.stopPropagation()
-              onSkip()
-            }}
-            className={cnm(
-              'font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-text-3 transition active:scale-95',
-              finale && 'invisible', // no skip on the send-off, just Let's go
-            )}
-          >
-            Skip
-          </button>
+          <div className={cnm('relative', finale && 'invisible')}>
+            <button
+              type="button"
+              className="pointer-events-none font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-text-3 transition active:scale-95"
+            >
+              Skip
+            </button>
+            <HapticOverlay className="absolute inset-0" silent onTap={onSkip} />
+          </div>
           <div className="flex items-center gap-3">
             {!finale && (
               <div className="flex items-center gap-1.5">
@@ -440,17 +448,16 @@ function Caption({
                 ))}
               </div>
             )}
-            <button
-              type="button"
-              onPointerDown={(e) => {
-                e.stopPropagation()
-                onNext()
-              }}
-              className="flex items-center gap-1 font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-brand-500 transition active:scale-95"
-            >
-              {last ? "Let's go" : 'Next'}
-              <span aria-hidden>▸</span>
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                className="pointer-events-none flex items-center gap-1 font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-brand-500 transition active:scale-95"
+              >
+                {last ? "Let's go" : 'Next'}
+                <span aria-hidden>▸</span>
+              </button>
+              <HapticOverlay className="absolute inset-0" silent onTap={onNext} />
+            </div>
           </div>
         </div>
       </div>

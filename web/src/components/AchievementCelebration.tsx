@@ -9,7 +9,8 @@ import { useAuth } from '@/lib/auth'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { resolveAchievement, type ResolvedAchievement } from '@/lib/achievements'
 import { achievementUnlock } from '@/lib/sound'
-import { haptic } from '@/lib/haptics'
+import { hapticPattern } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 
 const SEEN_PREFIX = 'pips_ach_seen:'
 // Backlog never celebrates, whether it's a first run or a catalog change/migration retroactively
@@ -85,7 +86,7 @@ export function AchievementCelebration() {
       // A sound/haptic hiccup on some exotic browser must never break the celebration flow.
       try {
         achievementUnlock()
-        haptic('success')
+        hapticPattern('achievement')
       } catch {
         // ignore
       }
@@ -110,13 +111,17 @@ export function AchievementCelebration() {
           key="ach-celebration"
           role="status"
           aria-live="polite"
-          onClick={() => setCurrent(null)}
           className="viewport-fill fixed inset-0 z-[120] flex items-center justify-center bg-black/70 px-6 backdrop-blur-2xl"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: reduced ? 0.18 : 0.42, ease: [0.22, 1, 0.36, 1] }}
         >
+          {/* The whole surface is the dismiss target and nothing under it scrolls, so `scrim` keeps the
+              tick lined up with the click (see HapticOverlay's header). Everything else here is
+              pointer-events-none decoration so this is the only thing a tap can hit. */}
+          <HapticOverlay className="absolute inset-0" scrim preset="low" onTap={() => setCurrent(null)} />
+
           {/* Warm amber bloom behind the cluster, breathing slowly. */}
           {!reduced && (
             <motion.div
@@ -128,7 +133,7 @@ export function AchievementCelebration() {
             />
           )}
 
-          <div className="relative flex w-full max-w-[520px] flex-col items-center gap-7 text-center">
+          <div className="pointer-events-none relative flex w-full max-w-[520px] flex-col items-center gap-7 text-center">
             <motion.h2
               className="text-[30px] font-extrabold leading-none tracking-tight text-white"
               initial={reduced ? false : { opacity: 0, y: -10 }}

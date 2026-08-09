@@ -108,7 +108,7 @@ export function CustomizeStudio({
 
   const pickPreset = (id: string) => {
     if (exiting) return
-    haptic('selection')
+    haptic('mid')
     track('custom.skin_preview', { skin: id })
     setDraft({ preset: id }) // preset tap resets all overrides
     // The whole device just changed colour, so throw the new skin off it as a scatter of hairlines.
@@ -121,7 +121,6 @@ export function CustomizeStudio({
 
   const pickSwatch = (part: PartId, i: number) => {
     if (exiting) return
-    haptic('selection')
     setDraft((d) => ({ ...d, parts: { ...d.parts, [part]: i } }))
     // A part pick bursts on that control (body has no anchor, so it scatters like a skin swap).
     const hex = (part === 'glow' ? GLOW_PALETTE : PALETTE)[i]?.hex
@@ -240,7 +239,6 @@ export function CustomizeStudio({
             <CircleButton
               label="Share"
               onPress={() => {
-                haptic('selection')
                 toast('For now, show off your rig with your PnL card', { id: 'share-rig' })
               }}
             >
@@ -362,80 +360,94 @@ function ThemeCard({
   onPress: () => void
 }) {
   return (
-    <motion.button
-      type="button"
-      data-id={theme.id}
-      onClick={onPress}
-      aria-pressed={selected}
-      animate={{
-        // The -5deg tilt + scale pivots off the bottom and throws the top-left corner toward the previous
-        // card, so nudge the whole chip right when it lifts to keep clear of its neighbor.
-        rotate: selected ? -5 : 0,
-        x: selected ? 4 : 0,
-        y: selected ? -10 : 0,
-        scale: selected ? 1.05 : 1,
-      }}
-      transition={{ type: 'spring', stiffness: 460, damping: 30 }}
-      className="relative h-[116px] w-[152px] shrink-0 origin-bottom overflow-hidden rounded-[22px] text-left"
-      style={{
-        background: theme.cardBg,
-        // Just the cast shadow here, the molded-plastic emboss lives on the overlay below so it also reads over full-bleed art cards.
-        boxShadow: selected
-          ? '0 26px 46px -16px rgba(0,0,0,0.9)'
-          : '0 10px 22px -12px rgba(0,0,0,0.8)',
-        outline: selected ? 'none' : '1px solid rgba(255,255,255,0.08)',
-        outlineOffset: '-1px',
-      }}
-    >
-      {theme.cardImage && (
-        <img
-          src={theme.cardImage}
-          alt=""
-          draggable={false}
-          decoding="async"
-          className="absolute inset-0 h-full w-full object-cover object-center"
-        />
-      )}
-
-      {/* The emboss: a soft top-light sheen fading into a shaded base via a gradient + blurred inset
-          shadows (no hard bevel lines, which alias once the chip tilts). Sits above art, below text. */}
-      <div
-        className="pointer-events-none absolute inset-0 rounded-[22px]"
-        style={{
-          background:
-            'linear-gradient(to bottom, rgba(255,255,255,0.26), rgba(255,255,255,0.06) 18%, rgba(255,255,255,0) 42%, rgba(0,0,0,0) 64%, rgba(0,0,0,0.16))',
-          boxShadow: selected
-            ? 'inset 0 1px 2px rgba(255,255,255,0.45), inset 0 -12px 22px -12px rgba(0,0,0,0.3)'
-            : 'inset 0 1px 2px rgba(255,255,255,0.38), inset 0 -10px 18px -12px rgba(0,0,0,0.24)',
+    <div className="relative h-[116px] w-[152px] shrink-0">
+      <motion.button
+        type="button"
+        data-id={theme.id}
+        aria-pressed={selected}
+        animate={{
+          // The -5deg tilt + scale pivots off the bottom and throws the top-left corner toward the
+          // previous card, so nudge the whole chip right when it lifts to keep clear of its neighbor.
+          rotate: selected ? -5 : 0,
+          x: selected ? 4 : 0,
+          y: selected ? -10 : 0,
+          scale: selected ? 1.05 : 1,
         }}
-      />
+        transition={{ type: 'spring', stiffness: 460, damping: 30 }}
+        className="pointer-events-none absolute inset-0 origin-bottom overflow-hidden rounded-[22px] text-left"
+        style={{
+          background: theme.cardBg,
+          // Just the cast shadow here, the molded-plastic emboss lives on the overlay below so it also reads over full-bleed art cards.
+          boxShadow: selected
+            ? '0 26px 46px -16px rgba(0,0,0,0.9)'
+            : '0 10px 22px -12px rgba(0,0,0,0.8)',
+          outline: selected ? 'none' : '1px solid rgba(255,255,255,0.08)',
+          outlineOffset: '-1px',
+        }}
+      >
+        {theme.cardImage && (
+          <img
+            src={theme.cardImage}
+            alt=""
+            draggable={false}
+            decoding="async"
+            className="absolute inset-0 h-full w-full object-cover object-center"
+          />
+        )}
 
-      <div className="absolute inset-0 flex flex-col justify-end p-3.5">
+        {/* The emboss: a soft top-light sheen fading into a shaded base via a gradient + blurred inset
+            shadows (no hard bevel lines, which alias once the chip tilts). Sits above art, below text. */}
         <div
-          className="text-[30px] font-black leading-none tracking-tight tnum"
-          style={{ color: theme.cardInk }}
-        >
-          {theme.code}
-        </div>
-        <div className="mt-1 text-[14px] font-bold leading-tight" style={{ color: theme.cardSub }}>
-          {theme.name}
-        </div>
-      </div>
+          className="pointer-events-none absolute inset-0 rounded-[22px]"
+          style={{
+            background:
+              'linear-gradient(to bottom, rgba(255,255,255,0.26), rgba(255,255,255,0.06) 18%, rgba(255,255,255,0) 42%, rgba(0,0,0,0) 64%, rgba(0,0,0,0.16))',
+            boxShadow: selected
+              ? 'inset 0 1px 2px rgba(255,255,255,0.45), inset 0 -12px 22px -12px rgba(0,0,0,0.3)'
+              : 'inset 0 1px 2px rgba(255,255,255,0.38), inset 0 -10px 18px -12px rgba(0,0,0,0.24)',
+          }}
+        />
 
-      {theme.badge && (
-        <span
-          className="absolute right-2.5 top-2.5 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-extrabold tracking-tight"
-          // Over art the card ink goes light, so anchor the badge to a fixed dark chip instead.
-          style={
-            theme.cardImage
-              ? { background: '#000f1d', color: '#ffffff' }
-              : { background: theme.cardInk, color: theme.cardBg }
-          }
-        >
-          {theme.badge}
-        </span>
-      )}
-    </motion.button>
+        <div className="absolute inset-0 flex flex-col justify-end p-3.5">
+          <div
+            className="text-[30px] font-black leading-none tracking-tight tnum"
+            style={{ color: theme.cardInk }}
+          >
+            {theme.code}
+          </div>
+          <div className="mt-1 text-[14px] font-bold leading-tight" style={{ color: theme.cardSub }}>
+            {theme.name}
+          </div>
+        </div>
+
+        {theme.badge && (
+          <span
+            className="absolute right-2.5 top-2.5 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-extrabold tracking-tight"
+            // Over art the card ink goes light, so anchor the badge to a fixed dark chip instead.
+            style={
+              theme.cardImage
+                ? { background: '#000f1d', color: '#ffffff' }
+                : { background: theme.cardInk, color: theme.cardBg }
+            }
+          >
+            {theme.badge}
+          </span>
+        )}
+      </motion.button>
+      {/* pickPreset already fires haptic('mid') itself, so this stays silent (iOS still gets its tick from
+          the switch arming at touchend, silent only skips the Android vibrate to avoid a double buzz).
+          sfx is null because onPress plays its own uiSfx('swipe') on a real change, the whole device
+          reskins, so it earns the swipe cue over the generic tap click. HapticOverlay's own scroll guard
+          (a plain 'scroll' listener on the nearest overflow ancestor, i.e. this rail) already disqualifies
+          a drag that ends over a card, on either axis, so no rail-specific tracking is needed here. */}
+      <HapticOverlay
+        className="absolute inset-0 rounded-[22px]"
+        preset="mid"
+        silent
+        sfx={null}
+        onTap={onPress}
+      />
+    </div>
   )
 }
 
@@ -449,14 +461,17 @@ function CircleButton({
   onPress: () => void
 }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onPress}
-      className="flex h-[58px] w-[58px] shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.07] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_10px_28px_-16px_rgba(0,0,0,1)] backdrop-blur-md transition-transform active:scale-95"
-    >
-      {children}
-    </button>
+    <div className="relative h-[58px] w-[58px] shrink-0">
+      <button
+        type="button"
+        aria-label={label}
+        onClick={onPress}
+        className="pointer-events-none flex h-[58px] w-[58px] items-center justify-center rounded-full border border-white/10 bg-white/[0.07] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_10px_28px_-16px_rgba(0,0,0,1)] backdrop-blur-md transition-transform active:scale-95"
+      >
+        {children}
+      </button>
+      <HapticOverlay className="absolute inset-0 rounded-full" preset="mid" onTap={onPress} />
+    </div>
   )
 }
 
@@ -480,25 +495,29 @@ function TabStrip({ tab, onSelect }: { tab: TabId; onSelect: (t: TabId) => void 
       ref={railRef}
       className="-mx-4 mb-2 flex gap-5 overflow-x-auto px-5 pb-1 pt-1 [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
-      {TABS.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          data-id={t.id}
-          aria-pressed={t.id === tab}
-          onClick={() => {
-            if (t.id === tab) return
-            haptic('selection')
-            onSelect(t.id)
-          }}
-          className={cnm(
-            'shrink-0 whitespace-nowrap text-[26px] font-extrabold leading-none tracking-tight transition-colors',
-            t.id === tab ? 'text-white' : 'text-white/35',
-          )}
-        >
-          {t.label}
-        </button>
-      ))}
+      {TABS.map((t) => {
+        const select = () => {
+          if (t.id === tab) return
+          onSelect(t.id)
+        }
+        return (
+          <div key={t.id} className="relative shrink-0">
+            <button
+              type="button"
+              data-id={t.id}
+              aria-pressed={t.id === tab}
+              onClick={select}
+              className={cnm(
+                'pointer-events-none whitespace-nowrap text-[26px] font-extrabold leading-none tracking-tight transition-colors',
+                t.id === tab ? 'text-white' : 'text-white/35',
+              )}
+            >
+              {t.label}
+            </button>
+            <HapticOverlay className="absolute inset-0" preset="mid" onTap={select} />
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -520,24 +539,26 @@ function SwatchGrid({
   return (
     <div className="grid grid-cols-6 justify-items-center gap-y-4 px-1 py-2">
       {colors.map((c, i) => (
-        <motion.button
-          key={c.name}
-          type="button"
-          aria-label={c.name}
-          aria-pressed={selected === i}
-          onClick={() => onPick(i)}
-          animate={{ scale: selected === i ? 1.12 : 1 }}
-          transition={{ type: 'spring', stiffness: 460, damping: 26 }}
-          className="h-[46px] w-[46px] rounded-full"
-          style={{
-            // Sphere shading like the reference: a top-left highlight over the flat hex + a seating shadow.
-            background: `radial-gradient(circle at 32% 28%, rgba(255,255,255,0.5), rgba(255,255,255,0) 42%), ${c.hex}`,
-            boxShadow:
-              selected === i
-                ? `0 0 0 2.5px #0a0a0b, 0 0 0 5px #ffffff, 0 8px 18px -8px rgba(0,0,0,0.8)`
-                : `inset 0 -6px 10px -6px rgba(0,0,0,0.45), 0 8px 18px -8px rgba(0,0,0,0.8)`,
-          }}
-        />
+        <div key={c.name} className="relative h-[46px] w-[46px]">
+          <motion.button
+            type="button"
+            aria-label={c.name}
+            aria-pressed={selected === i}
+            onClick={() => onPick(i)}
+            animate={{ scale: selected === i ? 1.12 : 1 }}
+            transition={{ type: 'spring', stiffness: 460, damping: 26 }}
+            className="pointer-events-none h-[46px] w-[46px] rounded-full"
+            style={{
+              // Sphere shading like the reference: a top-left highlight over the flat hex + a seating shadow.
+              background: `radial-gradient(circle at 32% 28%, rgba(255,255,255,0.5), rgba(255,255,255,0) 42%), ${c.hex}`,
+              boxShadow:
+                selected === i
+                  ? `0 0 0 2.5px #0a0a0b, 0 0 0 5px #ffffff, 0 8px 18px -8px rgba(0,0,0,0.8)`
+                  : `inset 0 -6px 10px -6px rgba(0,0,0,0.45), 0 8px 18px -8px rgba(0,0,0,0.8)`,
+            }}
+          />
+          <HapticOverlay className="absolute inset-0 rounded-full" preset="mid" onTap={() => onPick(i)} />
+        </div>
       ))}
     </div>
   )

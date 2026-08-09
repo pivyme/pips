@@ -140,7 +140,7 @@ export function ThemePicker({
 
   const commit = () => {
     if (exiting) return
-    haptic('rigid')
+    // No haptic here: the Hw3DButton below already has an explicit haptic="rigid" prop.
     setExiting(true)
   }
 
