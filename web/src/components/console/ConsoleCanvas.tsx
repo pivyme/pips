@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import * as THREE from 'three'
 import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
 import { createConsoleGui } from './consoleGui'
@@ -23,7 +23,7 @@ import {
 } from './consoleElements'
 import { createAudio } from './consoleAudio'
 import { unlockAudio } from '@/lib/sound'
-import { haptic } from '@/lib/haptics'
+import { haptic, hapticDetent, DETENT_SMALL_MS, isHapticsEnabled, subscribeHapticsEnabled } from '@/lib/haptics'
 import type { HapticPreset } from '@/lib/haptics'
 import type { ActionDisplay, ButtonColor, ConsoleView } from './controls'
 import { isDeviceParked } from './controls'
@@ -36,9 +36,24 @@ import { SoundsDrawer } from './SoundsDrawer'
 import { getMusicVolume, isMusicPlaying, setMusicVolume, subscribeAudio, togglePlay } from '@/lib/audio'
 
 // Main / Action1 / Action2 / MenuTab / HomeTab, matching ConsoleShell's DOM equivalents.
-const BTN_HAPTIC: HapticPreset[] = ['rigid', 'medium', 'medium', 'selection', 'selection']
+const BTN_HAPTIC: HapticPreset[] = ['high', 'high', 'high', 'mid', 'mid']
 // data-tour-anchor role per physical button, so the onboarding tour can find PLAY / MENU by the projected DOM overlay.
 const BTN_ROLE = ['play', 'action1', 'action2', 'menu', 'home'] as const
+
+// Each dial gets its own feel knob: for that dial, the native switch segment height, the value's
+// px-per-step, and (via the knob's dragSensitivity) its own px-per-step all read the SAME number, so a
+// haptic can never desync from a value change or a tick sound. The two pitches must never leak into
+// each other.
+
+// The knob's (the big game roller) single feel knob. Calibrated on a real iPhone, 2026-08-08: 20px felt
+// "so good" where 28px/40px (the old wheel/knob pitch) did not. Do not change without re-testing on a phone.
+const KNOB_DETENT_PX = 20
+
+// The number wheel's (the stake/bet drum) single feel knob. Calibrated on a real iPhone, 2026-08-08:
+// wider than the knob's pitch on purpose, the user wanted the bet wheel slower and smoother, meaning
+// more finger travel per detent for the same value step, tick sound, and haptic buzz. Do not change
+// without re-testing on a phone.
+const NUMBER_WHEEL_DETENT_PX = 32
 
 // The 3D handheld, driven by the console controls registry. A game binds via useConsoleControls(), which paints live labels on the buttons/knob and dispatches physical input to it.
 // The game's screen content (the chart) renders in an HTML layer masked to the screen cutout by the device body.
@@ -105,6 +120,168 @@ interface ConsoleCanvasProps {
   focusPart?: PartId | null
 }
 
+// WebKit's own switchHeldDelay (CheckboxInputType.cpp:202): the point at which its default handler calls
+// startSwitchPointerTracking(touchdownPoint) and captures the anchor for the flip line. Arm on the same
+// clock, never earlier.
+const DIAL_TELEPORT_ARM_MS = 200
+// Always past 1.4x the element's own size, so translating it this far is guaranteed to cross whatever
+// flip line WebKit just recomputed.
+const DIAL_TELEPORT_FAR_PX = 10000
+
+// A single real <input type="checkbox" switch>, appearance:none, IS the drag surface for one dial. This
+// is the only Taptic access on iOS (no navigator.vibrate there at all, see iosDialStrip below): dragging
+// the finger vertically teleports the switch far off to one side on every detent crossed, which
+// manufactures a fresh flip-line crossing under a roughly stationary finger and ticks WebKit's native
+// Switch haptic once per detent. Confirmed on a real iPhone via /dev/haptics section 9d, 2026-08-08.
+//
+// This replaces an earlier column-of-switches strip (one real <input switch> per dial's detent pitch,
+// appearance:auto) that also ticked on-device, and a separate earlier teleport attempt that did NOT: that
+// attempt fired a warm-up step() from inside its own arm timer, which teleports the switch before WebKit's
+// switchHeldDelay fires, so WebKit's touchdownPoint capture (absoluteToLocal, UseTransforms) anchors
+// against an element already 10000px away and every later comparison falls on the same side of the flip
+// line forever. This version never calls step() from the arm timer, only from a real detent crossing in
+// onTouchMove, so the element is guaranteed untransformed at the arming instant. Do not add a warm-up tick.
+//
+// `switch` is dropped entirely when haptics are off (B14): omitting the attribute is the only way to
+// silence WebKit's own tick, since it is not a JS event we can gate. The element stays mounted either way
+// so the dial keeps working (B14).
+function DialTeleportSwitch({
+  wrapperRef,
+  switchElRef,
+  hapticsOn,
+  getStep,
+  onDown,
+  onStep,
+  onNativeChange,
+  label,
+}: {
+  wrapperRef: RefObject<HTMLDivElement | null>
+  switchElRef: RefObject<HTMLInputElement | null>
+  hapticsOn: boolean
+  // Asks the scene for the CLAMPED, resisted step at a clientY (numberWheelStepAt/knobStepAt), the exact
+  // same math the value's own pointermove handler uses. The switch never computes a step from raw pixel
+  // travel itself: that duplicate counter is what let the haptic buzz past the point where the value,
+  // and the tick sound, had already stopped changing.
+  getStep: (clientY: number) => number
+  onDown: (clientY: number) => void
+  onStep?: () => void
+  onNativeChange?: () => void
+  label: string
+}) {
+  // Refs, not deps, so the touch listeners below never need to re-attach when a prop identity changes
+  // mid-drag (onDown/onStep/getStep are fresh closures every render).
+  const onDownRef = useRef(onDown)
+  onDownRef.current = onDown
+  const onStepRef = useRef(onStep)
+  onStepRef.current = onStep
+  const getStepRef = useRef(getStep)
+  getStepRef.current = getStep
+
+  const armTimerRef = useRef<number | undefined>(undefined)
+  const armedRef = useRef(false)
+  const lastNRef = useRef(0)
+  const signRef = useRef(1)
+
+  useEffect(() => {
+    const el = switchElRef.current
+    if (!el) return
+
+    function step() {
+      onStepRef.current?.()
+      signRef.current = -signRef.current
+      el!.style.transform = `translateX(${signRef.current * DIAL_TELEPORT_FAR_PX}px)`
+      el!.getBoundingClientRect() // forces style + layout synchronously, before WebKit's default handler runs
+    }
+
+    // Kicks off the shared value drag (startKnobDrag/startNumberWheelDrag) on the same touchdown that
+    // arms the teleport below, so both read the identical origin Y and never drift out of phase.
+    function onPointerDownNative(e: PointerEvent) {
+      onDownRef.current(e.clientY)
+    }
+
+    function onTouchStart(e: TouchEvent) {
+      const t = e.targetTouches[0]
+      if (!t) return
+      // The element must be untransformed while WebKit captures its touchdown anchor. Clearing here too
+      // (touchend already clears it) means a stray leftover transform can never survive into an arm.
+      el!.style.transform = ''
+      armedRef.current = false
+      lastNRef.current = 0
+      window.clearTimeout(armTimerRef.current)
+      armTimerRef.current = window.setTimeout(() => {
+        armedRef.current = true
+        // No step() here. See the comment above the component for why a warm-up tick kills every later flip.
+      }, DIAL_TELEPORT_ARM_MS)
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      if (!armedRef.current) return
+      const t = e.targetTouches[0]
+      if (!t) return
+      const n = getStepRef.current(t.clientY)
+      if (n === lastNRef.current) return
+      lastNRef.current = n
+      step()
+    }
+
+    function onTouchEnd() {
+      window.clearTimeout(armTimerRef.current)
+      armedRef.current = false
+      el!.style.transform = ''
+      el!.checked = false
+    }
+
+    el.addEventListener('pointerdown', onPointerDownNative)
+    el.addEventListener('touchstart', onTouchStart, { passive: true })
+    el.addEventListener('touchmove', onTouchMove, { passive: true })
+    el.addEventListener('touchend', onTouchEnd, { passive: true })
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true })
+    return () => {
+      window.clearTimeout(armTimerRef.current)
+      el.removeEventListener('pointerdown', onPointerDownNative)
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener('touchcancel', onTouchEnd)
+    }
+  }, [switchElRef])
+
+  return (
+    <div
+      ref={wrapperRef}
+      aria-hidden="true"
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0, // sized to the live pocket rect by projectPocket, every resize/camera move
+        pointerEvents: 'none', // the wrapper is paint-only; the switch below carries the hit target
+      }}
+    >
+      <input
+        ref={switchElRef}
+        type="checkbox"
+        {...(hapticsOn ? { switch: '' } : {})}
+        aria-label={label}
+        tabIndex={-1}
+        onChange={() => onNativeChange?.()}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          margin: 0,
+          appearance: 'none', // the working configuration (probe 9d); do not change to 'auto'
+          opacity: 0,
+          pointerEvents: 'auto',
+          touchAction: 'none',
+        }}
+      />
+    </div>
+  )
+}
+
 export default function ConsoleCanvas({
   view,
   handlers,
@@ -132,6 +309,13 @@ export default function ConsoleCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hintRef = useRef<HTMLDivElement>(null)
   const screenLayerRef = useRef<HTMLDivElement>(null)
+  // The Settings > Haptics toggle can only ever gate OUR navigator.vibrate() calls (Android). It cannot
+  // suppress iOS's native Taptic tick on a real <input switch>, because that tick is WebKit's own response
+  // to the `switch` HTML attribute, entirely outside JS. So the attribute itself must be conditional on
+  // this (B14), or a physical button keeps buzzing on iOS after the user turns haptics off. Reads
+  // lib/haptics.ts's own module state rather than useAuth(), which throws when this component is mounted
+  // off-tree with no AuthProvider (the offscreen PnL-card shot in consoleShot.tsx).
+  const hapticsOn = useSyncExternalStore(subscribeHapticsEnabled, isHapticsEnabled, isHapticsEnabled)
   // Real DOM overlays for the 5 physical buttons, positioned over their projected canvas rects. iOS Safari only grants its native Taptic tick to a genuine tap on a real switch element
   // (never script-triggered, closed in 26.5), and these buttons are raycast-picked canvas pixels with no DOM element under the finger otherwise. See overlayPressRef below + the JSX at the bottom.
   const btnOverlayRefs = useRef<Array<HTMLInputElement | null>>([null, null, null, null, null])
@@ -139,6 +323,42 @@ export default function ConsoleCanvas({
   const knobAnchorRef = useRef<HTMLDivElement>(null) // the big game roller
   const amountAnchorRef = useRef<HTMLDivElement>(null) // the stake drum
   const overlayPressRef = useRef<((bi: number) => void) | null>(null)
+
+  // iOS has no navigator.vibrate at all, ever (see HAPTICS.md §3): the knob/number-wheel are raycast-only
+  // Three.js meshes with no DOM under the finger, so they are architecturally silent there. The only
+  // Taptic access on iOS is a genuine touch on a real <input type="checkbox" switch>, which WebKit ticks
+  // once per crossing during a real drag (confirmed on-device, 2026-08-08). Feature-detected on the
+  // ABSENCE of navigator.vibrate, never UA sniffing, so this only ever renders for the population that
+  // has no other haptic path; Android keeps its existing raycast + hapticDetent() path untouched.
+  // Starts false (SSR has no navigator) and flips after mount, never read during render.
+  const [iosDialStrip, setIosDialStrip] = useState(false)
+  useEffect(() => {
+    setIosDialStrip(typeof navigator !== 'undefined' && typeof navigator.vibrate !== 'function')
+  }, [])
+  // The two dial switches: one teleport switch over each dial's projected pocket rect (same
+  // corner-projection as knobAnchorRef/amountAnchorRef above), filling it completely. Mounted whenever
+  // iosDialStrip is true regardless of the Haptics setting (B14): only the `switch` attribute is
+  // conditional on hapticsOn, or turning haptics off would also stop the dial from working.
+  const numberWheelStripElRef = useRef<HTMLDivElement>(null)
+  const knobStripElRef = useRef<HTMLDivElement>(null)
+  const numberWheelSwitchElRef = useRef<HTMLInputElement>(null)
+  const knobSwitchElRef = useRef<HTMLInputElement>(null)
+  // Bridges the switch's own pointerdown (see DialTeleportSwitch) into the imperative scene closure, same
+  // pattern as overlayPressRef above. Takes the pointer's clientY, which is all the shared step math needs.
+  const numberWheelStripDownRef = useRef<((clientY: number) => void) | null>(null)
+  const knobStripDownRef = useRef<((clientY: number) => void) | null>(null)
+  // Same bridge, the other direction: the switch's own touchmove asks the scene for the CLAMPED step at
+  // a clientY instead of computing raw pixel travel itself (see numberWheelStepAt/knobStepAt), so the
+  // native Taptic tick can never buzz past the point where the value stopped changing.
+  const numberWheelStripStepRef = useRef<((clientY: number) => number) | null>(null)
+  const knobStripStepRef = useRef<((clientY: number) => number) | null>(null)
+  // Dev-only instrumentation (never rendered in production, see the JSX at the bottom): counts each
+  // dial's step() calls against its real native onChange toggles, so a regression like the missing-tick
+  // warm-up bug above is visible in one drag instead of guessed at.
+  const [devKnobSteps, setDevKnobSteps] = useState(0)
+  const [devKnobToggles, setDevKnobToggles] = useState(0)
+  const [devWheelSteps, setDevWheelSteps] = useState(0)
+  const [devWheelToggles, setDevWheelToggles] = useState(0)
 
   // Fresh per render so the scene's input handlers never read a stale binding.
   const propsRef = useRef({ handlers, onNav, onOutroComplete, onWelcomeComplete, onWelcomeArrived })
@@ -1705,12 +1925,15 @@ export default function ConsoleCanvas({
       radius: 1.25,
       height: 0.95,
       edgeCurve: 0.1,
-      dragSensitivity: 0.5,
+      dragSensitivity: 0.5, // corrected below to KNOB_DETENT_PX per detent, kept here as the pre-fix value
       ridgePhase: 0,
       snapInterval: 20,
       snapSpeed: 5,
       ridgeLength: 0.825,
     }
+    // px-per-detent = snapInterval / dragSensitivity, so this is the sensitivity that lands the knob on
+    // KNOB_DETENT_PX (20) per detent without touching snapInterval, which is the value model, not the feel.
+    kp.dragSensitivity = kp.snapInterval / KNOB_DETENT_PX
 
     const { knobSlab, knobBump, matKnobSlab, redrawBump, knobProfile } =
       createKnob(
@@ -2433,11 +2656,13 @@ export default function ConsoleCanvas({
       }
 
       // Dial tour anchors: project each pocket's front face the same way, so the tour can spotlight them.
+      // Returns the projected size too, so callers that need to fit content to the live rect (the iOS
+      // dial strips below) don't have to re-run the projection or parse styles back out.
       const projectPocket = (
         el: HTMLDivElement | null,
         pk: { px: number; py: number; w: number; h: number },
-      ) => {
-        if (!el) return
+      ): { width: number; height: number } | null => {
+        if (!el) return null
         const cx = wx(pk.px)
         const cy = wy(pk.py)
         const hw = pk.w / 2
@@ -2461,13 +2686,21 @@ export default function ConsoleCanvas({
           if (y < minY) minY = y
           if (y > maxY) maxY = y
         }
+        const width = maxX - minX
+        const height = maxY - minY
         el.style.left = `${minX}px`
         el.style.top = `${minY}px`
-        el.style.width = `${maxX - minX}px`
-        el.style.height = `${maxY - minY}px`
+        el.style.width = `${width}px`
+        el.style.height = `${height}px`
+        return { width, height }
       }
       projectPocket(knobAnchorRef.current, knobPocket) // the big game roller
       projectPocket(amountAnchorRef.current, numberWheelPocket) // the stake drum
+
+      // The iOS dial switches (see the JSX render): same rect as the tour anchors above, one teleport
+      // switch filling it completely.
+      projectPocket(knobStripElRef.current, knobPocket)
+      projectPocket(numberWheelStripElRef.current, numberWheelPocket)
     }
 
     // Measure the live content's vertical overflow and fold it into screenFitScale so a too-tall screen (the hub stack on a short aperture) shrinks to fit instead of clipping its lower rows. Measured at the width-only scale, then re-applied; cheap and rare, resize + structural changes only.
@@ -2668,7 +2901,13 @@ export default function ConsoleCanvas({
       numberWheelLastStep = 0,
       numberWheelStartValue = 0
     let numberWheelStartPosition = 0
-    const NUMBER_WHEEL_PX_PER_STEP = 28
+    const NUMBER_WHEEL_PX_PER_STEP = NUMBER_WHEEL_DETENT_PX
+    // True when the in-flight drag was started by the iOS switch strip rather than the raycast: the two
+    // paths share the exact same move math below (window pointermove keeps driving it either way), this
+    // flag only decides whether that math also calls hapticDetent(). iOS has no vibrate to call and the
+    // native switch tick IS the haptic, so it must stay silent there.
+    let knobViaStrip = false
+    let numberWheelViaStrip = false
     let faderDrag = false
 
     // Raycast the wide fader hit target, map the world hit to the fader's local x, and set the volume.
@@ -2708,6 +2947,70 @@ export default function ConsoleCanvas({
       raycaster.setFromCamera(ndc, camera)
       const hit = raycaster.intersectObjects(interactive, false)
       return hit.length ? (hit[0].object as THREE.Mesh) : null
+    }
+
+    // Shared drag-start for the number wheel, called by the raycast pointerdown (Android, viaStrip=false)
+    // and the iOS switch strip's own pointerdown (viaStrip=true, see numberWheelStripDownRef below). Once
+    // this runs, the existing window pointermove/release listeners drive the rest identically for both.
+    function startNumberWheelDrag(clientY: number, viaStrip: boolean) {
+      numberWheelDrag = true
+      numberWheelViaStrip = viaStrip
+      numberWheelStartY = clientY
+      numberWheelLastStep = 0
+      numberWheelStartValue = state.numberWheel?.value ?? debugNumberValue
+      numberWheelStartPosition = state.numberWheel ? numberWheelPosition(state.numberWheel) : 0
+    }
+    // Same idea for the knob.
+    function startKnobDrag(clientY: number, viaStrip: boolean) {
+      knobDrag = true
+      knobViaStrip = viaStrip
+      knobStartY = clientY
+      knobBase = knobOffset
+      knobStartDetent = Math.round(knobOffset / kp.snapInterval)
+      knobLastStep = 0
+      knobStartValue = state.knob?.value ?? 0
+    }
+
+    // Pure query, no side effects: re-derives the number wheel's step at a given clientY against the
+    // live drag's start state, clamped + resisted exactly like the pointermove handler below. This is
+    // the ONE place that math lives; the pointermove handler and the iOS teleport switch's touchmove
+    // (DialTeleportSwitch, via numberWheelStripStepRef) both call it, so the tick sound, the haptic, and
+    // the value can never read a different step count from each other at the clamp.
+    function numberWheelStepAt(clientY: number) {
+      const wheel = state.numberWheel
+      if (!wheel) return null
+      const rawSteps = (numberWheelStartY - clientY) / NUMBER_WHEEL_PX_PER_STEP
+      const minSteps = (wheel.min - numberWheelStartValue) / wheel.step
+      const maxSteps = (wheel.max - numberWheelStartValue) / wheel.step
+      const resistedSteps =
+        rawSteps < minSteps
+          ? minSteps - Math.min(0.28, (minSteps - rawSteps) * 0.16)
+          : rawSteps > maxSteps
+            ? maxSteps + Math.min(0.28, (rawSteps - maxSteps) * 0.16)
+            : rawSteps
+      const steps = Math.round(Math.min(maxSteps, Math.max(minSteps, resistedSteps)))
+      return { resistedSteps, steps }
+    }
+    // Same idea for the knob. The knob has no rubber-band resistance (a hard stop reads right for a
+    // detented dial), so this is just the drag math clamped to the bound value's step range.
+    function knobStepAt(clientY: number) {
+      const dyDown = clientY - knobStartY
+      const rawOffset = knobBase + dyDown * kp.dragSensitivity
+      const rawSteps = knobStartDetent - Math.round(rawOffset / kp.snapInterval)
+      const k = state.knob
+      if (!k) return rawSteps
+      const minSteps = (k.min - knobStartValue) / k.step
+      const maxSteps = (k.max - knobStartValue) / k.step
+      return Math.round(Math.min(maxSteps, Math.max(minSteps, rawSteps)))
+    }
+
+    // Belt-and-braces clear for a dial switch's teleport transform, fired from the window-level
+    // pointerup/pointercancel below in addition to the switch's own touchend/touchcancel (DialTeleportSwitch):
+    // a no-op if the drag that just ended was raycast-started, and cheap either way.
+    function clearSwitchTransform(el: HTMLInputElement | null) {
+      if (!el) return
+      el.style.transform = ''
+      el.checked = false
     }
 
     // Arrow consts (not hoisted declarations) so the post-guard non-null narrowing of canvas/hint holds.
@@ -2765,23 +3068,12 @@ export default function ConsoleCanvas({
       }
       if (obj.userData.kind === 'numberWheel') {
         canvas.setPointerCapture(e.pointerId)
-        numberWheelDrag = true
-        numberWheelStartY = e.clientY
-        numberWheelLastStep = 0
-        numberWheelStartValue = state.numberWheel?.value ?? debugNumberValue
-        numberWheelStartPosition = state.numberWheel
-          ? numberWheelPosition(state.numberWheel)
-          : 0
+        startNumberWheelDrag(e.clientY, false)
         return
       }
       if (obj.userData.kind === 'knob') {
         canvas.setPointerCapture(e.pointerId)
-        knobDrag = true
-        knobStartY = e.clientY
-        knobBase = knobOffset
-        knobStartDetent = Math.round(knobOffset / kp.snapInterval)
-        knobLastStep = 0
-        knobStartValue = state.knob?.value ?? 0
+        startKnobDrag(e.clientY, false)
         return
       }
       if (obj.userData.kind === 'volumeFader') {
@@ -2835,24 +3127,16 @@ export default function ConsoleCanvas({
       if (numberWheelDrag) {
         const wheel = state.numberWheel
         if (!wheel) return
-        const rawSteps =
-          (numberWheelStartY - e.clientY) / NUMBER_WHEEL_PX_PER_STEP
-        const minSteps = (wheel.min - numberWheelStartValue) / wheel.step
-        const maxSteps = (wheel.max - numberWheelStartValue) / wheel.step
-        const resistedSteps =
-          rawSteps < minSteps
-            ? minSteps - Math.min(0.28, (minSteps - rawSteps) * 0.16)
-            : rawSteps > maxSteps
-              ? maxSteps + Math.min(0.28, (rawSteps - maxSteps) * 0.16)
-              : rawSteps
-        const steps = Math.round(
-          Math.min(maxSteps, Math.max(minSteps, resistedSteps)),
-        )
+        const stepped = numberWheelStepAt(e.clientY)
+        if (!stepped) return
+        const { resistedSteps, steps } = stepped
         numberWheelAngle =
           -(numberWheelStartPosition + resistedSteps) * NUMBER_LABEL_ANGLE
         numberWheelTarget = numberWheelAngle
         if (steps !== numberWheelLastStep) {
-          haptic('tick') // subtle detent pulse to ride the roller click, once per crossing
+          // iOS never reaches here: navigator.vibrate doesn't exist there, so the strip's own native
+          // switch tick is the only haptic, and firing this too would be a second, silent-no-op call.
+          if (!numberWheelViaStrip) hapticDetent(Math.abs(steps - numberWheelLastStep), DETENT_SMALL_MS) // one coalesced pulse covering every detent crossed this frame
           const direction = Math.sign(steps - numberWheelLastStep)
           for (
             let detent = numberWheelLastStep + direction;
@@ -2895,12 +3179,12 @@ export default function ConsoleCanvas({
         return
       }
       if (knobDrag) {
-        const dyDown = e.clientY - knobStartY // down positive — drives the visual ridge scroll
-        knobOffset = knobBase + dyDown * kp.dragSensitivity
-        const detent = Math.round(knobOffset / kp.snapInterval)
-        const steps = knobStartDetent - detent // dragging up advances one value per physical click
+        const dyDown = e.clientY - knobStartY // down positive, drives the visual ridge scroll
+        knobOffset = knobBase + dyDown * kp.dragSensitivity // free to keep spinning past the clamp, cosmetic only
+        const steps = knobStepAt(e.clientY) // clamped to the bound value's range, see knobStepAt above
         if (steps !== knobLastStep) {
-          haptic('tick') // subtle detent pulse to ride the knob click, once per crossing
+          // Same iOS exclusion as the number wheel above: the strip's native switch tick is the haptic.
+          if (!knobViaStrip) hapticDetent(Math.abs(steps - knobLastStep)) // one coalesced pulse covering every detent crossed this frame
           const direction = Math.sign(steps - knobLastStep)
           for (
             let step = knobLastStep + direction;
@@ -2951,6 +3235,9 @@ export default function ConsoleCanvas({
         knobTarget = Math.round(knobOffset / kp.snapInterval) * kp.snapInterval
         knobDrag = false
       }
+      // Clears whichever dial switch's teleport transform is live (see clearSwitchTransform above).
+      clearSwitchTransform(numberWheelSwitchElRef.current)
+      clearSwitchTransform(knobSwitchElRef.current)
       if (faderDrag) faderDrag = false
       if (active) {
         const btn = active
@@ -3014,10 +3301,33 @@ export default function ConsoleCanvas({
       else if (bi === 2) audio.playSfx('actionPress', 'action2')
       else if (bi === 3) audio.playSfx('pillPress', 'menu')
       else if (bi === 4) audio.playSfx('pillPress', 'home')
+      haptic(BTN_HAPTIC[bi]) // Android buzz fires here, on touch-down with the sound, not on onChange (B12)
       dispatch(bi)
       dirty = true
     }
     overlayPressRef.current = overlayPress
+
+    // Fired by the iOS dial switch's own pointerdown (see the JSX render + DialTeleportSwitch) on a
+    // genuine touch. The switch only starts the drag; the existing window pointermove/release listeners
+    // below take it from there, identically to a raycast-started drag (see startNumberWheelDrag /
+    // startKnobDrag above). No pointer capture here either, same reasoning as overlayPress.
+    numberWheelStripDownRef.current = (clientY) => {
+      if (customize) return
+      audio.resumeAudio()
+      unlockAudio()
+      if (hint) hint.style.opacity = '0'
+      startNumberWheelDrag(clientY, true)
+    }
+    knobStripDownRef.current = (clientY) => {
+      if (customize) return
+      audio.resumeAudio()
+      unlockAudio()
+      if (hint) hint.style.opacity = '0'
+      startKnobDrag(clientY, true)
+    }
+    // Read-only queries the switch's touchmove calls on every move; see numberWheelStepAt/knobStepAt.
+    numberWheelStripStepRef.current = (clientY) => numberWheelStepAt(clientY)?.steps ?? numberWheelLastStep
+    knobStripStepRef.current = (clientY) => knobStepAt(clientY)
 
     const onKeyDown = (e: KeyboardEvent) => {
       // Map the keyboard to the physical buttons: Enter = main, ArrowLeft/Right = the two action caps.
@@ -3543,6 +3853,10 @@ export default function ConsoleCanvas({
       applyOutroRef.current = () => {}
       applyActiveRef.current = () => {}
       overlayPressRef.current = null
+      numberWheelStripDownRef.current = null
+      knobStripDownRef.current = null
+      numberWheelStripStepRef.current = null
+      knobStripStepRef.current = null
       applyStageRef.current = () => {}
       applyFocusRef.current = () => {}
       gui?.destroy()
@@ -3744,31 +4058,37 @@ export default function ConsoleCanvas({
       </div>
 
       {/* Real DOM haptic overlays for the 5 physical buttons, glued onto their projected on-screen rects by projectButtonOverlay(). iOS only grants its native Taptic tick to a genuine tap on a
-          real switch element, so these must be actual DOM elements the finger touches, not the canvas raycast. Above the canvas (zIndex) so the real tap lands here first; overlayPress() then replays the exact same press the raycast branch would. Knob/number-wheel stay raycast+drag only. */}
+          real switch element, so these must be actual DOM elements the finger touches, not the canvas raycast. Above the canvas (zIndex) so the real tap lands here first; overlayPress() then replays the exact same press the raycast branch would. The knob/number-wheel stay raycast+drag only on Android; on iOS they additionally get a DialTeleportSwitch below (no navigator.vibrate there at all, see KNOB_DETENT_PX/NUMBER_WHEEL_DETENT_PX above). */}
       {!customize && !exportMode && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 11, pointerEvents: 'none' }}>
-          {BTN_HAPTIC.map((preset, i) => (
+          {BTN_HAPTIC.map((_preset, i) => (
             <input
               key={i}
               ref={(el) => {
                 btnOverlayRefs.current[i] = el
               }}
               type="checkbox"
-              {...{ switch: '' }}
+              // The `switch` attribute is what makes WebKit treat this as a native Switch control and
+              // grant it the Taptic tick on toggle (B14): omit it when haptics are off, and it is just a
+              // bare checkbox with no OS-level buzz, while every other behaviour here is unchanged.
+              {...(hapticsOn ? { switch: '' } : {})}
               aria-hidden="true"
               data-tour-anchor={BTN_ROLE[i]}
               tabIndex={-1}
-              // Press must fire on pointer-DOWN so the cap sinks, sounds, and dispatches the instant the finger lands (and holds while held), same as the keyboard + raycast paths; release() pops it on pointerup.
-              // onChange stays only for the switch-toggle haptic: iOS grants its native Taptic tick solely on a genuine toggle of a real <input switch>, which lands on click.
+              // Press must fire on pointer-DOWN so the cap sinks, sounds, dispatches, and buzzes the instant the finger lands (and holds while held), same as the keyboard + raycast paths; release() pops it on pointerup.
+              // onChange is a required no-op: React needs SOME onChange handler on a controlled checkbox for the browser to fire the toggle at all, and toggling a real <input switch> is what grants iOS its native Taptic tick.
+              // The Android buzz lives in overlayPress() now (B12), not here, so sound and haptic land together on pointerdown instead of buzz-on-release.
               onPointerDown={() => overlayPressRef.current?.(i)}
-              onChange={() => haptic(preset)}
+              onChange={() => {
+                // intentionally empty — see comment above
+              }}
               style={{
                 position: 'absolute',
                 left: 0,
                 top: 0,
                 width: 0,
                 height: 0,
-                appearance: 'none',
+                appearance: 'auto',
                 opacity: 0,
                 pointerEvents: 'auto',
                 touchAction: 'none',
@@ -3787,6 +4107,57 @@ export default function ConsoleCanvas({
             aria-hidden="true"
             style={{ position: 'absolute', left: 0, top: 0, width: 0, height: 0, pointerEvents: 'none' }}
           />
+          {iosDialStrip && (
+            <>
+              <DialTeleportSwitch
+                wrapperRef={knobStripElRef}
+                switchElRef={knobSwitchElRef}
+                hapticsOn={hapticsOn}
+                getStep={(clientY) => knobStripStepRef.current?.(clientY) ?? 0}
+                onDown={(clientY) => knobStripDownRef.current?.(clientY)}
+                onStep={() => setDevKnobSteps((v) => v + 1)}
+                onNativeChange={() => setDevKnobToggles((v) => v + 1)}
+                label="knob"
+              />
+              <DialTeleportSwitch
+                wrapperRef={numberWheelStripElRef}
+                switchElRef={numberWheelSwitchElRef}
+                hapticsOn={hapticsOn}
+                getStep={(clientY) => numberWheelStripStepRef.current?.(clientY) ?? 0}
+                onDown={(clientY) => numberWheelStripDownRef.current?.(clientY)}
+                onStep={() => setDevWheelSteps((v) => v + 1)}
+                onNativeChange={() => setDevWheelToggles((v) => v + 1)}
+                label="amount"
+              />
+            </>
+          )}
+        </div>
+      )}
+
+      {import.meta.env.DEV && iosDialStrip && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'fixed',
+            bottom: 8,
+            left: 8,
+            zIndex: 9999,
+            pointerEvents: 'none',
+            fontFamily: 'monospace',
+            fontSize: 10,
+            lineHeight: 1.4,
+            color: 'rgba(255,255,255,0.55)',
+            background: 'rgba(0,0,0,0.5)',
+            padding: '4px 6px',
+            borderRadius: 4,
+          }}
+        >
+          <div>
+            knob step {devKnobSteps} · onChange {devKnobToggles}
+          </div>
+          <div>
+            wheel step {devWheelSteps} · onChange {devWheelToggles}
+          </div>
         </div>
       )}
 
