@@ -8,6 +8,7 @@ import type { DisplayAchievement } from '@/lib/achievements'
 import { achievementImage } from '@/lib/achievements'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { haptic } from '@/lib/haptics'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { cnm } from '@/utils/style'
 
 type Selected = { a: DisplayAchievement; rect: DOMRect }
@@ -87,13 +88,17 @@ function Detail({ sel, onClose }: { sel: Selected; onClose: () => void }) {
       role="dialog"
       aria-modal="true"
       aria-label={a.name}
-      onClick={onClose}
       className="viewport-fill fixed inset-0 z-[110] bg-black/70 backdrop-blur-xl"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: reduced ? 0.18 : 0.4, ease: [0.22, 1, 0.36, 1] }}
     >
+      {/* The whole surface is the close target and nothing under it scrolls, so `scrim` keeps the tick
+          lined up with the click (see HapticOverlay's header). The overlay owns the haptic since nothing
+          else on close fires one. */}
+      <HapticOverlay className="absolute inset-0" scrim preset="low" onTap={onClose} />
+
       {a.unlocked && (
         <motion.div
           aria-hidden

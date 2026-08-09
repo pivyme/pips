@@ -1,7 +1,7 @@
 import { Link, createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Gauge, LogOut, Pencil } from 'lucide-react'
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuHeader, prepareMenuTransition } from '@/components/menu/shared'
 import { BalanceCard } from '@/components/menu/BalanceCard'
@@ -139,7 +139,7 @@ function AboutRow() {
         <span className="flex-1 text-[17px] font-bold">About PIPS</span>
         <span className="text-2xl text-text-3">›</span>
       </Link>
-      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={go} />
+      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" onTap={go} />
     </div>
   )
 }
@@ -165,7 +165,7 @@ function AdminRow() {
         <span className="flex-1 text-[17px] font-bold">Admin dashboard</span>
         <span className="text-2xl text-text-3">›</span>
       </Link>
-      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={go} />
+      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" onTap={go} />
     </div>
   )
 }
@@ -376,7 +376,6 @@ function AllAchievementsRow() {
       <HapticOverlay
         className="absolute inset-0 rounded-card"
         preset="selection"
-        silent
         onTap={() => {
           prepareMenuTransition('forward')
           void navigate({ to: '/menu/achievements' })
@@ -402,47 +401,56 @@ const pct = (a: DisplayAchievement): number =>
 function AchievementCard({ a }: { a: DisplayAchievement }): ReactNode {
   const p = pct(a)
   const { open } = useAchievementDetail()
+  const cardRef = useRef<HTMLButtonElement>(null)
+  const activate = () => {
+    if (cardRef.current) openFromCard(open, a, { currentTarget: cardRef.current })
+  }
   return (
-    <button
-      type="button"
-      aria-label={`${a.name}, ${a.unlocked ? 'unlocked' : `${Math.round(p * 100)}% complete`}`}
-      onClick={(e) => openFromCard(open, a, e)}
-      className={cnm(
-        'surface-skeuo flex w-[160px] shrink-0 flex-col gap-3 rounded-card p-4 text-left',
-        cardPressClass,
-      )}
-    >
-      <div className="relative mx-auto flex h-[116px] w-[116px] items-center justify-center">
-        {a.unlocked ? (
-          <img
-            src={achievementImage(a.slug)}
-            alt=""
-            className="h-[104px] w-[104px] object-contain drop-shadow-[0_12px_20px_rgba(0,0,0,0.34)]"
-            draggable={false}
-          />
-        ) : (
-          <>
-            {/* Locked badge as a black silhouette, with the progress ring + percent on top. */}
+    <div className="relative w-[160px] shrink-0">
+      <button
+        ref={cardRef}
+        type="button"
+        aria-label={`${a.name}, ${a.unlocked ? 'unlocked' : `${Math.round(p * 100)}% complete`}`}
+        onClick={activate}
+        className={cnm(
+          'pointer-events-none surface-skeuo flex w-full flex-col gap-3 rounded-card p-4 text-left',
+          cardPressClass,
+        )}
+      >
+        <div className="relative mx-auto flex h-[116px] w-[116px] items-center justify-center">
+          {a.unlocked ? (
             <img
               src={achievementImage(a.slug)}
               alt=""
-              className="absolute h-[80px] w-[80px] object-contain brightness-0 contrast-200 drop-shadow-[0_1px_0_rgba(255,255,255,0.04)]"
+              className="h-[104px] w-[104px] object-contain drop-shadow-[0_12px_20px_rgba(0,0,0,0.34)]"
               draggable={false}
             />
-            <ProgressRing value={p} />
-            <span className="tnum absolute text-[26px] font-extrabold leading-none">
-              {Math.round(p * 100)}%
-            </span>
-          </>
-        )}
-      </div>
-      <div>
-        <div className="text-[15px] font-bold leading-tight">{a.name}</div>
-        <div className="mt-1 line-clamp-2 text-[13px] leading-snug text-text-2">
-          {a.description}
+          ) : (
+            <>
+              {/* Locked badge as a black silhouette, with the progress ring + percent on top. */}
+              <img
+                src={achievementImage(a.slug)}
+                alt=""
+                className="absolute h-[80px] w-[80px] object-contain brightness-0 contrast-200 drop-shadow-[0_1px_0_rgba(255,255,255,0.04)]"
+                draggable={false}
+              />
+              <ProgressRing value={p} />
+              <span className="tnum absolute text-[26px] font-extrabold leading-none">
+                {Math.round(p * 100)}%
+              </span>
+            </>
+          )}
         </div>
-      </div>
-    </button>
+        <div>
+          <div className="text-[15px] font-bold leading-tight">{a.name}</div>
+          <div className="mt-1 line-clamp-2 text-[13px] leading-snug text-text-2">
+            {a.description}
+          </div>
+        </div>
+      </button>
+      {/* open() already buzzes ('selection', AchievementDetail.tsx), so the overlay stays silent. */}
+      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={activate} />
+    </div>
   )
 }
 

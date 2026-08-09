@@ -95,7 +95,7 @@ function UsernameScreen() {
     if (saving || !valid || !dirty) return
     setSaving(true)
     setError(null)
-    haptic('medium')
+    // No press haptic here: the Hw3DButton below already has an explicit haptic="medium" prop.
     try {
       await api.setUsername(trimmed)
       await refresh()

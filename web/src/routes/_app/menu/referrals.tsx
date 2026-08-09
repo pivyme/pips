@@ -141,7 +141,7 @@ function ReferralsScreen() {
                   variant="primary"
                   disabled={!canClaim}
                   loading={claiming}
-                  haptic="success"
+                  haptic="high"
                   onPress={() => void claim()}
                   className="shrink-0 px-6"
                 >
