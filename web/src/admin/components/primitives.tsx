@@ -5,8 +5,8 @@
 // Everything here renders text, never HTML: an error message can carry attacker-controlled input and
 // this dashboard is where it gets displayed.
 
-import type { LucideIcon } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { Check, Copy, type LucideIcon } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import { cnm } from '@/utils/style'
 
@@ -323,6 +323,49 @@ export function LatencyChart({
       <path d={path((d) => d.p95)} fill="none" stroke="var(--a-accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
     </svg>
   )
+}
+
+// Every address on this dashboard is shortened, and a shortened address you cannot copy is decoration.
+// One click copies the FULL value; the middle is elided so the leading and trailing bytes both stay
+// readable, which is what you actually eyeball against an explorer.
+export function Address({ value, chars = 8 }: { value: string; chars?: number }) {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const t = setTimeout(() => setCopied(false), 1400)
+    return () => clearTimeout(t)
+  }, [copied])
+
+  const copy = async () => {
+    // Safari over http (and any non-secure context) has no clipboard API, so fall back rather than throw.
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value)
+      else legacyCopy(value)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  const short = value.length <= chars * 2 + 3 ? value : `${value.slice(0, chars)}...${value.slice(-chars)}`
+  return (
+    <button type="button" className="a-copy" onClick={copy} title={`${value}\nClick to copy`} aria-label={`Copy ${value}`}>
+      <span className="a-mono">{short}</span>
+      {copied ? <Check size={12} strokeWidth={2.6} style={{ color: 'var(--a-ok)' }} /> : <Copy size={12} strokeWidth={2.2} className="a-copy-icon" />}
+    </button>
+  )
+}
+
+function legacyCopy(value: string): void {
+  const el = document.createElement('textarea')
+  el.value = value
+  el.setAttribute('readonly', '')
+  el.style.cssText = 'position:fixed;top:-1000px;opacity:0'
+  document.body.appendChild(el)
+  el.select()
+  document.execCommand('copy')
+  el.remove()
 }
 
 // Compact absolute + relative time. Absolute alone makes you do arithmetic, relative alone loses the

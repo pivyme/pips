@@ -235,9 +235,10 @@ export const DEMO_LUCKY_LEVERAGE: number = Number(process.env.PIPS_DEMO_LUCKY_LE
 export const DEMO_LUCKY_DURATION: number = Number(process.env.PIPS_DEMO_LUCKY_DURATION) || 0;
 
 // Stake bounds per play (display DUSDC), enforced by the knob + play endpoints. Floors at the protocol's
-// ~$1 min net premium (L-011) and caps tiny to protect finite DUSDC; MIN 1.5 clears $1 net after the ~12% fee headroom (1.5 * 0.88 = 1.32).
+// ~$1 min net premium (L-011); MIN 1.5 clears $1 net after the ~12% fee headroom (1.5 * 0.88 = 1.32).
+// MAX 25 gives the wheel its curated 1.5/5/10/25 rungs and sits far under market backing (~$175k per 1m market).
 export const MIN_STAKE: number = Number(process.env.PIPS_MIN_STAKE) || 1.5;
-export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || 3;
+export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || 25;
 
 // Login re-fund (D2/D3). A returning user whose spendable chips fall below THRESHOLD gets topped back up to
 // STARTING_BALANCE so they can keep playing. Play money, but the treasury is finite (L-008), so the refill is

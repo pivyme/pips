@@ -1,23 +1,25 @@
 {
   "network": "testnet",
   "chainId": "4c78adac",
-  "source": "MystenLabs/deepbookv3 deployment.testnet.json (branch predict-testnet-6-24, updatedAt 2026-06-25). Mysten's official Predict deployment, not ours. Committed on purpose: no bootstrap writes it, it is the source of truth for the real path. Re-vendor if Mysten redeploys (the boot stale-id guard flags a mismatch).",
+  "deployment": "predict-testnet-7-29",
+  "source": "MystenLabs/deepbookv3 packages/predict/deployment/deployment.testnet.json (branch predict-testnet-7-29, sourceCommit 80dcf727). Mysten's official Predict deployment, not ours. Committed on purpose: no bootstrap writes it, it is the source of truth for the real path. Re-vendor if Mysten redeploys (the boot guard flags stale ids AND a stale oracle).",
   "packages": {
-    "predict": "0xdb3ef5a5129920e59c9b2ae25a77eddb48acd0e1c6307b97073f0e076016446e",
-    "propbook": "0x8eb2adde1c91f8b7c9ba5e9b0a32bfb804510c342939c5f77458fd8143f9755b",
-    "blockScholesOracle": "0x8192932b70d5946217d0f09aad44f84ad5c27ee4c1ca31b09f46200fbd31d3de",
-    "account": "0xb9389eac8d59170ffd1427c1a66e5c8306263464fcc6615e825c1f5b3e15da3b",
-    "fixedMath": "0x6930d8eff504f15e45e7ceec3d504bfc1a6f1e1d4c02babe03c156f77b84523d"
+    "predict": "0xfe742239a3b033f7d52ed5275f238c17d27498ca0ee5ea5672ea732eb3f4dbbb",
+    "propbook": "0xed1295ff3c9a9415766afff20a74cdf2e362647be09aaf13b809302c0109e912",
+    "account": "0xbdbb60b00f2d4f30daeff62f2c642b18433a8fcdfbebccc808df578df2a0c203",
+    "fixedMath": "0xdf0bd2a0d201562f2bdecb1b77d7998c7af316f6fd7d1eab9b9035064f21bfd4",
+    "deepbookCoreAccount": "0x7ea715df00320b9460cd17531ecb507d8cc28925dce5be5de40af448c1d34239",
+    "sessions": "0x403ac487b19635c022f5c50378b9097ed7d80175f9b3ff7ea5a8a4a5fe0ecfbe"
   },
   "shared": {
-    "protocolConfigId": "0x2325224629b4bd96d1f1d7ee937e07f8a06f861018a130bbb26db09cb0394cb6",
-    "poolVaultId": "0xfde98c636eb8a7aba59c3a238cfee6b576b7118d1e5ffa2952876c4b270a3a2a",
-    "registryId": "0x54afbf245caf42466cedb5756ed7816f34f544afdfa13579a862eccf3afa21ca",
-    "oracleRegistryId": "0xf3deaff68cbd081a35ec21653af6f671d2ad5f012f3b4d817d81752843374136",
-    "accountRegistryId": "0x3c54d5b8b6bca376fc289121838ad02f8a5b3843242b9ad7e8f8245720e685a2"
+    "protocolConfigId": "0x43703ceee4d5f5a9e8cbf728071c34dc65961dd6e878fafd9ac36d86a9a4ce5b",
+    "poolVaultId": "0xeef535e7fcb850a943807ce48cc543c6d990b39e68a7bc47d0b56651ff20ab0a",
+    "registryId": "0x35970bfd0ff3703cb38b3fff3a3fbb0bc0e5638e7c747af3a8e42e2c95d353f0",
+    "oracleRegistryId": "0xc1dffc5f7a5404cb002ba3bd7c50d6a2dbe8bb6afd40080cd663965deff9d577",
+    "accountRegistryId": "0x21a7ed28397363b5550853c1f08795731257de81028cd1bf87f20c0752c8ca2f"
   },
   "accumulatorRoot": "0x0000000000000000000000000000000000000000000000000000000000000acc",
-  "clock": "0x6",
+  "clock": "0x0000000000000000000000000000000000000000000000000000000000000006",
   "dusdc": {
     "packageId": "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a",
     "type": "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a::dusdc::DUSDC"
@@ -27,10 +29,9 @@
       "symbol": "BTC_USD",
       "propbookUnderlyingId": 1,
       "feeds": {
-        "pyth": "0xc78d7de16217d46d21b92ae475da799448be30b71a758dc6d7bb3ac2f1c35afb",
-        "bsSpot": "0xcdc5fa7364e60fd2504aa96f65b707dc0734e507a919b1a7d7d63164fd67b745",
-        "bsForward": "0xe72c734ea8d8dcbc9183d9d8f96f51aaa1fb5034d5ed33ac60d67d261e15b48a",
-        "bsSvi": "0xdc2f8270676bd05fb28491e8d4a41a495722fda7a454926dd66dbba256a21c69"
+        "pyth": "0xccafaa6c5a41f0493585cf268f2b4dc14c91ed798362444144cac2c745db8dde",
+        "bsValues": "0x6d9de17954f4c1a2f01fdd97c0bb8a2e682c1fea0f8f048dcd127d543a6ac051",
+        "bsSvi": "0x83c2d6307fd3591228052fc0d24c4f00a698b0eb4fef5e6083a213ca0d54bd35"
       }
     }
   ],

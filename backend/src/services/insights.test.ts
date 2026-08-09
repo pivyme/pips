@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'bun:test';
 
-import { computeCohorts, computeFunnel, computeGameConversion, computeMenuSections } from './insights.ts';
+import { computeCohorts, computeFunnel, computeGameConversion, computeMenuSections, sumPositiveDrops } from './insights.ts';
 
 // Six visitors on the pre-auth funnel. `a_N` is the client anonId, which is the same before and after login.
 //
@@ -195,5 +195,63 @@ describe('computeCohorts', () => {
 
   it('returns nothing for no signups rather than a row of NaN percentages', () => {
     expect(computeCohorts([], [{ userId: 'u_1', ts: at('2026-07-02T12:00:00Z') }])).toEqual([]);
+  });
+});
+
+// The gas-burn accumulator. This is the one that shipped wrong: `walletBalance` caught a failed chain read
+// and returned sui: 0, so every RPC blip looked like the sponsor draining to empty and back. The dashboard
+// read "629.462 SUI burned today" against a wallet that never dipped below 38, which is worse than no number.
+describe('sumPositiveDrops (gas burned today)', () => {
+  const T0 = Date.UTC(2026, 7, 9);
+  const at_ = (mins: number): number => T0 + mins * 60_000;
+
+  it('sums the drops and ignores a top-up instead of netting it off', () => {
+    const samples = [
+      { t: at_(0), sui: 40 },
+      { t: at_(15), sui: 39.5 }, // -0.5 burned
+      { t: at_(30), sui: 39.1 }, // -0.4 burned
+      { t: at_(45), sui: 80 }, // a human top-up, skipped, not netted
+      { t: at_(60), sui: 79.75 }, // -0.25 burned
+    ];
+    expect(sumPositiveDrops(samples, T0)).toBe(1.15);
+  });
+
+  it('does not bill a failed read as a drain, the bug that reported 629 SUI', () => {
+    const samples = [
+      { t: at_(0), sui: 38.24 },
+      { t: at_(15), sui: null }, // read failed
+      { t: at_(30), sui: 38.2 }, // still there the whole time
+    ];
+    // The old code saw 38.24 -> 0 -> 38.2 and billed 38.24. Both pairs touch the null, so both are skipped.
+    expect(sumPositiveDrops(samples, T0)).toBeNull();
+  });
+
+  it('resumes across a gap once two real samples land again', () => {
+    const samples = [
+      { t: at_(0), sui: 38.24 },
+      { t: at_(15), sui: null },
+      { t: at_(30), sui: 38.2 },
+      { t: at_(45), sui: 38.1 }, // -0.1, the only measurable pair
+    ];
+    expect(sumPositiveDrops(samples, T0)).toBeCloseTo(0.1, 6);
+  });
+
+  it('says null, not zero, when today has no readable pair at all', () => {
+    expect(sumPositiveDrops([{ t: at_(0), sui: 38 }], T0)).toBeNull();
+    expect(sumPositiveDrops([], T0)).toBeNull();
+    expect(sumPositiveDrops([{ t: at_(0), sui: null }, { t: at_(15), sui: null }], T0)).toBeNull();
+  });
+
+  it('counts only pairs that land today, so yesterday carries in but does not accumulate', () => {
+    const samples = [
+      { t: at_(-30), sui: 50 }, // yesterday
+      { t: at_(-15), sui: 45 }, // yesterday, its 5 SUI drop is not today's
+      { t: at_(10), sui: 44 }, // today: the 45 -> 44 pair counts
+    ];
+    expect(sumPositiveDrops(samples, T0)).toBe(1);
+  });
+
+  it('is zero, not null, on a readable pair that simply did not move', () => {
+    expect(sumPositiveDrops([{ t: at_(0), sui: 38 }, { t: at_(15), sui: 38 }], T0)).toBe(0);
   });
 });

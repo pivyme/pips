@@ -47,7 +47,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
       {/* Pinned to the viewport, not to the page. Overview runs well past 100vh and a rail that scrolls
           away takes the nav and the health dot with it. h-screen + self-start keeps flex from stretching
           it to the full document height, which is what silently breaks sticky. */}
-      <nav className="a-rail sticky top-0 hidden h-screen w-[232px] shrink-0 flex-col justify-between self-start overflow-y-auto p-3 lg:flex">
+      <nav
+        className="a-rail sticky top-0 hidden h-screen w-[232px] shrink-0 flex-col justify-between self-start overflow-y-auto p-3 lg:flex"
+        style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
+      >
         <div className="flex min-h-0 flex-col gap-1">
           <Brand />
           <span className="a-label mb-1 mt-4 px-3">Dashboard</span>
@@ -60,9 +63,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
       {/* Mobile keeps the nav as a plain strip: Errors is the one page worth triaging from a phone. */}
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* Sticky at the viewport top, so on iOS it lands under the status bar unless it carries the inset itself. */}
         <div
-          className="sticky top-0 z-20 flex items-center gap-1 overflow-x-auto border-b px-2 py-2 lg:hidden"
-          style={{ background: 'var(--a-surface)', borderColor: 'var(--a-border)' }}
+          className="sticky top-0 z-20 flex items-center gap-1 overflow-x-auto border-b px-2 pb-2 lg:hidden"
+          style={{ background: 'var(--a-surface)', borderColor: 'var(--a-border)', paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}
         >
           <HealthDot />
           {NAV.map((item) => (

@@ -59,6 +59,10 @@ export function isDemo(): boolean {
     } catch {
       // storage blocked: fall through to env default
     }
+    // Privy's embedded wallet needs a secure context (HTTPS, or the localhost exception). A LAN IP over
+    // plain HTTP (testing on a phone) can never complete that handshake, so fall back to demo instead of
+    // a login that silently can't finish.
+    if (env.VITE_AUTH_MODE === 'privy' && !window.isSecureContext) return true
   }
   return env.VITE_DEMO_MODE === 'true'
 }

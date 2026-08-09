@@ -1,6 +1,10 @@
 // App-level brand and links. Sui package/object IDs live in src/lib/sui/config.ts
 // (read from env, never inlined), per the monorepo rule.
 
+// Canonical prod origin. Only for places with no runtime origin to read (SSR meta tags), never as the
+// base of a link the user copies, that follows the browser's own origin. See lib/referral.ts.
+export const SITE_URL = 'https://playpips.fun'
+
 export const config = {
   appName: 'PIPS',
   tagline: 'Built for fun and money.',

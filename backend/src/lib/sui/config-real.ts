@@ -9,16 +9,18 @@ import { SUI_NETWORK } from '../../config/main-config.ts';
 export type RealAsset = {
   symbol: string;
   propbookUnderlyingId: number;
-  // The 4 Propbook feed OBJECT ids load_live_pricer needs, resolved per underlying.
-  feeds: { pyth: string; bsSpot: string; bsForward: string; bsSvi: string };
+  // The 3 Propbook feed OBJECT ids load_live_pricer needs, resolved per underlying. The 7-29 deployment
+  // folded the old bsSpot + bsForward feeds into one BlockScholesValueStore.
+  feeds: { pyth: string; bsValues: string; bsSvi: string };
 };
 export type RealCadence = { id: number; name: string; periodMs: number; tickSize: string; admissionTickSize: string };
 
 export type DeployedReal = {
   network: string;
   chainId: string;
+  deployment?: string;
   source?: string;
-  packages: { predict: string; propbook: string; blockScholesOracle: string; account: string; fixedMath: string };
+  packages: { predict: string; propbook: string; account: string; fixedMath: string };
   shared: {
     protocolConfigId: string;
     poolVaultId: string;
@@ -71,7 +73,6 @@ export function realDeployment(): DeployedReal {
 export const REAL_PREDICT_PACKAGE = real?.packages.predict ?? '';
 export const REAL_PROPBOOK_PACKAGE = real?.packages.propbook ?? '';
 export const REAL_ACCOUNT_PACKAGE = real?.packages.account ?? '';
-export const REAL_BLOCK_SCHOLES_PACKAGE = real?.packages.blockScholesOracle ?? '';
 
 export const REAL_PROTOCOL_CONFIG_ID = real?.shared.protocolConfigId ?? '';
 export const REAL_POOL_VAULT_ID = real?.shared.poolVaultId ?? '';
@@ -134,6 +135,57 @@ export async function verifyRealDeployment(): Promise<boolean> {
       );
     }
   }
-  if (ok) console.log('[predict-real] deployment verified: PoolVault, AccountRegistry, OracleRegistry live.');
-  return ok;
+  if (!ok) return false;
+  console.log('[predict-real] deployment verified: PoolVault, AccountRegistry, OracleRegistry live.');
+  return verifyLivePricing();
+}
+
+// Liveness guard. The id check above only proves the objects still EXIST, which is why the 6-24
+// deployment read healthy for the ~62h after Mysten stopped publishing its oracle and every mint was
+// already aborting on pricing::live_inputs (EBlockScholesPriceStale, freshness window 10s).
+// So probe the thing that actually breaks: simulate load_live_pricer against a live market.
+export async function verifyLivePricing(): Promise<boolean> {
+  if (!real) return true;
+  try {
+    const { Transaction } = await import('@mysten/sui/transactions');
+    const { suiClient } = await import('./client.ts');
+    const { readActiveMarketIds, readMarketCoarse, buildLoadPricer } = await import('./predict-real.ts');
+
+    const ids = await readActiveMarketIds();
+    if (ids.length === 0) {
+      console.error('[predict-real] LIVE PRICING: PoolVault lists no active markets; nothing is mintable.');
+      return false;
+    }
+    // Any unsettled market prices off the same feeds, so the first live one is a sufficient probe.
+    let probe: string | null = null;
+    for (const id of ids.slice(0, 5)) {
+      const m = await readMarketCoarse(id);
+      if (m && !m.settled && m.expiryMs > Date.now()) {
+        probe = id;
+        break;
+      }
+    }
+    if (!probe) {
+      console.error('[predict-real] LIVE PRICING: no unsettled market among the first active ids.');
+      return false;
+    }
+
+    const tx = new Transaction();
+    buildLoadPricer(tx, probe);
+    tx.setSender(probe); // checks-disabled read, any valid address works
+    const res = await suiClient.simulateTransaction({ transaction: tx, include: { commandResults: true }, checksEnabled: false });
+    if (res.$kind !== 'Transaction') {
+      const msg = res.FailedTransaction?.status?.error?.message ?? 'simulate error';
+      console.error(
+        `[predict-real] LIVE PRICING DOWN: load_live_pricer aborts on market ${probe} (${msg}). ` +
+          'Mysten\'s oracle publisher is stale or the deployment moved; plays cannot mint until it recovers.',
+      );
+      return false;
+    }
+    console.log('[predict-real] live pricing verified: load_live_pricer loads against a live market.');
+    return true;
+  } catch (err) {
+    console.error(`[predict-real] LIVE PRICING: probe failed (${err instanceof Error ? err.message : err}).`);
+    return false;
+  }
 }

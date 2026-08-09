@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { decodeOrderId, isSettledDefiniteLoss, matchRealRedeemInPage } from './predict-real.ts';
+import { decodeOrderId, isSettledDefiniteLoss, matchRealRedeemInPage, normalizePythSpot1e9 } from './predict-real.ts';
 
 // decodeOrderId derives the full-close quantity + strike ticks straight from the packed u256 order id, so
 // the settle worker needs no extra column. Fixture is a real testnet OrderMinted event (all 25 sampled live events decoded exactly), locking the offsets/masks against source drift.
@@ -82,5 +82,33 @@ describe('matchRealRedeemInPage', () => {
     const hit = matchRealRedeemInPage([tx('0xold', ORDER, '1'), tx('0xnew', ORDER, '2')], ORDER);
     expect(hit!.digest).toBe('0xnew');
     expect(hit!.payoutRaw).toBe(2n);
+  });
+});
+
+// Mirrors pyth_feed::normalize_raw_spot. The chart's level rides on this, and since 7-29 it is the only
+// readable live spot (the Block Scholes store has no latest lane), so a wrong shift moves every line.
+describe('normalizePythSpot1e9', () => {
+  it('scales a real captured BTC read (exp -8) to 1e9', () => {
+    // Captured verbatim off the 7-29 PythFeed lane.latest on 2026-08-08.
+    expect(normalizePythSpot1e9({ price_magnitude: '6497963076825', exponent_magnitude: 8, exponent_is_negative: true })).toBe(
+      64_979_630_768_250n,
+    );
+  });
+
+  it('rounds down when the source carries finer precision than 1e9', () => {
+    // exp -12 is 3 decimals finer than 1e9, so the last 3 digits are truncated, never rounded up.
+    expect(normalizePythSpot1e9({ price_magnitude: '123456789012', exponent_magnitude: 12, exponent_is_negative: true })).toBe(123_456_789n);
+  });
+
+  it('scales up on a positive exponent', () => {
+    expect(normalizePythSpot1e9({ price_magnitude: '7', exponent_magnitude: 2, exponent_is_negative: false })).toBe(700_000_000_000n);
+  });
+
+  it('returns null for a negative, zero, or unrepresentable price rather than a bogus number', () => {
+    expect(normalizePythSpot1e9({ price_magnitude: '1', price_is_negative: true, exponent_magnitude: 8, exponent_is_negative: true })).toBeNull();
+    expect(normalizePythSpot1e9({ price_magnitude: '0', exponent_magnitude: 8, exponent_is_negative: true })).toBeNull();
+    expect(normalizePythSpot1e9({ price_magnitude: '1', exponent_magnitude: 30, exponent_is_negative: true })).toBeNull();
+    expect(normalizePythSpot1e9({ price_magnitude: '1', exponent_magnitude: 20, exponent_is_negative: false })).toBeNull();
+    expect(normalizePythSpot1e9({})).toBeNull();
   });
 });

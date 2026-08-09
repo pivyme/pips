@@ -186,8 +186,8 @@ const btcFeeds = () => {
   return a.feeds;
 };
 
-// Build a PTB-local live Pricer bound to `marketId` from the 4 Propbook feeds; must be built fresh in
-// the same PTB and passed by-ref into mint/redeem_live.
+// Build a PTB-local live Pricer bound to `marketId` from the 3 Propbook feeds; must be built fresh in
+// the same PTB and passed by-ref into mint/redeem_live. ctx is runtime-supplied, so no PTB argument.
 export function buildLoadPricer(tx: Transaction, marketId: string): TransactionObjectArgument {
   const f = btcFeeds();
   return tx.moveCall({
@@ -197,8 +197,7 @@ export function buildLoadPricer(tx: Transaction, marketId: string): TransactionO
       tx.object(REAL_PROTOCOL_CONFIG_ID),
       tx.object(REAL_ORACLE_REGISTRY_ID),
       tx.object(f.pyth),
-      tx.object(f.bsSpot),
-      tx.object(f.bsForward),
+      tx.object(f.bsValues),
       tx.object(f.bsSvi),
       tx.object(REAL_CLOCK),
     ],
@@ -235,7 +234,7 @@ export function buildWithdrawFunds(
 }
 
 // mint_exact_amount: sizes the largest lot-rounded position whose net premium fits amountRaw (fees charge on top, so deposit must cover amount + fee headroom); the minted order id (u256) comes via events, not the command return.
-// leverage1e9 is 1e9-scaled and never clamped (L-009); max_cost/max_probability default off (U64_MAX), tighten later.
+// leverage1e9 is 1e9-scaled and never clamped (L-009). maxCost bounds the ALL-IN draw (net premium + trading/builder/penalty fees) and the protocol requires it non-zero, so it defaults to U64_MAX (off, same as before 7-29) and the wrapper balance stays the real ceiling.
 export type MintExactAmountArgs = {
   marketId: string;
   wrapper: TransactionObjectArgument;
@@ -246,6 +245,7 @@ export type MintExactAmountArgs = {
   amountRaw: bigint;
   minQuantityRaw: bigint;
   leverage1e9: bigint;
+  maxCost?: bigint;
 };
 export function buildMintExactAmount(tx: Transaction, a: MintExactAmountArgs): void {
   tx.moveCall({
@@ -261,6 +261,7 @@ export function buildMintExactAmount(tx: Transaction, a: MintExactAmountArgs): v
       tx.pure.u64(a.amountRaw),
       tx.pure.u64(a.minQuantityRaw),
       tx.pure.u64(a.leverage1e9),
+      tx.pure.u64(a.maxCost ?? U64_MAX),
       tx.object(REAL_ACCUMULATOR_ROOT),
       tx.object(REAL_CLOCK),
     ],
@@ -304,9 +305,10 @@ export function buildMintExactQuantity(tx: Transaction, a: MintExactQuantityArgs
 
 // redeem_live: owner-authed mark-to-market close (partial ok); payout credits into the wrapper internal
 // balance, needs a fresh Pricer in the same PTB.
+// minProbability/minProceeds are the close-side slippage floors (mirror of mint's max_probability/max_cost); 0 disables either, which is the current behaviour.
 export function buildRedeemLive(
   tx: Transaction,
-  a: { marketId: string; wrapper: TransactionObjectArgument; auth: TransactionObjectArgument; pricer: TransactionObjectArgument; orderId: bigint; closeQuantityRaw: bigint },
+  a: { marketId: string; wrapper: TransactionObjectArgument; auth: TransactionObjectArgument; pricer: TransactionObjectArgument; orderId: bigint; closeQuantityRaw: bigint; minProbability?: bigint; minProceeds?: bigint },
 ): void {
   tx.moveCall({
     target: realTarget(REAL_PREDICT_PACKAGE, 'expiry_market', 'redeem_live'),
@@ -318,27 +320,28 @@ export function buildRedeemLive(
       a.pricer,
       tx.pure.u256(a.orderId),
       tx.pure.u64(a.closeQuantityRaw),
+      tx.pure.u64(a.minProbability ?? 0n),
+      tx.pure.u64(a.minProceeds ?? 0n),
       tx.object(REAL_ACCUMULATOR_ROOT),
       tx.object(REAL_CLOCK),
     ],
   });
 }
 
-// redeem_settled: permissionless (mints its own app Auth), full-close only, no Pricer; the settle path
-// uses this to sweep a settled payout into the user's wrapper on their behalf.
+// redeem_settled_permissionless: full-close only, no Pricer, mints its own app Auth from the AccountRegistry;
+// the settle path uses this to sweep a settled payout into the user's wrapper on their behalf.
+// 7-29 split the old permissionless redeem_settled in two: plain redeem_settled now takes owner Auth, the keeper path is this one.
 export function buildRedeemSettled(
   tx: Transaction,
   a: { marketId: string; wrapperId: string; orderId: bigint; closeQuantityRaw: bigint },
 ): void {
   tx.moveCall({
-    target: realTarget(REAL_PREDICT_PACKAGE, 'expiry_market', 'redeem_settled'),
+    target: realTarget(REAL_PREDICT_PACKAGE, 'expiry_market', 'redeem_settled_permissionless'),
     arguments: [
       tx.object(a.marketId),
       tx.object(REAL_ACCOUNT_REGISTRY_ID),
       tx.object(a.wrapperId),
       tx.object(REAL_PROTOCOL_CONFIG_ID),
-      tx.object(REAL_ORACLE_REGISTRY_ID),
-      tx.object(btcFeeds().pyth),
       tx.pure.u256(a.orderId),
       tx.pure.u64(a.closeQuantityRaw),
       tx.object(REAL_ACCUMULATOR_ROOT),
@@ -356,8 +359,6 @@ export function buildRebalanceExpiryCash(tx: Transaction, marketId: string): voi
       tx.object(REAL_POOL_VAULT_ID),
       tx.object(marketId),
       tx.object(REAL_PROTOCOL_CONFIG_ID),
-      tx.object(REAL_ORACLE_REGISTRY_ID),
-      tx.object(btcFeeds().pyth),
       tx.object(REAL_CLOCK),
     ],
   });
@@ -663,11 +664,15 @@ type MarketJson = {
   mint_paused?: boolean;
 };
 
-// Read the PoolVault's live market id vector. Flat under expiry_accounting.active_expiry_markets.
+// Read the PoolVault's live market id vector, flat under expiry_accounting.active_expiry_markets.
+// 7-29 changed the entry from a bare id to { expiry_market_id, expiry_ms }; both shapes are accepted so
+// a re-vendor either way keeps discovery working.
+type ActiveMarketEntry = string | { expiry_market_id?: string };
 export async function readActiveMarketIds(): Promise<string[]> {
   const res = await suiClient.core.getObject({ objectId: REAL_POOL_VAULT_ID, include: { json: true } });
-  const j = res.object?.json as { expiry_accounting?: { active_expiry_markets?: string[] } } | undefined;
-  return j?.expiry_accounting?.active_expiry_markets ?? [];
+  const j = res.object?.json as { expiry_accounting?: { active_expiry_markets?: ActiveMarketEntry[] } } | undefined;
+  const entries = j?.expiry_accounting?.active_expiry_markets ?? [];
+  return entries.map((e) => (typeof e === 'string' ? e : (e?.expiry_market_id ?? ''))).filter(Boolean);
 }
 
 // Coarse read of one ExpiryMarket from its json; null if the object is gone (rare mid-roll race).
@@ -712,20 +717,50 @@ export function isMinuteExpiry(expiryMs: number): boolean {
 }
 
 // === Live spot for the chart (Phase 6) ===
-// We never push prices in real mode (L-006), Mysten/Block Scholes push the Propbook feeds and we READ the live BS spot (the same feed load_live_pricer marks against) each poll and stamp it on the market set.
-// game-price.ts eases that on-chain spot as the chart feed in BOTH modes; the BS spot feed json exposes lane.latest.value.spot (1e9-scaled) + a freshness ms.
+// We never push prices in real mode (L-006), Mysten pushes the Propbook feeds and we READ the live spot each poll and stamp it on the market set.
+// game-price.ts eases that on-chain spot as the chart feed in BOTH modes. Since 7-29 the Block Scholes spot lives in a dynamic-field store with no readable latest lane, so this reads the Pyth Lazer feed, which keeps a latest lane AND is what the pricer re-anchors the forward to under use_pyth_spot_for_forward.
 
 export type SpotRead = { spot1e9: bigint; updatedMs: number };
 
-// Read the live BTC BS spot (1e9-scaled) + its update timestamp; null if unreadable/unreachable (the
+type PythLatest = {
+  source_timestamp_ms?: string;
+  update_timestamp_ms?: string;
+  value?: { price_magnitude?: string; price_is_negative?: boolean; exponent_magnitude?: string | number; exponent_is_negative?: boolean };
+};
+
+// Propbook normalizes a raw Pyth price to a 1e9-scaled spot; mirrors pyth_feed::normalize_raw_spot
+// exactly (target scale 9, round down when the source carries finer precision). Null on a negative or
+// unrepresentable price, same as the Move `Option` return.
+export function normalizePythSpot1e9(v: NonNullable<PythLatest['value']>): bigint | null {
+  if (v.price_is_negative || v.price_magnitude == null) return null;
+  const magnitude = BigInt(v.price_magnitude);
+  const exp = BigInt(v.exponent_magnitude ?? 0);
+  const target = 9n;
+  let out: bigint;
+  if (v.exponent_is_negative) {
+    if (exp <= target) out = magnitude * 10n ** (target - exp);
+    else {
+      const shift = exp - target;
+      if (shift > 18n) return null;
+      out = magnitude / 10n ** shift;
+    }
+  } else {
+    if (target + exp > 18n) return null;
+    out = magnitude * 10n ** (target + exp);
+  }
+  return out > 0n ? out : null;
+}
+
+// Read the live BTC spot (1e9-scaled) + its source timestamp; null if unreadable/unreachable (the
 // caller keeps the last known spot rather than dropping the market).
 export async function readBtcSpot(): Promise<SpotRead | null> {
   try {
-    const res = await suiClient.core.getObject({ objectId: btcFeeds().bsSpot, include: { json: true } });
-    const latest = (res.object?.json as { lane?: { latest?: { value?: { spot?: string }; update_timestamp_ms?: string } } } | undefined)?.lane?.latest;
-    const spot = latest?.value?.spot;
-    if (spot == null) return null;
-    return { spot1e9: BigInt(spot), updatedMs: Number(latest?.update_timestamp_ms ?? 0) };
+    const res = await suiClient.core.getObject({ objectId: btcFeeds().pyth, include: { json: true } });
+    const latest = (res.object?.json as { lane?: { latest?: PythLatest } } | undefined)?.lane?.latest;
+    if (!latest?.value) return null;
+    const spot1e9 = normalizePythSpot1e9(latest.value);
+    if (spot1e9 == null) return null;
+    return { spot1e9, updatedMs: Number(latest.source_timestamp_ms ?? latest.update_timestamp_ms ?? 0) };
   } catch (e) {
     if (isNotFound(e)) return null;
     throw e;

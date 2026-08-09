@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { GameIcon } from '@/components/GameIcon'
 import { OpsBanner } from './components/OpsBanner'
 import {
+  Address,
   Bar,
   DesktopOnlyNotice,
   EmptyState,
@@ -188,7 +189,11 @@ function OverviewBody({ data }: { data: OverviewReport }) {
           tone={chain.liveMarkets === 0 ? 'critical' : undefined}
           hint={chain.liveMarkets === 0 ? 'nothing tradeable right now' : chain.network}
         />
-        <Metric label="Gas burned today" value={`${num(chain.gasBurnedToday, 3)} SUI`} hint="measured from sponsor balance drops" />
+        <Metric
+          label="Gas burned today"
+          value={chain.gasBurnedToday == null ? '--' : `${num(chain.gasBurnedToday, 3)} SUI`}
+          hint={chain.gasBurnedToday == null ? 'not measured yet today' : 'measured from sponsor balance drops'}
+        />
         <Metric
           label="Cost per play"
           value={chain.costPerPlaySui == null ? '--' : `${num(chain.costPerPlaySui, 4)} SUI`}
@@ -235,13 +240,19 @@ function WalletRow({ wallet }: { wallet: WalletBalance }) {
   return (
     <tr>
       <td className="a-key">{wallet.name}</td>
-      <td className="a-mono" title={wallet.address}>
-        {`${wallet.address.slice(0, 10)}...${wallet.address.slice(-6)}`}
+      <td>
+        <Address value={wallet.address} />
       </td>
-      <td className="a-num">{num(wallet.sui, 3)}</td>
-      {/* A blank cell reads as zero. This wallet is not meant to hold chips, so say that. */}
-      <td className="a-num" style={wallet.dusdc == null ? { color: 'var(--a-text-muted)' } : undefined} title={wallet.dusdc == null ? 'Not a chip-holding wallet' : undefined}>
-        {wallet.dusdc == null ? 'n/a' : num(wallet.dusdc, 2)}
+      {/* An unreadable balance is not a drained wallet, and 0.000 is the one thing it must never say. */}
+      <td className="a-num" style={wallet.sui == null ? { color: 'var(--a-warn)' } : undefined} title={wallet.sui == null ? 'The chain read failed on the last sweep' : undefined}>
+        {wallet.sui == null ? 'unknown' : num(wallet.sui, 3)}
+      </td>
+      <td
+        className="a-num"
+        style={wallet.dusdc == null ? { color: wallet.chips ? 'var(--a-warn)' : 'var(--a-text-muted)' } : undefined}
+        title={wallet.dusdc == null ? (wallet.chips ? 'The chain read failed on the last sweep' : 'Not a chip-holding wallet') : undefined}
+      >
+        {wallet.dusdc == null ? (wallet.chips ? 'unknown' : 'n/a') : num(wallet.dusdc, 2)}
       </td>
     </tr>
   )

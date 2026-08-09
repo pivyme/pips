@@ -9,7 +9,7 @@ import { Hw3DButton } from '@/ui/Hardware3D'
 import { api, ApiError, type ReferralClaimDTO } from '@/lib/api'
 import { referralQuery } from '@/lib/menuQueries'
 import { useAuth } from '@/lib/auth'
-import { buildReferralLink } from '@/lib/referral'
+import { buildReferralLink, shareHost } from '@/lib/referral'
 import { explorerTxUrl } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { track } from '@/lib/track'
@@ -46,6 +46,7 @@ function ReferralsScreen() {
   // that into one effective flag so the link, the picker's checkmark, and buildReferralLink all agree.
   const effectiveAnon = (pendingAnon ?? info?.anon ?? false) || !hasUsername
   const link = info ? buildReferralLink({ code: info.code, anon: effectiveAnon, username: info.username }) : ''
+  const host = shareHost() // the format hints must read the same domain the copied link does
 
   const claimable = Number(info?.claimable ?? '0')
   const minClaim = Number(info?.minClaim ?? '1')
@@ -261,14 +262,14 @@ function ReferralsScreen() {
         <div className="flex flex-col gap-2">
           <FormatRow
             label="Use My Username"
-            sub={hasUsername ? `playpips.fun/@${info?.username ?? ''}` : 'Set a username to use this'}
+            sub={hasUsername ? `${host}/@${info?.username ?? ''}` : 'Set a username to use this'}
             selected={!effectiveAnon}
             disabled={!hasUsername}
             onTap={() => void setFormat(false)}
           />
           <FormatRow
             label="Anonymous"
-            sub="playpips.fun/r/CODE"
+            sub={`${host}/r/CODE`}
             selected={effectiveAnon}
             disabled={false}
             onTap={() => void setFormat(true)}

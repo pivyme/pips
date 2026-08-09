@@ -10,6 +10,7 @@ import { alert } from '../lib/alert.ts';
 import { prismaQuery } from '../lib/prisma.ts';
 import { routeSamples } from '../lib/route-latency.ts';
 import { allWorkerHealth, isWorkerStale } from '../lib/worker-registry.ts';
+import { sleep } from '../utils/miscUtils.ts';
 import { DUSDC_TYPE } from '../lib/sui/config.ts';
 import { getDusdcBalance } from '../lib/sui/dusdc.ts';
 import { getSuiBalanceRaw } from '../lib/sui/gas.ts';
@@ -1208,29 +1209,48 @@ export function dailySeries(dates: Date[], days: number, now: number): Array<{ t
 }
 
 export interface BalanceSnapshot {
+  /** Snapshot shape. A row below the current version has its samples dropped rather than trusted (L-027). */
+  v?: number;
   asOf: string;
   /** Σ user DUSDC read from chain. null when the sweep has never completed. */
   userChips: number | null;
   userCount: number;
   /** Set when the sweep stopped at its cap, so a partial total is never read as the whole. */
   partial?: string;
-  wallets: Array<{ name: string; address: string; sui: number; dusdc: number | null }>;
-  /** Positive sponsor SUI deltas seen today, so a human top-up never reads as negative burn. */
-  gasBurnedToday: number;
-  samples: Array<{ t: number; sui: number }>;
+  /** sui/dusdc are null when the read FAILED, which is not the same as an empty wallet. `chips` says
+   *  whether this wallet is even meant to hold DUSDC, so "n/a" and "unreadable" stay distinguishable. */
+  wallets: Array<{ name: string; address: string; sui: number | null; dusdc: number | null; chips: boolean }>;
+  /** Positive sponsor SUI deltas seen today, so a human top-up never reads as negative burn. null until two real samples exist. */
+  gasBurnedToday: number | null;
+  samples: Array<{ t: number; sui: number | null }>;
 }
 
 const BALANCE_ROW_KEY = 'ops:balances';
+/** v1 wrote a failed read as sui: 0, so every read blip logged a whole sponsor balance as burn. Bump to drop those samples once. */
+const BALANCE_SNAPSHOT_VERSION = 2;
 /** A chain read per user, so the sweep is capped and says so rather than quietly totalling a subset. */
 const BALANCE_USER_CAP = 500;
 
 export async function readBalanceSnapshot(): Promise<BalanceSnapshot | null> {
   try {
     const row = await prismaQuery.appConfig.findUnique({ where: { key: BALANCE_ROW_KEY } });
-    return row ? (JSON.parse(row.value) as BalanceSnapshot) : null;
+    return row ? normalizeSnapshot(JSON.parse(row.value) as BalanceSnapshot) : null;
   } catch {
     return null;
   }
+}
+
+// A v1 row's burn total was computed from samples that billed failed reads as drains, so it is known-wrong,
+// not merely old. Drop it here rather than in one caller, so nothing renders 629 SUI in the window between
+// the deploy and the next sweep. Its wallet balances self-heal on that sweep.
+function normalizeSnapshot(snap: BalanceSnapshot): BalanceSnapshot {
+  if ((snap.v ?? 1) >= BALANCE_SNAPSHOT_VERSION) return snap;
+  return {
+    ...snap,
+    wallets: (snap.wallets ?? []).map((w) => ({ ...w, chips: w.chips ?? false })),
+    gasBurnedToday: null,
+    samples: [],
+  };
 }
 
 // The one expensive metric on the page (§7.4), so it runs on a cron and the page renders the stored row
@@ -1266,25 +1286,20 @@ export async function refreshBalanceSnapshot(now = Date.now()): Promise<BalanceS
     walletBalance('operator', operatorAddress, false),
   ]);
 
-  // Burn is the sum of positive deltas across today's samples, so a top-up (a negative delta) is skipped
-  // rather than netted off. An estimate here would get believed, so it is measured or it is zero.
-  const sponsorSui = wallets.find((w) => w.name === 'sponsor')?.sui ?? 0;
+  // readBalanceSnapshot already emptied the samples of a pre-v2 row, so this only ever sees trustworthy ones.
+  const sponsorSui = wallets.find((w) => w.name === 'sponsor')?.sui ?? null;
   const todayStart = dayStart(new Date(now));
   const samples = [...(prev?.samples ?? []).filter((s) => s.t >= todayStart - DAY_MS), { t: now, sui: sponsorSui }];
-  let gasBurnedToday = 0;
-  for (let i = 1; i < samples.length; i += 1) {
-    if (samples[i]!.t < todayStart) continue;
-    const delta = samples[i - 1]!.sui - samples[i]!.sui;
-    if (delta > 0) gasBurnedToday += delta;
-  }
+  const gasBurnedToday = sumPositiveDrops(samples, todayStart);
 
   const snap: BalanceSnapshot = {
+    v: BALANCE_SNAPSHOT_VERSION,
     asOf: new Date(now).toISOString(),
     userChips: read ? round2(userChips) : null,
     userCount: read,
     ...(capped ? { partial: `swept the ${BALANCE_USER_CAP} oldest of ${users.length}+ users` } : {}),
     wallets,
-    gasBurnedToday: roundTo(gasBurnedToday, 4),
+    gasBurnedToday,
     samples,
   };
 
@@ -1298,17 +1313,44 @@ export async function refreshBalanceSnapshot(now = Date.now()): Promise<BalanceS
   return snap;
 }
 
+// Gas burn is the sum of today's positive sponsor-balance drops, so a human top-up (a negative delta) is
+// skipped rather than netted off. A null sample is a FAILED READ, not a drained wallet: it breaks the chain
+// and both pairs touching it are skipped. Billing a null as 0 is what once reported 629 SUI burned in a day
+// against a sponsor that never dipped below 38. null (not 0) when today has no readable consecutive pair.
+export function sumPositiveDrops(samples: BalanceSnapshot['samples'], todayStart: number): number | null {
+  let total: number | null = null;
+  for (let i = 1; i < samples.length; i += 1) {
+    const before = samples[i - 1]!.sui;
+    const after = samples[i]!.sui;
+    if (samples[i]!.t < todayStart || before == null || after == null) continue;
+    total = (total ?? 0) + Math.max(0, before - after);
+  }
+  return total == null ? null : roundTo(total, 4);
+}
+
 const MIST = 1_000_000_000;
 
+// One retry, then null. A 15-minute sample is too expensive to lose to a single RPC blip, and null is the
+// only honest answer when the read never landed: a 0 here reads as a drained wallet and fakes a burn spike.
+async function readOrNull(read: () => Promise<number>): Promise<number | null> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await read();
+    } catch {
+      if (attempt === 0) await sleep(400);
+    }
+  }
+  return null;
+}
+
 async function walletBalance(name: string, address: string, withChips: boolean): Promise<BalanceSnapshot['wallets'][number]> {
-  if (!address) return { name, address: '', sui: 0, dusdc: null };
-  const [sui, chips] = await Promise.all([
-    getSuiBalanceRaw(address)
-      .then((raw) => Number(raw) / MIST)
-      .catch(() => 0),
-    withChips ? getDusdcBalance(address).catch(() => null) : Promise.resolve(null),
+  if (!address) return { name, address: '', sui: null, dusdc: null, chips: withChips };
+  const [sui, dusdc] = await Promise.all([
+    readOrNull(async () => Number(await getSuiBalanceRaw(address)) / MIST),
+    withChips ? readOrNull(() => getDusdcBalance(address)) : Promise.resolve(null),
   ]);
-  return { name, address, sui: roundTo(sui, 4), dusdc: chips == null ? null : round2(chips) };
+  if (sui == null) console.warn(`[ops] could not read SUI for ${name} (${address}); recording it as unknown`);
+  return { name, address, sui: sui == null ? null : roundTo(sui, 4), dusdc: dusdc == null ? null : round2(dusdc), chips: withChips };
 }
 
 export interface OverviewReport {
@@ -1332,7 +1374,8 @@ export interface OverviewReport {
   chain: {
     liveMarkets: number;
     wallets: BalanceSnapshot['wallets'];
-    gasBurnedToday: number;
+    /** null until the sweep has two consecutive readable sponsor samples today. */
+    gasBurnedToday: number | null;
     costPerPlaySui: number | null;
     network: string;
   };
@@ -1385,7 +1428,7 @@ export async function overviewReport(now = Date.now()): Promise<OverviewReport> 
     round2(rows.reduce((sum, r) => sum + Number(r.amount) / 10 ** r.decimals, 0));
 
   const aggregates = computePlayAggregates(windowPlays);
-  const gasBurnedToday = balances?.gasBurnedToday ?? 0;
+  const gasBurnedToday = balances?.gasBurnedToday ?? null;
 
   return {
     users: {
@@ -1409,7 +1452,7 @@ export async function overviewReport(now = Date.now()): Promise<OverviewReport> 
       liveMarkets: tradeableMarkets(now, EXPIRY_SAFETY_MS).length,
       wallets: balances?.wallets ?? [],
       gasBurnedToday,
-      costPerPlaySui: todayPlays ? roundTo(gasBurnedToday / todayPlays, 5) : null,
+      costPerPlaySui: todayPlays && gasBurnedToday != null ? roundTo(gasBurnedToday / todayPlays, 5) : null,
       network: SUI_NETWORK,
     },
     sparklines: {
