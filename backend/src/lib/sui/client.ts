@@ -39,6 +39,15 @@ export function grpcErrorText(e: unknown): string {
   return decoded.toLowerCase();
 }
 
+// The fullnode is rate limited per IP (~100 requests / 30s on the public one) and says so in three shapes:
+// the 429 itself, a gRPC RESOURCE_EXHAUSTED, and the plain JSON error body grpc-web can't parse
+// ("unexpected response content type"). Callers use this to log backpressure as backpressure, not as a bug.
+export function isRateLimitedError(e: unknown): boolean {
+  const m = grpcErrorText(e);
+  if (!m) return false;
+  return m.includes('too many requests') || m.includes('resource_exhausted') || m.includes('unexpected response content type');
+}
+
 // True when the deployed Predict package/vault/treasury-cap/manager is gone: Sui Devnet wipes roughly
 // weekly, deleting every published object, so config ids go stale until the next bootstrap. Sign-in maps this to CHAIN_UNAVAILABLE (points the user at demo mode); scoped to missing-resource signals only, not gas/transient errors.
 export function isChainUnavailableError(e: unknown): boolean {

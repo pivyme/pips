@@ -6,24 +6,24 @@ import { Activity, Coins, Cpu, Gamepad2, Link2, RefreshCw, Route as RouteIcon, T
 import { useState } from 'react'
 
 import { GameIcon } from '@/components/GameIcon'
+import { LivePanel } from './components/LivePanel'
 import { OpsBanner } from './components/OpsBanner'
+import { TimeSeriesChart } from './components/charts'
 import {
   Address,
   Bar,
-  DesktopOnlyNotice,
   EmptyState,
   ErrorState,
-  LatencyChart,
   LoadingState,
   Metric,
   PageHeader,
   Panel,
   Segmented,
-  Sparkline,
+  TableScroll,
   When,
 } from './components/primitives'
 import { overviewQuery, perfQuery } from './queries'
-import type { OverviewReport, PerfReport, WalletBalance } from './types'
+import type { LatencyPoint, OverviewReport, PerfReport, WalletBalance } from './types'
 
 const num = (n: number | null | undefined, digits = 0): string =>
   n == null ? '--' : n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
@@ -32,6 +32,11 @@ const num = (n: number | null | undefined, digits = 0): string =>
 const usd = (n: number | null | undefined): string => (n == null ? '--' : `${n < 0 ? '-' : ''}$${num(Math.abs(n), 2)}`)
 const pct = (n: number | null | undefined): string => (n == null ? '--' : `${num(n, 1)}%`)
 const ms = (n: number | null | undefined): string => (n == null ? '--' : `${num(Math.round(n))}ms`)
+
+// Module-level so the chart's options memo stays stable across renders instead of rebuilding every tick.
+const plain = (n: number): string => num(n)
+const msAxis = (n: number): string => `${num(Math.round(n))}ms`
+const toPoints = (data: Array<{ t: number; n: number }>): Array<{ t: number; v: number }> => data.map((d) => ({ t: d.t, v: d.n }))
 
 export function OverviewPage() {
   const q = useQuery(overviewQuery())
@@ -55,7 +60,7 @@ export function OverviewPage() {
           Refresh
         </button>
       </PageHeader>
-      <DesktopOnlyNotice page="Overview" />
+      <LivePanel />
       <OpsBanner />
 
       {q.isPending && (
@@ -114,7 +119,8 @@ function OverviewBody({ data }: { data: OverviewReport }) {
               hint="Not an outage on its own, but check the Errors page if you expected traffic."
             />
           ) : (
-            <table className="a-table">
+            <TableScroll minWidth={420}>
+              <table className="a-table">
               <thead>
                 <tr>
                   <th>Game</th>
@@ -140,19 +146,33 @@ function OverviewBody({ data }: { data: OverviewReport }) {
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </TableScroll>
           )}
         </Panel>
 
-        <Panel title="Last 14 days" icon={TrendingUp}>
+        {/* Days are cut in the reader's own timezone server-side, so "9 Aug" is the 9th where you are. */}
+        <Panel title="Last 14 days" icon={TrendingUp} note="your local days">
           <div className="grid gap-5 p-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
+            <div className="flex min-w-0 flex-col gap-1.5">
               <span className="a-label">Plays per day</span>
-              <Sparkline data={sparklines.plays} />
+              <TimeSeriesChart
+                series={[{ name: 'Plays', tone: 'accent', points: toPoints(sparklines.plays) }]}
+                unit="day"
+                height={140}
+                format={plain}
+                label={`Plays per day over 14 days, ${num(sparklines.plays.reduce((s, d) => s + d.n, 0))} in total`}
+              />
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="flex min-w-0 flex-col gap-1.5">
               <span className="a-label">Errors per day</span>
-              <Sparkline data={sparklines.errors} tone="var(--a-critical)" />
+              <TimeSeriesChart
+                series={[{ name: 'Errors', tone: 'critical', points: toPoints(sparklines.errors) }]}
+                unit="day"
+                height={140}
+                format={plain}
+                label={`Errors per day over 14 days, ${num(sparklines.errors.reduce((s, d) => s + d.n, 0))} in total`}
+              />
             </div>
           </div>
         </Panel>
@@ -189,10 +209,11 @@ function OverviewBody({ data }: { data: OverviewReport }) {
           tone={chain.liveMarkets === 0 ? 'critical' : undefined}
           hint={chain.liveMarkets === 0 ? 'nothing tradeable right now' : chain.network}
         />
+        {/* The sponsor sweep is a cron with no reader, so its "today" is a UTC day, unlike every other one here. */}
         <Metric
           label="Gas burned today"
           value={chain.gasBurnedToday == null ? '--' : `${num(chain.gasBurnedToday, 3)} SUI`}
-          hint={chain.gasBurnedToday == null ? 'not measured yet today' : 'measured from sponsor balance drops'}
+          hint={chain.gasBurnedToday == null ? 'not measured yet today' : 'sponsor balance drops, UTC day'}
         />
         <Metric
           label="Cost per play"
@@ -205,21 +226,23 @@ function OverviewBody({ data }: { data: OverviewReport }) {
         {chain.wallets.length === 0 ? (
           <EmptyState icon={Wallet} title="Balances have not been swept yet" hint="The sweep runs every 15 minutes and writes one row." />
         ) : (
-          <table className="a-table">
-            <thead>
-              <tr>
-                <th>Wallet</th>
-                <th>Address</th>
-                <th className="a-num">SUI</th>
-                <th className="a-num">DUSDC</th>
-              </tr>
-            </thead>
-            <tbody>
-              {chain.wallets.map((w) => (
-                <WalletRow key={w.name} wallet={w} />
-              ))}
-            </tbody>
-          </table>
+          <TableScroll minWidth={480}>
+            <table className="a-table">
+              <thead>
+                <tr>
+                  <th>Wallet</th>
+                  <th>Address</th>
+                  <th className="a-num">SUI</th>
+                  <th className="a-num">DUSDC</th>
+                </tr>
+              </thead>
+              <tbody>
+                {chain.wallets.map((w) => (
+                  <WalletRow key={w.name} wallet={w} />
+                ))}
+              </tbody>
+            </table>
+          </TableScroll>
         )}
       </Panel>
     </>
@@ -275,7 +298,8 @@ function Section({
         <Icon size={12} strokeWidth={2.6} style={{ color: 'var(--a-text-muted)' }} />
         <span className="a-label">{label}</span>
       </span>
-      <div className={cols === 3 ? 'grid gap-4 sm:grid-cols-2 xl:grid-cols-3' : 'grid gap-4 sm:grid-cols-2 xl:grid-cols-5'}>{children}</div>
+      {/* Two across on a phone. One 30px number per screenful is not a dashboard, it is a scroll. */}
+      <div className={cols === 3 ? 'grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3' : 'grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-5'}>{children}</div>
     </div>
   )
 }
@@ -296,7 +320,6 @@ export function PerfPage() {
       <PageHeader title="Performance" sub="How long a play takes end to end, and whether the workers behind it are alive.">
         <Segmented value={hours} options={WINDOWS} onChange={setHours} label="Time window" />
       </PageHeader>
-      <DesktopOnlyNotice page="Performance" />
 
       {q.isPending && (
         <Panel title="Reading play timings and worker health" icon={Cpu}>
@@ -325,7 +348,7 @@ function PerfBody({ data }: { data: PerfReport }) {
               <Stat label="p50" value={ms(data.mint.p50)} />
               <Stat label="p95" value={ms(data.mint.p95)} accent />
             </div>
-            <LatencyChart data={data.mint.series} />
+            <LatencyPair series={data.mint.series} what="Mint latency" />
           </div>
         </Panel>
         <Panel title="Settle lag" icon={Activity} note={`${data.settle.n} settles`}>
@@ -334,7 +357,7 @@ function PerfBody({ data }: { data: PerfReport }) {
               <Stat label="p50" value={ms(data.settle.p50)} />
               <Stat label="p95" value={ms(data.settle.p95)} accent />
             </div>
-            <LatencyChart data={data.settle.series} />
+            <LatencyPair series={data.settle.series} what="Settle lag" />
           </div>
         </Panel>
       </div>
@@ -343,6 +366,7 @@ function PerfBody({ data }: { data: PerfReport }) {
         {data.routes.length === 0 ? (
           <EmptyState icon={RouteIcon} title="No requests recorded yet" hint="The ring fills as traffic arrives and resets on restart." />
         ) : (
+          <TableScroll minWidth={560}>
           <table className="a-table">
             <thead>
               <tr>
@@ -367,6 +391,7 @@ function PerfBody({ data }: { data: PerfReport }) {
               ))}
             </tbody>
           </table>
+          </TableScroll>
         )}
       </Panel>
 
@@ -389,6 +414,7 @@ function PerfBody({ data }: { data: PerfReport }) {
             hint="Nothing is settling plays, syncing markets, or pruning analytics. Check the API logs for a boot failure."
           />
         ) : (
+        <TableScroll minWidth={720}>
         <table className="a-table">
           <thead>
             <tr>
@@ -421,9 +447,28 @@ function PerfBody({ data }: { data: PerfReport }) {
             ))}
           </tbody>
         </table>
+        </TableScroll>
         )}
       </Panel>
     </>
+  )
+}
+
+// p50 under p95 over time. p95 is the amber one: it describes what the slowest users actually felt.
+// A bucket with no samples stays null so the line breaks there instead of drawing through dead air.
+function LatencyPair({ series, what }: { series: LatencyPoint[]; what: string }) {
+  const peak = Math.max(0, ...series.map((d) => d.p95 ?? 0))
+  return (
+    <TimeSeriesChart
+      series={[
+        { name: 'p50', tone: 'neutral', points: series.map((d) => ({ t: d.t, v: d.p50 })) },
+        { name: 'p95', tone: 'accent', points: series.map((d) => ({ t: d.t, v: d.p95 })) },
+      ]}
+      unit="hour"
+      height={132}
+      format={msAxis}
+      label={`${what}: p50 and p95 over time, peak ${Math.round(peak)}ms`}
+    />
   )
 }
 

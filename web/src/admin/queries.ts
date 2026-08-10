@@ -5,9 +5,19 @@ import { queryOptions } from '@tanstack/react-query'
 
 import { getAuthToken } from '@/lib/api'
 import { env } from '@/env'
-import type { AdminPing, ErrorDetail, ErrorGroupRow, ErrorStatus, OpsSnapshot, OverviewReport, PerfReport, RetentionPreview, SettingRow, UsageReport } from './types'
+import type { AdminPing, ErrorDetail, ErrorGroupRow, ErrorStatus, LiveReport, OpsSnapshot, OverviewReport, PerfReport, RetentionPreview, SettingRow, UsageReport } from './types'
 
 const BASE = env.VITE_API_URL
+
+// Day buckets are cut server-side in the reader's zone, or a chart at GMT+7 names the wrong day. SSR has
+// no reader, so it falls back to UTC and the first client render refetches with the real one.
+const readerTz = (): string => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
+}
 
 export class AdminError extends Error {
   constructor(
@@ -89,19 +99,36 @@ export function setErrorStatus(fingerprint: string, status: ErrorStatus): Promis
   })
 }
 
-export const usageQuery = (days: number) =>
-  queryOptions({
-    queryKey: ['admin', 'usage', days],
-    queryFn: () => adminFetch<UsageReport>(`/admin/usage?days=${days}`),
+export const usageQuery = (days: number) => {
+  const tz = readerTz()
+  return queryOptions({
+    queryKey: ['admin', 'usage', days, tz],
+    queryFn: () => adminFetch<UsageReport>(`/admin/usage?days=${days}&tz=${encodeURIComponent(tz)}`),
     staleTime: 60_000,
     retry: false,
   })
+}
 
-export const overviewQuery = () =>
-  queryOptions({
-    queryKey: ['admin', 'overview'],
-    queryFn: () => adminFetch<OverviewReport>('/admin/overview'),
+export const overviewQuery = () => {
+  const tz = readerTz()
+  return queryOptions({
+    queryKey: ['admin', 'overview', tz],
+    queryFn: () => adminFetch<OverviewReport>(`/admin/overview?tz=${encodeURIComponent(tz)}`),
     staleTime: 60_000,
+    retry: false,
+  })
+}
+
+// The one genuinely live read. 5s is fast enough to feel like "right now" and still only 12 calls a
+// minute against the 60/min admin bucket.
+// Presence is the reason this refreshes fast, and presence does not care about the window. A day or a week
+// of plays is a heavier aggregate though, so the wide ranges poll slower rather than hammering the DB.
+export const liveQuery = (minutes: number) =>
+  queryOptions({
+    queryKey: ['admin', 'live', minutes],
+    queryFn: () => adminFetch<LiveReport>(`/admin/live?minutes=${minutes}`),
+    staleTime: 4_000,
+    refetchInterval: minutes <= 60 ? 5_000 : 15_000,
     retry: false,
   })
 

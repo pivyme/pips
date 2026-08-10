@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 
-import { probit, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9 } from './games.ts';
+import { probit, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9, restrikeCloser, type ResolvedReal } from './games.ts';
+import { LEVERAGE_ONE, ticksForBinary } from '../lib/sui/predict-real.ts';
+import type { Side } from '../types/api.ts';
 import { REAL_STRIKE_MIN_PROB, REAL_STRIKE_MAX_OFFSET_FRAC, REAL_BTC_ANNUAL_VOL, REAL_BINARY_MIN_OFFSET_SIGMA } from '../config/main-config.ts';
 
 // The real-mode strike sizer can't be exercised on-chain (needs a funded wrapper, L-012), so the math it
@@ -108,3 +110,72 @@ function probitApproxOff(p: number, seconds: number): number {
   const sigma = REAL_BTC_ANNUAL_VOL * Math.sqrt(seconds / (365.25 * 24 * 3600));
   return probit(1 - p) * sigma;
 }
+
+// The admission fallback used to drop leverage and re-derive the strike from the nominal tier, which pushed
+// it FURTHER out of the money and through the chain's 1% min_entry_probability floor, turning a recoverable
+// ELeverageAboveAdmissionCap into a dead play. It must move toward spot, and it must terminate.
+describe('restrikeCloser (admission fallback)', () => {
+  const SPOT = 65_000_000_000_000n; // $65,000 at 1e9
+  const ADMISSION_TICK = 1_000_000_000n; // $1
+  const TICK = 10_000_000n; // $0.01
+
+  const binary = (side: Side, strike1e9: bigint): ResolvedReal => ({
+    game: 'moonshot',
+    kind: 'binary',
+    marketId: '0x1',
+    asset: 'BTC',
+    spot1e9: SPOT,
+    tickSize: TICK,
+    admissionTickSize: ADMISSION_TICK,
+    ...ticksForBinary(side, strike1e9, TICK, ADMISSION_TICK),
+    leverage1e9: 3_000_000_000n,
+    amountRaw: 4_400_000n,
+    minQuantityRaw: 10_000n,
+    expiryMs: Date.now() + 20_000,
+    duration: 20,
+    entrySpot: '65000',
+    tierMultiplier: 10,
+    side,
+    strike1e9,
+    strikeDisplay: String(Number(strike1e9) / 1e9),
+  });
+
+  it('moves an up strike toward spot, never further out', () => {
+    const next = restrikeCloser(binary('up', SPOT + 64_000_000_000n), LEVERAGE_ONE);
+    expect(next).not.toBeNull();
+    expect(next!.strike1e9!).toBeLessThan(SPOT + 64_000_000_000n);
+    expect(next!.strike1e9!).toBeGreaterThan(SPOT);
+    expect(next!.leverage1e9).toBe(LEVERAGE_ONE);
+  });
+
+  it('moves a down strike toward spot, never further out', () => {
+    const next = restrikeCloser(binary('down', SPOT - 64_000_000_000n), LEVERAGE_ONE);
+    expect(next).not.toBeNull();
+    expect(next!.strike1e9!).toBeGreaterThan(SPOT - 64_000_000_000n);
+    expect(next!.strike1e9!).toBeLessThan(SPOT);
+  });
+
+  it('terminates: repeated fallbacks converge on the closest boundary, then return null', () => {
+    let cur: ResolvedReal | null = binary('up', SPOT + 64_000_000_000n);
+    let steps = 0;
+    while (cur && steps < 50) {
+      const next: ResolvedReal | null = restrikeCloser(cur, LEVERAGE_ONE);
+      if (!next) break;
+      expect(next.strike1e9!).toBeLessThan(cur.strike1e9!); // strictly monotone toward spot
+      cur = next;
+      steps++;
+    }
+    expect(steps).toBeLessThan(50); // converged rather than looping forever
+    expect(restrikeCloser(cur!, LEVERAGE_ONE)).toBeNull(); // already on the closest boundary
+  });
+
+  it('keeps the strike at least one admission step clear of spot', () => {
+    let cur = binary('up', SPOT + 64_000_000_000n);
+    for (let i = 0; i < 20; i++) {
+      const next = restrikeCloser(cur, LEVERAGE_ONE);
+      if (!next) break;
+      cur = next;
+    }
+    expect(cur.strike1e9! - SPOT).toBeGreaterThanOrEqual(ADMISSION_TICK);
+  });
+});

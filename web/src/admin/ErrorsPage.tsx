@@ -5,8 +5,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bug, CheckCircle2, ClipboardCopy, MousePointerClick } from 'lucide-react'
 import { useState } from 'react'
 
+import { TimeSeriesChart } from './components/charts'
 import {
-  BarChart,
   EmptyState,
   ErrorState,
   LevelBadge,
@@ -15,6 +15,7 @@ import {
   PageHeader,
   Segmented,
   StatusBadge,
+  TableScroll,
   Trend,
   When,
 } from './components/primitives'
@@ -83,7 +84,7 @@ function GroupTable({
   onSelect: (fp: string) => void
 }) {
   return (
-    <div className="overflow-x-auto">
+    <TableScroll minWidth={720}>
       <table className="a-table">
         <thead>
           <tr>
@@ -135,7 +136,7 @@ function GroupTable({
           ))}
         </tbody>
       </table>
-    </div>
+    </TableScroll>
   )
 }
 
@@ -245,7 +246,13 @@ function Detail({ fingerprint }: { fingerprint: string | null }) {
 
         <div>
           <p className="a-label mb-2">Occurrences, last 24h (retained samples)</p>
-          <BarChart data={occurrences} />
+          <TimeSeriesChart
+            series={[{ name: 'Occurrences', tone: 'neutral', points: occurrences.map((o) => ({ t: o.t, v: o.n })) }]}
+            kind="bar"
+            unit="hour"
+            height={110}
+            label={`Occurrences per hour over the last 24 hours, ${occurrences.reduce((sum, o) => sum + o.n, 0)} retained samples`}
+          />
         </div>
 
         <div>

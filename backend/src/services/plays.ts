@@ -33,7 +33,7 @@ import { checkPlayAllowed, recordPlay, clearPlay } from '../lib/sui/play-safety.
 import { executeForUser, executeRealSettle, userContext } from '../lib/sui/execute.ts';
 import {
   resolveReal,
-  restrikeBinary,
+  restrikeCloser,
   parseStake,
   PlayError,
   type PlayErrorCode,
@@ -303,10 +303,14 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
           await prismaQuery.play.update({ where: { id: playId }, data: realMarketFieldsOf(next) });
           continue;
         }
-        // Admission abort (LUCKY.md §5b): drop to leverage 1x, and for a binary also re-price the strike for that leverage (it was priced assuming the rejected higher leverage); RANGE keeps its band as-is.
-        // Already at 1x means genuinely unmintable, so fall through to error instead of looping a doomed mint.
-        if (isAdmissionAbort(e) && cur.leverage1e9 > LEVERAGE_ONE) {
-          cur = cur.kind === 'binary' ? restrikeBinary(cur, LEVERAGE_ONE) : { ...cur, leverage1e9: LEVERAGE_ONE };
+        // Admission abort: the strike is preflight-quoted, so this only fires when the price moved between
+        // the quote and the mint. Drop to 1x (all we're admitted inside the no-leverage window) and step the
+        // strike toward ATM, which raises entry probability. Null means it's already on the closest
+        // admissible boundary, so fall through to error instead of looping a doomed mint.
+        if (isAdmissionAbort(e)) {
+          const closer = restrikeCloser(cur, LEVERAGE_ONE);
+          if (!closer) throw e;
+          cur = closer;
           await prismaQuery.play
             .update({ where: { id: playId }, data: cur.kind === 'binary' ? { leverage: 1, strike: cur.strikeDisplay } : { leverage: 1 } })
             .catch(() => {});

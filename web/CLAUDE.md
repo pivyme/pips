@@ -92,7 +92,9 @@ Its guarantees are the implementation's job, so no call site ever has to think a
 
 Rules that are not negotiable: **never `await track()`**, never call it in a render body (an effect or a handler), and **never track continuous data**. No price ticks, no frames, no scroll, no mouse. If it fires more than once per user action it is not an event. For a scrubbed control (a knob, a stake ladder), use `trackSettled()`, which debounces to the value the user landed on. For a screen that can re-mount in a loop (the crash boundary is the one that bit us), use `trackOnce()`, which fires a given name and props at most once per session. Adding an event means adding it to `backend/src/config/analytics-catalog.ts` **and** the typed twin in `track.ts`, or ingest rejects it with a 400.
 
-The dashboard's visual system lives in [`../docs/DESIGN-SYSTEM.md`](../docs/DESIGN-SYSTEM.md) (Part III), alongside the app surface and the hardware kit: tokens, the three-plane material model, every component class verbatim, and the four hand-rolled SVG charts. Read it before adding a panel or a control there.
+The dashboard's visual system lives in [`../docs/DESIGN-SYSTEM.md`](../docs/DESIGN-SYSTEM.md) (Part III), alongside the app surface and the hardware kit: tokens, the three-plane material model, and every component class verbatim. Read it before adding a panel or a control there.
+
+Two rules there bite silently. **Charts are Chart.js**, through the one `TimeSeriesChart` in `src/admin/components/charts.tsx`; its colours are read off the live CSS custom properties at mount because a canvas cannot resolve `var()` and `check:admin` fails on a literal colour anywhere under `src/admin`. And **every table goes in `<TableScroll>`**: below its natural width a dense table does not compress, it overlaps, since `.a-cell-fill` is `max-width: 0`.
 
 **`src/admin/` is sealed off from the DEVICE, not from the design system.** Everything admin (pages, queries, types, primitives, tokens) lives in that one folder, and the dashboard wears the product's skin: pure black canvas, molded `surface-skeuo`-style panels, the amber `brand-500` accent, up/down green/red, Gabarito with mono uppercase micro-labels over big tabular numbers. It uses the app's own primitives, the `@/ui/*` HeroUI wrappers, the `Hw3D*` hardware keys, lucide icons, `GameIcon`. What makes it different is posture, not palette: it is dense, desktop-first, and tabular, an instrument you read rather than a device you play.
 
@@ -190,10 +192,11 @@ src/
 ├── admin/                    # The whole dashboard, sealed off from the device (see the section above)
 │   ├── AdminShell.tsx        # Rail + mobile strip + the ops banner
 │   ├── pages.tsx             # Overview + Performance; ErrorsPage.tsx, UsagePage.tsx are their own files
-│   ├── components/           # primitives.tsx (Panel/Metric/Table/charts), OpsBanner, SettingsDrawer
+│   ├── components/           # primitives.tsx (Panel/Metric/Badge/TableScroll/states), charts.tsx
+│   │                         #   (the one Chart.js TimeSeriesChart), LivePanel, OpsBanner, SettingsDrawer
 │   ├── queries.ts / types.ts # queryOptions + the wire types
-│   ├── admin.css             # Admin tokens, scoped to [data-admin], never the global @theme
-│   └── DESIGN.md             # The dashboard's design system, read before adding a panel
+│   └── admin.css             # Admin tokens, scoped to [data-admin], never the global @theme
+│                             #   (its design system is docs/DESIGN-SYSTEM.md Part III, not a local DESIGN.md)
 ├── ui/                       # HeroUI v3 wrappers + Illo/Hardware3D (Button, Card, Modal, TextField, Tooltip, Switch, Alert, LoadingIcon)
 ├── lib/                      # Integrations + app logic
 │   ├── api.ts                # Typed backend client + SSE; the demo seam lives here

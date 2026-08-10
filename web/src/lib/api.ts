@@ -583,7 +583,7 @@ export type PlayTick = {
   ts: number
 }
 // Live presence: how many players have PIPS open right now. Pushed on every join/leave.
-export type LiveTick = { online: number }
+export type LiveTick = { online: number; sid?: string }
 
 export const streamPrices = (asset: string, onTick: (t: PriceTick) => void, onError?: () => void): (() => void) =>
   isDemo()
@@ -602,3 +602,9 @@ export const streamMarkets = (onTick: (t: MarketsTick) => void, onError?: () => 
 
 export const streamLive = (onTick: (t: LiveTick) => void, onError?: () => void): (() => void) =>
   isDemo() ? demoStreamLive(onTick) : stream<LiveTick>('/stream/live', onTick, onError)
+
+// The session's claim on itself. A socket alone does not prove anyone is behind it (a slept phone leaves
+// one open for hours), so presence expires unless this keeps arriving. Returns false once the server has
+// already swept the session, which it answers by ending the stream, so EventSource reconnects on its own.
+export const livePing = (sid: string): Promise<{ alive: boolean }> =>
+  isDemo() ? Promise.resolve({ alive: true }) : request<{ alive: boolean }>('POST', '/stream/live/ping', { sid })

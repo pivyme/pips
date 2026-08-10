@@ -11,9 +11,10 @@ import {
   REAL_STRIKE_MAX_OFFSET_FRAC,
   REAL_STRIKE_MIN_PROB,
 } from '../config/main-config.ts';
+import { captureError } from '../lib/analytics.ts';
 import { FLOAT_SCALING, multiplier as multiplierOf } from '../lib/sui/config.ts';
 import { liveByAsset, type Market } from '../lib/sui/markets.ts';
-import { LEVERAGE_ONE, POSITION_LOT_SIZE, readBtcSpot, resolveWrapper, simulateMint, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
+import { LEVERAGE_ONE, POSITION_LOT_SIZE, quoteMint, readBtcSpot, resolveWrapper, simulateMint, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
 import { treasuryAddress } from '../lib/sui/signer.ts';
 import type { Game, MoonshotAimLevelDTO, RangeQuoteDTO as RangeQuote, RangeQuoteModelDTO, RangeTierQuoteDTO, Side } from '../types/api.ts';
 import { PlayError } from './games-base.ts';
@@ -43,6 +44,7 @@ export type ResolvedReal = {
   entrySpot: string;
   tierMultiplier: number;
   side?: Side;
+  strike1e9?: bigint; // binary only: the exact strike, so an abort fallback can step it without reparsing the display string
   strikeDisplay?: string;
   lowerDisplay?: string;
   upperDisplay?: string;
@@ -69,13 +71,23 @@ function realMarket(roundMs: number, minRemainingMs: number = EXPIRY_SAFETY_MS):
 const RANGE_TARGET_MS = Math.round((RANGE_MIN_ORACLE_LIFE_MS + RANGE_MAX_ORACLE_LIFE_MS) / 2);
 const rangeMarket = (): Market => realMarket(RANGE_TARGET_MS, RANGE_MIN_ORACLE_LIFE_MS);
 
+// The leverage this market will actually admit right now. `max_admission_leverage` (3x on BTC) is only the
+// global ceiling: admitted_leverage_cap() short-circuits to exactly 1x inside `no_leverage_window_ms`, which
+// is ONE HOUR on testnet, so every 1m market we route to caps at 1x. Asking for more is a guaranteed
+// ELeverageAboveAdmissionCap abort, which is what burned an attempt on every tier above 2x.
+function admittedMaxLeverage(market: Market): bigint {
+  const ceiling = market.maxLeverage1e9 ? BigInt(market.maxLeverage1e9) : LEVERAGE_ONE;
+  const window = market.noLeverageWindowMs ? Number(market.noLeverageWindowMs) : 0;
+  return market.expiryMs - now() < window ? LEVERAGE_ONE : ceiling;
+}
+
 function realEcon(market: Market): { spot1e9: bigint; tickSize: bigint; admissionTickSize: bigint; maxLeverage1e9: bigint } {
   if (!market.spot1e9 || !market.admissionTickSizeRaw) throw new PlayError('ORACLE_STALE', 'Market has no price yet');
   return {
     spot1e9: BigInt(market.spot1e9),
     tickSize: BigInt(market.tickSize),
     admissionTickSize: BigInt(market.admissionTickSizeRaw),
-    maxLeverage1e9: market.maxLeverage1e9 ? BigInt(market.maxLeverage1e9) : LEVERAGE_ONE,
+    maxLeverage1e9: admittedMaxLeverage(market),
   };
 }
 
@@ -109,8 +121,39 @@ export function probit(p: number): number {
   return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
 }
 
+// The chain prices off a Block Scholes surface whose implied vol sits nowhere near the REAL_BTC_ANNUAL_VOL
+// seed (measured ~0.10 at 12s to expiry, ~0.21 at 100s), so a strike placed on the seed lands multiples of
+// sigma from where its tier intends: that is how a "5x" tier came to price at 38x, and how the far tiers fell
+// through the protocol's 1% min_entry_probability floor. Every preflight quote reports the true entry
+// probability, so each play back-solves the vol and leaves it for the next one; the seed is only a cold start.
+// Bucketed by time to expiry, because the surface has real term structure: measured ~0.10 annual at 12s out
+// against ~0.21 at 100s. One global number would be wrong at both ends and force a corrective re-quote on
+// nearly every play; a 10s bucket lands the first strike on target and keeps the tap to a single quote.
+const SIGMA_EMA = 0.5;
+const SIGMA_BUCKETS = 7; // 10s each, covering the 5-65s range a 1m cadence can route to
+const sigmaBucket = (seconds: number): number => Math.min(SIGMA_BUCKETS - 1, Math.max(0, Math.round(seconds / 10)));
+const binaryCalib = { sigmaAnnual: new Array<number>(SIGMA_BUCKETS).fill(REAL_BTC_ANNUAL_VOL) };
+const calibSigma = (seconds: number): number => binaryCalib.sigmaAnnual[sigmaBucket(seconds)];
+
 function roundSigmaFrac(seconds: number): number {
-  return REAL_BTC_ANNUAL_VOL * Math.sqrt(Math.max(1, seconds) / SECONDS_PER_YEAR);
+  return calibSigma(seconds) * Math.sqrt(Math.max(1, seconds) / SECONDS_PER_YEAR);
+}
+
+// Back out the annual vol the chain just priced with, from a quoted probability at a known strike offset.
+// Only sampled away from ATM: as p approaches 0.5 the probit divisor approaches 0 and the implied vol
+// explodes, so a near-ATM quote (which is exactly what the walk-toward-spot fallback produces) would poison
+// the bucket and fling the NEXT play's strike far enough out that nothing is admissible.
+const SIGMA_SAMPLE_MIN_PROB = 0.02;
+const SIGMA_SAMPLE_MAX_PROB = 0.42;
+
+function noteImpliedSigma(offsetFrac: number, p: number, seconds: number): void {
+  if (!(p > SIGMA_SAMPLE_MIN_PROB && p < SIGMA_SAMPLE_MAX_PROB) || offsetFrac <= 0) return;
+  const sigma = offsetFrac / (probit(1 - p) * Math.sqrt(Math.max(1, seconds) / SECONDS_PER_YEAR));
+  if (!Number.isFinite(sigma) || sigma <= 0) return;
+  const i = sigmaBucket(seconds);
+  // Clamp the SAMPLE before blending; blending an out-of-band reading still drags the bucket with it.
+  const clamped = Math.min(SIGMA_ANNUAL_MAX, Math.max(SIGMA_ANNUAL_MIN, sigma));
+  binaryCalib.sigmaAnnual[i] = binaryCalib.sigmaAnnual[i] * (1 - SIGMA_EMA) + clamped * SIGMA_EMA;
 }
 
 function normCdf(x: number): number {
@@ -155,6 +198,8 @@ function rangeLeverage(winProb: number, maxLeverage1e9: bigint): bigint {
 }
 
 const premiumBudget = (stakeRaw: bigint): bigint => (stakeRaw * (100n - REAL_FEE_HEADROOM_PCT)) / 100n;
+// constants::min_net_premium (6dp): the chain refuses a mint whose net premium is under $1 (L-011).
+const MIN_NET_PREMIUM_RAW = 1_000_000n;
 const realFmt = (value: bigint): string => String(Number(value) / 1e9);
 
 // Half a cent (1e9-scaled). The screen rounds spot to 2dp, so a strike inside this of spot renders equal to
@@ -197,13 +242,144 @@ function strikeFor(
   return { strike1e9, lowerTick, higherTick };
 }
 
-// Called when the requested leverage is rejected by the admission check (ELeverageAboveAdmission, L-012);
-// re-prices the strike for the leverage that actually lands, so the fallback lands close to the nominal tier.
-export function restrikeBinary(r: ResolvedReal, leverage1e9: bigint): ResolvedReal {
-  if (r.kind !== 'binary' || !r.side) return r;
-  const seconds = Math.max(1, (r.expiryMs - now()) / 1000);
-  const { strike1e9, lowerTick, higherTick } = strikeFor(r.side, r.tierMultiplier, leverage1e9, r.spot1e9, r.tickSize, r.admissionTickSize, seconds);
-  return { ...r, leverage1e9, lowerTick, higherTick, strikeDisplay: realFmt(strike1e9) };
+// Halve a strike's distance from spot, snapped back onto the admission grid. otmStrike1e9 keeps it at least
+// one admission step clear, so repeated halving terminates on the closest mintable boundary.
+function halveToSpot(side: Side, strike1e9: bigint, spot1e9: bigint, admissionTickSize: bigint): bigint {
+  const gap = side === 'up' ? strike1e9 - spot1e9 : spot1e9 - strike1e9;
+  if (gap <= 0n) return strike1e9;
+  const raw1e9 = side === 'up' ? spot1e9 + gap / 2n : spot1e9 - gap / 2n;
+  return otmStrike1e9(side, raw1e9, spot1e9, admissionTickSize);
+}
+
+// Last-resort fallback when a mint still aborts on admission (price moved between the preflight quote and
+// the mint). Moves the strike toward ATM, which RAISES entry probability: the old fallback dropped leverage
+// and re-derived the strike from the nominal tier, which pushed it further OUT and straight through the
+// protocol's 1% min_entry_probability floor, turning a recoverable abort into a dead play.
+// Null when the strike is already on the closest admissible boundary, so the caller errors instead of looping.
+export function restrikeCloser(r: ResolvedReal, leverage1e9: bigint): ResolvedReal | null {
+  if (r.kind !== 'binary' || !r.side || r.strike1e9 === undefined) return { ...r, leverage1e9 };
+  const strike1e9 = halveToSpot(r.side, r.strike1e9, r.spot1e9, r.admissionTickSize);
+  if (strike1e9 === r.strike1e9) return null;
+  const { lowerTick, higherTick } = ticksForBinary(r.side, strike1e9, r.tickSize, r.admissionTickSize);
+  return { ...r, leverage1e9, strike1e9, lowerTick, higherTick, strikeDisplay: realFmt(strike1e9) };
+}
+
+// The strike for a target win probability under a given vol, floored to REAL_BINARY_MIN_OFFSET_SIGMA and
+// snapped to the admission grid. Same placement as binaryOffsetFloored, but parameterised by the vol so the
+// preflight can re-place a strike on the vol the chain just quoted instead of the seed.
+function strikeForProb(
+  side: Side,
+  p: number,
+  spot1e9: bigint,
+  sigmaAnnual: number,
+  seconds: number,
+  admissionTickSize: bigint,
+): bigint {
+  const sigmaFrac = sigmaAnnual * Math.sqrt(Math.max(1, seconds) / SECONDS_PER_YEAR);
+  const raw = Math.max(probit(1 - p) * sigmaFrac, REAL_BINARY_MIN_OFFSET_SIGMA * sigmaFrac);
+  const off = Math.max(-REAL_STRIKE_MAX_OFFSET_FRAC, Math.min(REAL_STRIKE_MAX_OFFSET_FRAC, raw));
+  const offset = BigInt(Math.round(off * 1e9));
+  const raw1e9 = side === 'up' ? (spot1e9 * (FLOAT_SCALING + offset)) / FLOAT_SCALING : (spot1e9 * (FLOAT_SCALING - offset)) / FLOAT_SCALING;
+  return otmStrike1e9(side, raw1e9, spot1e9, admissionTickSize);
+}
+
+// The win probability a tier is meant to pay at: strikeTier = tier/leverage, p = 1/strikeTier (LUCKY.md §5b).
+function targetProb(tier: number, leverage1e9: bigint): number {
+  const strikeTier = tier / (Number(leverage1e9) / 1e9);
+  return Math.min(1 - REAL_STRIKE_MIN_PROB, Math.max(REAL_STRIKE_MIN_PROB, 1 / strikeTier));
+}
+
+// Preflight the strike against the chain before spending a transaction on it. expiry_market::quote_mint is
+// `public` for exactly this (devInspect pre-trade pricing, ~85ms a call), so a bad strike costs a read rather
+// than a failed mint, and the quote is the only honest source for entry probability and all-in cost (L-012).
+// Solves three things at once, re-quoting until they all hold: the chain admits the strike, it prices near the
+// tier's target probability, and the all-in cost fits inside the stake.
+const PREFLIGHT_STEPS = 7;
+const PROB_TOLERANCE = 1.5; // re-place the strike when the quoted probability is off target by more than this
+const COST_MARGIN_PCT = 4n; // headroom under the stake for the fee ramp between this quote and the mint
+
+type Preflight = { strike1e9: bigint; lowerTick: bigint; higherTick: bigint; entryProbability: number; amountRaw: bigint };
+
+async function preflightBinary(
+  marketId: string,
+  side: Side,
+  tier: number,
+  spot1e9: bigint,
+  tickSize: bigint,
+  admissionTickSize: bigint,
+  leverage1e9: bigint,
+  netRaw: bigint,
+  seconds: number,
+): Promise<Preflight | null> {
+  const target = targetProb(tier, leverage1e9);
+  const costTarget = (netRaw * (100n - COST_MARGIN_PCT)) / 100n;
+  let strike1e9 = strikeForProb(side, target, spot1e9, calibSigma(seconds), seconds, admissionTickSize);
+  let budgetRaw = premiumBudget(netRaw);
+  let aimed = false; // whether the budget has already been rescaled for this strike's fee load
+  let best: Preflight | null = null; // last strike that fully checked out, in case we run out of steps
+  const trace: string[] = []; // why each candidate was rejected, so an exhausted search is diagnosable
+
+  for (let step = 0; step < PREFLIGHT_STEPS; step++) {
+    const { lowerTick, higherTick } = ticksForBinary(side, strike1e9, tickSize, admissionTickSize);
+    const q = await quoteMint({ marketId, lowerTick, higherTick, maxPremiumRaw: budgetRaw, leverage1e9 });
+    if (!q || q.allInCostRaw === 0n) {
+      trace.push(`${realFmt(strike1e9)}@$${fmtUsd(budgetRaw)} refused`);
+      // Inadmissible (past a probability bound): only a strike closer to spot can be admitted.
+      const next = halveToSpot(side, strike1e9, spot1e9, admissionTickSize);
+      if (next === strike1e9) return finishPreflight(best, trace, tier, target, seconds);
+      strike1e9 = next;
+      aimed = false; // new strike, new fee load
+      continue;
+    }
+    const p = Number(q.entryProbability1e9) / 1e9;
+    noteImpliedSigma(Math.abs(Number(strike1e9 - spot1e9)) / Number(spot1e9), p, seconds);
+
+    // Trading fees ride on TOP of the premium and grow as the strike goes out (~1/sqrt(p)), so a far tier can
+    // bill well over its premium. Aim the budget a few percent under the stake, then accept anything that
+    // fits inside it: the rescale approaches its aim asymptotically, so requiring it to land strictly under
+    // never terminates, which is what left the top reaches unplayable.
+    if (q.allInCostRaw > costTarget && (!aimed || q.allInCostRaw > netRaw)) {
+      trace.push(`${realFmt(strike1e9)} p=${p.toFixed(3)} costs $${fmtUsd(q.allInCostRaw)} > $${fmtUsd(costTarget)}`);
+      const scaled = (budgetRaw * costTarget) / q.allInCostRaw;
+      if (scaled >= MIN_NET_PREMIUM_RAW && scaled < budgetRaw) {
+        budgetRaw = scaled;
+        aimed = true;
+        continue;
+      }
+      // Can't fit this strike inside the stake at the protocol's $1 minimum premium; a closer one costs less.
+      const next = halveToSpot(side, strike1e9, spot1e9, admissionTickSize);
+      if (next === strike1e9) return finishPreflight(best, trace, tier, target, seconds);
+      strike1e9 = next;
+      aimed = false; // new strike, new fee load
+      continue;
+    }
+
+    best = { strike1e9, lowerTick, higherTick, entryProbability: p, amountRaw: budgetRaw };
+    if (p >= target / PROB_TOLERANCE && p <= target * PROB_TOLERANCE) return best;
+    trace.push(`${realFmt(strike1e9)} p=${p.toFixed(3)} off target ${target.toFixed(3)}`);
+    // Admissible and affordable, but priced well off the tier: re-place it on the vol just implied.
+    const retarget = strikeForProb(side, target, spot1e9, calibSigma(seconds), seconds, admissionTickSize);
+    if (retarget === strike1e9) return best;
+    strike1e9 = retarget;
+  }
+  return finishPreflight(best, trace, tier, target, seconds);
+}
+
+const fmtUsd = (raw: bigint): string => (Number(raw) / 1e6).toFixed(2);
+
+// A search that ends with nothing playable is a real incident (the tier is unreachable on this market), so
+// record WHY it ran out rather than surfacing a bare "no mintable strike". A partial result still plays.
+function finishPreflight(best: Preflight | null, trace: string[], tier: number, target: number, seconds: number): Preflight | null {
+  if (!best) {
+    console.warn(`[preflight] ${tier}x unmintable (p*=${target.toFixed(3)}, ${Math.round(seconds)}s, sigma=${calibSigma(seconds).toFixed(3)}): ${trace.join(' | ')}`);
+    captureError(new Error(`preflight found no mintable strike for ${tier}x`), {
+      kind: 'chain',
+      level: 'warn',
+      fingerprint: 'chain.preflight_exhausted',
+      context: { tier, targetProb: target, seconds: Math.round(seconds), sigma: calibSigma(seconds), trace },
+    });
+  }
+  return best;
 }
 
 async function resolveRealBinary(game: 'lucky' | 'moonshot', netRaw: bigint, stakeRaw: bigint, side: Side, tier: number, seed?: string): Promise<ResolvedReal> {
@@ -212,7 +388,9 @@ async function resolveRealBinary(game: 'lucky' | 'moonshot', netRaw: bigint, sta
   const spot1e9 = await freshRealSpot(cachedSpot);
   const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
   const leverage1e9 = binaryLeverage(tier, maxLeverage1e9);
-  const { strike1e9, lowerTick, higherTick } = strikeFor(side, tier, leverage1e9, spot1e9, tickSize, admissionTickSize, seconds);
+  const pre = await preflightBinary(market.oracleId, side, tier, spot1e9, tickSize, admissionTickSize, leverage1e9, netRaw, seconds);
+  if (!pre) throw new PlayError('MARKET_UNAVAILABLE', 'No mintable strike right now, try again');
+  const { strike1e9, lowerTick, higherTick } = pre;
   return {
     game,
     kind: 'binary',
@@ -225,13 +403,15 @@ async function resolveRealBinary(game: 'lucky' | 'moonshot', netRaw: bigint, sta
     higherTick,
     leverage1e9,
     // Mint sizes off NET (stake - rake); wrapper is funded to full STAKE so the rake peels out after mint (lib/sui/house.ts).
-    amountRaw: premiumBudget(netRaw),
+    // Budget comes from the quote, so the all-in cost (premium + fees) lands inside the stake.
+    amountRaw: pre.amountRaw,
     minQuantityRaw: POSITION_LOT_SIZE,
     expiryMs: market.expiryMs,
     duration: Math.max(1, Math.round(seconds)),
     entrySpot: realFmt(spot1e9),
     tierMultiplier: tier,
     side,
+    strike1e9,
     strikeDisplay: realFmt(strike1e9),
     seed,
   };

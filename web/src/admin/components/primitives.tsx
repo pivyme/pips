@@ -1,6 +1,6 @@
 // The handful of shapes every admin page repeats. Plain HTML plus the component classes in admin.css,
 // borrowing the product's palette, hardware keys and lucide icons so this reads as the same app.
-// No chart library: a sparkline is 20 lines of SVG.
+// Charts live in charts.tsx and are Chart.js: axes, local-timezone dates and hover values are the point.
 //
 // Everything here renders text, never HTML: an error message can carry attacker-controlled input and
 // this dashboard is where it gets displayed.
@@ -197,27 +197,6 @@ export function Bar({
   )
 }
 
-// Hand-rolled bar chart, zero dependencies. Bars carry a count, so they stay neutral: colour is reserved
-// for severity everywhere on this surface.
-export function BarChart({ data, height = 56 }: { data: Array<{ t: number; n: number }>; height?: number }) {
-  const max = Math.max(1, ...data.map((d) => d.n))
-  const w = 100 / Math.max(1, data.length)
-  return (
-    <svg
-      viewBox={`0 0 100 ${height}`}
-      preserveAspectRatio="none"
-      style={{ width: '100%', height }}
-      role="img"
-      aria-label="Occurrences per hour over the last 24 hours"
-    >
-      {data.map((d, i) => {
-        const h = d.n === 0 ? 0 : Math.max(1.5, (d.n / max) * (height - 2))
-        return <rect key={d.t} x={i * w + w * 0.15} y={height - h} width={w * 0.7} height={h} fill="var(--a-text-3)" />
-      })}
-    </svg>
-  )
-}
-
 // The stat tile. Mono micro-label above, hero number below, one line of context underneath, which is
 // where "as of" and "of 412 users" live so a number is never read without its denominator.
 export function Metric({
@@ -251,77 +230,6 @@ export function Metric({
         </span>
       )}
     </div>
-  )
-}
-
-// 14-day sparkline, ~20 lines of SVG. A soft fill under the line so a flat series still reads as a
-// series rather than a stray rule.
-export function Sparkline({
-  data,
-  height = 40,
-  tone = 'var(--a-accent)',
-}: {
-  data: Array<{ t: number; n: number }>
-  height?: number
-  tone?: string
-}) {
-  if (data.length < 2) return <div style={{ height, color: 'var(--a-text-muted)', fontSize: 11 }}>not enough history</div>
-  const max = Math.max(1, ...data.map((d) => d.n))
-  const step = 100 / (data.length - 1)
-  const y = (n: number) => height - 1 - (n / max) * (height - 3)
-  const points = data.map((d, i) => `${(i * step).toFixed(2)},${y(d.n).toFixed(2)}`).join(' ')
-  const label = `${data.reduce((sum, d) => sum + d.n, 0)} over ${data.length} days, peak ${max}`
-  return (
-    <svg viewBox={`0 0 100 ${height}`} preserveAspectRatio="none" style={{ width: '100%', height }} role="img" aria-label={label}>
-      <polygon points={`0,${height} ${points} 100,${height}`} fill={tone} opacity={0.1} />
-      <polyline points={points} fill="none" stroke={tone} strokeWidth={1.5} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-// p50 under p95 over time. Two lines, no legend clutter: p95 is the amber one because it is the number
-// that describes what the slowest users actually felt.
-export function LatencyChart({
-  data,
-  height = 96,
-}: {
-  data: Array<{ t: number; p50: number | null; p95: number | null }>
-  height?: number
-}) {
-  // Two buckets, not two numbers: one bucket carries a p50 and a p95, and a single point draws nothing.
-  const filled = data.filter((d) => d.p50 != null || d.p95 != null)
-  if (filled.length < 2) return <EmptyState title="Not enough samples to plot" hint="One bucket is a number, not a line. Play again, or widen the window." />
-  const values = data.flatMap((d) => [d.p50, d.p95]).filter((v): v is number => v != null)
-  const max = Math.max(1, ...values)
-  const step = 100 / Math.max(1, data.length - 1)
-  const y = (v: number) => height - 2 - (v / max) * (height - 4)
-
-  // A null bucket breaks the line rather than drawing straight through a gap that had no traffic.
-  const path = (pick: (d: (typeof data)[number]) => number | null): string =>
-    data
-      .map((d, i) => {
-        const v = pick(d)
-        return v == null ? null : `${(i * step).toFixed(2)},${y(v).toFixed(2)}`
-      })
-      .reduce<string[]>((acc, point, i) => {
-        if (point == null) return acc
-        const prev = pick(data[i - 1] ?? { p50: null, p95: null })
-        acc.push(`${prev == null ? 'M' : 'L'}${point}`)
-        return acc
-      }, [])
-      .join(' ')
-
-  return (
-    <svg
-      viewBox={`0 0 100 ${height}`}
-      preserveAspectRatio="none"
-      style={{ width: '100%', height }}
-      role="img"
-      aria-label={`p50 and p95 over time, peak ${Math.round(max)}ms`}
-    >
-      <path d={path((d) => d.p50)} fill="none" stroke="var(--a-text-3)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-      <path d={path((d) => d.p95)} fill="none" stroke="var(--a-accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-    </svg>
   )
 }
 
@@ -404,16 +312,12 @@ export function PageHeader({ title, sub, children }: { title: string; sub?: Reac
   )
 }
 
-// Under ~1024px the dense tables stop being readable. Say so plainly rather than shipping a squeeze.
-export function DesktopOnlyNotice({ page }: { page: string }) {
+// Every table goes in one of these. A dense table below its natural width does not compress, it overlaps:
+// `.a-cell-fill` collapses to nothing and the numeric columns paint over each other. Scroll instead.
+export function TableScroll({ children, minWidth }: { children: ReactNode; minWidth?: number }) {
   return (
-    <div className="lg:hidden">
-      <div className="a-panel">
-        <p className="a-section-title">Open this on a desktop</p>
-        <p className="mt-1" style={{ color: 'var(--a-text-2)' }}>
-          {page} is a dense table view built for 1280px and up. Errors is the one page that works from a phone.
-        </p>
-      </div>
+    <div className="a-scroll-x" style={minWidth ? ({ '--a-table-min': `${minWidth}px` } as React.CSSProperties) : undefined}>
+      {children}
     </div>
   )
 }

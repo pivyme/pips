@@ -13,8 +13,9 @@ export type Market = {
   lastPushAt?: number; // ms epoch of the last successful spot read
   // Market economics from readMarketEconomics.
   admissionTickSizeRaw?: string; // coarser mint-boundary step (BTC 1e9 = $1)
-  maxLeverage1e9?: string; // max_admission_leverage (BTC 3e9 = 3.0x)
+  maxLeverage1e9?: string; // max_admission_leverage (BTC 3e9 = 3.0x), the GLOBAL ceiling, not what's admitted now
   liquidationLtv1e9?: string; // liquidation_ltv (BTC 0.85e9)
+  noLeverageWindowMs?: string; // inside this much time to expiry the admitted cap is exactly 1x (testnet: 1h)
 };
 
 const markets = new Map<string, Market>();

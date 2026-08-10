@@ -61,7 +61,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <ShellFooter username={user?.username ?? null} />
       </nav>
 
-      {/* Mobile keeps the nav as a plain strip: Errors is the one page worth triaging from a phone. */}
+      {/* Mobile keeps the nav as a plain strip. Every page works from a phone: the tables scroll sideways. */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Sticky at the viewport top, so on iOS it lands under the status bar unless it carries the inset itself. */}
         <div
@@ -73,7 +73,12 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <NavLink key={item.to} item={item} pathname={location.pathname} compact />
           ))}
         </div>
-        <main className="mx-auto min-w-0 w-full max-w-[1600px] flex-1 p-4 lg:p-6">{children}</main>
+        <main
+          className="mx-auto min-w-0 w-full max-w-[1600px] flex-1 p-3 sm:p-4 lg:p-6"
+          style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+        >
+          {children}
+        </main>
       </div>
     </div>
   )

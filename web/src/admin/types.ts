@@ -137,6 +137,40 @@ export interface OverviewReport {
   generatedAt: string
 }
 
+export interface LiveRow {
+  id: string
+  username: string | null
+  displayName: string
+  avatarUrl: string | null
+  address: string
+  /** Holding an open stream connection right now. False means "was here, tab is closed". */
+  live: boolean
+  sessions: number
+  since: number | null
+  lastSeenAt: number
+  /** Last thing they actually did, at any age. null = nothing on record, not the same as idle now. */
+  lastActiveAt: number | null
+  doing: string
+  platform: string | null
+  plays: number
+  /** DUSDC committed in the window. */
+  staked: number
+  pnl: number
+}
+
+export interface LiveReport {
+  online: { users: number; sessions: number }
+  windowMin: number
+  /** Width of one bar in playsSeries, so the axis is told what it shows instead of guessing. */
+  bucketMs: number
+  unit: 'minute' | 'hour'
+  rows: LiveRow[]
+  truncated: number
+  playsSeries: Array<{ t: number; n: number }>
+  window: { players: number; plays: number; staked: number }
+  generatedAt: string
+}
+
 export interface LatencyPoint {
   t: number
   n: number
