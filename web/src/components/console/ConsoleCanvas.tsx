@@ -352,13 +352,6 @@ export default function ConsoleCanvas({
   // native Taptic tick can never buzz past the point where the value stopped changing.
   const numberWheelStripStepRef = useRef<((clientY: number) => number) | null>(null)
   const knobStripStepRef = useRef<((clientY: number) => number) | null>(null)
-  // Dev-only instrumentation (never rendered in production, see the JSX at the bottom): counts each
-  // dial's step() calls against its real native onChange toggles, so a regression like the missing-tick
-  // warm-up bug above is visible in one drag instead of guessed at.
-  const [devKnobSteps, setDevKnobSteps] = useState(0)
-  const [devKnobToggles, setDevKnobToggles] = useState(0)
-  const [devWheelSteps, setDevWheelSteps] = useState(0)
-  const [devWheelToggles, setDevWheelToggles] = useState(0)
 
   // Fresh per render so the scene's input handlers never read a stale binding.
   const propsRef = useRef({ handlers, onNav, onOutroComplete, onWelcomeComplete, onWelcomeArrived })
@@ -4115,8 +4108,6 @@ export default function ConsoleCanvas({
                 hapticsOn={hapticsOn}
                 getStep={(clientY) => knobStripStepRef.current?.(clientY) ?? 0}
                 onDown={(clientY) => knobStripDownRef.current?.(clientY)}
-                onStep={() => setDevKnobSteps((v) => v + 1)}
-                onNativeChange={() => setDevKnobToggles((v) => v + 1)}
                 label="knob"
               />
               <DialTeleportSwitch
@@ -4125,39 +4116,10 @@ export default function ConsoleCanvas({
                 hapticsOn={hapticsOn}
                 getStep={(clientY) => numberWheelStripStepRef.current?.(clientY) ?? 0}
                 onDown={(clientY) => numberWheelStripDownRef.current?.(clientY)}
-                onStep={() => setDevWheelSteps((v) => v + 1)}
-                onNativeChange={() => setDevWheelToggles((v) => v + 1)}
                 label="amount"
               />
             </>
           )}
-        </div>
-      )}
-
-      {import.meta.env.DEV && iosDialStrip && (
-        <div
-          aria-hidden="true"
-          style={{
-            position: 'fixed',
-            bottom: 8,
-            left: 8,
-            zIndex: 9999,
-            pointerEvents: 'none',
-            fontFamily: 'monospace',
-            fontSize: 10,
-            lineHeight: 1.4,
-            color: 'rgba(255,255,255,0.55)',
-            background: 'rgba(0,0,0,0.5)',
-            padding: '4px 6px',
-            borderRadius: 4,
-          }}
-        >
-          <div>
-            knob step {devKnobSteps} · onChange {devKnobToggles}
-          </div>
-          <div>
-            wheel step {devWheelSteps} · onChange {devWheelToggles}
-          </div>
         </div>
       )}
 
