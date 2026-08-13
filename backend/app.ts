@@ -43,7 +43,7 @@ import { warmExecuteCaches } from './src/lib/sui/execute.ts';
 import { SPONSOR_ENABLED, sponsorAddress, ensureSponsorAccumulator } from './src/lib/sui/sponsor.ts';
 import { treasuryAddress, REVENUE_ENABLED } from './src/lib/sui/signer.ts';
 import { startSponsorMonitor } from './src/lib/sui/play-safety.ts';
-import { SPONSOR_FLOOR_SUI, TREASURY_MIN_DUSDC, MIN_STAKE, MAX_STAKE, HOUSE_EDGE_BPS, HOUSE_EDGE_MIN_NET_USD, BRIDGE_EXECUTE_ENABLED } from './src/config/main-config.ts';
+import { SPONSOR_FLOOR_SUI, TREASURY_MIN_DUSDC, MIN_STAKE, MAX_STAKE, MAX_STAKE_ADMIN, HOUSE_EDGE_BPS, HOUSE_EDGE_MIN_NET_USD, BRIDGE_EXECUTE_ENABLED } from './src/config/main-config.ts';
 
 console.log(
   '======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n'
@@ -153,13 +153,14 @@ fastify.register(FastifyCors, {
   allowedHeaders: ['Content-Type', 'Authorization', 'token'],
 });
 
-// Security headers. This is a pure JSON API serving no HTML, so CSP has no target and only risks
-// breaking things for no benefit (off). COEP/CORP defaults are meant for browser-rendered content and
-// would fight the web app's cross-origin fetches, so allow cross-origin resource policy (the actual
-// origin allow-list is CORS above). The rest of helmet's defaults stay on: X-Content-Type-Options,
-// X-Frame-Options, and HSTS (meaningful because Traefik terminates TLS in front of this).
+// Security headers. This serves JSON and nothing else, so the CSP is the degenerate one: load nothing,
+// frame nowhere. It costs a header and neuters anything that ever manages to get HTML out of this origin.
+// COEP/CORP defaults are meant for browser-rendered content and would fight the web app's cross-origin
+// fetches, so allow cross-origin resource policy (the actual origin allow-list is CORS above). The rest of
+// helmet's defaults stay on: X-Content-Type-Options, X-Frame-Options, and HSTS (meaningful because Traefik
+// terminates TLS in front of this).
 fastify.register(FastifyHelmet, {
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: { useDefaults: false, directives: { 'default-src': ["'none'"], 'frame-ancestors': ["'none'"] } },
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 });
 
@@ -261,6 +262,9 @@ fastify.get('/config', async (_request: FastifyRequest, reply: FastifyReply) => 
       // offers an out-of-band bet (testnet-real is a tight 1.5..3, the fork is a wide 1..100).
       minStake: MIN_STAKE,
       maxStake: MAX_STAKE,
+      // Raised ceiling for ADMIN accounts. The client only offers the extra rungs to an admin session; the
+      // cap itself is enforced per play on the user's roles, so publishing the number here gives nothing away.
+      maxStakeAdmin: MAX_STAKE_ADMIN,
       // House rake the play endpoints apply, so pre-play previews show the true NET max payout (net *
       // multiplier) instead of stake * multiplier and never over-promise. Effective value: 0 when the
       // revenue wallet is unset (rake disabled). minNetUsd = the floor below which the rake is skipped.

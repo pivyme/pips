@@ -19,6 +19,17 @@ export let DUSDC_TYPE = env.VITE_DUSDC_TYPE ?? ''
 let STAKE_MIN = 1.5
 let STAKE_MAX = 25
 
+// ADMIN-only ceiling: the same band with a raised top, unlocked once /me says the signed-in user is ADMIN.
+// This only decides which rungs the wheel offers; the backend enforces the real cap on every play.
+let STAKE_MAX_ADMIN = 1000
+let adminStakes = false
+
+export function setAdminStakes(on: boolean): void {
+  adminStakes = on
+}
+
+const stakeMax = (): number => (adminStakes ? Math.max(STAKE_MAX, STAKE_MAX_ADMIN) : STAKE_MAX)
+
 // House rake (backend house.ts): a real play sizes off `net = stake - rake`, kept here so previews show the true
 // NET max payout instead of over-promising. 0 until /config says otherwise (always 0 in demo); MIN_NET is the skip-rake floor.
 let HOUSE_EDGE_BPS = 0
@@ -30,14 +41,23 @@ export async function refreshDeployedConfig(): Promise<void> {
     const res = await fetch(`${env.VITE_API_URL}/config`, { signal: AbortSignal.timeout(5000) })
     if (!res.ok) return
     const body = (await res.json()) as {
-      data?: { dusdcType?: string; minStake?: number; maxStake?: number; houseEdgeBps?: number; houseEdgeMinNetUsd?: number }
+      data?: {
+        dusdcType?: string
+        minStake?: number
+        maxStake?: number
+        maxStakeAdmin?: number
+        houseEdgeBps?: number
+        houseEdgeMinNetUsd?: number
+      }
     }
     const live = body?.data?.dusdcType
     if (live && live !== DUSDC_TYPE) DUSDC_TYPE = live
     const min = body?.data?.minStake
     const max = body?.data?.maxStake
+    const maxAdmin = body?.data?.maxStakeAdmin
     if (typeof min === 'number' && min > 0) STAKE_MIN = min
     if (typeof max === 'number' && max >= STAKE_MIN) STAKE_MAX = max
+    if (typeof maxAdmin === 'number' && maxAdmin >= STAKE_MIN) STAKE_MAX_ADMIN = maxAdmin
     const bps = body?.data?.houseEdgeBps
     const minNet = body?.data?.houseEdgeMinNetUsd
     if (typeof bps === 'number' && bps >= 0) HOUSE_EDGE_BPS = bps
@@ -56,7 +76,8 @@ export function netStakeUsd(stakeUsd: number): number {
 }
 
 // The curated tiers we prefer when the band is wide enough. A tight real band gets even rungs.
-const CURATED_TIERS = [1, 5, 10, 25, 50, 100]
+// The top three only ever appear on an ADMIN session, where the band opens to 1000.
+const CURATED_TIERS = [1, 5, 10, 25, 50, 100, 500, 1000]
 
 function buildBetLadder(min: number, max: number): number[] {
   const inside = CURATED_TIERS.filter((v) => v >= min && v <= max)
@@ -74,8 +95,9 @@ function buildBetLadder(min: number, max: number): number[] {
 // One shared bet ladder for every game + the home idle wheel, sized to the live [min, max] band; cached by band so the reference stays stable across renders.
 let ladderCache: { min: number; max: number; ladder: number[] } | null = null
 export function betLadder(): number[] {
-  if (!ladderCache || ladderCache.min !== STAKE_MIN || ladderCache.max !== STAKE_MAX) {
-    ladderCache = { min: STAKE_MIN, max: STAKE_MAX, ladder: buildBetLadder(STAKE_MIN, STAKE_MAX) }
+  const max = stakeMax()
+  if (!ladderCache || ladderCache.min !== STAKE_MIN || ladderCache.max !== max) {
+    ladderCache = { min: STAKE_MIN, max, ladder: buildBetLadder(STAKE_MIN, max) }
   }
   return ladderCache.ladder
 }

@@ -1,4 +1,5 @@
-import { MAX_STAKE, MIN_STAKE } from '../config/main-config.ts';
+import { MAX_STAKE, MAX_STAKE_ADMIN, MIN_STAKE } from '../config/main-config.ts';
+import { isAdmin } from '../config/roles.ts';
 import { toDusdcRaw } from '../lib/sui/config.ts';
 
 export type PlayErrorCode =
@@ -46,11 +47,16 @@ export const httpStatusForPlayError = (code: PlayErrorCode): number => {
   }
 };
 
-export function parseStake(stake: string | number): bigint {
+// Per-play stake ceiling. ADMIN gets the raised cap; roles are read fresh off the user row, never a JWT claim.
+export function maxStakeFor(user: { specialRoles?: string[] | null }): number {
+  return isAdmin(user.specialRoles) ? MAX_STAKE_ADMIN : MAX_STAKE;
+}
+
+export function parseStake(stake: string | number, max: number = MAX_STAKE): bigint {
   const n = typeof stake === 'number' ? stake : Number(stake);
   if (!Number.isFinite(n) || n <= 0) throw new PlayError('INVALID_PARAMS', 'Enter a valid play amount');
   if (n < MIN_STAKE) throw new PlayError('INVALID_PARAMS', `Minimum play amount is $${MIN_STAKE}`);
-  if (n > MAX_STAKE) throw new PlayError('INVALID_PARAMS', `Maximum play amount is $${MAX_STAKE}`);
+  if (n > max) throw new PlayError('INVALID_PARAMS', `Maximum play amount is $${max}`);
   return toDusdcRaw(n);
 }
 

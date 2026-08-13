@@ -1501,7 +1501,6 @@ export default function ConsoleCanvas({
     let numberWheelTarget = 0
     let numberWheelInitialized = false
     let debugNumberValue = 1
-    const idleStakes = betLadder()
     // The home wheel shares one persisted stake with the games (same ladder), so the value the user
     // leaves it on stays put across navigation instead of resetting to a sample.
     const STAKE_KEY = 'pips_stake_idx'
@@ -1509,7 +1508,7 @@ export default function ConsoleCanvas({
       try {
         const raw = window.localStorage.getItem(STAKE_KEY)
         const n = raw == null ? 2 : Math.round(JSON.parse(raw))
-        return Number.isFinite(n) ? Math.max(0, Math.min(idleStakes.length - 1, n)) : 2
+        return Number.isFinite(n) ? Math.max(0, Math.min(betLadder().length - 1, n)) : 2
       } catch {
         return 2
       }
@@ -1534,13 +1533,17 @@ export default function ConsoleCanvas({
       label: '',
       format: (value: number) => `$${value}`,
     }
-    const idleNumberWheel = {
-      min: 0,
-      max: idleStakes.length - 1,
-      step: 1,
-      value: idleNumberValue,
-      label: 'DUSDC',
-      format: (value: number) => `$${idleStakes[value]}`,
+    // Built per read, not once: the ladder gains its ADMIN rungs when the session lands, after the scene is up.
+    const idleNumberWheel = () => {
+      const stakes = betLadder()
+      return {
+        min: 0,
+        max: stakes.length - 1,
+        step: 1,
+        value: Math.max(0, Math.min(stakes.length - 1, idleNumberValue)),
+        label: 'DUSDC',
+        format: (value: number) => `$${stakes[value]}`,
+      }
     }
 
     // View state mirrored from the registry. Registered controls remain physically interactive;
@@ -1657,7 +1660,7 @@ export default function ConsoleCanvas({
           ? { ...debugNumberWheel, value: debugNumberValue }
           : customize
             ? customizeWheel
-            : { ...idleNumberWheel, value: idleNumberValue })
+            : idleNumberWheel())
       state.numberWheel = n
       setNumberWheelLabels(n)
       if (n && !numberWheelDrag) {
@@ -2884,7 +2887,7 @@ export default function ConsoleCanvas({
                 } catch {
                   // storage blocked, keep the in-memory value
                 }
-                const idleSpec = { ...idleNumberWheel, value: idleNumberValue }
+                const idleSpec = idleNumberWheel()
                 state.numberWheel = idleSpec
                 setNumberWheelLabels(idleSpec)
               }

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 
-import { probit, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9, restrikeCloser, type ResolvedReal } from './games.ts';
+import { probit, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9, restrikeCloser, parseStake, maxStakeFor, type ResolvedReal } from './games.ts';
 import { LEVERAGE_ONE, ticksForBinary } from '../lib/sui/predict-real.ts';
 import type { Side } from '../types/api.ts';
-import { REAL_STRIKE_MIN_PROB, REAL_STRIKE_MAX_OFFSET_FRAC, REAL_BTC_ANNUAL_VOL, REAL_BINARY_MIN_OFFSET_SIGMA } from '../config/main-config.ts';
+import { REAL_STRIKE_MIN_PROB, REAL_STRIKE_MAX_OFFSET_FRAC, REAL_BTC_ANNUAL_VOL, REAL_BINARY_MIN_OFFSET_SIGMA, MIN_STAKE, MAX_STAKE, MAX_STAKE_ADMIN } from '../config/main-config.ts';
 
 // The real-mode strike sizer can't be exercised on-chain (needs a funded wrapper, L-012), so the math it
 // rests on is pinned here: binaryOffsetFrac places a strike at z(p)*sigma off spot so entry probability lands inside the chain's (unreadable) admission band, instead of the fixed strike that always aborts on a 20-60s market.
@@ -177,5 +177,32 @@ describe('restrikeCloser (admission fallback)', () => {
       cur = next;
     }
     expect(cur.strike1e9! - SPOT).toBeGreaterThanOrEqual(ADMISSION_TICK);
+  });
+});
+
+// The raised ceiling is ADMIN-only, so the guard is worth a test: a plain user asking for an admin-sized
+// stake must be rejected by the same parse the play endpoints run, not merely hidden in the UI.
+describe('stake ceiling by role', () => {
+  const asUser = (roles: string[]) => maxStakeFor({ specialRoles: roles });
+
+  it('caps a normal user at MAX_STAKE and an admin at MAX_STAKE_ADMIN', () => {
+    expect(asUser([])).toBe(MAX_STAKE);
+    expect(asUser(['KOL'])).toBe(MAX_STAKE);
+    expect(asUser(['ADMIN'])).toBe(MAX_STAKE_ADMIN);
+    expect(MAX_STAKE_ADMIN).toBeGreaterThan(MAX_STAKE);
+  });
+
+  it('rejects an over-cap stake for a normal user and accepts it for an admin', () => {
+    expect(() => parseStake(MAX_STAKE_ADMIN, asUser([]))).toThrow(`Maximum play amount is $${MAX_STAKE}`);
+    expect(parseStake(MAX_STAKE_ADMIN, asUser(['ADMIN']))).toBe(BigInt(MAX_STAKE_ADMIN) * 1_000_000n);
+  });
+
+  it('still enforces the floor and the ceiling for an admin', () => {
+    expect(() => parseStake(MIN_STAKE / 2, asUser(['ADMIN']))).toThrow('Minimum play amount');
+    expect(() => parseStake(MAX_STAKE_ADMIN + 1, asUser(['ADMIN']))).toThrow('Maximum play amount');
+  });
+
+  it('defaults to the public cap when no max is passed', () => {
+    expect(() => parseStake(MAX_STAKE + 1)).toThrow(`Maximum play amount is $${MAX_STAKE}`);
   });
 });

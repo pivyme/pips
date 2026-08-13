@@ -12,6 +12,7 @@ import { setHapticsEnabled } from '@/lib/haptics'
 import { setSoundEnabled } from '@/lib/sound'
 import { emitChipGrant } from '@/lib/chipGrantBus'
 import { readWalletBalances } from '@/lib/sui/predict'
+import { setAdminStakes } from '@/lib/sui/config'
 import { clearRef, readRef } from '@/lib/referral'
 import { track } from '@/lib/track'
 
@@ -120,17 +121,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fail = useCallback((e: unknown) => move('error', toAuthError(e)), [move])
 
+  // Every user write goes through here: the bet ladder's top rungs are ADMIN-only, so it has to follow
+  // whoever is signed in, set synchronously with the state so the same render reads the right ladder.
+  const applyUser = useCallback((u: UserDTO | null) => {
+    setAdminStakes(!!u?.specialRoles?.includes('ADMIN'))
+    setUser(u)
+  }, [])
+
   const apply = useCallback((token: string, u: UserDTO) => {
     saveToken(token)
     setAuthToken(token)
-    setUser(u)
+    applyUser(u)
     move('authed')
     // Carries the same anonId the pre-auth events used, which is what stitches the door funnel to a user.
     track('door.auth_ok')
     // The backend only attributes a stashed referral on account creation, so clearing it unconditionally
     // is safe: real attribution already landed, a no-op resolve just leaves a stale code around.
     clearRef()
-  }, [move])
+  }, [applyUser, move])
 
   const devLogin = useCallback(async () => {
     const { token, user: u, grant } = await api.authDev()
@@ -151,9 +159,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
     clearStoredSession()
-    setUser(null)
+    applyUser(null)
     move('anon')
-  }, [move])
+  }, [applyUser, move])
 
   // Self-heal a re-armed session: ask the backend to re-provision (new PredictManager + chips) behind a
   // brief overlay. Never changes status or signs out; if it can't heal yet, stay signed in and back off.
@@ -164,7 +172,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     track('friction.session_heal')
     try {
       const { user: u } = await api.authHeal()
-      setUser(u) // adopt the freshest user either way (new manager, or still-not-ready)
+      applyUser(u) // adopt the freshest user either way (new manager, or still-not-ready)
       healBackoffUntil.current = managerLost(u) ? Date.now() + HEAL_BACKOFF_MS : 0
     } catch {
       // network / route missing / server error: keep the session, retry after the backoff
@@ -173,22 +181,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       recoveringRef.current = false
       setRecovering(false)
     }
-  }, [])
+  }, [applyUser])
 
   const refresh = useCallback(async () => {
     try {
       const { user: u } = await api.me()
-      setUser(u)
+      applyUser(u)
       move('authed')
       if (managerLost(u)) void recoverSession() // re-armed session: heal in the background, stay in
     } catch (e) {
       if (isSessionRejected(e)) {
         clearStoredSession()
-        setUser(null)
+        applyUser(null)
         move('anon')
       }
     }
-  }, [move, recoverSession])
+  }, [applyUser, move, recoverSession])
 
   const signIn = useCallback(async () => {
     setError(null) // a fresh attempt clears the last failure so the error sheet drops
@@ -327,7 +335,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setAuthToken(token)
         try {
           const { user: u } = await api.me()
-          setUser(u)
+          applyUser(u)
           move('authed') // always show the app; never park a returning user on a loading veil
           if (managerLost(u)) void recoverSession() // re-armed since last visit: heal in the background
           return
@@ -351,7 +359,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // privy: the bridge resolves status from the live Privy session; stay 'loading' until it does.
     })()
-  }, [apply, devLogin, move, fail, recoverSession])
+  }, [apply, applyUser, devLogin, move, fail, recoverSession])
 
   // Stable so the bridge's effects don't re-run every render (was bouncing a fresh wallet login back to the door).
   const registerPrivy = useCallback((c: { signIn: () => Promise<void>; signOut: () => Promise<void> } | null) => {

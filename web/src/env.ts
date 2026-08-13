@@ -33,7 +33,23 @@ export const env = createEnv({
     // the working Google + embedded-Sui login is untouched; flip to 'true' on the mainnet deploy. The actual
     // execute gate is server-owned (/deposit/options.executeEnabled), this only enables the connect UI.
     VITE_BRIDGE_EXECUTE: z.enum(['true', 'false']).default('false'),
-    VITE_SUI_FULLNODE_URL: z.string().url().optional(),
+    // Public fullnode only. Accepts the backend's comma-separated shape so one value can be shared, but the
+    // browser reads the FIRST entry: a keyed endpoint pasted here ships its key in the bundle.
+    VITE_SUI_FULLNODE_URL: z
+      .string()
+      .refine(
+        (v) =>
+          v.split(',').every((u) => {
+            try {
+              new URL(u.trim())
+              return true
+            } catch {
+              return false
+            }
+          }),
+        'must be a url, or a comma-separated list of urls',
+      )
+      .optional(),
     // Public Predict ids the client needs for reads, mirrored from the backend's committed testnet deploy record; optional so the app can boot pre-deploy.
     VITE_PREDICT_PACKAGE_ID: z.string().optional(),
     VITE_PREDICT_OBJECT_ID: z.string().optional(),

@@ -116,9 +116,9 @@ describe('alertTransitions', () => {
 });
 
 describe('the detector catalog', () => {
-  it('has all twelve, each with a unique key and a real runbook', () => {
-    expect(DETECTORS).toHaveLength(12);
-    expect(new Set(DETECTORS.map((d) => d.key)).size).toBe(12);
+  it('has all thirteen, each with a unique key and a real runbook', () => {
+    expect(DETECTORS).toHaveLength(13);
+    expect(new Set(DETECTORS.map((d) => d.key)).size).toBe(13);
     for (const d of DETECTORS) {
       // An alert without a one-line "what to do" is a notification, not a tool.
       expect(d.runbook.length).toBeGreaterThan(30);

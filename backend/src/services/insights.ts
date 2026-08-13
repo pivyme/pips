@@ -12,6 +12,7 @@ import { routeSamples } from '../lib/route-latency.ts';
 import { allWorkerHealth, isWorkerStale } from '../lib/worker-registry.ts';
 import { sleep } from '../utils/miscUtils.ts';
 import { tzAddDays, tzDayStart, tzIsoDay } from '../utils/timeUtils.ts';
+import { FULLNODE_ENDPOINTS, fullnodeRetryCount } from '../lib/sui/client.ts';
 import { DUSDC_TYPE } from '../lib/sui/config.ts';
 import { getDusdcBalance } from '../lib/sui/dusdc.ts';
 import { getSuiBalanceRaw } from '../lib/sui/gas.ts';
@@ -741,6 +742,11 @@ const MIN = 60_000;
 // persists. One counter, reset the moment a market appears.
 let marketsEmptySince: number | null = null;
 
+// Retry counter is cumulative, so the detector reads the DELTA since its last tick. A restart resets both
+// halves together, which under-reports exactly one tick and then self-corrects: a rate, not a clock (L-029).
+let retriesSeen = 0;
+let retriesSeenAt = Date.now();
+
 // A process restart must not rewind that clock: an in-memory-only counter reads green through a real
 // outage, because a redeploy or a crash loop keeps starting the count over. The persisted snapshot is
 // already written every tick, so the first empty tick after a restart resumes from what it recorded.
@@ -975,6 +981,25 @@ export const DETECTORS: Detector[] = [
       }
       const since = await marketsEmptyStart(now);
       return { value: round1((now - since) / MIN), detail: 'no tradeable market right now' };
+    },
+  },
+  {
+    key: 'fullnode_backpressure',
+    title: 'Fullnode retries',
+    warn: 20,
+    critical: 60,
+    windowMs: 0,
+    unit: '/min',
+    runbook:
+      'The fullnode is 429ing us and the transport is retrying (client.ts). The public node allows ~100 req/30s per IP and is shared by every app on this host. Point SUI_FULLNODE_URL at a dedicated gRPC endpoint, or add a second one to the comma-separated list.',
+    read: async (now) => {
+      const count = fullnodeRetryCount();
+      const elapsed = Math.max(now - retriesSeenAt, 1);
+      const perMin = ((count - retriesSeen) / elapsed) * MIN;
+      retriesSeen = count;
+      retriesSeenAt = now;
+      const where = FULLNODE_ENDPOINTS.length > 1 ? `${FULLNODE_ENDPOINTS.length} endpoints` : 'single endpoint, no fallback';
+      return { value: round1(Math.max(perMin, 0)), detail: `${count} since boot, ${where}` };
     },
   },
 ];

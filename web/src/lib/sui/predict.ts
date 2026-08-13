@@ -24,7 +24,10 @@ const DEFAULT_FULLNODE: Record<string, string> = {
 let client: SuiGrpcClient | null = null
 function suiClient(): SuiGrpcClient {
   if (!client) {
-    const baseUrl = env.VITE_SUI_FULLNODE_URL || DEFAULT_FULLNODE[NETWORK] || DEFAULT_FULLNODE.testnet
+    // First entry only: the var may carry the backend's comma-separated list, and these two reads are not
+    // worth a failover layer in the browser.
+    const configured = (env.VITE_SUI_FULLNODE_URL || '').split(',')[0].trim()
+    const baseUrl = configured || DEFAULT_FULLNODE[NETWORK] || DEFAULT_FULLNODE.testnet
     client = new SuiGrpcClient({ network: NETWORK, baseUrl })
   }
   return client

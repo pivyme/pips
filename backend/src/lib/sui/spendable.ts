@@ -37,3 +37,18 @@ export function resolveSpendable(
   const failure = wallet.status === 'rejected' ? wallet.reason : manager.status === 'rejected' ? manager.reason : null;
   throw failure ?? new Error('balance read failed');
 }
+
+// Same policy, but never throws: for sign-in, where identity is in the JWT and the balance is decoration the
+// client's next /me corrects. A throttled fullnode used to 500 the whole login. Falls back past the
+// freshness bound to the last known total, then to 0, which is a new account's real balance anyway.
+export function resolveSpendableSoft(
+  address: string,
+  wallet: PromiseSettledResult<bigint>,
+  manager: PromiseSettledResult<bigint>,
+): bigint {
+  try {
+    return resolveSpendable(address, wallet, manager);
+  } catch {
+    return lastSpendable.get(address)?.raw ?? 0n;
+  }
+}

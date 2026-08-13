@@ -12,7 +12,8 @@ import { transferDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { treasuryAddress, TREASURY_ENABLED } from '../lib/sui/signer.ts';
 import { generateCustodialWallet } from '../lib/sui/custodial.ts';
 import { readUserChipsRaw } from '../lib/sui/predict-real.ts';
-import { resolveSpendable } from '../lib/sui/spendable.ts';
+import { resolveSpendable, resolveSpendableSoft } from '../lib/sui/spendable.ts';
+import { isChainUnavailableError } from '../lib/sui/client.ts';
 import { fromDusdcRaw, toDusdcRaw, DUSDC_TYPE } from '../lib/sui/config.ts';
 import { recordWalletTx } from '../lib/sui/wallet-ledger.ts';
 import { alert } from '../lib/alert.ts';
@@ -186,11 +187,17 @@ export async function provisionUser(user: User): Promise<ProvisionResult> {
 // succeed and the user picks up chips on a later attempt once it's refilled. `cooldownMs` lets the login path
 // stay conservative (6h) while the explicit "I'm out of chips" grant uses a short window.
 export async function grantStarterChips(user: User, cooldownMs: number, threshold: number): Promise<ProvisionResult> {
-  const [wallet, manager] = await Promise.all([
-    getDusdcBalanceRaw(user.address).catch(() => 0n),
-    readUserChipsRaw(user.address, user.predictWrapperId).catch(() => 0n),
+  const [wallet, manager] = await Promise.allSettled([
+    getDusdcBalanceRaw(user.address),
+    readUserChipsRaw(user.address, user.predictWrapperId),
   ]);
-  const chips = fromDusdcRaw(wallet + manager);
+  // A read that failed is not a zero balance. Treating it as one re-funds a user who already has chips, out
+  // of a treasury that cannot be minted (L-008), and the fullnode rate-limits us often enough to matter.
+  // A wrapper that is genuinely gone is still a real 0.
+  const walletRaw = wallet.status === 'fulfilled' ? wallet.value : null;
+  const managerRaw = manager.status === 'fulfilled' ? manager.value : isChainUnavailableError(manager.reason) ? 0n : null;
+  if (walletRaw === null || managerRaw === null) return { user, granted: null };
+  const chips = fromDusdcRaw(walletRaw + managerRaw);
   const cooldownOk = !user.lastFundedAt || Date.now() - user.lastFundedAt.getTime() >= cooldownMs;
   if (chips >= threshold || !cooldownOk || !(await treasuryAboveFloor())) return { user, granted: null };
 
@@ -249,18 +256,20 @@ export function userIdFromToken(token: string): string | null {
 
 // Wallet DUSDC plus the wrapper's internal chips. The failure policy (fail soft to the last known total
 // rather than 500 /me on a rate-limited read) lives in resolveSpendable.
-async function spendableRaw(user: User): Promise<bigint> {
+async function spendableRaw(user: User, soft: boolean): Promise<bigint> {
   const [wallet, manager] = await Promise.allSettled([
     getDusdcBalanceRaw(user.address),
     readUserChipsRaw(user.address, user.predictWrapperId),
   ]);
-  return resolveSpendable(user.address, wallet, manager);
+  return soft ? resolveSpendableSoft(user.address, wallet, manager) : resolveSpendable(user.address, wallet, manager);
 }
 
 // Fresh public view of a user, including the live on-chain DUSDC balance. Chips live in the wallet
 // (onboarding mint) and migrate into the PredictManager as plays run, so spendable balance is the sum of both.
-export async function toUserDTO(user: User): Promise<UserDTO> {
-  const spendable = await spendableRaw(user);
+// `soft` is for the sign-in routes: a throttled balance read must not cost the user their login (it 500'd
+// /auth/privy/verify as AUTH_VERIFY_FAILED against a healthy account). Everything else keeps the strict policy.
+export async function toUserDTO(user: User, opts: { soft?: boolean } = {}): Promise<UserDTO> {
+  const spendable = await spendableRaw(user, opts.soft === true);
   return {
     id: user.id,
     address: user.address,

@@ -89,7 +89,7 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   │   └── exampleRoutes.ts # starter sample
 │   ├── services/            # Business logic, called by routes
 │   │   └── auth, games (+ games-base / games-real split), plays, stats, achievements,
-│   │       rng, wallet, leaderboard, referral, insights (dashboard reports + the 12 ops
+│   │       rng, wallet, leaderboard, referral, insights (dashboard reports + the 13 ops
 │   │       detectors), retention (age-based prune + the destructive confirm gate)
 │   │       (+ colocated *.test.ts)
 │   ├── workers/             # node-cron jobs (isRunning guard), tracked in worker-registry
@@ -138,7 +138,7 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 import { JWT_SECRET, APP_PORT, AUTH_MODE, SUI_NETWORK } from '../config/main-config.ts';
 ```
 
-It covers, grouped: **core** (`APP_PORT`, `NODE_ENV`, `IS_DEV`/`IS_PROD`, `DATABASE_URL`, `JWT_SECRET`, `ALLOWED_ORIGIN`), **auth** (`AUTH_MODE` dev|privy, the `PRIVY_*` keys, `TESTING_WALLET_PK`), **Sui** (`SUI_NETWORK`, `SUI_FULLNODE_URL`, `PYTH_HERMES_URL`), **economy** (`STARTING_BALANCE`, `MIN_STAKE`/`MAX_STAKE`, `GAME_DURATIONS`), **gas** (`PLAY_GAS_BUDGET`, `GAS_SPONSORSHIP_WALLET_PK` + the `SPONSOR_*` knobs), **workers** (`SETTLE_CRON` / `MARKET_SYNC_CRON`, the `LUCKY_ROUND_MS` / `RANGE_*_ORACLE_LIFE_MS` round durations), **real-mode sizing** (the `REAL_*` strike knobs + the sponsor safety layer), and **hardening** (`PIPS_SHUTDOWN_TIMEOUT_MS` graceful-drain budget default 8000ms, `PIPS_DB_POOL_MAX` pg pool ceiling default 10, `PIPS_ALERT_WEBHOOK_URL` opt-in Discord/Slack alerts empty default, the `PIPS_RATE_LIMIT_*` HTTP caps). Add a new tunable here, not inline.
+It covers, grouped: **core** (`APP_PORT`, `NODE_ENV`, `IS_DEV`/`IS_PROD`, `DATABASE_URL`, `JWT_SECRET`, `ALLOWED_ORIGIN`), **auth** (`AUTH_MODE` dev|privy, the `PRIVY_*` keys, `TESTING_WALLET_PK`), **Sui** (`SUI_NETWORK`, `SUI_FULLNODE_URL` + `SUI_GRAPHQL_URL`, both comma-separated endpoint lists with public first, `PYTH_HERMES_URL`), **economy** (`STARTING_BALANCE`, `MIN_STAKE`/`MAX_STAKE`, `GAME_DURATIONS`), **gas** (`PLAY_GAS_BUDGET`, `GAS_SPONSORSHIP_WALLET_PK` + the `SPONSOR_*` knobs), **workers** (`SETTLE_CRON` / `MARKET_SYNC_CRON`, the `LUCKY_ROUND_MS` / `RANGE_*_ORACLE_LIFE_MS` round durations), **real-mode sizing** (the `REAL_*` strike knobs + the sponsor safety layer), and **hardening** (`PIPS_SHUTDOWN_TIMEOUT_MS` graceful-drain budget default 8000ms, `PIPS_DB_POOL_MAX` pg pool ceiling default 10, `PIPS_ALERT_WEBHOOK_URL` opt-in Discord/Slack alerts empty default, the `PIPS_RATE_LIMIT_*` HTTP caps). Add a new tunable here, not inline.
 
 ---
 

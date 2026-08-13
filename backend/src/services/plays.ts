@@ -35,6 +35,7 @@ import {
   resolveReal,
   restrikeCloser,
   parseStake,
+  maxStakeFor,
   PlayError,
   type PlayErrorCode,
   type ResolvedReal,
@@ -121,7 +122,7 @@ export async function createPlay(user: User, input: CreatePlayInput): Promise<Cr
   recordPlay(user.id); // reserve the cooldown slot so a double-tap can't slip two plays past the gate
 
   try {
-    const stakeRaw = parseStake(input.stake);
+    const stakeRaw = parseStake(input.stake, maxStakeFor(user));
     // Fast affordability gate: reject only when a fresh cached total is confidently short, so the hot path skips the ~1.5s balance devInspect.
     // Anything else proceeds, the background mint reads the real balance and is the source of truth.
     const cached = balCache.get(user.id);

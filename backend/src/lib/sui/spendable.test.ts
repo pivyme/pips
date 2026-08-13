@@ -11,7 +11,7 @@
 
 import { describe, expect, it, spyOn } from 'bun:test';
 
-import { resolveSpendable } from './spendable.ts';
+import { resolveSpendable, resolveSpendableSoft } from './spendable.ts';
 
 const ok = (raw: bigint): PromiseSettledResult<bigint> => ({ status: 'fulfilled', value: raw });
 const bad = (message: string): PromiseSettledResult<bigint> => ({ status: 'rejected', reason: new Error(message) });
@@ -57,6 +57,29 @@ describe('resolveSpendable', () => {
     const clock = spyOn(Date, 'now').mockReturnValue(Date.now() + 120_001);
     try {
       expect(() => resolveSpendable('0xstale', bad(RATE_LIMITED), ok(0n))).toThrow(RATE_LIMITED);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
+
+// The sign-in variant. A 429 on the balance read used to answer AUTH_VERIFY_FAILED and lock the user out of
+// an account that was fine, so this path has to survive every failure the strict one throws on.
+describe('resolveSpendableSoft', () => {
+  it('reads the same as the strict policy when the chain answers', () => {
+    expect(resolveSpendableSoft('0xsoft-ok', ok(3_000_000n), ok(500_000n))).toBe(3_500_000n);
+  });
+
+  it('answers 0 rather than throw for an account it has never read', () => {
+    expect(resolveSpendableSoft('0xsoft-cold', bad(RATE_LIMITED), bad(RATE_LIMITED))).toBe(0n);
+  });
+
+  it('serves the last known total even once it is past the freshness bound', () => {
+    expect(resolveSpendableSoft('0xsoft-stale', ok(8_000_000n), ok(0n))).toBe(8_000_000n);
+
+    const clock = spyOn(Date, 'now').mockReturnValue(Date.now() + 120_001);
+    try {
+      expect(resolveSpendableSoft('0xsoft-stale', bad(RATE_LIMITED), ok(0n))).toBe(8_000_000n);
     } finally {
       clock.mockRestore();
     }
