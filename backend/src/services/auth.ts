@@ -12,7 +12,7 @@ import { transferDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { treasuryAddress, TREASURY_ENABLED } from '../lib/sui/signer.ts';
 import { generateCustodialWallet } from '../lib/sui/custodial.ts';
 import { readUserChipsRaw } from '../lib/sui/predict-real.ts';
-import { resolveSpendable, resolveSpendableSoft } from '../lib/sui/spendable.ts';
+import { resolveSpendableSoft } from '../lib/sui/spendable.ts';
 import { isChainUnavailableError } from '../lib/sui/client.ts';
 import { fromDusdcRaw, toDusdcRaw, DUSDC_TYPE } from '../lib/sui/config.ts';
 import { recordWalletTx } from '../lib/sui/wallet-ledger.ts';
@@ -254,22 +254,24 @@ export function userIdFromToken(token: string): string | null {
   }
 }
 
-// Wallet DUSDC plus the wrapper's internal chips. The failure policy (fail soft to the last known total
-// rather than 500 /me on a rate-limited read) lives in resolveSpendable.
-async function spendableRaw(user: User, soft: boolean): Promise<bigint> {
+// Wallet DUSDC plus the wrapper's internal chips. The failure policy lives in spendable.ts.
+async function spendableRaw(user: User): Promise<bigint> {
   const [wallet, manager] = await Promise.allSettled([
     getDusdcBalanceRaw(user.address),
     readUserChipsRaw(user.address, user.predictWrapperId),
   ]);
-  return soft ? resolveSpendableSoft(user.address, wallet, manager) : resolveSpendable(user.address, wallet, manager);
+  return resolveSpendableSoft(user.address, wallet, manager);
 }
 
 // Fresh public view of a user, including the live on-chain DUSDC balance. Chips live in the wallet
 // (onboarding mint) and migrate into the PredictManager as plays run, so spendable balance is the sum of both.
-// `soft` is for the sign-in routes: a throttled balance read must not cost the user their login (it 500'd
-// /auth/privy/verify as AUTH_VERIFY_FAILED against a healthy account). Everything else keeps the strict policy.
-export async function toUserDTO(user: User, opts: { soft?: boolean } = {}): Promise<UserDTO> {
-  const spendable = await spendableRaw(user, opts.soft === true);
+//
+// The balance NEVER throws here. Every caller is a display path (sign-in, /me, a profile write, a money
+// action's echo), and the play path reads its own balance, so a throttled fullnode costing someone their
+// session was pure downside: it 500'd /auth/me as "Could not load profile" 6.2k times against healthy
+// accounts. A stale or 0 number self-corrects on the next poll.
+export async function toUserDTO(user: User): Promise<UserDTO> {
+  const spendable = await spendableRaw(user);
   return {
     id: user.id,
     address: user.address,

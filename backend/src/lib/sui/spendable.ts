@@ -38,9 +38,10 @@ export function resolveSpendable(
   throw failure ?? new Error('balance read failed');
 }
 
-// Same policy, but never throws: for sign-in, where identity is in the JWT and the balance is decoration the
-// client's next /me corrects. A throttled fullnode used to 500 the whole login. Falls back past the
-// freshness bound to the last known total, then to 0, which is a new account's real balance anyway.
+// Same policy, but never throws. This is what every user DTO uses: identity comes from the JWT and the
+// balance is decoration the client's next poll corrects, so a throttled fullnode must not cost someone
+// their session. Falls back past the freshness bound to the last known total, then to 0, which is a new
+// account's real balance anyway.
 export function resolveSpendableSoft(
   address: string,
   wallet: PromiseSettledResult<bigint>,

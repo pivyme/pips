@@ -37,7 +37,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     const body = (request.body ?? {}) as { referralCode?: string; tz?: number };
     try {
       const { user, granted } = await ensureUser({ address: operatorAddress, provider: 'dev', referralCode: body.referralCode, tzOffsetMin: tzOf(body.tz) });
-      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user, { soft: true }), grant: granted ?? undefined } });
+      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user), grant: granted ?? undefined } });
     } catch (error) {
       return failSignIn(reply, error, 'AUTH_DEV_FAILED', 'Could not sign in');
     }
@@ -75,7 +75,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
         referralCode: body.referralCode,
         tzOffsetMin: tzOf(body.tz),
       });
-      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user, { soft: true }), grant: granted ?? undefined } });
+      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user), grant: granted ?? undefined } });
     } catch (error) {
       return failSignIn(reply, error, 'AUTH_VERIFY_FAILED', 'Could not finish sign-in');
     }
@@ -106,7 +106,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
 
     try {
       const { user, granted } = await ensureWalletUser(address, body.referralCode, tzOf(body.tz));
-      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user, { soft: true }), grant: granted ?? undefined } });
+      return reply.code(200).send({ success: true, error: null, data: { token: mintToken(user), user: await toUserDTO(user), grant: granted ?? undefined } });
     } catch (error) {
       return failSignIn(reply, error, 'AUTH_VERIFY_FAILED', 'Could not finish sign-in');
     }
@@ -128,7 +128,7 @@ export const authRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   app.post('/heal', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { user: healed, granted } = await provisionUser(request.user!);
-      return reply.code(200).send({ success: true, error: null, data: { user: await toUserDTO(healed, { soft: true }), grant: granted ?? undefined } });
+      return reply.code(200).send({ success: true, error: null, data: { user: await toUserDTO(healed), grant: granted ?? undefined } });
     } catch (error) {
       return failSignIn(reply, error, 'AUTH_HEAL_FAILED', 'Could not finish setting up your account');
     }
