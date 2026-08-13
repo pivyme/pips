@@ -69,17 +69,15 @@ export const AUTH_MODE: AuthMode = process.env.PIPS_AUTH_MODE === 'privy' ? 'pri
 // Sui network. testnet + mainnet run Mysten's OFFICIAL DeepBook Predict (L-005). Mainnet is the clean
 // re-point of the testnet path: same code, its own deploy record.
 export const SUI_NETWORK: string = process.env.SUI_NETWORK || 'testnet';
+// Fullnode gRPC endpoints (reads + writes) and GraphQL endpoints (historical queries gRPC v2 can't serve),
+// both comma-separated and primary first. Public node first, keyed fallbacks behind it: sui/client.ts
+// parses the lists, drops any wrong-network url, and fails over only while the one in front is throttled.
+// Empty = the network's public endpoint.
 export const SUI_FULLNODE_URL: string = process.env.SUI_FULLNODE_URL || '';
+export const SUI_GRAPHQL_URL: string = process.env.SUI_GRAPHQL_URL || '';
 // PIPS's optional, stateless on-chain attribution package. Empty keeps mint PTBs byte-for-byte
 // unchanged, so deployment and runtime rollout are deliberately separate decisions.
 export const PIPS_LOGGER_PACKAGE_ID: string = process.env.PIPS_LOGGER_PACKAGE_ID?.trim() ?? '';
-// GraphQL endpoint for historical queries (events / tx-history) gRPC v2 can't serve. Override with SUI_GRAPHQL_URL.
-const DEFAULT_GRAPHQL_URL: Record<string, string> = {
-  mainnet: 'https://graphql.mainnet.sui.io/graphql',
-  testnet: 'https://graphql.testnet.sui.io/graphql',
-};
-export const SUI_GRAPHQL_URL: string =
-  process.env.SUI_GRAPHQL_URL || DEFAULT_GRAPHQL_URL[SUI_NETWORK] || DEFAULT_GRAPHQL_URL.testnet;
 export const TESTING_WALLET_PK: string = process.env.TESTING_WALLET_PK || '';
 export const PYTH_HERMES_URL: string = process.env.PYTH_HERMES_URL || 'https://hermes.pyth.network';
 
@@ -239,6 +237,10 @@ export const DEMO_LUCKY_DURATION: number = Number(process.env.PIPS_DEMO_LUCKY_DU
 // MAX 25 gives the wheel its curated 1.5/5/10/25 rungs and sits far under market backing (~$175k per 1m market).
 export const MIN_STAKE: number = Number(process.env.PIPS_MIN_STAKE) || 1.5;
 export const MAX_STAKE: number = Number(process.env.PIPS_MAX_STAKE) || 25;
+
+// ADMIN-only ceiling (User.specialRoles ADMIN, granted by scripts/grant-role.ts only). Lets us size-test the
+// treasury and demo real money without opening the cap to players; enforced per play in parseStake.
+export const MAX_STAKE_ADMIN: number = Number(process.env.PIPS_MAX_STAKE_ADMIN) || 1000;
 
 // Login re-fund (D2/D3). A returning user whose spendable chips fall below THRESHOLD gets topped back up to
 // STARTING_BALANCE so they can keep playing. Play money, but the treasury is finite (L-008), so the refill is
