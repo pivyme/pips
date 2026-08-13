@@ -123,9 +123,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Every user write goes through here: the bet ladder's top rungs are ADMIN-only, so it has to follow
   // whoever is signed in, set synchronously with the state so the same render reads the right ladder.
+  //
+  // A stale balance is the server saying it never reached the chain (throttled fullnode), so we keep the
+  // figure already on screen. Adopting it wrote $0 over funded accounts, which reads as "my money is gone".
   const applyUser = useCallback((u: UserDTO | null) => {
     setAdminStakes(!!u?.specialRoles?.includes('ADMIN'))
-    setUser(u)
+    setUser((prev) => (u && u.balanceStale && prev && prev.id === u.id ? { ...u, balance: prev.balance } : u))
   }, [])
 
   const apply = useCallback((token: string, u: UserDTO) => {

@@ -18,6 +18,7 @@ export interface UserDTO {
   customAvatar: boolean; // a custom upload is set (drives the remove-X in the profile editor)
   specialRoles: string[]; // the user's OWN roles (ADMIN gates the dashboard entry point); never another user's
   balance: string; // available DUSDC (wallet + manager cash), 2dp display, e.g. "983.50"
+  balanceStale?: boolean; // the balance read didn't reach the chain; keep the last one the client showed
   managerReady: boolean; // PredictManager exists
   settings: { sound: boolean; haptics: boolean; reducedMotion: boolean; confirmTrades: boolean; theme: string; themeConfig: unknown | null };
 }

@@ -12,7 +12,7 @@ import { transferDusdc, getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
 import { treasuryAddress, TREASURY_ENABLED } from '../lib/sui/signer.ts';
 import { generateCustodialWallet } from '../lib/sui/custodial.ts';
 import { readUserChipsRaw } from '../lib/sui/predict-real.ts';
-import { resolveSpendableSoft } from '../lib/sui/spendable.ts';
+import { readSpendable } from '../lib/sui/spendable.ts';
 import { isChainUnavailableError } from '../lib/sui/client.ts';
 import { fromDusdcRaw, toDusdcRaw, DUSDC_TYPE } from '../lib/sui/config.ts';
 import { recordWalletTx } from '../lib/sui/wallet-ledger.ts';
@@ -254,24 +254,19 @@ export function userIdFromToken(token: string): string | null {
   }
 }
 
-// Wallet DUSDC plus the wrapper's internal chips. The failure policy lives in spendable.ts.
-async function spendableRaw(user: User): Promise<bigint> {
-  const [wallet, manager] = await Promise.allSettled([
-    getDusdcBalanceRaw(user.address),
-    readUserChipsRaw(user.address, user.predictWrapperId),
-  ]);
-  return resolveSpendableSoft(user.address, wallet, manager);
-}
-
-// Fresh public view of a user, including the live on-chain DUSDC balance. Chips live in the wallet
-// (onboarding mint) and migrate into the PredictManager as plays run, so spendable balance is the sum of both.
+// Fresh public view of a user, including the on-chain DUSDC balance. Chips live in the wallet (onboarding
+// mint) and migrate into the PredictManager as plays run, so spendable balance is the sum of both.
 //
 // The balance NEVER throws here. Every caller is a display path (sign-in, /me, a profile write, a money
 // action's echo), and the play path reads its own balance, so a throttled fullnode costing someone their
 // session was pure downside: it 500'd /auth/me as "Could not load profile" 6.2k times against healthy
-// accounts. A stale or 0 number self-corrects on the next poll.
+// accounts. Caching + the stale flag live in spendable.ts.
 export async function toUserDTO(user: User): Promise<UserDTO> {
-  const spendable = await spendableRaw(user);
+  const spendable = await readSpendable(
+    user.id,
+    () => getDusdcBalanceRaw(user.address),
+    () => readUserChipsRaw(user.address, user.predictWrapperId),
+  );
   return {
     id: user.id,
     address: user.address,
@@ -285,7 +280,10 @@ export async function toUserDTO(user: User): Promise<UserDTO> {
     customAvatar: user.avatarUrl != null,
     // Own roles only. Other users' roles are filtered to PUBLIC_ROLES before they leave the server.
     specialRoles: user.specialRoles,
-    balance: fromDusdcRaw(spendable).toFixed(2),
+    balance: fromDusdcRaw(spendable.raw).toFixed(2),
+    // Set when the read didn't reach the chain: the client keeps the balance it already has rather than
+    // painting a $0 nobody's money actually went to.
+    balanceStale: spendable.stale || undefined,
     // The wrapper is created lazily + self-heals on the first play, so the account is always ready to play.
     managerReady: true,
     settings: {

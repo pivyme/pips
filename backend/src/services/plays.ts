@@ -9,6 +9,7 @@ import { publishPlay } from '../lib/play-bus.ts';
 import { SETTLE_MAX_REDEEMS_PER_TICK, SETTLE_MAX_PLAYS_PER_TICK, LIVE_MARK_TTL_MS, SUI_NETWORK } from '../config/main-config.ts';
 import { fromDusdcRaw, multiplier as multiplierOf } from '../lib/sui/config.ts';
 import { getDusdcBalanceRaw } from '../lib/sui/dusdc.ts';
+import { invalidateSpendable } from '../lib/sui/spendable.ts';
 import { getMarket } from '../lib/sui/markets.ts';
 import {
   buildRedeemSettled,
@@ -68,8 +69,11 @@ const seedBalCache = (userId: string, total: bigint): void => {
   balCache.set(userId, { total, at: Date.now() });
   if (balCache.size > 512) for (const [k, v] of balCache) if (Date.now() - v.at >= BAL_TTL_MS) balCache.delete(k);
 };
+// Also drops the DTO's read-through total, so the balance the user sees after a play is the new one, not
+// the one their last poll cached.
 export const invalidateBal = (userId: string): void => {
   balCache.delete(userId);
+  invalidateSpendable(userId);
 };
 
 // === Create ===

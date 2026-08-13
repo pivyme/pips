@@ -27,6 +27,9 @@ export interface UserDTO {
   avatarUrl: string | null // custom uploaded avatar, or null (the client renders the PIPS identicon)
   customAvatar: boolean // a custom upload is set (drives the remove-X in the profile editor)
   balance: string
+  // The server couldn't reach the chain for this one, so it's a last-known figure (or nothing at all).
+  // auth.tsx keeps the balance already on screen instead of adopting it.
+  balanceStale?: boolean
   managerReady: boolean
   // The caller's OWN roles, never another user's. ADMIN gates the dashboard entry point in the menu.
   specialRoles?: string[]

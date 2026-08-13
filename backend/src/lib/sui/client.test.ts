@@ -64,4 +64,30 @@ describe('createEndpointRing', () => {
     expect(ring.count()).toBe(2);
     expect(ring.pick()).toBe(0);
   });
+
+  // The 429 is a per-IP window, so re-sending inside it is a doomed round trip that also deepens the
+  // throttle. With one endpoint configured that turned a busy minute into a self-inflicted outage.
+  test('next() refuses to re-issue to an endpoint that already answered 429 on this call', () => {
+    const ring = createEndpointRing(['https://only.example'], 'test');
+    const spent = new Set<number>();
+    expect(ring.next(spent)).toBe(0);
+    spent.add(0);
+    expect(ring.next(spent)).toBeNull();
+  });
+
+  test('next() fails over to the healthy endpoint, then gives up', () => {
+    const ring = createEndpointRing(list, 'test');
+    const spent = new Set<number>([0]);
+    expect(ring.next(spent)).toBe(1);
+    spent.add(1);
+    expect(ring.next(spent)).toBe(2);
+    spent.add(2);
+    expect(ring.next(spent)).toBeNull();
+  });
+
+  test('next() still probes a cooling endpoint rather than stalling every read', () => {
+    const ring = createEndpointRing(['https://only.example'], 'test');
+    ring.cool(0, 429);
+    expect(ring.next(new Set())).toBe(0);
+  });
 });

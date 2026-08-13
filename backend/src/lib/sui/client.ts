@@ -66,7 +66,7 @@ const WRITE_SERVICE = 'TransactionExecutionService';
 const COOLDOWN_MS = 20_000;
 
 /** Endpoints, primary first, with the throttled ones parked. Shared shape for both transports. */
-export function createEndpointRing(list: string[], label: string) {
+export function createEndpointRing(list: string[], label: string, detail?: () => string) {
   const cooling = new Array<number>(list.length).fill(0);
   let retries = 0;
   let lastLogAt = 0;
@@ -78,19 +78,54 @@ export function createEndpointRing(list: string[], label: string) {
       for (let i = 0; i < list.length; i++) if (cooling[i] <= now) return i;
       return 0;
     },
+    /**
+     * Next endpoint to try, skipping any that already answered 429 in this call: the limit is a per-IP
+     * window, so re-issuing to the same node inside it is a doomed round trip that also deepens the
+     * throttle. Null means every endpoint is spent and the caller should surface the failure now.
+     */
+    next(spent: ReadonlySet<number>): number | null {
+      const now = Date.now();
+      for (let i = 0; i < list.length; i++) if (!spent.has(i) && cooling[i] <= now) return i;
+      for (let i = 0; i < list.length; i++) if (!spent.has(i)) return i; // all cooling: probe rather than stall
+      return null;
+    },
     cool(i: number, why: number | string): void {
       cooling[i] = Date.now() + COOLDOWN_MS;
       retries++;
       if (Date.now() - lastLogAt < 60_000) return; // one line a minute, not one per throttled read
       lastLogAt = Date.now();
-      const next = list.length > 1 ? 'failing over' : 'retrying';
-      console.warn(`[sui] ${label} backpressure (${why}) on ${redactEndpoint(list[i])}, ${next}. ${retries} retries so far.`);
+      const next = list.length > 1 ? 'failing over' : 'no fallback configured';
+      console.warn(
+        `[sui] ${label} backpressure (${why}) on ${redactEndpoint(list[i])}, ${next}. ${retries} retries so far.${detail ? ` ${detail()}` : ''}`,
+      );
     },
     count: (): number => retries,
   };
 }
 
-const fullnodeRing = createEndpointRing(FULLNODE_ENDPOINTS, 'fullnode');
+// Where the per-IP budget actually goes, rolled every minute. Without it, tuning the call sites that
+// throttled us is guesswork: the warn line names the top three methods of the last minute.
+const callsByMethod = new Map<string, number>();
+let windowAt = Date.now();
+
+function noteCall(path: string): void {
+  const now = Date.now();
+  if (now - windowAt >= 60_000) {
+    callsByMethod.clear();
+    windowAt = now;
+  }
+  const method = path.split('/').filter(Boolean).pop() ?? path;
+  callsByMethod.set(method, (callsByMethod.get(method) ?? 0) + 1);
+}
+
+function topMethods(): string {
+  const top = [...callsByMethod.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  if (!top.length) return '';
+  const secs = Math.max(1, Math.round((Date.now() - windowAt) / 1000));
+  return `Last ${secs}s: ${top.map(([m, n]) => `${m} x${n}`).join(', ')}.`;
+}
+
+const fullnodeRing = createEndpointRing(FULLNODE_ENDPOINTS, 'fullnode', topMethods);
 const graphqlRing = createEndpointRing(GRAPHQL_ENDPOINTS, 'graphql');
 
 /** Retries so far, for the ops snapshot: a climbing number means the primary endpoint is undersized. */
@@ -111,25 +146,33 @@ async function fetchWithFailover(input: Parameters<typeof fetch>[0], init?: Requ
   // Only the grpc method path is kept, so an endpoint carrying its own key prefix still resolves.
   const path = grpcPath(url);
   const isWrite = path.includes(WRITE_SERVICE);
-  const start = fullnodeRing.pick();
+  noteCall(path);
+  // Endpoints that already 429'd on this call. A connection error is not in here: that one is worth one
+  // more shot at the same node.
+  const spent = new Set<number>();
   let lastError: unknown;
+  let lastRes: Response | undefined;
 
   for (let attempt = 0; attempt < fullnodeRing.attempts; attempt++) {
-    const idx = (start + attempt) % FULLNODE_ENDPOINTS.length;
+    const idx = fullnodeRing.next(spent);
+    if (idx == null) break; // every endpoint is throttled; hand the caller the 429 instead of piling on
     try {
       const res = await fetch(FULLNODE_ENDPOINTS[idx] + path, init);
-      if (!RETRY_STATUS.has(res.status) || attempt === fullnodeRing.attempts - 1) return res;
+      if (!RETRY_STATUS.has(res.status)) return res;
       if (isWrite && res.status !== 429) return res; // ambiguous for a write: it may already be executing
       fullnodeRing.cool(idx, res.status);
+      lastRes = res;
+      if (res.status === 429) spent.add(idx);
     } catch (e) {
       lastError = e;
-      if (isWrite || attempt === fullnodeRing.attempts - 1) throw e; // a write that may have landed is never re-sent
+      if (isWrite) throw e; // a write that may have landed is never re-sent
       fullnodeRing.cool(idx, 'connect');
     }
     // Short jittered backoff. The play path lives inside a 20-60s round and settle ticks every second, so
     // this stays well under a tick rather than being a polite-but-useless multi-second wait.
     await new Promise((r) => setTimeout(r, 120 * (attempt + 1) + Math.floor(Math.random() * 80)));
   }
+  if (lastRes) return lastRes; // the transport turns the status into the error the call site sees
   throw lastError ?? new Error('fullnode request failed');
 }
 
@@ -138,22 +181,26 @@ async function fetchWithFailover(input: Parameters<typeof fetch>[0], init?: Requ
 async function graphqlFetchWithFailover(input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
   if (!GRAPHQL_ENDPOINTS.includes(url.replace(/\/+$/, ''))) return fetch(input, init); // not one of ours, pass through
-  const start = graphqlRing.pick();
+  const spent = new Set<number>();
   let lastError: unknown;
+  let lastRes: Response | undefined;
 
   for (let attempt = 0; attempt < graphqlRing.attempts; attempt++) {
-    const idx = (start + attempt) % GRAPHQL_ENDPOINTS.length;
+    const idx = graphqlRing.next(spent);
+    if (idx == null) break;
     try {
       const res = await fetch(GRAPHQL_ENDPOINTS[idx], init);
-      if (!RETRY_STATUS.has(res.status) || attempt === graphqlRing.attempts - 1) return res;
+      if (!RETRY_STATUS.has(res.status)) return res;
       graphqlRing.cool(idx, res.status);
+      lastRes = res;
+      if (res.status === 429) spent.add(idx);
     } catch (e) {
       lastError = e;
-      if (attempt === graphqlRing.attempts - 1) throw e;
       graphqlRing.cool(idx, 'connect');
     }
     await new Promise((r) => setTimeout(r, 150 * (attempt + 1) + Math.floor(Math.random() * 100)));
   }
+  if (lastRes) return lastRes;
   throw lastError ?? new Error('graphql request failed');
 }
 
