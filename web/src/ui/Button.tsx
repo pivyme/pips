@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, MouseEvent, ReactNode } from 'react'
+import { haptic } from '@/lib/haptics'
 import { uiSfx } from '@/lib/uiSfx'
 import { cnm } from '@/utils/style'
 
@@ -32,6 +33,7 @@ export function Button({ variant = 'primary', loading, disabled, className, chil
           uiSfx('disabled')
           return
         }
+        haptic('mid')
         uiSfx('tap')
         onClick?.(e)
       }}

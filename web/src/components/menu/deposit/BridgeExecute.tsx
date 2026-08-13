@@ -53,7 +53,8 @@ export function BridgeExecute({
   })
 
   const connect = () => {
-    haptic('selection')
+    // No haptic here: the Hw3DButton this is bound to has no explicit preset, so it already fires
+    // its default 'mid' on press.
     setError(null)
     connectWallet({ walletChainType: vm === 'EVM' ? 'ethereum-only' : 'solana-only' })
   }
@@ -62,7 +63,9 @@ export function BridgeExecute({
     if (busy || !connectedAddress) return
     setError(null)
     setProgress({ phase: 'preparing', message: 'Preparing your deposit…' })
-    haptic('success')
+    // No haptic here: the press itself is covered by the Hw3DButton's default 'mid', and firing
+    // 'success' before the bridge has even started was also premature. The real completion haptic
+    // is below, once executeBridge actually finishes.
     track('money.deposit_execute')
     try {
       // Fresh, signable route with the connected source address; toAddress is stamped server-side.

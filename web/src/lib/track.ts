@@ -53,6 +53,7 @@ export const EVENT_NAMES = [
 
   'menu.open',
   'menu.section',
+  'menu.setting_toggle',
 
   'money.deposit_open',
   'money.deposit_quote',

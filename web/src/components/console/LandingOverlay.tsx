@@ -125,7 +125,8 @@ export function LandingOverlay({ onEnter }: { onEnter: () => void }) {
   }, [status, signIn, onEnter, surfaceError])
 
   const onCta = useCallback(() => {
-    haptic('rigid')
+    // No haptic here: the Hw3DButton below already has an explicit haptic="rigid" prop, which fires
+    // on its own onPress before this runs. A second call here would double-fire.
     track('door.start_tap')
     // Private test deploy: hold at the door until this device enters the access code.
     if (accessGuardEnabled() && !isUnlocked()) {

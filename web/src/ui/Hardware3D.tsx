@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { HapticPreset } from '@/lib/haptics'
-import { haptic } from '@/lib/haptics'
+import { haptic, hapticDetent } from '@/lib/haptics'
 import { uiSfx } from '@/lib/uiSfx'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { cnm } from '@/utils/style'
 
 const AMBER = '#f5a623'
@@ -40,6 +41,14 @@ interface Hw3DButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 
 
 // The metallic domed key. `wide` makes it fill its row; `icon` sits before the label; `size="sm"` shrinks
 // it for tight rows (a compact pill still needs the same tactile press, not a flat text button).
+//
+// The visible key is `pointer-events-none`; an invisible HapticOverlay on top is the real touch/pointer
+// target (see HapticOverlay.tsx for why: iOS's only Taptic access is a genuine tap on a real switch
+// element, which needs to physically receive the touch). The key's own onClick stays wired for the
+// keyboard path (Enter/Space on the focused button), so both paths funnel through the same `activate`,
+// buzzing exactly once either way. `className` is applied to both the wrapper and the key: most of what
+// callers pass is sizing (`w-9`, `shrink-0`) that the wrapper (the actual flex/grid item now) needs, and
+// the rest (padding, color) is a no-op on the empty wrapper, so there's nothing to split per call site.
 export function Hw3DButton({
   variant = 'neutral',
   size = 'md',
@@ -47,46 +56,51 @@ export function Hw3DButton({
   icon: Icon,
   loading,
   disabled,
-  haptic: hapticPreset = 'selection',
+  haptic: hapticPreset = 'mid',
   onPress,
   className,
   children,
   ...rest
 }: Hw3DButtonProps) {
   const off = disabled || loading
+  const activate = () => {
+    if (off) {
+      uiSfx('disabled')
+      return
+    }
+    haptic(hapticPreset)
+    uiSfx('tap')
+    onPress?.()
+  }
   return (
-    <button
-      type="button"
-      // aria-disabled rather than disabled, here and on the parts below: a disabled button never
-      // receives the click, so a dead key could not answer with the reject sound. Styling keys off both.
-      aria-disabled={off || undefined}
-      onClick={() => {
-        if (off) {
-          uiSfx('disabled')
-          return
-        }
-        haptic(hapticPreset)
-        uiSfx('tap')
-        onPress?.()
-      }}
-      className={cnm(
-        'hw3d-key uppercase',
-        size === 'sm' ? 'hw3d-key-sm text-xs' : 'text-sm',
-        KEY_VARIANT[variant],
-        wide && 'w-full',
-        className,
-      )}
-      {...rest}
-    >
-      {loading ? (
-        '···'
-      ) : (
-        <>
-          {Icon && <Icon size={size === 'sm' ? 14 : 17} strokeWidth={2.6} />}
-          {children}
-        </>
-      )}
-    </button>
+    <span className={cnm('relative', wide ? 'block w-full' : 'inline-block', className)}>
+      <button
+        type="button"
+        // aria-disabled rather than disabled, here and on the parts below: a disabled button never
+        // receives the click, so a dead key could not answer with the reject sound. Styling keys off both.
+        aria-disabled={off || undefined}
+        onClick={activate}
+        className={cnm(
+          'hw3d-key pointer-events-none uppercase',
+          size === 'sm' ? 'hw3d-key-sm text-xs' : 'text-sm',
+          KEY_VARIANT[variant],
+          wide && 'w-full',
+          className,
+        )}
+        {...rest}
+      >
+        {loading ? (
+          '···'
+        ) : (
+          <>
+            {Icon && <Icon size={size === 'sm' ? 14 : 17} strokeWidth={2.6} />}
+            {children}
+          </>
+        )}
+      </button>
+      {/* silent + sfx=null: activate() above already buzzes and plays the click, this is only the touch target. */}
+      <HapticOverlay className="absolute inset-0" disabled={off} silent sfx={null} onTap={activate} />
+    </span>
   )
 }
 
@@ -97,6 +111,7 @@ export function Hw3DIconButton({
   size = 44,
   accent = '#f5a623',
   disabled,
+  haptic: hapticPreset = 'mid',
   onPress,
   className,
 }: {
@@ -105,25 +120,27 @@ export function Hw3DIconButton({
   size?: number
   accent?: string
   disabled?: boolean
+  haptic?: HapticPreset
   onPress?: () => void
   className?: string
 }) {
+  const activate = () => {
+    if (disabled) {
+      uiSfx('disabled')
+      return
+    }
+    haptic(hapticPreset)
+    uiSfx('tap')
+    onPress?.()
+  }
   return (
-    <span className={cnm('hw3d-socket', className)}>
+    <span className={cnm('hw3d-socket relative', className)}>
       <button
         type="button"
         aria-label={label}
         aria-disabled={disabled || undefined}
-        onClick={() => {
-          if (disabled) {
-            uiSfx('disabled')
-            return
-          }
-          haptic('selection')
-          uiSfx('tap')
-          onPress?.()
-        }}
-        className="hw3d-cap"
+        onClick={activate}
+        className="hw3d-cap pointer-events-none"
         style={{ width: size, height: size }}
       >
         <Icon
@@ -137,6 +154,8 @@ export function Hw3DIconButton({
           }}
         />
       </button>
+      {/* silent + sfx=null: activate() above already buzzes and plays the click, this is only the touch target. */}
+      <HapticOverlay className="absolute inset-0 rounded-full" disabled={disabled} silent sfx={null} onTap={activate} />
     </span>
   )
 }
@@ -216,10 +235,10 @@ export function Hw3DFader({
       onKeyDown={(e) => {
         if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
           onChange(Math.min(1, value + 0.02))
-          haptic('tick')
+          hapticDetent(1) // a keyboard step is exactly one detent
         } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
           onChange(Math.max(0, value - 0.02))
-          haptic('tick')
+          hapticDetent(1)
         }
       }}
       className={cnm('relative outline-none', className)}
@@ -290,35 +309,42 @@ export function Hw3DToggle({
   isSelected,
   onChange,
   isDisabled,
+  haptic: hapticPreset = 'mid',
   label,
   className,
 }: {
   isSelected: boolean
   onChange: (value: boolean) => void
   isDisabled?: boolean
+  haptic?: HapticPreset
   label?: string
   className?: string
 }) {
+  const activate = () => {
+    if (isDisabled) {
+      uiSfx('disabled')
+      return
+    }
+    haptic(hapticPreset)
+    uiSfx(isSelected ? 'toggleOff' : 'toggleOn')
+    onChange(!isSelected)
+  }
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={isSelected}
-      aria-label={label}
-      aria-disabled={isDisabled || undefined}
-      onClick={() => {
-        if (isDisabled) {
-          uiSfx('disabled')
-          return
-        }
-        haptic('selection')
-        uiSfx(isSelected ? 'toggleOff' : 'toggleOn')
-        onChange(!isSelected)
-      }}
-      className={cnm('hw3d-toggle', className)}
-    >
-      <span className="hw3d-toggle-fill" />
-      <span className="hw3d-toggle-thumb" />
-    </button>
+    <span className={cnm('relative inline-block', className)}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={isSelected}
+        aria-label={label}
+        aria-disabled={isDisabled || undefined}
+        onClick={activate}
+        className="hw3d-toggle pointer-events-none"
+      >
+        <span className="hw3d-toggle-fill" />
+        <span className="hw3d-toggle-thumb" />
+      </button>
+      {/* silent + sfx=null: activate() above already buzzes and plays the click, this is only the touch target. */}
+      <HapticOverlay className="absolute inset-0 rounded-full" disabled={isDisabled} silent sfx={null} onTap={activate} />
+    </span>
   )
 }

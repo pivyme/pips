@@ -307,7 +307,6 @@ function HistoryPage() {
               <HapticOverlay
                 className="absolute inset-0 rounded-full"
                 preset="selection"
-                silent
                 onTap={() => setFilter(f.key)}
               />
             </div>
@@ -429,7 +428,7 @@ function HistoryRow({ play }: { play: PlayDTO }) {
             <div className={cnm('tnum text-[17px] font-extrabold leading-tight', positive ? 'text-up' : 'text-down')}>{headline}</div>
           </div>
         </button>
-        <HapticOverlay className="absolute inset-0" preset="selection" silent onTap={() => detail.open()} />
+        <HapticOverlay className="absolute inset-0" preset="selection" onTap={() => detail.open()} />
       </div>
 
       {/* Share is always one tap away, never buried in the detail view. */}
@@ -441,7 +440,7 @@ function HistoryRow({ play }: { play: PlayDTO }) {
         >
           <Share2 className="h-[17px] w-[17px]" strokeWidth={2.6} />
         </button>
-        <HapticOverlay className="absolute inset-0" preset="medium" silent onTap={() => share.open()} />
+        <HapticOverlay className="absolute inset-0" preset="medium" onTap={() => share.open()} />
       </div>
 
       <PlayDetailModal
@@ -551,7 +550,7 @@ function PlayDetailModal({
               <span className="text-[14px] font-bold text-text">Trade details</span>
               <ChevronDown className={cnm('h-5 w-5 text-text-3 transition-transform', showDetails && 'rotate-180')} strokeWidth={2.4} />
             </button>
-            <HapticOverlay className="absolute inset-0" preset="selection" silent onTap={() => setShowDetails((s) => !s)} />
+            <HapticOverlay className="absolute inset-0" preset="selection" onTap={() => setShowDetails((s) => !s)} />
           </div>
           {showDetails && (
             <div className="border-t border-white/[0.06] px-4 pb-4 pt-3">
@@ -609,7 +608,7 @@ function PlayShareModal({ play, isOpen, onOpenChange }: { play: PlayDTO; isOpen:
 
   const doShare = async () => {
     if (sharing) return
-    haptic('medium')
+    // No press haptic here: the Hw3DButton below already has an explicit haptic="medium" prop.
     setSharing(true)
     try {
       await sharePlayCard(play, { showPnl })

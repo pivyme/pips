@@ -1,4 +1,5 @@
 import { Switch as HeroSwitch } from '@heroui/react'
+import { haptic } from '@/lib/haptics'
 import { uiSfx } from '@/lib/uiSfx'
 import { cnm } from '@/utils/style'
 
@@ -20,6 +21,7 @@ export function Switch({
       aria-label={label}
       isSelected={isSelected}
       onChange={(v) => {
+        haptic('mid')
         uiSfx(v ? 'toggleOn' : 'toggleOff')
         onChange(v)
       }}

@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth'
 import { isDemo, resetDemo } from '@/lib/demo'
 import { haptic } from '@/lib/haptics'
 import { HapticOverlay } from '@/components/HapticOverlay'
+import { track } from '@/lib/track'
 
 // Sound, haptics, reduced motion. No save button, each toggle PATCHes /settings immediately with a haptic tick.
 // Reduced motion flows back through the auth user, so the chart and rolling numbers calm down at once.
@@ -35,7 +36,9 @@ function SettingsScreen() {
   const [busy, setBusy] = useState<Key | null>(null)
 
   const toggle = async (key: Key, value: boolean) => {
-    haptic('selection') // the only feedback, silent otherwise
+    // No haptic here: Hw3DToggle already buzzes 'mid' on its own onClick, before onChange (which is
+    // what calls this) ever runs. A second call here would double-fire, same pattern as B13.5.
+    track('menu.setting_toggle', { key, on: value })
     setLocal((s) => ({ ...s, [key]: value })) // optimistic
     setBusy(key)
     try {
@@ -92,7 +95,6 @@ function SettingsScreen() {
               <HapticOverlay
                 className="absolute inset-0 rounded-full"
                 preset="rigid"
-                silent
                 onTap={() => {
                   resetDemo()
                   window.location.reload()

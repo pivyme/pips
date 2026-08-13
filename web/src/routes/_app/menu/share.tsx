@@ -77,7 +77,7 @@ function ShareEditor({
 
   const doShare = async () => {
     if (sharing) return
-    haptic('medium')
+    // No press haptic here: the Hw3DButton below already has an explicit haptic="medium" prop.
     setSharing(true)
     try {
       await shareStatsCard(stats, { displayName, avatarUrl, twitter }, { showNetPnl, rank })

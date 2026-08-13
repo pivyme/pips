@@ -3,10 +3,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Activity } from 'lucide-react'
 import { useConsoleControls } from '@/components/console/controls'
 import { GameReadout, GameScreen, GameStage, ScreenCRT } from '@/components/game/screen'
-import { MinigameBoard, useMinigameLeaderboard } from '@/components/game/MinigameBoard'
+import { MinigameBoard, minigameOutcomePattern, useMinigameLeaderboard } from '@/components/game/MinigameBoard'
 import { RideEngine, type RideHud } from '@/components/game/rideEngine'
 import type { LeaderboardScoreEntry, MinigameSubmit } from '@/lib/api'
-import { haptic } from '@/lib/haptics'
+import { haptic, hapticPattern } from '@/lib/haptics'
 import { track } from '@/lib/track'
 import { rideCrash, rideStart, setRideState, startRideBgm, stopRideBgm } from '@/lib/sound'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
@@ -40,16 +40,21 @@ function LineRiderScreen() {
   const best = board[0]?.score ?? 0 // the high score to chase (top of the board)
 
   // The run ends inside the engine loop; kept in a ref so the engine (built once) always calls the latest closure. Score shows instantly, rank + refreshed board land when submit resolves.
+  // The outcome haptic waits for submit(): isBest means "beat your own best AND now rank #1 globally", which
+  // only the server can know, so firing `lose` at impact and correcting with a second pattern later is
+  // exactly the double-buzz bug that also hit Flappy. One pattern per run, chosen once the result is in.
   endRef.current = (score: number) => {
-    haptic('error')
-    stopRideBgm() // cut the bed so the wipeout lands clean over silence
+    stopRideBgm() // cut the bed so the wipeout lands clean over silence, same order as Lucky/Moonshot/Range
     rideCrash()
     setOver({ score, result: null })
     setPhase('over')
     track('arcade.end', { game: 'line-rider', score })
     void submit(score)
-      .then((result) => setOver((o) => (o ? { ...o, result } : { score, result })))
-      .catch(() => {})
+      .then((result) => {
+        setOver((o) => (o ? { ...o, result } : { score, result }))
+        hapticPattern(minigameOutcomePattern(result))
+      })
+      .catch(() => hapticPattern('lose'))
   }
 
   // Build the engine once the canvas is mounted; it lives for the screen and is reused across runs.
@@ -63,8 +68,8 @@ function LineRiderScreen() {
         setRideState({ intensity: h.intensity, onLine: h.onLine, gripLow: h.grip < 0.28, mult: h.multiplier })
       },
       onEnd: (s) => endRef.current(s),
-      onMilestone: () => haptic('rigid'), // combo crossed an integer: just a tick, the bed carries the rest
-      onRegain: () => haptic('selection'), // snapped back onto the line: haptic only, no chime
+      onMilestone: () => haptic('mid'), // combo crossed an integer: just a tick, the bed carries the rest
+      onRegain: () => haptic('low'), // snapped back onto the line: haptic only, no chime
       reduced,
     })
     engineRef.current = eng
@@ -88,7 +93,7 @@ function LineRiderScreen() {
       eng.setTarget(0.5)
       eng.start()
     }
-    haptic('rigid')
+    haptic('high')
     rideStart() // takeoff whoosh as the line flows in (the bed itself starts on the phase effect)
   }, [startRun])
 

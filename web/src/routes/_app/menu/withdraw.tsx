@@ -93,7 +93,7 @@ export function SendForm({ onClose }: { onClose?: () => void } = {}) {
   const submit = async () => {
     if (!canSubmit) return
     setSubmitting(true)
-    haptic('medium')
+    // No press haptic here: the Hw3DButton below already has an explicit haptic="medium" prop.
     try {
       // DUSDC stays on the default (chips: wallet + wrapper) path; any other coin passes its type.
       await api.withdraw({

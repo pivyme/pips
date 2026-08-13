@@ -104,7 +104,7 @@ function GamesConsole() {
   // (a direct row tap skips the knob, which is what persists selection), so Home reopens on your last game, not the default.
   const launch = useCallback(
     (i: number) => {
-      haptic('rigid')
+      haptic('high')
       const game = ALL[i].to.replace('/games/', '')
       // In Play means the tile is resuming a live round rather than starting one, which is a different
       // intent and worth telling apart.

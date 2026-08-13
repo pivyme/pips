@@ -6,9 +6,9 @@ import type { LeaderboardScoreEntry, MinigameSubmit } from '@/lib/api'
 import { useConsoleControls, useDeviceSettled } from '@/components/console/controls'
 import { FlapEngine } from '@/components/game/flapEngine'
 import { GameReadout, GameScreen, GameStage, ScreenCRT } from '@/components/game/screen'
-import { MinigameBoard, useMinigameLeaderboard } from '@/components/game/MinigameBoard'
+import { MinigameBoard, minigameOutcomePattern, useMinigameLeaderboard } from '@/components/game/MinigameBoard'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
-import { haptic } from '@/lib/haptics'
+import { haptic, hapticPattern } from '@/lib/haptics'
 import { track } from '@/lib/track'
 import { sound, startBgm, stopBgm, hopScore, hopLose, hopResetCombo } from '@/lib/sound'
 import { cnm } from '@/utils/style'
@@ -47,7 +47,10 @@ function FlappyPiperScreen() {
 
   const best = board[0]?.score ?? 0
 
-  // The run ends inside the engine loop; kept in a ref so the engine (built once) always calls the latest closure. Score shows instantly, new-best celebration fires once submit lands.
+  // The run ends inside the engine loop; kept in a ref so the engine (built once) always calls the latest closure. Score shows instantly.
+  // The outcome haptic waits for submit(): isBest means "beat your own best AND now rank #1 globally", which
+  // only the server can know, so firing `lose` at impact and correcting with `win` later is exactly the
+  // double-buzz bug. One pattern per run, chosen once the result is in.
   endRef.current = (score: number) => {
     setOver({ score, result: null })
     setPhase('over')
@@ -55,12 +58,10 @@ function FlappyPiperScreen() {
     void submit(score)
       .then((result) => {
         setOver((o) => (o ? { ...o, result } : { score, result }))
-        if (result.isBest) {
-          haptic('success')
-          sound('win')
-        }
+        hapticPattern(minigameOutcomePattern(result))
+        if (result.isBest) sound('win')
       })
-      .catch(() => {})
+      .catch(() => hapticPattern('lose'))
   }
 
   // Build the engine once the canvas is mounted; it lives for the screen and is reused across runs.
@@ -71,13 +72,12 @@ function FlappyPiperScreen() {
       onHud: setHud,
       onEnd: (s) => endRef.current(s),
       onScore: () => {
-        haptic('selection') // cleared a gap: a light tick
+        haptic('low') // cleared a gap: a light tick
         hopScore() // and a bright "tuiing" that climbs with the streak
       },
       onCrash: () => {
-        haptic('error')
         stopBgm() // cut the bed the instant you hit, so the lose synth lands clean
-        hopLose()
+        hopLose() // the visual/audio beat; the outcome haptic waits for submit() to resolve, see endRef above
       },
       reduced,
     })
@@ -95,12 +95,12 @@ function FlappyPiperScreen() {
     startRun() // open the run before playing
     track('arcade.start', { game: 'flappy-piper' })
     engineRef.current?.start()
-    haptic('rigid')
+    haptic('high')
   }, [startRun])
 
   const flap = useCallback(() => {
     engineRef.current?.flap()
-    haptic('medium')
+    haptic('low')
   }, [])
 
   const playing = phase === 'playing'

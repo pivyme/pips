@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import type { DisplayAchievement } from '@/lib/achievements'
 import { MenuScreen, ScreenError } from '@/components/menu/shared'
 import {
@@ -8,6 +8,7 @@ import {
   openFromCard,
   useAchievementDetail,
 } from '@/components/menu/AchievementDetail'
+import { HapticOverlay } from '@/components/HapticOverlay'
 import { achievementsQuery } from '@/lib/menuQueries'
 import { achievementImage, mergeCatalog } from '@/lib/achievements'
 import { cnm } from '@/utils/style'
@@ -68,39 +69,48 @@ function AchievementCard({
   achievement: DisplayAchievement
 }): ReactNode {
   const { open } = useAchievementDetail()
+  const cardRef = useRef<HTMLButtonElement>(null)
+  const activate = () => {
+    if (cardRef.current) openFromCard(open, achievement, { currentTarget: cardRef.current })
+  }
   return (
-    <button
-      type="button"
-      aria-label={`${achievement.name}, ${achievement.unlocked ? 'unlocked' : 'locked'}`}
-      onClick={(e) => openFromCard(open, achievement, e)}
-      className={cnm(
-        'surface-skeuo relative flex min-h-[274px] flex-col overflow-hidden rounded-card px-4 pb-5 pt-4 text-left',
-        cardPressClass,
-      )}
-    >
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.035)_0%,rgba(255,255,255,0)_38%,rgba(0,0,0,0.16)_100%)]" />
-      <div className="relative flex min-h-[150px] flex-1 items-center justify-center pb-3">
-        <img
-          src={achievementImage(achievement.slug)}
-          alt={`${achievement.name} ${achievement.unlocked ? 'illustration' : 'silhouette'}`}
-          className={cnm(
-            'h-[148px] w-[148px] max-w-full object-contain transition-transform duration-200',
-            achievement.unlocked
-              ? 'drop-shadow-[0_14px_22px_rgba(0,0,0,0.34)]'
-              : 'brightness-0 contrast-200 drop-shadow-[0_1px_0_rgba(255,255,255,0.025)]',
-          )}
-          draggable={false}
-        />
-      </div>
-      <div className="relative">
-        <h2 className="text-[17px] font-semibold leading-[1.08] text-white">
-          {achievement.name}
-        </h2>
-        <p className="mt-1.5 line-clamp-2 h-[2.4em] text-[14px] font-semibold leading-[1.2] text-[#9a9a9a]">
-          {achievement.description}
-        </p>
-      </div>
-    </button>
+    <div className="relative">
+      <button
+        ref={cardRef}
+        type="button"
+        aria-label={`${achievement.name}, ${achievement.unlocked ? 'unlocked' : 'locked'}`}
+        onClick={activate}
+        className={cnm(
+          'pointer-events-none surface-skeuo relative flex min-h-[274px] w-full flex-col overflow-hidden rounded-card px-4 pb-5 pt-4 text-left',
+          cardPressClass,
+        )}
+      >
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.035)_0%,rgba(255,255,255,0)_38%,rgba(0,0,0,0.16)_100%)]" />
+        <div className="relative flex min-h-[150px] flex-1 items-center justify-center pb-3">
+          <img
+            src={achievementImage(achievement.slug)}
+            alt={`${achievement.name} ${achievement.unlocked ? 'illustration' : 'silhouette'}`}
+            className={cnm(
+              'h-[148px] w-[148px] max-w-full object-contain transition-transform duration-200',
+              achievement.unlocked
+                ? 'drop-shadow-[0_14px_22px_rgba(0,0,0,0.34)]'
+                : 'brightness-0 contrast-200 drop-shadow-[0_1px_0_rgba(255,255,255,0.025)]',
+            )}
+            draggable={false}
+          />
+        </div>
+        <div className="relative">
+          <h2 className="text-[17px] font-semibold leading-[1.08] text-white">
+            {achievement.name}
+          </h2>
+          <p className="mt-1.5 line-clamp-2 h-[2.4em] text-[14px] font-semibold leading-[1.2] text-[#9a9a9a]">
+            {achievement.description}
+          </p>
+        </div>
+      </button>
+      {/* open() already buzzes ('selection', AchievementDetail.tsx), so the overlay stays silent. */}
+      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={activate} />
+    </div>
   )
 }
 

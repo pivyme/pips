@@ -68,3 +68,8 @@ ehthumbs.db
 /bigdev/
 /docs/
 /remotion/
+/memory/
+# Agent workspaces (local only)
+web/.agents/
+web/.claude/agent-memory/
+web/.claude/skills/

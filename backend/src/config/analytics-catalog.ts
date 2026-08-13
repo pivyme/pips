@@ -46,6 +46,7 @@ export const EVENT_NAMES = [
   // menu: one event with a prop covers all 14 routes, which is what keeps cardinality bounded
   'menu.open',
   'menu.section', // { section }
+  'menu.setting_toggle', // { key, on }
 
   // money: deposits, withdrawals, chips
   'money.deposit_open',

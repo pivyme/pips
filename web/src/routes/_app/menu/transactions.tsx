@@ -171,7 +171,7 @@ function ActivityRow({ row }: { row: WalletTxDTO }) {
           <ChevronRight className="h-4 w-4 text-text-3" strokeWidth={2.4} />
         </div>
       </button>
-      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" silent onTap={() => detail.open()} />
+      <HapticOverlay className="absolute inset-0 rounded-card" preset="selection" onTap={() => detail.open()} />
 
       <TxDetailModal row={row} isOpen={detail.isOpen} onOpenChange={detail.setOpen} />
     </div>
@@ -192,13 +192,15 @@ function TxDetailModal({ row, isOpen, onOpenChange }: { row: WalletTxDTO; isOpen
     hour: 'numeric',
     minute: '2-digit',
   })
-  const copy = (label: string, value: string) => {
+  const copy = async (label: string, value: string) => {
     if (!value) return
-    haptic('success')
-    void navigator.clipboard
-      ?.writeText(value)
-      .then(() => toast.success(`${label} copied`, { id: 'tx-copy' }))
-      .catch(() => {})
+    try {
+      await navigator.clipboard.writeText(value)
+      haptic('success')
+      toast.success(`${label} copied`, { id: 'tx-copy' })
+    } catch {
+      toast.error(`Could not copy the ${label.toLowerCase()}`, { id: 'tx-copy' })
+    }
   }
 
   return (

@@ -109,6 +109,7 @@ All game sound is **hand-built WebAudio, zero asset files**. Three buses, three 
 - **`src/lib/sound.ts`** is the per-game musical layer: the looping beds and the one-shot stings (spin, lock, win, lose, cash-out). This is where new game audio goes.
 - **`src/components/console/consoleAudio.ts`** is the physical device SFX (button/knob/roller), sample-based, owned by the shell. Leave it alone unless you are changing a control's feel.
 - **`src/lib/uiSfx.ts`** is the app-surface chrome: `uiSfx('tap' | 'toggleOn' | 'toggleOff' | 'swipe' | 'disabled')`. Already wired into the primitives, so a new menu button, toggle or dead key gets it for free: `HapticOverlay`, `Hw3DButton`/`Hw3DIconButton`/`Hw3DToggle`, `ui/Button`, `ui/Switch`, and the console preset rail. **Call it directly only for a control that goes through none of those.** Samples never repeat back to back, a repeat inside 40ms is dropped, and playback starts past the decoded onset so codec priming never delays a click. Levels are set in `FAMILIES`; assets live in `public/sounds/ui-sfx` with the originals in `sfx-src/ui-sfx` (re-encode line is in the file header). Anything that renders a disabled control uses `aria-disabled`, never the `disabled` attribute, or the click never arrives and the reject sound cannot fire.
+- **`src/lib/haptics.ts`** follows the identical rule: `haptic(preset)` is already wired into the same five primitives (`HapticOverlay`, `Hw3DButton`/`Hw3DIconButton`/`Hw3DToggle`, `ui/Button`, `ui/Switch`), each firing its own preset (or an explicit `haptic="…"` prop override) on press. **Never call `haptic()` a second time inside a handler already bound to one of those**, it double-fires (a `Hw3DButton` with `haptic="medium"` plus a handler that also calls `haptic('medium')` synchronously buzzes twice for one press; this bit several menu screens before it was caught). The only legitimate second call is a genuinely later, distinct signal, most often an async success or rejection that carries new information the press-time buzz did not have (`haptic('success')` after an await resolves, `haptic('error')` in a catch). `hapticDetent()` and `hapticPattern()` are separate, narrower APIs: the former only for the knob/wheel's per-detent scheduler, the latter only for game outcomes (win/lose/cashOut/achievement).
 
 **The quality bar (this is the whole point, keep it).** The house sound is "clean, warm, not 8-bit, never intrusive." It comes from a few hard rules:
 
@@ -167,7 +168,8 @@ src/
 ├── components/
 │   ├── console/              # The device shell (the heart of the app)
 │   │   ├── ConsoleCanvas.tsx # 3D WebGL handheld (Three.js) + screen-cutout projection
-│   │   ├── ConsoleShell.tsx  # CSS/DOM shell (fallback behind the menu)
+│   │   ├── ConsoleShell.tsx  # CSS/DOM shell, written as a fallback but currently dead: nothing mounts it
+│   │   │                     #   (`_app.tsx` mounts `ConsoleCanvas` unconditionally). Verify before building on it.
 │   │   ├── CustomizeStudio.tsx # Skin/theme workshop (/menu/customize)
 │   │   ├── AppFrame.tsx      # Phone-sized frame wrapper
 │   │   ├── MenuDrawer.tsx    # Menu as a drawer over the device (owns the hand-rolled page slide)

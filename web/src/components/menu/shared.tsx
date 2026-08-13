@@ -105,7 +105,7 @@ export function MenuHeader({
           >
             <ChevronLeft className="h-7 w-7" strokeWidth={3} />
           </Link>
-          <HapticOverlay className="absolute inset-0 rounded-full" preset="selection" silent onTap={goBack} />
+          <HapticOverlay className="absolute inset-0 rounded-full" preset="selection" onTap={goBack} />
         </div>
       )}
       {/* touch-manipulation so the hidden 5-tap unlock below isn't swallowed by iOS double-tap-zoom. */}

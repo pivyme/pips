@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
-import { haptic } from '@/lib/haptics'
 import { cnm } from '@/utils/style'
 
 // Trade confirmation, the opt-in fat-finger guard (.claude/TRADE_CONFIRMATION.md): when on, placing a
@@ -32,13 +31,14 @@ export function useTradeConfirm(onPlace: () => void, getDetails: () => TradeDeta
     setRemainingMs(0)
   }, [])
 
-  // Explicit CANCEL press: a light tick, then disarm.
+  // Explicit CANCEL press, always bound to action1: ConsoleCanvas's overlayPress already buzzes on
+  // every press of that physical button, so no haptic here (it would double-fire, B13).
   const cancel = useCallback(() => {
-    haptic('selection')
     disarm()
   }, [disarm])
 
-  // Replaces the direct doPlay() on the main button.
+  // Replaces the direct doPlay() on the main button. Always bound to main, so overlayPress already
+  // covers the buzz for both the arm press and the confirm press; no haptic here either.
   const press = useCallback(() => {
     if (!enabled) {
       onPlace() // gate off: place immediately, today's behavior
@@ -49,8 +49,7 @@ export function useTradeConfirm(onPlace: () => void, getDetails: () => TradeDeta
       onPlace()
       return
     }
-    haptic('rigid') // first press: arm
-    setArmed(getDetails())
+    setArmed(getDetails()) // first press: arm
     setRemainingMs(CONFIRM_WINDOW_MS)
   }, [enabled, armed, onPlace, getDetails, disarm])
 

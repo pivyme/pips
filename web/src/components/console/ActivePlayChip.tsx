@@ -4,7 +4,7 @@ import toast from 'react-hot-toast'
 import type { Game, PlayStatus } from '@/lib/api'
 import { GameIcon } from '@/components/GameIcon'
 import { PLAY_TERMINAL, useActivePlay } from '@/lib/activePlay'
-import { haptic } from '@/lib/haptics'
+import { haptic, hapticPattern } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 
@@ -43,7 +43,7 @@ export function ActivePlayChip() {
     const label = GAME_LABEL[active.game]
     const sign = pnl >= 0 ? '+' : '-'
     const msg = `${label} settled — ${sign}$${Math.abs(pnl).toFixed(2)}`
-    haptic(active.status === 'lost' ? 'error' : 'success')
+    hapticPattern(active.status === 'lost' ? 'lose' : active.status === 'cashed_out' ? 'cashOut' : 'win')
     if (active.status === 'lost') toast(msg, { id: 'activeplay-settle' })
     else toast.success(msg, { id: 'activeplay-settle' })
   }, [active?.id, active?.status, active?.pnl, active?.game, onOwnRoute])

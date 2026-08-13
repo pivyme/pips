@@ -15,6 +15,12 @@
       "source": "heroui-inc/heroui",
       "sourceType": "github",
       "computedHash": "6116a849a6039e8b4d9dda3f6251c462e4ce8f583c53fda77838d0b2c124fe41"
+    },
+    "web-haptics": {
+      "source": "lochie/web-haptics",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "a6dce0fce9dc37f4dac87cd9ed2dc0e32e1ec3a5d8c860e1af07fee670295b7b"
     }
   }
 }

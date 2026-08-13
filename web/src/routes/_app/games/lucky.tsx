@@ -24,7 +24,7 @@ import {
   useRestoreOpenPlay,
   useRoundCountdown,
 } from '@/hooks/useGameRound'
-import { haptic } from '@/lib/haptics'
+import { haptic, hapticPattern } from '@/lib/haptics'
 // Aliased: this file already destructures a `track` from useActivePlay (the open-round tracker).
 import { track as trackEvent, trackSettled } from '@/lib/track'
 import { slotSpin, slotTick, slotPick, startLuckyBgm, stopLuckyBgm, luckyWin, luckyCashout, luckyLose } from '@/lib/sound'
@@ -115,6 +115,7 @@ function LuckyScreen() {
   const finalized = useRef(false)
   const onTargetRef = useRef<boolean | null>(null) // mirrors onTarget so the rAF only re-renders on a real flip
   const wasOnTarget = useRef<boolean | null>(null) // last state, for the crossing haptic
+  const lastCrossRef = useRef(0) // gates the crossing haptic to one per 400ms, mirrors range.tsx (B10)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const balanceSyncedPlayId = useRef<string | null>(null)
   // Latest chart spot, mirrored for the DEV deal log; the ENTRY line is never derived from this display feed, only the backend's real oracle entrySpot.
@@ -221,7 +222,7 @@ function LuckyScreen() {
       })
       setPhase('result')
       stopLuckyBgm() // cut the bed the instant it resolves, so the sting lands clean
-      haptic(final.status === 'lost' ? 'error' : 'success')
+      hapticPattern(final.status === 'lost' ? 'lose' : final.status === 'cashed_out' ? 'cashOut' : 'win')
       if (final.status === 'won') luckyWin()
       else if (final.status === 'cashed_out') luckyCashout()
       else luckyLose()
@@ -348,7 +349,10 @@ function LuckyScreen() {
     if (showReadouts && lp?.asset) {
       if (restored) return // rehydrated round: already revealed, no spin to commit
       slotPick() // the slot commits: a short ascending confirm under the lock-in
-      const reveal = setTimeout(() => setRevealOverlays(true), LOCKIN_MS)
+      const reveal = setTimeout(() => {
+        setRevealOverlays(true)
+        haptic('low') // the deal completes: a light beat under the sound, no touch involved
+      }, LOCKIN_MS)
       return () => clearTimeout(reveal)
     }
     setRevealOverlays(false)
@@ -372,7 +376,13 @@ function LuckyScreen() {
       const now = p > 0 ? (side === 'up' ? p >= strike : p <= strike) : null
       if (now !== onTargetRef.current) {
         onTargetRef.current = now
-        if (wasOnTarget.current != null && wasOnTarget.current !== now) haptic('selection')
+        if (wasOnTarget.current != null && wasOnTarget.current !== now) {
+          const t = performance.now()
+          if (t - lastCrossRef.current > 400) {
+            lastCrossRef.current = t
+            haptic('low')
+          }
+        }
         wasOnTarget.current = now
         setOnTarget(now)
       }
@@ -400,7 +410,6 @@ function LuckyScreen() {
     setLockPrice(null)
     setOverlay('none')
     setPhase('placing')
-    haptic('rigid')
     slotSpin()
     trackEvent('game.play_tap', { game: 'lucky', stake: bet })
     const tapAt = Date.now()
@@ -432,7 +441,6 @@ function LuckyScreen() {
         status: p.status,
       })
       setPhase('spinning')
-      haptic('heavy')
       setTimeout(() => setPhase((cur) => (cur === 'spinning' ? 'open' : cur)), SPIN_TOTAL)
     } catch (e) {
       trackEvent('game.play_error', { game: 'lucky', code: errorCode(e) })
@@ -456,7 +464,8 @@ function LuckyScreen() {
     if (phase !== 'open' || !play || closeLocked) return
     trackEvent('game.cashout_tap', { game: 'lucky' })
     setPhase('cashing')
-    haptic('rigid')
+    // No haptic here: CASH OUT is the `main` physical button relabeled, and ConsoleCanvas's
+    // overlayPress already buzzes on press for every label main can show (B13).
     const started = Date.now()
     try {
       const { play: p } = await cashOut(play.id)
@@ -484,7 +493,8 @@ function LuckyScreen() {
   // re-spin; the auto-advance timer lands the same place, sooner. Touches only refs/setters, so a stable identity is fine.
   const dismissResult = useCallback(() => {
     clearResetTimer()
-    haptic('selection')
+    // No haptic: bound to main/action1/action2 simultaneously while isResult, all three already
+    // buzz on press via ConsoleCanvas's overlayPress.
     setPhase('idle')
   }, [])
 
@@ -492,16 +502,16 @@ function LuckyScreen() {
   // grant is on cooldown or the treasury is dry, so a broke player is never a dead-end.
   const topUp = useTopUp()
   const goTopUp = useCallback(() => {
-    haptic('rigid')
+    // No haptic: TOP UP is `main` relabeled, already covered by overlayPress.
     void topUp()
   }, [topUp])
 
   const toggleHowto = useCallback(() => {
-    haptic('selection')
+    // No haptic: HOW TO is `action1` relabeled, already covered by overlayPress.
     setOverlay((o) => (o === 'howto' ? 'none' : 'howto'))
   }, [])
   const toggleBoard = useCallback(() => {
-    haptic('selection')
+    // No haptic: RANKS is `action2` relabeled, already covered by overlayPress.
     setOverlay((o) => (o === 'board' ? 'none' : 'board'))
   }, [])
 
