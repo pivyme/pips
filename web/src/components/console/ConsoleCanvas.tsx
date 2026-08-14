@@ -158,10 +158,12 @@ function DialTeleportSwitch({
   wrapperRef: RefObject<HTMLDivElement | null>
   switchElRef: RefObject<HTMLInputElement | null>
   hapticsOn: boolean
-  // Asks the scene for the CLAMPED, resisted step at a clientY (numberWheelStepAt/knobStepAt), the exact
+  // Asks the scene for the shared detent counter at a clientY (numberWheelStepAt/knobStepAt), the exact
   // same math the value's own pointermove handler uses. The switch never computes a step from raw pixel
-  // travel itself: that duplicate counter is what let the haptic buzz past the point where the value,
-  // and the tick sound, had already stopped changing.
+  // travel itself: that duplicate counter is the original bug this component's history warns about (see
+  // below), where the switch's own count disagreed with the value and the tick sound. Reusing one counter
+  // fixes that. The knob's counter is unclamped, so its tick keeps firing past the end of its range; the
+  // number wheel's counter is clamped (see numberWheelStepAt), so its tick goes silent there instead.
   getStep: (clientY: number) => number
   onDown: (clientY: number) => void
   onStep?: () => void
@@ -347,9 +349,11 @@ export default function ConsoleCanvas({
   // pattern as overlayPressRef above. Takes the pointer's clientY, which is all the shared step math needs.
   const numberWheelStripDownRef = useRef<((clientY: number) => void) | null>(null)
   const knobStripDownRef = useRef<((clientY: number) => void) | null>(null)
-  // Same bridge, the other direction: the switch's own touchmove asks the scene for the CLAMPED step at
-  // a clientY instead of computing raw pixel travel itself (see numberWheelStepAt/knobStepAt), so the
-  // native Taptic tick can never buzz past the point where the value stopped changing.
+  // Same bridge, the other direction: the switch's own touchmove asks the scene for the shared detent
+  // counter at a clientY instead of computing raw pixel travel itself (see numberWheelStepAt/knobStepAt),
+  // so the native Taptic tick stays in lockstep with the haptic and the SFX. The knob's counter is
+  // unclamped, so its tick keeps firing past the end of its range; the number wheel's is clamped, so its
+  // tick goes silent there instead, matching its rubber-banded visual.
   const numberWheelStripStepRef = useRef<((clientY: number) => number) | null>(null)
   const knobStripStepRef = useRef<((clientY: number) => number) | null>(null)
 
@@ -2968,10 +2972,14 @@ export default function ConsoleCanvas({
     }
 
     // Pure query, no side effects: re-derives the number wheel's step at a given clientY against the
-    // live drag's start state, clamped + resisted exactly like the pointermove handler below. This is
-    // the ONE place that math lives; the pointermove handler and the iOS teleport switch's touchmove
-    // (DialTeleportSwitch, via numberWheelStripStepRef) both call it, so the tick sound, the haptic, and
-    // the value can never read a different step count from each other at the clamp.
+    // live drag's start state. This is the ONE place that math lives; the pointermove handler and the iOS
+    // teleport switch's touchmove (DialTeleportSwitch, via numberWheelStripStepRef) both call it, so the
+    // tick sound, the haptic, and the value can never disagree with each other.
+    //
+    // `detent` is the shared FEEDBACK counter, and it stays clamped to the bound value's range (unlike
+    // `knobStepAt` below): the drum's own visual is rubber-banded and saturates at its +/-0.28-step give,
+    // so past the end it already looks stopped, and a stopped drum should tick silent, not click forever.
+    // `resistedSteps` still carries the sub-step rubber-band give for the visual.
     function numberWheelStepAt(clientY: number) {
       const wheel = state.numberWheel
       if (!wheel) return null
@@ -2984,20 +2992,17 @@ export default function ConsoleCanvas({
           : rawSteps > maxSteps
             ? maxSteps + Math.min(0.28, (rawSteps - maxSteps) * 0.16)
             : rawSteps
-      const steps = Math.round(Math.min(maxSteps, Math.max(minSteps, resistedSteps)))
-      return { resistedSteps, steps }
+      const detent = Math.round(Math.min(maxSteps, Math.max(minSteps, rawSteps)))
+      return { resistedSteps, detent }
     }
-    // Same idea for the knob. The knob has no rubber-band resistance (a hard stop reads right for a
-    // detented dial), so this is just the drag math clamped to the bound value's step range.
+    // Same idea for the knob, but UNCLAMPED, unlike the number wheel's `detent` above: the knob has no
+    // rubber-band resistance and `knobOffset` (see the pointermove handler) is visually unbounded, so it
+    // keeps spinning past the bound value's range and the tick keeps counting with it. The value itself is
+    // still clamped where it's written.
     function knobStepAt(clientY: number) {
       const dyDown = clientY - knobStartY
       const rawOffset = knobBase + dyDown * kp.dragSensitivity
-      const rawSteps = knobStartDetent - Math.round(rawOffset / kp.snapInterval)
-      const k = state.knob
-      if (!k) return rawSteps
-      const minSteps = (k.min - knobStartValue) / k.step
-      const maxSteps = (k.max - knobStartValue) / k.step
-      return Math.round(Math.min(maxSteps, Math.max(minSteps, rawSteps)))
+      return knobStartDetent - Math.round(rawOffset / kp.snapInterval)
     }
 
     // Belt-and-braces clear for a dial switch's teleport transform, fired from the window-level
@@ -3125,22 +3130,25 @@ export default function ConsoleCanvas({
         if (!wheel) return
         const stepped = numberWheelStepAt(e.clientY)
         if (!stepped) return
-        const { resistedSteps, steps } = stepped
+        const { resistedSteps, detent } = stepped
         numberWheelAngle =
           -(numberWheelStartPosition + resistedSteps) * NUMBER_LABEL_ANGLE
         numberWheelTarget = numberWheelAngle
-        if (steps !== numberWheelLastStep) {
+        if (detent !== numberWheelLastStep) {
           // iOS never reaches here: navigator.vibrate doesn't exist there, so the strip's own native
           // switch tick is the only haptic, and firing this too would be a second, silent-no-op call.
-          if (!numberWheelViaStrip) hapticDetent(Math.abs(steps - numberWheelLastStep), DETENT_SMALL_MS) // one coalesced pulse covering every detent crossed this frame
-          const direction = Math.sign(steps - numberWheelLastStep)
+          if (!numberWheelViaStrip) hapticDetent(Math.abs(detent - numberWheelLastStep), DETENT_SMALL_MS) // one coalesced pulse covering every detent crossed this frame
+          const direction = Math.sign(detent - numberWheelLastStep)
           for (
-            let detent = numberWheelLastStep + direction;
-            detent !== steps + direction;
-            detent += direction
+            let d = numberWheelLastStep + direction;
+            d !== detent + direction;
+            d += direction
           ) {
             audio.playSfx('roller', 'thumbwheel')
-            const raw = numberWheelStartValue + detent * wheel.step
+            const raw = numberWheelStartValue + d * wheel.step
+            // Clamped here, per detent crossed, regardless of how far `detent` has run past the range:
+            // this is what keeps the bound value pinned at min/max while the counter driving the tick
+            // keeps counting (see numberWheelStepAt above).
             const next = Math.min(
               wheel.max,
               Math.max(wheel.min, Number(raw.toFixed(6))),
@@ -3170,26 +3178,28 @@ export default function ConsoleCanvas({
               }
             }
           }
-          numberWheelLastStep = steps
+          numberWheelLastStep = detent
         }
         return
       }
       if (knobDrag) {
         const dyDown = e.clientY - knobStartY // down positive, drives the visual ridge scroll
         knobOffset = knobBase + dyDown * kp.dragSensitivity // free to keep spinning past the clamp, cosmetic only
-        const steps = knobStepAt(e.clientY) // clamped to the bound value's range, see knobStepAt above
-        if (steps !== knobLastStep) {
+        const detent = knobStepAt(e.clientY) // shared feedback counter, unclamped, see knobStepAt above
+        if (detent !== knobLastStep) {
           // Same iOS exclusion as the number wheel above: the strip's native switch tick is the haptic.
-          if (!knobViaStrip) hapticDetent(Math.abs(steps - knobLastStep)) // one coalesced pulse covering every detent crossed this frame
-          const direction = Math.sign(steps - knobLastStep)
+          if (!knobViaStrip) hapticDetent(Math.abs(detent - knobLastStep)) // one coalesced pulse covering every detent crossed this frame
+          const direction = Math.sign(detent - knobLastStep)
           for (
             let step = knobLastStep + direction;
-            step !== steps + direction;
+            step !== detent + direction;
             step += direction
           ) {
             audio.playSfx('knob', 'knob')
             const k = state.knob
             if (k && state.knobAvailable) {
+              // Clamped here, per detent crossed, same reasoning as the number wheel above: the value
+              // stays pinned at min/max no matter how far `detent` itself has run past the range.
               const next = Math.min(
                 k.max,
                 Math.max(k.min, knobStartValue + step * k.step),
@@ -3197,7 +3207,7 @@ export default function ConsoleCanvas({
               propsRef.current.handlers?.current.knob?.(next)
             }
           }
-          knobLastStep = steps
+          knobLastStep = detent
         }
         return
       }
@@ -3321,8 +3331,10 @@ export default function ConsoleCanvas({
       if (hint) hint.style.opacity = '0'
       startKnobDrag(clientY, true)
     }
-    // Read-only queries the switch's touchmove calls on every move; see numberWheelStepAt/knobStepAt.
-    numberWheelStripStepRef.current = (clientY) => numberWheelStepAt(clientY)?.steps ?? numberWheelLastStep
+    // Read-only queries the switch's touchmove calls on every move; see numberWheelStepAt/knobStepAt. The
+    // knob's counter is unclamped, so its iOS tick keeps firing past the end like the Android haptic and
+    // the knob SFX; the number wheel's counter is clamped, so its iOS tick goes silent there too.
+    numberWheelStripStepRef.current = (clientY) => numberWheelStepAt(clientY)?.detent ?? numberWheelLastStep
     knobStripStepRef.current = (clientY) => knobStepAt(clientY)
 
     const onKeyDown = (e: KeyboardEvent) => {
