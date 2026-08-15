@@ -53,17 +53,20 @@ async function play(game: string, userId: string | null): Promise<{ status: numb
   }
 }
 
+const LAB_GAMES = ['pin', 'snipe', 'press', 'rush', 'breakout'];
+
 describe('lab games are ADMIN-only at the API', () => {
-  it('answers 404 for a normal user, the same as a game that does not exist', async () => {
-    const lab = await play('pin', NORMAL.id);
+  // Every built game, not a sample: a gate that holds for four of five leaks the fifth.
+  it.each(LAB_GAMES)('answers 404 for %s, the same as a game that does not exist', async (game) => {
+    const lab = await play(game, NORMAL.id);
     const nonsense = await play('not-a-game', NORMAL.id);
     expect(lab.status).toBe(404);
     expect(lab.status).not.toBe(403);
     expect(lab).toEqual(nonsense);
   });
 
-  it('lets an ADMIN past the gate', async () => {
-    const { status } = await play('pin', ADMIN.id);
+  it.each(LAB_GAMES)('lets an ADMIN reach %s', async (game) => {
+    const { status } = await play(game, ADMIN.id);
     expect(status).not.toBe(404);
   });
 
