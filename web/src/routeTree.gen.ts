@@ -51,6 +51,7 @@ import { Route as AppGamesMoonshotRouteImport } from './routes/_app/games/moonsh
 import { Route as AppGamesLuckyRouteImport } from './routes/_app/games/lucky'
 import { Route as AppGamesLineRiderRouteImport } from './routes/_app/games/line-rider'
 import { Route as AppGamesFlappyPiperRouteImport } from './routes/_app/games/flappy-piper'
+import { Route as AppGamesBreakoutRouteImport } from './routes/_app/games/breakout'
 
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
@@ -261,6 +262,11 @@ const AppGamesFlappyPiperRoute = AppGamesFlappyPiperRouteImport.update({
   path: '/games/flappy-piper',
   getParentRoute: () => AppRoute,
 } as any)
+const AppGamesBreakoutRoute = AppGamesBreakoutRouteImport.update({
+  id: '/games/breakout',
+  path: '/games/breakout',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/@{$handle}': typeof AtChar123handleChar125Route
@@ -280,6 +286,7 @@ export interface FileRoutesByFullPath {
   '/r/$code': typeof RCodeRoute
   '/admin/': typeof AdminIndexRoute
   '/dev/': typeof DevIndexRoute
+  '/games/breakout': typeof AppGamesBreakoutRoute
   '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
@@ -322,6 +329,7 @@ export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/admin': typeof AdminIndexRoute
   '/dev': typeof DevIndexRoute
+  '/games/breakout': typeof AppGamesBreakoutRoute
   '/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/games/line-rider': typeof AppGamesLineRiderRoute
   '/games/lucky': typeof AppGamesLuckyRoute
@@ -367,6 +375,7 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/admin/': typeof AdminIndexRoute
   '/dev/': typeof DevIndexRoute
+  '/_app/games/breakout': typeof AppGamesBreakoutRoute
   '/_app/games/flappy-piper': typeof AppGamesFlappyPiperRoute
   '/_app/games/line-rider': typeof AppGamesLineRiderRoute
   '/_app/games/lucky': typeof AppGamesLuckyRoute
@@ -412,6 +421,7 @@ export interface FileRouteTypes {
     | '/r/$code'
     | '/admin/'
     | '/dev/'
+    | '/games/breakout'
     | '/games/flappy-piper'
     | '/games/line-rider'
     | '/games/lucky'
@@ -454,6 +464,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/dev'
+    | '/games/breakout'
     | '/games/flappy-piper'
     | '/games/line-rider'
     | '/games/lucky'
@@ -498,6 +509,7 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/admin/'
     | '/dev/'
+    | '/_app/games/breakout'
     | '/_app/games/flappy-piper'
     | '/_app/games/line-rider'
     | '/_app/games/lucky'
@@ -836,11 +848,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppGamesFlappyPiperRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/games/breakout': {
+      id: '/_app/games/breakout'
+      path: '/games/breakout'
+      fullPath: '/games/breakout'
+      preLoaderRoute: typeof AppGamesBreakoutRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
+  AppGamesBreakoutRoute: typeof AppGamesBreakoutRoute
   AppGamesFlappyPiperRoute: typeof AppGamesFlappyPiperRoute
   AppGamesLineRiderRoute: typeof AppGamesLineRiderRoute
   AppGamesLuckyRoute: typeof AppGamesLuckyRoute
@@ -869,6 +889,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
+  AppGamesBreakoutRoute: AppGamesBreakoutRoute,
   AppGamesFlappyPiperRoute: AppGamesFlappyPiperRoute,
   AppGamesLineRiderRoute: AppGamesLineRiderRoute,
   AppGamesLuckyRoute: AppGamesLuckyRoute,

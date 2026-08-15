@@ -19,8 +19,8 @@ import {
   findRealRedeem,
   isSettledDefiniteLoss,
   LEVERAGE_ONE,
-  parseMint,
-  parseRedeem,
+  parseMints,
+  parseRedeems,
   readMarketSettlement,
   readWrapper,
   readWrapperBalanceRaw,
@@ -87,6 +87,8 @@ export type CreatePlayInput =
   | { game: 'snipe'; stake: string | number; asset: string; wall: number; side: Side }
   // `step` and `inner` are server-filled from the player's own open boxes (see pressContext), never from the body.
   | { game: 'press'; stake: string | number; asset: string; open: number; step?: number; inner?: { lower: number; upper: number; expiryMs: number } }
+  // `stake` is the TOTAL for both legs; the server splits it and floors the play at 2 x MIN_STAKE.
+  | { game: 'breakout'; stake: string | number; asset: string; break: number; lean: number }
   // `offer` is claimed from the server-side store by its id (see rushTake). The body carries the id only.
   | {
       game: 'rush';
@@ -216,6 +218,9 @@ function realDeposit(stakeRaw: bigint, wrapperBal: bigint, wallet: bigint): bigi
 function realMarketFieldsOf(r: ResolvedReal) {
   const base = { asset: r.asset, oracleId: r.marketId, durationSec: r.duration, expiry: BigInt(r.expiryMs), entrySpot: r.entrySpot };
   if (r.kind === 'binary') return { ...base, side: r.side, strike: r.strikeDisplay };
+  // BREAKOUT stores its two walls in the same pair of columns, but its pay zones are OUTSIDE them: the screen
+  // and the settle reveal both key off the game, so the columns stay generic bounds rather than gaining a twin.
+  if (r.kind === 'multi') return { ...base, lower: r.lowerDisplay, upper: r.upperDisplay, widthPct: null, strike: null };
   // PIN carries the named price in `strike` so the settle reveal can state the miss; the other range games leave it unset.
   return { ...base, lower: r.lowerDisplay, upper: r.upperDisplay, widthPct: r.widthPct ?? null, strike: r.strikeDisplay };
 }
@@ -304,6 +309,8 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
         leverage1e9: cur.leverage1e9,
         lowerTick: cur.lowerTick,
         higherTick: cur.higherTick,
+        // Multi-leg (BREAKOUT): every leg mints in this same PTB, so the chain enforces both-or-neither.
+        legs: cur.legs?.map((l) => ({ lowerTick: l.lowerTick, higherTick: l.higherTick, amountRaw: l.amountRaw })),
         // House rake: withdrawn from the wrapper after the mint and sent to revenue (no-op at rake 0).
         rakeRaw,
         revenueAddress: rakeRaw > 0n ? revenueAddress : undefined,
@@ -313,27 +320,37 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
 
       try {
         const exec = await executeForUser(tx, userCtx(acct));
-        const mint = parseMint(exec.events);
+        const mints = parseMints(exec.events);
         // Cache the derived wrapper id after a first-ever create so later plays skip the derive read.
         if (!w.exists && !acct.predictWrapperId) {
           await prismaQuery.user.update({ where: { id: acct.id }, data: { predictWrapperId: w.wrapperId } }).catch(() => {});
         }
-        const actualMultiplier = multiplierOf(mint.costRaw, mint.quantityRaw);
+        const costRaw = mints.reduce((sum, m) => sum + m.costRaw, 0n);
+        // Only one leg of a multi-leg play can pay, so the honest multiple is the SMALLEST leg's payout over
+        // the whole play's cost, never a sum. Single-leg is the same expression with one term.
+        const payoutRaw = mints.reduce((least, m) => (m.quantityRaw < least ? m.quantityRaw : least), mints[0].quantityRaw);
+        const actualMultiplier = multiplierOf(costRaw, payoutRaw);
         roundLog(
           `[Round OPEN]   ${cur.game.padEnd(5)} BTC  ` +
-          (cur.kind === 'binary' ? `${(cur.side ?? '').toUpperCase().padEnd(4)} strike=${cur.strikeDisplay}` : `band=(${cur.lowerDisplay}, ${cur.upperDisplay}]`) +
-          `  x${actualMultiplier.toFixed(2)}  lev=${Number(cur.leverage1e9) / 1e9}  entry=$${fromDusdcRaw(mint.costRaw).toFixed(2)}` +
-          `  order=${mint.orderId.toString().slice(0, 10)}…  expires in ${Math.max(0, Math.round((cur.expiryMs - Date.now()) / 1000))}s @${hhmmss()} tx=${exec.digest.slice(0, 8)}`,
+          (cur.kind === 'binary'
+            ? `${(cur.side ?? '').toUpperCase().padEnd(4)} strike=${cur.strikeDisplay}`
+            : cur.kind === 'multi'
+              ? `break=(<${cur.lowerDisplay} | >${cur.upperDisplay})`
+              : `band=(${cur.lowerDisplay}, ${cur.upperDisplay}]`) +
+          `  x${actualMultiplier.toFixed(2)}  lev=${Number(cur.leverage1e9) / 1e9}  entry=$${fromDusdcRaw(costRaw).toFixed(2)}` +
+          `  order=${mints.map((m) => m.orderId.toString().slice(0, 10)).join('+')}…  expires in ${Math.max(0, Math.round((cur.expiryMs - Date.now()) / 1000))}s @${hhmmss()} tx=${exec.digest.slice(0, 8)}`,
         );
         await commitPlay(playId, {
           status: 'open',
           txMint: exec.digest,
-          marketKey: mint.orderId.toString(), // the settle worker's key (decodeOrderId derives the close qty)
-          // All-in cost = on-chain mint cost + the rake withdrawn to revenue (== mint.costRaw at rake 0).
-          entryCost: mint.costRaw + rakeRaw,
+          // The settle worker's key (decodeOrderId derives the close qty). A multi-leg play stores its legs
+          // comma-separated in mint order, which is why no column was needed for BREAKOUT.
+          marketKey: mints.map((m) => m.orderId.toString()).join(','),
+          // All-in cost = on-chain mint cost + the rake withdrawn to revenue (== mint cost at rake 0).
+          entryCost: costRaw + rakeRaw,
           rake: rakeRaw, // exact fee collected: the auditable ground truth for referral revshare (referral.ts). Only minted plays carry rake > 0.
           multiplier: actualMultiplier,
-          leverage: Number(mint.leverage1e9) / 1e9, // the REAL admitted leverage (may be trimmed from the request)
+          leverage: Number(mints[0].leverage1e9) / 1e9, // the REAL admitted leverage (may be trimmed from the request)
           openedAt: new Date(),
         });
         invalidateBal(acct.id);
@@ -410,13 +427,18 @@ async function cashoutRealLocked(user: User, playId: string): Promise<CashoutRes
   if (!play.marketKey) throw new PlayError('PLAY_NOT_OPEN', 'Play is still opening');
 
   const w = await resolveWrapper(user.address, user.predictWrapperId);
-  const { orderId, quantityRaw } = realOrderOf(play);
+  const orders = realOrdersOf(play);
   const tx = new Transaction();
-  buildRedeemLivePlay(tx, { marketId: play.oracleId, wrapperId: w.wrapperId, orderId, closeQuantityRaw: quantityRaw });
+  // Every leg closes in this one PTB, so a multi-leg cash-out is all-or-nothing exactly like its mint was.
+  buildRedeemLivePlay(tx, {
+    marketId: play.oracleId,
+    wrapperId: w.wrapperId,
+    orders: orders.map((o) => ({ orderId: o.orderId, closeQuantityRaw: o.quantityRaw })),
+  });
   try {
     const exec = await executeForUser(tx, userCtx(user));
-    const r = parseRedeem(exec.events);
-    return finalizeCashout(play, r.payoutRaw, exec.digest);
+    const payoutRaw = parseRedeems(exec.events).reduce((sum, r) => sum + r.payoutRaw, 0n);
+    return finalizeCashout(play, payoutRaw, exec.digest);
   } catch (e) {
     // Buzzer beat the cash-out: past expiry the market is no longer quoteable, so the position settles to win/loss; the settle worker finalizes it shortly.
     if (isOracleExpiredAbort(e) || isRealMarketGone(e)) throw new PlayError('PLAY_NOT_OPEN', 'Round is settling, your result is locking in');
@@ -474,11 +496,13 @@ const ORPHAN_GIVEUP_MS = 30 * 60_000; // market object unreadable this long (cha
 // Mysten's Predict settles from Pyth-at-expiry, not a price we push, so there's no operator nudge: redeem_settled (permissionless, full-close) drives ensure_settled then pays $1*qty or 0 into the wrapper.
 // Self-healing: reconciles an already-closed position against its on-chain redeem event, gives up only on a provably-stuck/gone market. Stores the ExpiryMarket id in oracleId, the u256 order id in marketKey (quantity decoded from it).
 
-// Full close quantity for a real play, decoded from its packed order id.
-const realOrderOf = (play: Play): { orderId: bigint; quantityRaw: bigint } => {
-  const orderId = BigInt(play.marketKey);
-  return { orderId, quantityRaw: decodeOrderId(orderId).quantityRaw };
-};
+// A real play's on-chain orders, with each one's full close quantity decoded from its packed id. One entry for
+// every game but BREAKOUT, whose two legs live comma-separated in the same column.
+const realOrdersOf = (play: Play): Array<{ orderId: bigint; quantityRaw: bigint }> =>
+  play.marketKey.split(',').map((part) => {
+    const orderId = BigInt(part);
+    return { orderId, quantityRaw: decodeOrderId(orderId).quantityRaw };
+  });
 
 // Resolve the user's wrapper id for a settle: the cached column, else the deterministic derived address.
 async function wrapperIdForUser(userId: string): Promise<string | null> {
@@ -511,13 +535,18 @@ async function finalizeRealSettle(
 
 // Reconcile a real play whose redeem_settled failed, in order: (1) already redeemed on chain, recover the true payout, (2) market not settleable yet, retry next tick, (3) provably gone/stuck for far longer than any settle, give up to error.
 // Leaves the play 'open' when a later tick can still resolve it.
-async function reconcileRealSettle(play: Play, wrapperId: string, orderId: bigint, now: number, err: unknown): Promise<void> {
-  const onChain = await findRealRedeem(wrapperId, orderId).catch(() => null);
-  if (onChain) {
-    const status: PlayStatus = onChain.liquidated ? 'lost' : onChain.settled ? (onChain.payoutRaw > 0n ? 'won' : 'lost') : 'cashed_out';
-    const settle = onChain.settled ? await readMarketSettlement(play.oracleId).catch(() => null) : null;
-    await finalizeRealSettle(play, { payoutRaw: onChain.payoutRaw, status, settlePrice1e9: settle?.settlementPrice1e9 ?? null, digest: onChain.digest });
-    console.log(`\x1b[33m[Settle] reconciled real ${play.id}: already ${status} on-chain, payout=$${fromDusdcRaw(onChain.payoutRaw).toFixed(2)}\x1b[0m`);
+async function reconcileRealSettle(play: Play, wrapperId: string, orderIds: bigint[], now: number, err: unknown): Promise<void> {
+  const found = await Promise.all(orderIds.map((id) => findRealRedeem(wrapperId, id).catch(() => null)));
+  // A multi-leg play only reconciles once EVERY leg is closed on chain; a half-found play falls through to the
+  // retry below rather than being finalized on a partial payout.
+  if (found.every((f) => f !== null)) {
+    const legs = found as NonNullable<(typeof found)[number]>[];
+    const payoutRaw = legs.reduce((sum, l) => sum + l.payoutRaw, 0n);
+    const closed = legs.every((l) => l.settled || l.liquidated);
+    const status: PlayStatus = closed ? (payoutRaw > 0n ? 'won' : 'lost') : 'cashed_out';
+    const settle = closed ? await readMarketSettlement(play.oracleId).catch(() => null) : null;
+    await finalizeRealSettle(play, { payoutRaw, status, settlePrice1e9: settle?.settlementPrice1e9 ?? null, digest: legs[0].digest });
+    console.log(`\x1b[33m[Settle] reconciled real ${play.id}: already ${status} on-chain, payout=$${fromDusdcRaw(payoutRaw).toFixed(2)}\x1b[0m`);
     return;
   }
   const ms = await readMarketSettlement(play.oracleId).catch(() => null);
@@ -550,13 +579,14 @@ async function reconcileRealSettle(play: Play, wrapperId: string, orderId: bigin
 // Only ever skips a PROVABLE loss (isSettledDefiniteLoss is conservative); a win, an on-boundary price, an
 // unsettled market, or an unknown tick size all return false and fall through to redeem_settled below, so a
 // winner is never skipped and our redeem still drives settlement when nobody else has settled the market.
-async function trySkipLostRedeem(play: Play, orderId: bigint, lagS: number): Promise<boolean> {
+async function trySkipLostRedeem(play: Play, orderIds: bigint[], lagS: number): Promise<boolean> {
   const market = getMarket(play.oracleId);
   if (!market) return false; // tick size unknown (market pruned from cache): redeem to be safe
   const ms = await readMarketSettlement(play.oracleId).catch(() => null);
   if (!ms?.settled || ms.settlementPrice1e9 == null) return false; // not frozen yet: redeem drives settlement
-  if (!isSettledDefiniteLoss(decodeOrderId(orderId), ms.settlementPrice1e9, BigInt(market.tickSize))) return false;
-  roundLog(`[Round SETTLE] ${play.game.padEnd(5)} ${play.asset.padEnd(4)} real order=${orderId.toString().slice(0, 8)}… LOSS payout=$0.00 (expired ${lagS}s ago, no redeem) @${hhmmss()}`);
+  // Every leg must be a provable loss: one surviving leg on a BREAKOUT play means there is a payout to collect.
+  if (!orderIds.every((id) => isSettledDefiniteLoss(decodeOrderId(id), ms.settlementPrice1e9!, BigInt(market.tickSize)))) return false;
+  roundLog(`[Round SETTLE] ${play.game.padEnd(5)} ${play.asset.padEnd(4)} real order=${orderIds.map((id) => id.toString().slice(0, 8)).join('+')}… LOSS payout=$0.00 (expired ${lagS}s ago, no redeem) @${hhmmss()}`);
   await finalizeRealSettle(play, { payoutRaw: 0n, status: 'lost', settlePrice1e9: ms.settlementPrice1e9, digest: undefined });
   return true;
 }
@@ -576,23 +606,27 @@ async function settleOnePlayReal(play: Play, now: number): Promise<boolean> {
     });
     return false;
   }
-  const { orderId, quantityRaw } = realOrderOf(play);
+  const orders = realOrdersOf(play);
+  const orderIds = orders.map((o) => o.orderId);
   const lagS = Math.round((now - Number(play.expiry)) / 1000);
   // Provable loss: finalize from chain reads alone, no redeem tx (returns false to leave the redeem budget for real wins).
-  if (await trySkipLostRedeem(play, orderId, lagS)) return false;
+  if (await trySkipLostRedeem(play, orderIds, lagS)) return false;
   try {
     const tx = new Transaction();
-    buildRedeemSettled(tx, { marketId: play.oracleId, wrapperId, orderId, closeQuantityRaw: quantityRaw });
+    // One tx per play, not per leg: a multi-leg play redeems both legs together so its settle stays atomic.
+    for (const o of orders) buildRedeemSettled(tx, { marketId: play.oracleId, wrapperId, orderId: o.orderId, closeQuantityRaw: o.quantityRaw });
     // Direct build-sign-submit, not the coin-caching serial executor: redeem_settled is all-shared-input, so testnet pays gas from the settle wallet's address balance, which the serial executor's post-exec gas-coin cache chokes on.
     // The direct path reads effects.status only, so a settled redeem resolves this tick.
     const exec = await executeRealSettle(tx, `settle-redeem-real ${play.id}`);
-    const r = parseRedeem(exec.events);
-    const status: PlayStatus = r.liquidated ? 'lost' : r.payoutRaw > 0n ? 'won' : 'lost';
-    roundLog(`[Round SETTLE] ${play.game.padEnd(5)} ${play.asset.padEnd(4)} real order=${orderId.toString().slice(0, 8)}… ${status === 'won' ? 'WIN ' : 'LOSS'} payout=$${fromDusdcRaw(r.payoutRaw).toFixed(2)} (expired ${lagS}s ago) @${hhmmss()}`);
-    await finalizeRealSettle(play, { payoutRaw: r.payoutRaw, status, settlePrice1e9: r.settlementPrice1e9, digest: exec.digest });
+    const redeems = parseRedeems(exec.events);
+    const payoutRaw = redeems.reduce((sum, r) => sum + r.payoutRaw, 0n);
+    const status: PlayStatus = payoutRaw > 0n ? 'won' : 'lost';
+    const settlePrice1e9 = redeems.find((r) => r.settlementPrice1e9 != null)?.settlementPrice1e9 ?? null;
+    roundLog(`[Round SETTLE] ${play.game.padEnd(5)} ${play.asset.padEnd(4)} real order=${orderIds.map((id) => id.toString().slice(0, 8)).join('+')}… ${status === 'won' ? 'WIN ' : 'LOSS'} payout=$${fromDusdcRaw(payoutRaw).toFixed(2)} (expired ${lagS}s ago) @${hhmmss()}`);
+    await finalizeRealSettle(play, { payoutRaw, status, settlePrice1e9, digest: exec.digest });
     return true;
   } catch (e) {
-    await reconcileRealSettle(play, wrapperId, orderId, now, e);
+    await reconcileRealSettle(play, wrapperId, orderIds, now, e);
     return false;
   }
 }

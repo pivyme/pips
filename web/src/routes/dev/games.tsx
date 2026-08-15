@@ -86,8 +86,9 @@ const CONCEPTS: Concept[] = [
     score: [Y, Y, Y, N],
     mints: '2, atomic',
     floor: '$3.00',
-    status: 'building',
-    note: "Inverts the product's emotional polarity: a boring market becomes the enemy. Weakest of the five, gated behind an atomic two-mint spike, and may be cut.",
+    status: 'playable',
+    to: '/games/breakout',
+    note: "Inverts the product's emotional polarity: a boring market becomes the enemy. The spike passed, so both legs mint in ONE PTB and the chain enforces both-or-neither.",
   },
   {
     n: 1,

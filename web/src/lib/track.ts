@@ -53,6 +53,7 @@ export const EVENT_NAMES = [
   'game.press',
   'game.fold',
   'game.auto',
+  'game.lean',
 
   'menu.open',
   'menu.section',

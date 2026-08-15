@@ -134,6 +134,24 @@ export interface SnipeModel {
   admissionTick: number
 }
 
+// BREAKOUT's round model. The BREAK ladder is target win probabilities per leg, not dollar widths, so the
+// two pay zones re-solve on the live vol every frame the knob moves instead of stepping on the refetch.
+export interface BreakoutRung {
+  break: number
+  lean: number
+  up: { prob: number; sigmaMult: number }
+  down: { prob: number; sigmaMult: number }
+}
+export interface BreakoutModel {
+  entrySpot: string
+  duration: number
+  expiryMs: number
+  annualVol: number
+  legs: number
+  admissionTick: number
+  rungs: BreakoutRung[]
+}
+
 // RUSH's dealt band. Solved, priced and stored server-side; the take names the id and nothing else, so a
 // client can never mint a band it was not offered or at a multiple it was not quoted.
 export interface RushOffer {
@@ -522,6 +540,8 @@ const realApi = {
   pinModel: () => request<PinModel | null>('GET', '/games/pin/model'),
   // SNIPE's round model (ADMIN only, 404 otherwise): spot, the clock, the vol, the wall's mintable travel.
   snipeModel: () => request<SnipeModel | null>('GET', '/games/snipe/model'),
+  // BREAKOUT's round model (ADMIN only, 404 otherwise): spot, the clock, the vol, and the BREAK ladder.
+  breakoutModel: () => request<BreakoutModel | null>('GET', '/games/breakout/model'),
   // RUSH's beat (ADMIN only, 404 otherwise): the machine deals a band or nothing. One live offer per player,
   // so calling this while a deal is on the table returns that same deal rather than a fresh one.
   rushDeal: (stake: number, appetite: number) => request<{ now: number; offer: RushOffer | null }>('POST', '/games/rush/deal', { stake, appetite }),

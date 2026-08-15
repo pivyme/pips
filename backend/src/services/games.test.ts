@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { probit, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9, restrikeCloser, snipeWall, SNIPE_MAX_WALL_SIGMA, pressBand, parseStake, maxStakeFor, type ResolvedReal } from './games.ts';
+import { probit, breakoutProbs, BREAKOUT_LEG_PROBS, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9, restrikeCloser, snipeWall, SNIPE_MAX_WALL_SIGMA, pressBand, parseStake, maxStakeFor, type ResolvedReal } from './games.ts';
 import { LEVERAGE_ONE, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
 import type { Side } from '../types/api.ts';
 import { REAL_STRIKE_MIN_PROB, REAL_STRIKE_MAX_OFFSET_FRAC, REAL_BTC_ANNUAL_VOL, REAL_BINARY_MIN_OFFSET_SIGMA, MIN_STAKE, MAX_STAKE, MAX_STAKE_ADMIN } from '../config/main-config.ts';
@@ -366,5 +366,50 @@ describe('pressBand (every box nests inside the one before it)', () => {
     const next = pressBand({ step: 1, openIdx: 0, spot1e9: SPOT, sigma: SIGMA, inner: parent })
     expect(next.lower1e9).toBeGreaterThanOrEqual(parent.lower1e9)
     expect(next.upper1e9).toBeLessThanOrEqual(parent.upper1e9)
+  })
+})
+
+// BREAKOUT's BREAK ladder. The rungs are the game's risk dial, so a non-monotonic one (a riskier setting
+// paying LESS) is a product bug the chain will never report: both rungs mint fine, they just rank wrong.
+describe('breakoutProbs', () => {
+  const even = (i: number) => breakoutProbs(i, 0)
+
+  it('drops the win probability on every rung, so a wider break always pays more', () => {
+    for (let i = 1; i < BREAKOUT_LEG_PROBS.length; i++) {
+      expect(even(i)[0].prob).toBeLessThan(even(i - 1)[0].prob)
+    }
+  })
+
+  it('is symmetric on EVEN and skewed the right way on a lean', () => {
+    const [up, down] = even(2)
+    expect(up.side).toBe('up')
+    expect(down.side).toBe('down')
+    expect(up.prob).toBe(down.prob)
+
+    // Leaning up brings the up wall CLOSER (likelier, and it pays less for exactly that reason).
+    const [lu, ld] = breakoutProbs(2, 1)
+    expect(lu.prob).toBeGreaterThan(up.prob)
+    expect(ld.prob).toBeLessThan(down.prob)
+
+    const [du, dd] = breakoutProbs(2, -1)
+    expect(du.prob).toBeLessThan(up.prob)
+    expect(dd.prob).toBeGreaterThan(down.prob)
+  })
+
+  it('keeps every leg inside the chain bounds, and clear of break-even, at both extremes', () => {
+    for (let i = 0; i < BREAKOUT_LEG_PROBS.length; i++) {
+      for (const lean of [0, 1, -1]) {
+        for (const leg of breakoutProbs(i, lean)) {
+          expect(leg.prob).toBeGreaterThanOrEqual(REAL_STRIKE_MIN_PROB)
+          // Under 0.5 or the surviving leg cannot repay both premiums, which is the one way this game breaks.
+          expect(leg.prob).toBeLessThan(0.5)
+        }
+      }
+    }
+  })
+
+  it('clamps an out-of-range ladder index rather than reading off the end', () => {
+    expect(breakoutProbs(-5, 0)[0].prob).toBe(BREAKOUT_LEG_PROBS[0])
+    expect(breakoutProbs(99, 0)[0].prob).toBe(BREAKOUT_LEG_PROBS[BREAKOUT_LEG_PROBS.length - 1])
   })
 })

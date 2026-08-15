@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { decodeOrderId, isSettledDefiniteLoss, matchRealRedeemInPage, normalizePythSpot1e9 } from './predict-real.ts';
+import { decodeOrderId, isSettledDefiniteLoss, matchRealRedeemInPage, normalizePythSpot1e9, parseMints, parseRedeems } from './predict-real.ts';
 
 // decodeOrderId derives the full-close quantity + strike ticks straight from the packed u256 order id, so
 // the settle worker needs no extra column. Fixture is a real testnet OrderMinted event (all 25 sampled live events decoded exactly), locking the offsets/masks against source drift.
@@ -110,5 +110,69 @@ describe('normalizePythSpot1e9', () => {
     expect(normalizePythSpot1e9({ price_magnitude: '1', exponent_magnitude: 30, exponent_is_negative: true })).toBeNull();
     expect(normalizePythSpot1e9({ price_magnitude: '1', exponent_magnitude: 20, exponent_is_negative: false })).toBeNull();
     expect(normalizePythSpot1e9({})).toBeNull();
+  });
+});
+
+// A multi-leg play (BREAKOUT) mints both legs in one PTB and closes both in one PTB, so the parsers have to
+// return EVERY leg. Missing one silently loses a real payout, which reads as a normal loss.
+describe('parseMints', () => {
+  const minted = (orderId: string, quantity: string) => ({
+    type: '0xabc::order_events::OrderMinted',
+    parsedJson: {
+      order_id: orderId,
+      quantity,
+      expiry_market_id: '0xmarket',
+      leverage: '1000000000',
+      entry_probability: '200000000',
+      net_premium: '1200000',
+      trading_fee: '100000',
+      builder_fee: '0',
+      penalty_fee: '0',
+      lower_tick: '6298100',
+      higher_tick: '1073741823',
+    },
+  });
+
+  it('returns one result per leg, in emission order', () => {
+    const r = parseMints([minted('11', '7340000'), { type: '0xabc::other::Thing', parsedJson: {} }, minted('22', '7520000')]);
+    expect(r.map((m) => m.orderId)).toEqual([11n, 22n]);
+    expect(r.map((m) => m.quantityRaw)).toEqual([7_340_000n, 7_520_000n]);
+    expect(r[0].costRaw).toBe(1_300_000n); // net premium + all three fees
+  });
+
+  it('throws rather than returning an empty list when nothing minted', () => {
+    expect(() => parseMints([{ type: '0xabc::other::Thing', parsedJson: {} }])).toThrow('missing OrderMinted event');
+  });
+});
+
+describe('parseRedeems', () => {
+  const settled = (orderId: string, payout: string) => ({
+    type: '0xabc::order_events::SettledOrderRedeemed',
+    parsedJson: { order_id: orderId, payout_amount: payout, quantity_closed: '7340000', settlement_price: '63000000000000' },
+  });
+  const liquidated = (orderId: string) => ({
+    type: '0xabc::order_events::LiquidatedOrderRedeemed',
+    parsedJson: { order_id: orderId, quantity_closed: '7340000' },
+  });
+
+  it('returns one result per order so a multi-leg close can sum its legs', () => {
+    const r = parseRedeems([settled('11', '7340000'), settled('22', '0')]);
+    expect(r.length).toBe(2);
+    expect(r.reduce((sum, x) => sum + x.payoutRaw, 0n)).toBe(7_340_000n);
+  });
+
+  // Precedence, not order: a liquidated order pays nothing whichever event the chain emitted first, or a
+  // knocked-out leg would be summed in as a win.
+  it('collapses a liquidation tombstone onto the same order, in either emission order', () => {
+    for (const events of [[settled('11', '7340000'), liquidated('11')], [liquidated('11'), settled('11', '7340000')]]) {
+      const r = parseRedeems(events);
+      expect(r.length).toBe(1);
+      expect(r[0].liquidated).toBe(true);
+      expect(r[0].payoutRaw).toBe(0n);
+    }
+  });
+
+  it('throws when no redeem event fired at all', () => {
+    expect(() => parseRedeems([{ type: '0xabc::other::Thing', parsedJson: {} }])).toThrow('no redeem event found');
   });
 });

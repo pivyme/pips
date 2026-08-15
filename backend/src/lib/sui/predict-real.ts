@@ -379,6 +379,10 @@ export type MintPlayParams = {
   leverage1e9: bigint;
   lowerTick: bigint;
   higherTick: bigint;
+  // Multi-leg (BREAKOUT): every leg mints in THIS PTB off the one deposit and the one Pricer, so the chain
+  // enforces both-or-neither and nobody is ever left holding half a play. Absent = the single-leg path,
+  // byte-identical to before.
+  legs?: Array<{ lowerTick: bigint; higherTick: bigint; amountRaw: bigint }>;
   // House rake (seam in lib/sui/house.ts): when rakeRaw > 0, peel it from the wrapper's internal balance AFTER the mint and send it to revenueAddress, all in this one atomic PTB.
   // The deposit tops the wrapper to the full stake and the mint consumes ~net, so >= rake is always left to withdraw; rakeRaw = 0 (or no revenueAddress) is a clean no-op.
   rakeRaw?: bigint;
@@ -406,18 +410,22 @@ export function buildMintPlay(tx: Transaction, p: MintPlayParams): void {
     buildDepositFunds(tx, wrapper, buildAuth(tx), coin);
   }
 
+  // mint_exact_amount takes the Pricer by ref, so one load serves every leg; each mint takes its own fresh Auth.
   const pricer = buildLoadPricer(tx, p.marketId);
-  buildMintExactAmount(tx, {
-    marketId: p.marketId,
-    wrapper,
-    auth: buildAuth(tx),
-    pricer,
-    lowerTick: p.lowerTick,
-    higherTick: p.higherTick,
-    amountRaw: p.amountRaw,
-    minQuantityRaw: p.minQuantityRaw,
-    leverage1e9: p.leverage1e9,
-  });
+  const legs = p.legs ?? [{ lowerTick: p.lowerTick, higherTick: p.higherTick, amountRaw: p.amountRaw }];
+  for (const leg of legs) {
+    buildMintExactAmount(tx, {
+      marketId: p.marketId,
+      wrapper,
+      auth: buildAuth(tx),
+      pricer,
+      lowerTick: leg.lowerTick,
+      higherTick: leg.higherTick,
+      amountRaw: leg.amountRaw,
+      minQuantityRaw: p.minQuantityRaw,
+      leverage1e9: p.leverage1e9,
+    });
+  }
 
   // House rake: withdraw from the wrapper's internal balance (fresh Auth) and send to the revenue wallet
   // before the wrapper is shared (see MintPlayParams.rakeRaw); no-op when rakeRaw=0 or no revenueAddress.
@@ -433,21 +441,24 @@ export function buildMintPlay(tx: Transaction, p: MintPlayParams): void {
   }
 }
 
-// Live cash-out play (one PTB): load Pricer -> redeem_live; payout lands in the wrapper internal
-// balance (the user's chips), no withdraw so the game loop is one tx.
+// Live cash-out play (one PTB): load Pricer -> redeem_live per order; payout lands in the wrapper internal
+// balance (the user's chips), no withdraw so the game loop is one tx. A multi-leg play closes every leg in
+// this same PTB, so a cash-out is all or nothing exactly like its mint was.
 export function buildRedeemLivePlay(
   tx: Transaction,
-  p: { marketId: string; wrapperId: string; orderId: bigint; closeQuantityRaw: bigint },
+  p: { marketId: string; wrapperId: string; orders: Array<{ orderId: bigint; closeQuantityRaw: bigint }> },
 ): void {
   const pricer = buildLoadPricer(tx, p.marketId);
-  buildRedeemLive(tx, {
-    marketId: p.marketId,
-    wrapper: tx.object(p.wrapperId),
-    auth: buildAuth(tx),
-    pricer,
-    orderId: p.orderId,
-    closeQuantityRaw: p.closeQuantityRaw,
-  });
+  for (const order of p.orders) {
+    buildRedeemLive(tx, {
+      marketId: p.marketId,
+      wrapper: tx.object(p.wrapperId),
+      auth: buildAuth(tx),
+      pricer,
+      orderId: order.orderId,
+      closeQuantityRaw: order.closeQuantityRaw,
+    });
+  }
 }
 
 // Withdraw chips from the wrapper internal balance back to `to` (the wallet-screen action, not the
@@ -616,9 +627,18 @@ export async function quoteMint(p: {
 const isMoveAbort = (e: unknown): boolean => /MoveAbort|abort code|abortCode/i.test(grpcErrorText(e));
 
 export function parseMint(events: RealEvent[]): MintResult {
-  const e = events.find((x) => x.type.endsWith(OrderMintedSuffix));
-  if (!e?.parsedJson) throw new Error('missing OrderMinted event');
-  const j = e.parsedJson;
+  return parseMints(events)[0];
+}
+
+// Every leg a PTB minted, in emission order, so a multi-leg play reads each leg's own order id, quantity and
+// real multiplier off its own OrderMinted (L-012). Single-leg callers go through parseMint above.
+export function parseMints(events: RealEvent[]): MintResult[] {
+  const minted = events.filter((x) => x.type.endsWith(OrderMintedSuffix) && x.parsedJson).map((x) => mintFromJson(x.parsedJson!));
+  if (minted.length === 0) throw new Error('missing OrderMinted event');
+  return minted;
+}
+
+function mintFromJson(j: Record<string, unknown>): MintResult {
   const netPremium = evBig(j, 'net_premium');
   const fees = evBig(j, 'trading_fee') + evBig(j, 'builder_fee') + evBig(j, 'penalty_fee');
   return {
@@ -647,13 +667,34 @@ export type RedeemResult = {
 // Parse whichever redeem event fired: live -> LiveOrderRedeemed (redeem_amount minus fees), settled -> SettledOrderRedeemed (payout_amount), liquidated -> LiquidatedOrderRedeemed (zero payout).
 // Both redeem paths can emit the liquidated variant for a knocked-out order.
 export function parseRedeem(events: RealEvent[]): RedeemResult {
-  const liq = events.find((x) => x.type.endsWith(LiquidatedRedeemedSuffix));
-  if (liq?.parsedJson) return redeemFromJson(liq.parsedJson, 'liquidated');
-  const live = events.find((x) => x.type.endsWith(LiveRedeemedSuffix));
-  if (live?.parsedJson) return redeemFromJson(live.parsedJson, 'live');
-  const settled = events.find((x) => x.type.endsWith(SettledRedeemedSuffix));
-  if (settled?.parsedJson) return redeemFromJson(settled.parsedJson, 'settled');
-  throw new Error('no redeem event found (Live/Settled/Liquidated)');
+  const all = parseRedeems(events);
+  // Same precedence as before: a liquidated tombstone wins over a live or settled close for the same order.
+  return all.reduce((best, r) => (redeemRank(r) > redeemRank(best) ? r : best));
+}
+
+const redeemRank = (r: RedeemResult): number => (r.liquidated ? 3 : r.settled ? 1 : 2);
+
+// One result per order id, so a multi-leg redeem can sum its legs. Deduped by order with the same precedence
+// parseRedeem uses, since one order can emit both a close and a liquidation tombstone.
+export function parseRedeems(events: RealEvent[]): RedeemResult[] {
+  const byOrder = new Map<string, RedeemResult>();
+  for (const e of events) {
+    if (!e.parsedJson) continue;
+    const kind = e.type.endsWith(LiquidatedRedeemedSuffix)
+      ? 'liquidated'
+      : e.type.endsWith(LiveRedeemedSuffix)
+        ? 'live'
+        : e.type.endsWith(SettledRedeemedSuffix)
+          ? 'settled'
+          : null;
+    if (!kind) continue;
+    const r = redeemFromJson(e.parsedJson, kind);
+    const key = r.orderId.toString();
+    const cur = byOrder.get(key);
+    if (!cur || redeemRank(r) > redeemRank(cur)) byOrder.set(key, r);
+  }
+  if (byOrder.size === 0) throw new Error('no redeem event found (Live/Settled/Liquidated)');
+  return [...byOrder.values()];
 }
 
 // One parser for all three redeem event shapes (shared by parseRedeem + the GraphQL reconcile scan).

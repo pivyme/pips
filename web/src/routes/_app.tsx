@@ -10,6 +10,7 @@ import { Route as PinRoute } from './_app/games/pin'
 import { Route as SnipeRoute } from './_app/games/snipe'
 import { Route as PressRoute } from './_app/games/press'
 import { Route as RushRoute } from './_app/games/rush'
+import { Route as BreakoutRoute } from './_app/games/breakout'
 import { Route as LineRiderRoute } from './_app/games/line-rider'
 import { Route as FlappyPiperRoute } from './_app/games/flappy-piper'
 import { AppFrame } from '@/components/console/AppFrame'
@@ -67,6 +68,7 @@ const DEVICE_SCREENS: Record<string, ComponentType> = {
   '/games/snipe': routeComponent(SnipeRoute),
   '/games/press': routeComponent(PressRoute),
   '/games/rush': routeComponent(RushRoute),
+  '/games/breakout': routeComponent(BreakoutRoute),
   '/games/line-rider': routeComponent(LineRiderRoute),
   '/games/flappy-piper': routeComponent(FlappyPiperRoute),
 }

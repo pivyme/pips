@@ -15,6 +15,7 @@ import {
   httpStatusForPlayError,
   maxStakeFor,
   parseStake,
+  quoteBreakoutModelReal,
   quoteMoonshotAimReal,
   quotePinModelReal,
   quoteSnipeModelReal,
@@ -123,6 +124,14 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
   app.get('/games/snipe/model', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!canSeeGame('snipe', request.user!.specialRoles)) return handleNotFoundError(reply, 'Game');
     const model = await quoteSnipeModelReal();
+    return reply.code(200).send({ success: true, error: null, data: model ?? null });
+  });
+
+  // BREAKOUT's round model: spot, the clock, the calibrated vol, and the BREAK ladder as target win
+  // probabilities, so the two pay zones slide under the thumb at every frame. Lab-gated like the play route.
+  app.get('/games/breakout/model', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!canSeeGame('breakout', request.user!.specialRoles)) return handleNotFoundError(reply, 'Game');
+    const model = await quoteBreakoutModelReal();
     return reply.code(200).send({ success: true, error: null, data: model ?? null });
   });
 
@@ -285,6 +294,16 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
       throw new PlayError('INVALID_PARAMS', 'Name a price and pick a window');
     }
     return { game, stake, asset, pin, window };
+  }
+
+  if (game === 'breakout') {
+    // BREAKOUT: the client sends the BREAK rung by ladder index and a LEAN of -1 / 0 / +1. Both walls, both
+    // budgets and the split are the server's, and `stake` is the TOTAL for the play, not one leg.
+    const asset = String(body.asset ?? '');
+    const brk = Number(body.break);
+    const lean = Number(body.lean ?? 0);
+    if (!asset || !Number.isFinite(brk)) throw new PlayError('INVALID_PARAMS', 'Pick a break size');
+    return { game, stake, asset, break: brk, lean: Number.isFinite(lean) ? Math.sign(lean) : 0 };
   }
 
   if (game === 'range') {

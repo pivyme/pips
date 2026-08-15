@@ -2,6 +2,7 @@ import {
   EXPIRY_SAFETY_MS,
   LEVERAGE_TARGET_WIN_PROB,
   LUCKY_ROUND_MS,
+  MIN_STAKE,
   RANGE_MAX_ORACLE_LIFE_MS,
   RANGE_MIN_ORACLE_LIFE_MS,
   RANGE_TIER_PROBS,
@@ -26,9 +27,22 @@ const SECONDS_PER_YEAR = 365.25 * 24 * 3600;
 const REAL_RANGE_QUOTE_HAIRCUT = 0.04;
 const now = (): number => Date.now();
 
+// One leg of a multi-leg play. Every leg is its own mint with its own strike, budget and multiplier, and they
+// all land in ONE PTB so the chain enforces both-or-neither (the BREAKOUT spike, 04-GAMES-LAB.md §7).
+export type ResolvedLeg = {
+  side: Side;
+  strike1e9: bigint;
+  strikeDisplay: string;
+  lowerTick: bigint;
+  higherTick: bigint;
+  amountRaw: bigint;
+  multiplier: number; // the chain's own quote for this leg, over the whole play's cost; `est` until OrderMinted snaps it
+  costRaw?: bigint; // the quoted all-in cost, so the play's total is the chain's number and not the budget
+};
+
 export type ResolvedReal = {
   game: Game;
-  kind: 'binary' | 'range';
+  kind: 'binary' | 'range' | 'multi';
   marketId: string;
   asset: string;
   spot1e9: bigint;
@@ -50,6 +64,7 @@ export type ResolvedReal = {
   upperDisplay?: string;
   widthPct?: number;
   seed?: string;
+  legs?: ResolvedLeg[]; // multi only: every leg mints in the same PTB
 };
 
 export type CreatePlayInputShape =
@@ -61,6 +76,7 @@ export type CreatePlayInputShape =
   // `step` and `inner` are filled by the server from the player's own open boxes, never read off the body:
   // a client that could name its own parent box could mint a wide box at a tight box's price.
   | { game: 'press'; stake: string | number; asset: string; open: number; step?: number; inner?: { lower: number; upper: number; expiryMs: number } }
+  | { game: 'breakout'; stake: string | number; asset: string; break: number; lean: number }
   // `offer` is the claimed server-side offer, filled from the store by its id. The body carries the id only.
   | {
       game: 'rush';
@@ -338,7 +354,17 @@ const PREFLIGHT_STEPS = 7;
 const PROB_TOLERANCE = 1.5; // re-place the strike when the quoted probability is off target by more than this
 const COST_MARGIN_PCT = 4n; // headroom under the stake for the fee ramp between this quote and the mint
 
-type Preflight = { strike1e9: bigint; lowerTick: bigint; higherTick: bigint; entryProbability: number; amountRaw: bigint };
+// quantityRaw/costRaw are the chain's own numbers for the winning quote, so a caller can state a multiple
+// without re-deriving one from the probability. Still an estimate: it snaps from OrderMinted on mint (L-012).
+export type Preflight = {
+  strike1e9: bigint;
+  lowerTick: bigint;
+  higherTick: bigint;
+  entryProbability: number;
+  amountRaw: bigint;
+  quantityRaw: bigint;
+  costRaw: bigint;
+};
 
 async function preflightBinary(
   marketId: string,
@@ -351,7 +377,29 @@ async function preflightBinary(
   netRaw: bigint,
   seconds: number,
 ): Promise<Preflight | null> {
-  const target = targetProb(tier, leverage1e9);
+  return preflightBinaryAt(marketId, side, targetProb(tier, leverage1e9), `${tier}x`, spot1e9, tickSize, admissionTickSize, leverage1e9, netRaw, seconds);
+}
+
+/**
+ * Place one binary strike at a target win probability, quoted against the live market until the chain agrees.
+ *
+ * This is the only honest way to hit a target: the chain prices off a Block Scholes surface whose short-horizon
+ * implied vol is nowhere near our lognormal, so a strike placed analytically lands multiples of sigma off (a
+ * BREAKOUT rung aimed at p=0.15 quoted at 1%, i.e. straight through the admission floor). Each quote reports
+ * the real probability, which re-places the strike AND warms `binaryCalib` for the next play.
+ */
+async function preflightBinaryAt(
+  marketId: string,
+  side: Side,
+  target: number,
+  label: string,
+  spot1e9: bigint,
+  tickSize: bigint,
+  admissionTickSize: bigint,
+  leverage1e9: bigint,
+  netRaw: bigint,
+  seconds: number,
+): Promise<Preflight | null> {
   const costTarget = (netRaw * (100n - COST_MARGIN_PCT)) / 100n;
   let strike1e9 = strikeForProb(side, target, spot1e9, calibSigma(seconds), seconds, admissionTickSize);
   let budgetRaw = premiumBudget(netRaw);
@@ -366,7 +414,7 @@ async function preflightBinary(
       trace.push(`${realFmt(strike1e9)}@$${fmtUsd(budgetRaw)} refused`);
       // Inadmissible (past a probability bound): only a strike closer to spot can be admitted.
       const next = halveToSpot(side, strike1e9, spot1e9, admissionTickSize);
-      if (next === strike1e9) return finishPreflight(best, trace, tier, target, seconds);
+      if (next === strike1e9) return finishPreflight(best, trace, label, target, seconds);
       strike1e9 = next;
       aimed = false; // new strike, new fee load
       continue;
@@ -388,13 +436,13 @@ async function preflightBinary(
       }
       // Can't fit this strike inside the stake at the protocol's $1 minimum premium; a closer one costs less.
       const next = halveToSpot(side, strike1e9, spot1e9, admissionTickSize);
-      if (next === strike1e9) return finishPreflight(best, trace, tier, target, seconds);
+      if (next === strike1e9) return finishPreflight(best, trace, label, target, seconds);
       strike1e9 = next;
       aimed = false; // new strike, new fee load
       continue;
     }
 
-    best = { strike1e9, lowerTick, higherTick, entryProbability: p, amountRaw: budgetRaw };
+    best = { strike1e9, lowerTick, higherTick, entryProbability: p, amountRaw: budgetRaw, quantityRaw: q.quantityRaw, costRaw: q.allInCostRaw };
     if (p >= target / PROB_TOLERANCE && p <= target * PROB_TOLERANCE) return best;
     trace.push(`${realFmt(strike1e9)} p=${p.toFixed(3)} off target ${target.toFixed(3)}`);
     // Admissible and affordable, but priced well off the tier: re-place it on the vol just implied.
@@ -402,21 +450,21 @@ async function preflightBinary(
     if (retarget === strike1e9) return best;
     strike1e9 = retarget;
   }
-  return finishPreflight(best, trace, tier, target, seconds);
+  return finishPreflight(best, trace, label, target, seconds);
 }
 
 const fmtUsd = (raw: bigint): string => (Number(raw) / 1e6).toFixed(2);
 
 // A search that ends with nothing playable is a real incident (the tier is unreachable on this market), so
 // record WHY it ran out rather than surfacing a bare "no mintable strike". A partial result still plays.
-function finishPreflight(best: Preflight | null, trace: string[], tier: number, target: number, seconds: number): Preflight | null {
+function finishPreflight(best: Preflight | null, trace: string[], label: string, target: number, seconds: number): Preflight | null {
   if (!best) {
-    console.warn(`[preflight] ${tier}x unmintable (p*=${target.toFixed(3)}, ${Math.round(seconds)}s, sigma=${calibSigma(seconds).toFixed(3)}): ${trace.join(' | ')}`);
-    captureError(new Error(`preflight found no mintable strike for ${tier}x`), {
+    console.warn(`[preflight] ${label} unmintable (p*=${target.toFixed(3)}, ${Math.round(seconds)}s, sigma=${calibSigma(seconds).toFixed(3)}): ${trace.join(' | ')}`);
+    captureError(new Error(`preflight found no mintable strike for ${label}`), {
       kind: 'chain',
       level: 'warn',
       fingerprint: 'chain.preflight_exhausted',
-      context: { tier, targetProb: target, seconds: Math.round(seconds), sigma: calibSigma(seconds), trace },
+      context: { label, targetProb: target, seconds: Math.round(seconds), sigma: calibSigma(seconds), trace },
     });
   }
   return best;
@@ -1229,6 +1277,214 @@ async function resolveRealRush(
   };
 }
 
+// === BREAKOUT ===
+// Bet that something HAPPENS. Two binaries in one PTB on the same expiry: an up at spot + break and a down at
+// spot - break. The down strike always sits below the up strike, so at most one leg can ever pay, and both are
+// sized under p < 0.5 so the survivor's payout clears both premiums. Atomicity is the chain's, not ours: the
+// legs mint off one deposit and one Pricer in a single transaction (the spike, 04-GAMES-LAB.md §7), so an
+// admission abort on either side kills the whole tx and nobody is left holding a naked directional bet.
+
+/** Both legs, so the floor is 2 x MIN_STAKE = $3.00. Stated on screen before the player commits (L-034). */
+export const BREAKOUT_LEGS = 2n;
+/** The whole play's floor, in DUSDC raw. The wire stake is the total, and the server splits it across the legs. */
+export const BREAKOUT_MIN_STAKE_RAW = BigInt(Math.round(MIN_STAKE * 1e6)) * BREAKOUT_LEGS;
+/**
+ * The BREAK ladder, as the target win probability of ONE leg. Tight break = likely, small pay; wide = brutal.
+ * Spaced so every rung is a visibly different bet even after the $1 admission grid quantises a near wall: a
+ * denser ladder measured NON-MONOTONIC on a 28s round, one notch riskier paying less, which reads as broken.
+ */
+export const BREAKOUT_LEG_PROBS = [0.26, 0.19, 0.14, 0.1, 0.07, 0.05];
+/**
+ * Ceiling per leg. Not the p < 0.5 break-even bound: `REAL_BINARY_MIN_OFFSET_SIGMA` already floors a strike
+ * at 0.3 sigma out, which is p = 0.38, so anything above this is a clamp that silently never binds.
+ */
+const BREAKOUT_MAX_LEG_PROB = 0.38;
+/** LEAN pulls one wall in and pushes the other out at the same total cost: a hunch, priced, not a discount. */
+const BREAKOUT_LEAN_SKEW = 1.4;
+
+const breakoutProb = (p: number): number => Math.min(BREAKOUT_MAX_LEG_PROB, Math.max(REAL_STRIKE_MIN_PROB, p));
+
+/**
+ * The target win probability of each leg for a BREAK rung and a LEAN. Sized by probability, never by a fixed
+ * dollar move (L-013): a 20-60s round's 1-sigma move is only ~0.04-0.08% of spot, so a hand-picked $70 break
+ * lands multiple sigma out and both legs abort. Shared by the resolve path and the ladder proof.
+ */
+export function breakoutProbs(breakIdx: number, lean: number): Array<{ side: Side; prob: number }> {
+  const base = BREAKOUT_LEG_PROBS[Math.max(0, Math.min(BREAKOUT_LEG_PROBS.length - 1, Math.round(breakIdx)))];
+  // The leaned side is the one you think will break: closer, likelier, and it pays less for exactly that reason.
+  const skew = lean > 0 ? BREAKOUT_LEAN_SKEW : lean < 0 ? 1 / BREAKOUT_LEAN_SKEW : 1;
+  return [
+    { side: 'up', prob: breakoutProb(base * skew) },
+    { side: 'down', prob: breakoutProb(base / skew) },
+  ];
+}
+
+/** A leg's wall distance in sigma, mirroring strikeForProb's placement so the drawn zone is the bet's shape. */
+const breakoutSigmaMult = (p: number): number => Math.max(probit(1 - p), REAL_BINARY_MIN_OFFSET_SIGMA);
+
+/**
+ * What BREAKOUT's screen needs to draw the two pay zones and the dead zone between them, and to state the
+ * floor cost before the player commits.
+ *
+ * Every rung is enumerated here rather than re-derived on the client, so the ladder math cannot drift between
+ * the two pillars. The client multiplies `sigmaMult` by the LIVE sigma each frame, so the zones slide under
+ * the thumb and tighten with the clock instead of stepping on the 5s refetch.
+ */
+export async function quoteBreakoutModelReal(): Promise<{
+  entrySpot: string;
+  duration: number;
+  expiryMs: number;
+  annualVol: number;
+  legs: number;
+  admissionTick: number;
+  rungs: Array<{ break: number; lean: number; up: { prob: number; sigmaMult: number }; down: { prob: number; sigmaMult: number } }>;
+} | null> {
+  try {
+    await ensureRangeCalib();
+    const market = rangeMarket();
+    const { spot1e9, admissionTickSize } = realEcon(market);
+    const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+    const rungs = BREAKOUT_LEG_PROBS.flatMap((_, breakIdx) =>
+      [0, 1, -1].map((lean) => {
+        const [up, down] = breakoutProbs(breakIdx, lean);
+        return {
+          break: breakIdx,
+          lean,
+          up: { prob: up.prob, sigmaMult: breakoutSigmaMult(up.prob) },
+          down: { prob: down.prob, sigmaMult: breakoutSigmaMult(down.prob) },
+        };
+      }),
+    );
+    return {
+      entrySpot: realFmt(spot1e9),
+      duration: Math.max(1, Math.round(seconds)),
+      expiryMs: market.expiryMs,
+      annualVol: rangeCalib.sigmaAnnual,
+      legs: Number(BREAKOUT_LEGS),
+      admissionTick: Number(admissionTickSize) / 1e9,
+      rungs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Run the real placement for one BREAK rung and one LEAN, without minting. Drives the exact preflight the
+ * resolve path drives, so `scripts/verify-breakout-ladder.ts` proves what actually mints rather than a copy
+ * of the math. Same idiom as `probeSnipeWalls` / `probePinLadder`, one rung at a time so the script can pace
+ * itself under the fullnode's rate limit (L-032). Read-only: quote_mint needs no wrapper and no chips.
+ */
+export async function probeBreakoutRung(
+  breakIdx: number,
+  lean: number,
+  legNetRaw: bigint,
+): Promise<{
+  marketId: string;
+  spot1e9: bigint;
+  seconds: number;
+  legs: Array<{ side: Side; target: number; placed: Preflight | null }>;
+}> {
+  await ensureRangeCalib();
+  const market = rangeMarket();
+  const { spot1e9: cachedSpot, tickSize, admissionTickSize } = realEcon(market);
+  const spot1e9 = await freshRealSpot(cachedSpot);
+  const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+  const legs = [];
+  for (const t of breakoutProbs(breakIdx, lean)) {
+    legs.push({
+      side: t.side,
+      target: t.prob,
+      placed: await preflightBinaryAt(market.oracleId, t.side, t.prob, `breakout ${t.side}`, spot1e9, tickSize, admissionTickSize, LEVERAGE_ONE, legNetRaw, seconds),
+    });
+  }
+  return { marketId: market.oracleId, spot1e9, seconds, legs };
+}
+
+async function resolveRealBreakout(netRaw: bigint, stakeRaw: bigint, input: { break: number; lean: number }): Promise<ResolvedReal> {
+  // Awaited for the same reason PRESS awaits it: both walls are placed off this vol, and the 0.55 seed
+  // against the surface's ~0.2 implied puts them far enough out that both legs abort on the probability floor.
+  await ensureRangeCalib();
+  const market = rangeMarket();
+  const { spot1e9: cachedSpot, tickSize, admissionTickSize } = realEcon(market);
+  const spot1e9 = await freshRealSpot(cachedSpot);
+  const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+
+  // Split evenly, and floored at the PRODUCT floor per leg, not the protocol's: MIN_STAKE is a per-mint rule
+  // and this play is two mints (L-034). parseStake only knows about one, so the second floor is checked here.
+  if (stakeRaw < BREAKOUT_MIN_STAKE_RAW) {
+    throw new PlayError('INVALID_PARAMS', `Both directions is ${Number(BREAKOUT_LEGS)} plays, so it needs $${fmtUsd(BREAKOUT_MIN_STAKE_RAW)}`);
+  }
+  const legNet = netRaw / BREAKOUT_LEGS;
+
+  const targets = breakoutProbs(input.break, input.lean);
+
+  // Both legs go through the binary preflight, which re-places each strike until the CHAIN agrees it prices
+  // near the rung's target odds. The analytic placement alone is not close enough here: the surface's implied
+  // vol runs ~2x under our lognormal at this horizon, so an analytically-placed p=0.15 wall really quotes at
+  // ~1% and the whole upper half of the ladder aborts (measured by scripts/verify-breakout-ladder.ts).
+  const legs: ResolvedLeg[] = [];
+  for (const t of targets) {
+    const pre = await preflightBinaryAt(
+      market.oracleId,
+      t.side,
+      t.prob,
+      `breakout ${t.side}`,
+      spot1e9,
+      tickSize,
+      admissionTickSize,
+      LEVERAGE_ONE,
+      legNet,
+      seconds,
+    );
+    // Both legs or neither, decided BEFORE anything mints: half a BREAKOUT is a naked directional bet.
+    if (!pre) throw new PlayError('MARKET_UNAVAILABLE', 'That break is not tradeable right now');
+    legs.push({
+      side: t.side,
+      strike1e9: pre.strike1e9,
+      strikeDisplay: realFmt(pre.strike1e9),
+      lowerTick: pre.lowerTick,
+      higherTick: pre.higherTick,
+      amountRaw: pre.amountRaw,
+      // The chain's own quoted payout, not a probability run back through a haircut. Restated over the whole
+      // play's cost just below, since only one leg can ever pay.
+      multiplier: Number(pre.quantityRaw),
+      costRaw: pre.costRaw,
+    });
+  }
+
+  // Only one leg can pay, so every leg's multiple is stated over the WHOLE play's cost and the play-level
+  // number is the smaller of the two: the floor the player is guaranteed on a break, never a sum.
+  const totalRaw = legs.reduce((sum, l) => sum + l.amountRaw, 0n);
+  const totalCostRaw = legs.reduce((sum, l) => sum + (l.costRaw ?? l.amountRaw), 0n);
+  for (const leg of legs) leg.multiplier = leg.multiplier / Number(totalCostRaw);
+
+  return {
+    game: 'breakout',
+    kind: 'multi',
+    marketId: market.oracleId,
+    asset: REAL_BTC_GAME_ASSET,
+    spot1e9,
+    tickSize,
+    admissionTickSize,
+    // The single-leg fields carry the UP leg, so anything reading a play generically still sees a real bet.
+    lowerTick: legs[0].lowerTick,
+    higherTick: legs[0].higherTick,
+    leverage1e9: LEVERAGE_ONE,
+    amountRaw: totalRaw,
+    minQuantityRaw: POSITION_LOT_SIZE,
+    expiryMs: market.expiryMs,
+    duration: Math.max(1, Math.round(seconds)),
+    entrySpot: realFmt(spot1e9),
+    tierMultiplier: Math.min(...legs.map((l) => l.multiplier)),
+    // The two walls, so the settle reveal can state which side broke. The pay zones are OUTSIDE this pair,
+    // the inverse of every other range game, which is the whole point of BREAKOUT.
+    lowerDisplay: legs[1].strikeDisplay,
+    upperDisplay: legs[0].strikeDisplay,
+    legs,
+  };
+}
+
 // Tier quotes: multiplier = the last SIMULATED mint's multiple per tier (chain truth incl. fees/spread,
 // analytic fallback pre-calibration), so the promise holds whenever the tap lands; sigmaMult + expiryMs +
 // the calibrated annualVol let the client redraw the live band width between fetches.
@@ -1306,5 +1562,6 @@ export async function resolveReal(input: CreatePlayInputShape, netRaw: bigint, s
   if (input.game === 'snipe') return resolveRealSnipe(netRaw, stakeRaw, input);
   if (input.game === 'press') return resolveRealPress(netRaw, stakeRaw, input);
   if (input.game === 'rush') return resolveRealRush(netRaw, stakeRaw, input);
+  if (input.game === 'breakout') return resolveRealBreakout(netRaw, stakeRaw, input);
   return resolveRealRange(netRaw, stakeRaw, input);
 }
