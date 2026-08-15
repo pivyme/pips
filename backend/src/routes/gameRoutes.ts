@@ -8,7 +8,7 @@ import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { buildMarketsPayload } from '../lib/markets-feed.ts';
 import { spotHistory } from '../lib/price-history.ts';
 import { PYTH_FEED_IDS } from '../lib/pyth.ts';
-import { PlayError, httpStatusForPlayError, quoteMoonshotAimReal, quotePinModelReal, quoteRangeBatchReal, quoteRangeTiersReal } from '../services/games.ts';
+import { PlayError, httpStatusForPlayError, quoteMoonshotAimReal, quotePinModelReal, quoteSnipeModelReal, quoteRangeBatchReal, quoteRangeTiersReal } from '../services/games.ts';
 import {
   createPlay,
   cashoutPlay,
@@ -103,6 +103,14 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     return reply.code(200).send({ success: true, error: null, data: model ?? null });
   });
 
+  // SNIPE's round model: spot, the clock, the calibrated vol, and the wall's mintable travel, so the knob can
+  // plant a wall and the screen can read the exact gap every frame. Lab-gated like the play route.
+  app.get('/games/snipe/model', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!canSeeGame('snipe', request.user!.specialRoles)) return handleNotFoundError(reply, 'Game');
+    const model = await quoteSnipeModelReal();
+    return reply.code(200).send({ success: true, error: null, data: model ?? null });
+  });
+
   // One endpoint per game, uniform shape. Body is the game-specific config plus a stake.
   app.post('/games/:game/play', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const game = (request.params as { game: string }).game;
@@ -176,6 +184,16 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
       throw new PlayError('INVALID_PARAMS', 'Pick an asset, a direction, and a reach');
     }
     return { game, stake, asset, side, reach };
+  }
+
+  if (game === 'snipe') {
+    // SNIPE: the wall is an absolute PRICE the player planted, and the side is what they committed to. Both
+    // travel together, because re-deriving the side from a spot that has since crossed the wall flips the bet.
+    const asset = String(body.asset ?? '');
+    const wall = Number(body.wall);
+    const side = body.side === 'down' ? 'down' : 'up';
+    if (!asset || !Number.isFinite(wall)) throw new PlayError('INVALID_PARAMS', 'Plant a wall');
+    return { game, stake, asset, wall, side };
   }
 
   if (game === 'pin') {

@@ -56,7 +56,8 @@ export type CreatePlayInputShape =
   | { game: 'lucky'; stake: string | number }
   | { game: 'range'; stake: string | number; asset: string; widthPct?: number; tier?: number }
   | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number }
-  | { game: 'pin'; stake: string | number; asset: string; pin: number; window: number };
+  | { game: 'pin'; stake: string | number; asset: string; pin: number; window: number }
+  | { game: 'snipe'; stake: string | number; asset: string; wall: number; side: Side };
 
 function realMarket(roundMs: number, minRemainingMs: number = EXPIRY_SAFETY_MS): Market {
   const at = now();
@@ -813,6 +814,174 @@ async function resolveRealPin(netRaw: bigint, stakeRaw: bigint, input: { pin: nu
   };
 }
 
+// === SNIPE ===
+// One binary at a wall the player plants and the market drifts toward. The wall is an absolute PRICE, not a
+// tier, and it does not move for the round: that is the whole game, so this path deliberately skips
+// preflightBinary's probability retargeting, which exists to drag a strike onto a tier's target odds.
+
+// How far off spot a wall may be planted, in sigma: solved so the furthest wall still prices above the chain's
+// admission floor, then haircut, because the Block Scholes surface has thinner tails than this lognormal.
+// Measured with `scripts/verify-snipe-walls.ts`: at 0.5 all 12 walls admit on both sides, the near wall
+// quoting ~2.5x and the far one ~16-19x, which is the payout spread the timing game is built on.
+const SNIPE_TRAVEL_SAFETY = 0.5;
+export const SNIPE_MAX_WALL_SIGMA = probit(1 - REAL_STRIKE_MIN_PROB) * SNIPE_TRAVEL_SAFETY;
+// The nearest wall the knob can PLANT. Only a planting bound: once planted, a wall is honoured all the way
+// through the market crossing it, because closing the gap is the game.
+const SNIPE_MIN_WALL_SIGMA = 0.15;
+
+/**
+ * The strike a planted wall mints at. Shared by the resolve path and the wall proof, so what gets verified is
+ * exactly what mints.
+ *
+ * The planted PRICE is honoured verbatim, never re-derived off a spot that has moved since: re-deriving is
+ * what would move the wall exactly when the gap gets interesting, and GAP is the one exact number in this
+ * game. The admissible band is the only thing that can override it, and it is SYMMETRIC, so a wall the market
+ * has already crossed is kept rather than pushed back out. That crossing is the payoff for waiting, not a
+ * case to correct. Unlike otmStrike1e9, nothing here forces the strike off the entry line.
+ */
+export function snipeWall(p: { wall: number; side: Side; spot1e9: bigint; sigma: number; admissionTickSize: bigint }): bigint {
+  const wall1e9 = BigInt(Math.round(p.wall * 1e9));
+  const band = BigInt(Math.round(SNIPE_MAX_WALL_SIGMA * p.sigma * 1e9));
+  const hi1e9 = (p.spot1e9 * (FLOAT_SCALING + band)) / FLOAT_SCALING;
+  const lo1e9 = (p.spot1e9 * (FLOAT_SCALING - band)) / FLOAT_SCALING;
+  const raw1e9 = wall1e9 > hi1e9 ? hi1e9 : wall1e9 < lo1e9 ? lo1e9 : wall1e9;
+  // Snapped onto the $1 admission grid, away from the winning side, so the snap never quietly improves the bet.
+  return p.side === 'up'
+    ? ((raw1e9 + p.admissionTickSize - 1n) / p.admissionTickSize) * p.admissionTickSize
+    : (raw1e9 / p.admissionTickSize) * p.admissionTickSize;
+}
+
+// What SNIPE's screen needs to plant a wall and read the gap: the round's spot and clock, the calibrated vol,
+// and the wall's mintable travel. GAP itself is exact (spot minus a known strike) and is computed on the
+// client from these, never estimated.
+export async function quoteSnipeModelReal(): Promise<{
+  entrySpot: string;
+  duration: number;
+  expiryMs: number;
+  annualVol: number;
+  minWallSigma: number;
+  maxWallSigma: number;
+  admissionTick: number;
+} | null> {
+  try {
+    await ensureRangeCalib();
+    const market = realMarket(LUCKY_ROUND_MS);
+    const { spot1e9, admissionTickSize } = realEcon(market);
+    const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+    return {
+      entrySpot: realFmt(spot1e9),
+      duration: Math.max(1, Math.round(seconds)),
+      expiryMs: market.expiryMs,
+      annualVol: rangeCalib.sigmaAnnual,
+      minWallSigma: SNIPE_MIN_WALL_SIGMA,
+      maxWallSigma: SNIPE_MAX_WALL_SIGMA,
+      admissionTick: Number(admissionTickSize) / 1e9,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every wall the knob can plant, as the ticks it would really mint at, so `scripts/verify-snipe-walls.ts`
+ * can quote each one and prove the whole travel admits before a multiple is offered on screen. Read-only.
+ */
+export async function probeSnipeWalls(stepsPerSide: number): Promise<{
+  marketId: string;
+  spot1e9: bigint;
+  seconds: number;
+  sigma: number;
+  walls: Array<{ side: Side; distSigma: number; strike1e9: bigint; lowerTick: bigint; higherTick: bigint }>;
+}> {
+  const market = realMarket(LUCKY_ROUND_MS);
+  const { spot1e9: cachedSpot, tickSize, admissionTickSize } = realEcon(market);
+  const spot1e9 = await freshRealSpot(cachedSpot);
+  const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+  const sigma = rangeSigmaFrac(seconds);
+  const sides: Side[] = ['up', 'down'];
+  const walls = sides.flatMap((side) =>
+    Array.from({ length: stepsPerSide }, (_, i) => {
+      const distSigma = SNIPE_MIN_WALL_SIGMA + ((SNIPE_MAX_WALL_SIGMA - SNIPE_MIN_WALL_SIGMA) * i) / (stepsPerSide - 1);
+      // Planted the way the knob plants one, then run through the resolve path's own snap, so the probe
+      // measures the strike a real press would mint at.
+      const planted = (Number(spot1e9) / 1e9) * (1 + (side === 'up' ? 1 : -1) * distSigma * sigma);
+      const strike1e9 = snipeWall({ wall: planted, side, spot1e9, sigma, admissionTickSize });
+      return { side, distSigma, strike1e9, ...ticksForBinary(side, strike1e9, tickSize, admissionTickSize) };
+    }),
+  );
+  return { marketId: market.oracleId, spot1e9, seconds, sigma, walls };
+}
+
+// Fit the mint inside the stake WITHOUT moving the wall. Fees ride on top of the premium and grow as the
+// strike goes out, so a far wall can bill over its budget; the only lever left is the budget itself.
+const SNIPE_FIT_STEPS = 4;
+
+async function fitWallBudget(
+  marketId: string,
+  lowerTick: bigint,
+  higherTick: bigint,
+  netRaw: bigint,
+): Promise<{ amountRaw: bigint; entryProbability: number } | null> {
+  const costTarget = (netRaw * (100n - COST_MARGIN_PCT)) / 100n;
+  let budgetRaw = premiumBudget(netRaw);
+  let last: { amountRaw: bigint; entryProbability: number } | null = null;
+  for (let step = 0; step < SNIPE_FIT_STEPS; step++) {
+    const q = await quoteMint({ marketId, lowerTick, higherTick, maxPremiumRaw: budgetRaw, leverage1e9: LEVERAGE_ONE });
+    if (!q || q.allInCostRaw === 0n) return last; // wall inadmissible; the caller mints anyway and the abort path owns it
+    last = { amountRaw: budgetRaw, entryProbability: Number(q.entryProbability1e9) / 1e9 };
+    if (q.allInCostRaw <= costTarget) return last;
+    const scaled = (budgetRaw * costTarget) / q.allInCostRaw;
+    if (scaled < MIN_NET_PREMIUM_RAW || scaled >= budgetRaw) return last;
+    budgetRaw = scaled;
+  }
+  return last;
+}
+
+async function resolveRealSnipe(netRaw: bigint, stakeRaw: bigint, input: { wall: number; side: Side }): Promise<ResolvedReal> {
+  void ensureRangeCalib(); // shares RANGE's implied vol; never block a tap on it
+  const market = realMarket(LUCKY_ROUND_MS);
+  const { spot1e9: cachedSpot, tickSize, admissionTickSize } = realEcon(market);
+  const spot1e9 = await freshRealSpot(cachedSpot);
+  const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+  const sigma = rangeSigmaFrac(seconds);
+
+  if (!(input.wall > 0)) throw new PlayError('INVALID_PARAMS', 'Plant a wall');
+  // The side is what the player committed to and it never moves, only the price can be clamped: re-deriving
+  // the direction from a spot that has since crossed the wall would silently flip the bet.
+  const side: Side = input.side === 'down' ? 'down' : 'up';
+  const strike1e9 = snipeWall({ wall: input.wall, side, spot1e9, sigma, admissionTickSize });
+  const { lowerTick, higherTick } = ticksForBinary(side, strike1e9, tickSize, admissionTickSize);
+
+  const fit = await fitWallBudget(market.oracleId, lowerTick, higherTick, netRaw);
+  // Signed off the strike that will actually mint, so a crossed wall reads as the better-than-even shot it is.
+  const dist = (side === 'up' ? Number(strike1e9 - spot1e9) : Number(spot1e9 - strike1e9)) / Number(spot1e9);
+  const p = fit?.entryProbability ?? Math.max(REAL_STRIKE_MIN_PROB, normCdf(-dist / Math.max(sigma, 1e-9)));
+
+  return {
+    game: 'snipe',
+    kind: 'binary',
+    marketId: market.oracleId,
+    asset: REAL_BTC_GAME_ASSET,
+    spot1e9,
+    tickSize,
+    admissionTickSize,
+    lowerTick,
+    higherTick,
+    leverage1e9: LEVERAGE_ONE,
+    amountRaw: fit?.amountRaw ?? premiumBudget(netRaw),
+    minQuantityRaw: POSITION_LOT_SIZE,
+    expiryMs: market.expiryMs,
+    duration: Math.max(1, Math.round(seconds)),
+    entrySpot: realFmt(spot1e9),
+    // The chain's own quoted entry probability where the fit landed one, so the pre-mint estimate is as close
+    // as it can be without being the mint. It is still labelled `est` and still snaps from OrderMinted (L-012).
+    tierMultiplier: tierMultOf(Math.min(REAL_RANGE_MAX_PROB, Math.max(0.005, p))),
+    side,
+    strike1e9,
+    strikeDisplay: realFmt(strike1e9),
+  };
+}
+
 // Tier quotes: multiplier = the last SIMULATED mint's multiple per tier (chain truth incl. fees/spread,
 // analytic fallback pre-calibration), so the promise holds whenever the tap lands; sigmaMult + expiryMs +
 // the calibrated annualVol let the client redraw the live band width between fetches.
@@ -887,5 +1056,6 @@ export async function resolveReal(input: CreatePlayInputShape, netRaw: bigint, s
     return resolveRealBinary('moonshot', netRaw, stakeRaw, input.side, Math.max(2, Math.min(25, input.reach)));
   }
   if (input.game === 'pin') return resolveRealPin(netRaw, stakeRaw, input);
+  if (input.game === 'snipe') return resolveRealSnipe(netRaw, stakeRaw, input);
   return resolveRealRange(netRaw, stakeRaw, input);
 }

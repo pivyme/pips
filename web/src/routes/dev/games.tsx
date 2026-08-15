@@ -53,7 +53,8 @@ const CONCEPTS: Concept[] = [
     score: [Y, Y, Y, N],
     mints: '1',
     floor: '$1.50',
-    status: 'building',
+    status: 'playable',
+    to: '/games/snipe',
     note: 'GAP is exact by construction, which dodges the unreadable-ask problem entirely. Shortest teach in the product: press when the number looks good.',
   },
   {

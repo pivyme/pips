@@ -122,6 +122,18 @@ export interface PinModel {
   windows: PinWindow[]
 }
 
+// SNIPE's round model. The wall's travel is in sigma so it decays with the clock between fetches; GAP itself
+// is not here because it is exact (live spot minus a known strike) and is computed on the client.
+export interface SnipeModel {
+  entrySpot: string
+  duration: number
+  expiryMs: number
+  annualVol: number
+  minWallSigma: number
+  maxWallSigma: number
+  admissionTick: number
+}
+
 export interface PlayDTO {
   id: string
   game: Game
@@ -497,6 +509,8 @@ const realApi = {
     request<{ levels: MoonshotAim[] }>('GET', `/games/moonshot/aim?asset=${encodeURIComponent(asset)}`),
   // PIN's round model (ADMIN only, 404 otherwise): spot, the calibrated vol, the pin's usable travel, the windows.
   pinModel: () => request<PinModel | null>('GET', '/games/pin/model'),
+  // SNIPE's round model (ADMIN only, 404 otherwise): spot, the clock, the vol, the wall's mintable travel.
+  snipeModel: () => request<SnipeModel | null>('GET', '/games/snipe/model'),
   play: (game: Game, body: Record<string, unknown>) => request<PlayResult>('POST', `/games/${game}/play`, body),
   cashout: (playId: string) => request<CashoutResult>('POST', `/plays/${playId}/cashout`, {}),
   plays: (q: { status?: string; limit?: number; network?: string } = {}) => {

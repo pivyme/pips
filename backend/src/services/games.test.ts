@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { probit, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9, restrikeCloser, parseStake, maxStakeFor, type ResolvedReal } from './games.ts';
+import { probit, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9, restrikeCloser, snipeWall, SNIPE_MAX_WALL_SIGMA, parseStake, maxStakeFor, type ResolvedReal } from './games.ts';
 import { LEVERAGE_ONE, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
 import type { Side } from '../types/api.ts';
 import { REAL_STRIKE_MIN_PROB, REAL_STRIKE_MAX_OFFSET_FRAC, REAL_BTC_ANNUAL_VOL, REAL_BINARY_MIN_OFFSET_SIGMA, MIN_STAKE, MAX_STAKE, MAX_STAKE_ADMIN } from '../config/main-config.ts';
@@ -265,5 +265,50 @@ describe('stake ceiling by role', () => {
 
   it('defaults to the public cap when no max is passed', () => {
     expect(() => parseStake(MAX_STAKE + 1)).toThrow(`Maximum play amount is $${MAX_STAKE}`);
+  });
+});
+
+// SNIPE's whole game is waiting for the market to close the gap on a wall you planted, so the wall must be
+// minted at the price it was planted at, not re-derived off a spot that has moved since. The near rung sits
+// only ~0.15 sigma out, which on a 70s BTC round is about $2.70, so the market crosses it constantly.
+describe('snipeWall (a planted wall does not move)', () => {
+  const SPOT = 63_000_000_000_000n; // $63,000
+  const ADMISSION = 1_000_000_000n; // $1 grid
+  const SIGMA = 0.000284; // ~$17.90 on a 70s BTC round, measured off the live market
+  const usd = (v: bigint) => Number(v) / 1e9;
+  const at = (wall: number, side: Side, spot1e9 = SPOT) => snipeWall({ wall, side, spot1e9, sigma: SIGMA, admissionTickSize: ADMISSION });
+
+  it('mints a planted wall at exactly the planted price', () => {
+    expect(usd(at(63_010, 'up'))).toBe(63_010);
+    expect(usd(at(62_990, 'down'))).toBe(62_990);
+  });
+
+  it('holds the wall as the market closes the gap, and keeps it after the crossing', () => {
+    const wall = 63_010;
+    // The player planted at $63,010 with spot at $63,000, then waited. Every one of these is the same bet.
+    for (const spot of [63_000, 63_005, 63_009, 63_010, 63_012]) {
+      const strike = at(wall, 'up', BigInt(spot) * 1_000_000_000n);
+      expect(usd(strike)).toBe(wall);
+    }
+  });
+
+  it('never flips the side, even once the market is through the wall', () => {
+    const past = 63_020n * 1_000_000_000n;
+    expect(usd(at(63_010, 'up', past))).toBe(63_010); // still an up bet, now in the money
+    expect(usd(at(63_010, 'down', past))).toBe(63_010);
+  });
+
+  it('clamps only a wall outside the admissible band, and only to that edge', () => {
+    const band = SNIPE_MAX_WALL_SIGMA * SIGMA * 63_000; // ~$16.80
+    const far = at(63_000 + band * 4, 'up');
+    expect(usd(far)).toBeLessThan(63_000 + band * 4);
+    expect(usd(far)).toBeCloseTo(63_000 + band, 0);
+    const farDown = at(63_000 - band * 4, 'down');
+    expect(usd(farDown)).toBeCloseTo(63_000 - band, 0);
+  });
+
+  it('snaps to the $1 grid away from the winning side, never quietly improving the bet', () => {
+    expect(usd(at(63_010.4, 'up'))).toBe(63_011); // up pays above, so round the wall up
+    expect(usd(at(62_989.6, 'down'))).toBe(62_989); // down pays below, so round it down
   });
 });

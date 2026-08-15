@@ -82,7 +82,8 @@ export type CreatePlayInput =
   | { game: 'lucky'; stake: string | number }
   | { game: 'range'; stake: string | number; asset: string; widthPct?: number; tier?: number }
   | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number }
-  | { game: 'pin'; stake: string | number; asset: string; pin: number; window: number };
+  | { game: 'pin'; stake: string | number; asset: string; pin: number; window: number }
+  | { game: 'snipe'; stake: string | number; asset: string; wall: number; side: Side };
 
 export type CreateResult = { play: PlayDTO };
 
