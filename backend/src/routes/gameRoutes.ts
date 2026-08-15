@@ -8,7 +8,20 @@ import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { buildMarketsPayload } from '../lib/markets-feed.ts';
 import { spotHistory } from '../lib/price-history.ts';
 import { PYTH_FEED_IDS } from '../lib/pyth.ts';
-import { PlayError, httpStatusForPlayError, quoteMoonshotAimReal, quotePinModelReal, quoteSnipeModelReal, quoteRangeBatchReal, quoteRangeTiersReal } from '../services/games.ts';
+import {
+  PlayError,
+  RUSH_APPETITES,
+  dealRushOffer,
+  httpStatusForPlayError,
+  maxStakeFor,
+  parseStake,
+  quoteMoonshotAimReal,
+  quotePinModelReal,
+  quoteSnipeModelReal,
+  quoteRangeBatchReal,
+  quoteRangeTiersReal,
+  rushDealChance,
+} from '../services/games.ts';
 import {
   createPlay,
   cashoutPlay,
@@ -16,6 +29,8 @@ import {
   getPlay,
   type CreatePlayInput,
 } from '../services/plays.ts';
+import { dealTooSoon, dropOffers, liveOffer, noteDeal, putOffer, type RushOffer } from '../services/rush-offers.ts';
+import { rakeOf } from '../lib/sui/house.ts';
 import { canSeeGame } from '../config/games.ts';
 import type { Game } from '../types/api.ts';
 
@@ -111,6 +126,52 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     return reply.code(200).send({ success: true, error: null, data: model ?? null });
   });
 
+  // RUSH's deal: the machine offers a band, or nothing this beat. The offer is stored server-side with the
+  // exact ticks it would mint at and a short life, and the take references it by id, so the band and the
+  // multiple are never the client's to assert. Lab-gated like the play route.
+  app.post('/games/rush/deal', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!canSeeGame('rush', request.user!.specialRoles)) return handleNotFoundError(reply, 'Game');
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const userId = request.user!.id;
+    // `now` is the server clock the offer's countdown is measured against: a 3s window has no room for the
+    // device clock to disagree, so the client offsets rather than trusting its own.
+    const dealt = (offer: RushOffer | null) =>
+      reply.code(200).send({
+        success: true,
+        error: null,
+        data: {
+          now: Date.now(),
+          offer: offer && {
+            id: offer.id,
+            lower: offer.lower,
+            upper: offer.upper,
+            multiplier: offer.multiplier,
+            expiresAt: offer.expiresAt,
+            expiryMs: offer.expiryMs,
+          },
+        },
+      });
+    try {
+      const stakeRaw = parseStake(body.stake as string | number, maxStakeFor(request.user!));
+      // One band on the table at a time. A repeat call while a deal is live returns that same deal rather
+      // than quoting a fresh one, which is both the honest answer and the throttle on the shared fullnode.
+      const live = liveOffer(userId);
+      if (live?.stakeRaw === stakeRaw) return dealt(live);
+      if (live) dropOffers(userId); // the chip moved under it, so that deal is not this player's bet any more
+      if (dealTooSoon(userId)) return dealt(null);
+      noteDeal(userId);
+      const appetite = Math.max(1.05, Number(body.appetite) || RUSH_APPETITES[0]);
+      // The rhythm is the route's, the price is the resolver's. Drawing here means a quiet beat costs nothing.
+      if (Math.random() > rushDealChance(appetite)) return dealt(null);
+      const solved = await dealRushOffer(appetite, rakeOf(stakeRaw).net);
+      // Nothing on the table is a normal beat, not an error: it is what makes a high appetite go quiet.
+      if (!solved) return dealt(null);
+      return dealt(putOffer({ ...solved, userId, stakeRaw }));
+    } catch (e) {
+      return fail(reply, e, 'RUSH_DEAL_FAILED', 'Could not deal');
+    }
+  });
+
   // One endpoint per game, uniform shape. Body is the game-specific config plus a stake.
   app.post('/games/:game/play', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const game = (request.params as { game: string }).game;
@@ -194,6 +255,15 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
     const side = body.side === 'down' ? 'down' : 'up';
     if (!asset || !Number.isFinite(wall)) throw new PlayError('INVALID_PARAMS', 'Plant a wall');
     return { game, stake, asset, wall, side };
+  }
+
+  if (game === 'rush') {
+    // A take names an OFFER, never a band. The bounds, the ticks and the multiple all come from the
+    // server's own record of what it dealt, so nothing about the bet is assertable from here.
+    const asset = String(body.asset ?? '');
+    const offerId = String(body.offerId ?? '');
+    if (!asset || !offerId) throw new PlayError('INVALID_PARAMS', 'That offer is gone');
+    return { game, stake, asset, offerId };
   }
 
   if (game === 'press') {

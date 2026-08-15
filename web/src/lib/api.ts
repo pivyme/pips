@@ -134,6 +134,17 @@ export interface SnipeModel {
   admissionTick: number
 }
 
+// RUSH's dealt band. Solved, priced and stored server-side; the take names the id and nothing else, so a
+// client can never mint a band it was not offered or at a multiple it was not quoted.
+export interface RushOffer {
+  id: string
+  lower: string
+  upper: string
+  multiplier: number
+  expiresAt: number // the offer's own countdown, in server epoch ms
+  expiryMs: number // the market buzzer it was solved against
+}
+
 export interface PlayDTO {
   id: string
   game: Game
@@ -511,6 +522,9 @@ const realApi = {
   pinModel: () => request<PinModel | null>('GET', '/games/pin/model'),
   // SNIPE's round model (ADMIN only, 404 otherwise): spot, the clock, the vol, the wall's mintable travel.
   snipeModel: () => request<SnipeModel | null>('GET', '/games/snipe/model'),
+  // RUSH's beat (ADMIN only, 404 otherwise): the machine deals a band or nothing. One live offer per player,
+  // so calling this while a deal is on the table returns that same deal rather than a fresh one.
+  rushDeal: (stake: number, appetite: number) => request<{ now: number; offer: RushOffer | null }>('POST', '/games/rush/deal', { stake, appetite }),
   play: (game: Game, body: Record<string, unknown>) => request<PlayResult>('POST', `/games/${game}/play`, body),
   cashout: (playId: string) => request<CashoutResult>('POST', `/plays/${playId}/cashout`, {}),
   plays: (q: { status?: string; limit?: number; network?: string } = {}) => {

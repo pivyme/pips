@@ -60,7 +60,15 @@ export type CreatePlayInputShape =
   | { game: 'snipe'; stake: string | number; asset: string; wall: number; side: Side }
   // `step` and `inner` are filled by the server from the player's own open boxes, never read off the body:
   // a client that could name its own parent box could mint a wide box at a tight box's price.
-  | { game: 'press'; stake: string | number; asset: string; open: number; step?: number; inner?: { lower: number; upper: number; expiryMs: number } };
+  | { game: 'press'; stake: string | number; asset: string; open: number; step?: number; inner?: { lower: number; upper: number; expiryMs: number } }
+  // `offer` is the claimed server-side offer, filled from the store by its id. The body carries the id only.
+  | {
+      game: 'rush';
+      stake: string | number;
+      asset: string;
+      offerId: string;
+      offer?: { marketId: string; expiryMs: number; lowerTick: bigint; higherTick: bigint; lower: string; upper: string; multiplier: number };
+    };
 
 function realMarket(roundMs: number, minRemainingMs: number = EXPIRY_SAFETY_MS): Market {
   const at = now();
@@ -1091,6 +1099,136 @@ async function resolveRealPress(
   };
 }
 
+// === RUSH ===
+// The machine deals a band, the player takes it or it is gone. The band and its multiple are solved and
+// QUOTED here, stored server side (rush-offers.ts), and a take references the offer by id, so a client can
+// never mint a band that was not offered or at a multiple that was not quoted.
+
+/** What the knob may ask for. The machine only deals what clears the player's appetite, so a high one goes quiet. */
+export const RUSH_APPETITES = [1.5, 2, 2.5, 3.5, 5, 8];
+/** Aim above the appetite by up to this much, so the dealt multiple varies instead of hugging the ask. */
+const RUSH_JITTER = 0.45;
+/** How far the band's centre may drift off spot, as a fraction of its own half-width. Texture, never a trap. */
+const RUSH_DRIFT = 0.5;
+/** One correction: the chain prices off its own surface, so a first quote that misses the ask gets re-aimed once. */
+const RUSH_DEAL_TRIES = 2;
+/**
+ * The first aim sits this much tighter than the analytic answer. Measured on testnet, the chain's own entry
+ * probability runs ~1.4x the one our sigma models (a band we call 28% it prices at 42%), so aiming straight
+ * at 1/target quotes well under the ask and the machine passes on beats it should have dealt.
+ */
+const RUSH_AIM_BIAS = 0.7;
+
+/**
+ * How often the machine deals at all, per beat. The knob is a risk dial, not a payout picker: a lazy appetite
+ * gets a band on the table almost always, a greedy one goes quiet for stretches and then hands over something
+ * frightening. The chain would happily price a 10x band every single beat, so this thinning is a deliberate
+ * design choice, and it is drawn BEFORE the quote, so a pass costs no chain read either.
+ */
+export function rushDealChance(appetite: number): number {
+  return Math.min(0.95, Math.max(0.18, 1.35 / Math.max(1.05, appetite)));
+}
+
+export type RushDealt = {
+  marketId: string;
+  expiryMs: number;
+  lowerTick: bigint;
+  higherTick: bigint;
+  lower: string;
+  upper: string;
+  multiplier: number;
+  entryProbability: number;
+};
+
+/**
+ * Deal one band, or nothing. The multiple is the CHAIN's quote for the exact ticks that would mint, never
+ * the analytic model (which reads ~40% high against the surface, see the PRESS notes), so an offer is real
+ * or it is not made at all. A band the chain will not price, or one that comes back under the appetite twice,
+ * is a beat with nothing on the table, which is the game's rhythm, not an error.
+ */
+export async function dealRushOffer(appetite: number, netRaw: bigint, rand: () => number = Math.random): Promise<RushDealt | null> {
+  await ensureRangeCalib();
+  const market = rangeMarket();
+  const { spot1e9: cachedSpot, tickSize, admissionTickSize } = realEcon(market);
+  const spot1e9 = await freshRealSpot(cachedSpot);
+  const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+  const sigma = rangeSigmaFrac(seconds);
+  const budgetRaw = premiumBudget(netRaw);
+
+  // Aim a bit above the appetite, and slide the band off centre, so two deals in a row never look alike. The
+  // drift stays inside the band's own half-width, so the price is always in the box at the moment it is dealt.
+  const target = Math.max(1.05, appetite * (1 + rand() * RUSH_JITTER));
+  const drift = (rand() * 2 - 1) * RUSH_DRIFT;
+  let prob = Math.min(REAL_RANGE_MAX_PROB, Math.max(REAL_STRIKE_MIN_PROB, RUSH_AIM_BIAS / target));
+
+  for (let tries = 0; tries < RUSH_DEAL_TRIES; tries++) {
+    const half = (spot1e9 * BigInt(Math.round(probit((1 + prob) / 2) * sigma * 1e9))) / FLOAT_SCALING;
+    const centre = spot1e9 + (half * BigInt(Math.round(drift * 1e6))) / 1_000_000n;
+    const { lowerTick, higherTick } = ticksForRange(centre - half, centre + half, tickSize, admissionTickSize);
+
+    const q = await quoteMint({ marketId: market.oracleId, lowerTick, higherTick, maxPremiumRaw: budgetRaw, leverage1e9: LEVERAGE_ONE });
+    if (!q || q.allInCostRaw === 0n || q.quantityRaw === 0n) return null; // the chain refused this band: deal nothing
+    const multiplier = multiplierOf(q.allInCostRaw, q.quantityRaw);
+    if (multiplier >= appetite) {
+      return {
+        marketId: market.oracleId,
+        expiryMs: market.expiryMs,
+        lowerTick,
+        higherTick,
+        lower: realFmt(centre - half),
+        upper: realFmt(centre + half),
+        multiplier,
+        entryProbability: Number(q.entryProbability1e9) / 1e9,
+      };
+    }
+    // Short of the ask. Correct in PROBABILITY space off the chain's own answer: the multiple runs as 1/p, so
+    // scaling p by the ratio it missed by lands the next quote on target in one step, whatever the surface is
+    // doing. If that one still misses the machine passes, which is what a greedy appetite is supposed to feel
+    // like.
+    prob = Math.min(REAL_RANGE_MAX_PROB, Math.max(REAL_STRIKE_MIN_PROB, prob * (multiplier / target)));
+  }
+  return null;
+}
+
+// A take mints the offer's own ticks, verbatim. Nothing about the band is recomputed here, or the thing that
+// mints would not be the thing that was quoted.
+async function resolveRealRush(
+  netRaw: bigint,
+  stakeRaw: bigint,
+  input: { offer?: { marketId: string; expiryMs: number; lowerTick: bigint; higherTick: bigint; lower: string; upper: string; multiplier: number } },
+): Promise<ResolvedReal> {
+  const offer = input.offer;
+  if (!offer) throw new PlayError('INVALID_PARAMS', 'That offer is gone');
+  const market = rangeMarket();
+  // The offer was solved against one buzzer. If the market rolled underneath it, the deal died with it.
+  if (market.oracleId !== offer.marketId || market.expiryMs !== offer.expiryMs) {
+    throw new PlayError('MARKET_UNAVAILABLE', 'That offer is gone');
+  }
+  const { spot1e9: cachedSpot, tickSize, admissionTickSize } = realEcon(market);
+  const spot1e9 = await freshRealSpot(cachedSpot);
+  const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+  return {
+    game: 'rush',
+    kind: 'range',
+    marketId: offer.marketId,
+    asset: REAL_BTC_GAME_ASSET,
+    spot1e9,
+    tickSize,
+    admissionTickSize,
+    lowerTick: offer.lowerTick,
+    higherTick: offer.higherTick,
+    leverage1e9: LEVERAGE_ONE,
+    amountRaw: premiumBudget(netRaw),
+    minQuantityRaw: POSITION_LOT_SIZE,
+    expiryMs: offer.expiryMs,
+    duration: Math.max(1, Math.round(seconds)),
+    entrySpot: realFmt(spot1e9),
+    tierMultiplier: offer.multiplier, // the quote the player accepted; snaps to the minted truth on OrderMinted
+    lowerDisplay: offer.lower,
+    upperDisplay: offer.upper,
+  };
+}
+
 // Tier quotes: multiplier = the last SIMULATED mint's multiple per tier (chain truth incl. fees/spread,
 // analytic fallback pre-calibration), so the promise holds whenever the tap lands; sigmaMult + expiryMs +
 // the calibrated annualVol let the client redraw the live band width between fetches.
@@ -1167,5 +1305,6 @@ export async function resolveReal(input: CreatePlayInputShape, netRaw: bigint, s
   if (input.game === 'pin') return resolveRealPin(netRaw, stakeRaw, input);
   if (input.game === 'snipe') return resolveRealSnipe(netRaw, stakeRaw, input);
   if (input.game === 'press') return resolveRealPress(netRaw, stakeRaw, input);
+  if (input.game === 'rush') return resolveRealRush(netRaw, stakeRaw, input);
   return resolveRealRange(netRaw, stakeRaw, input);
 }

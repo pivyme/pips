@@ -52,6 +52,7 @@ export const EVENT_NAMES = [
   'game.restore',
   'game.press',
   'game.fold',
+  'game.auto',
 
   'menu.open',
   'menu.section',

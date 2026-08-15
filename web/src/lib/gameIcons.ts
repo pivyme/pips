@@ -8,4 +8,5 @@ export const GAME_ICON_SRC: Record<string, string> = {
   pin: '/assets/games/icon-pin.svg',
   snipe: '/assets/games/icon-snipe.svg',
   press: '/assets/games/icon-press.svg',
+  rush: '/assets/games/icon-rush.svg',
 }

@@ -41,6 +41,7 @@ import {
   type PlayErrorCode,
   type ResolvedReal,
 } from './games.ts';
+import { claimOffer } from './rush-offers.ts';
 import { recordSettlement } from './stats.ts';
 import { evaluateAndUnlock } from './achievements.ts';
 import type { Game, PlayDTO, PlayStatus, Side } from '../types/api.ts';
@@ -85,7 +86,15 @@ export type CreatePlayInput =
   | { game: 'pin'; stake: string | number; asset: string; pin: number; window: number }
   | { game: 'snipe'; stake: string | number; asset: string; wall: number; side: Side }
   // `step` and `inner` are server-filled from the player's own open boxes (see pressContext), never from the body.
-  | { game: 'press'; stake: string | number; asset: string; open: number; step?: number; inner?: { lower: number; upper: number; expiryMs: number } };
+  | { game: 'press'; stake: string | number; asset: string; open: number; step?: number; inner?: { lower: number; upper: number; expiryMs: number } }
+  // `offer` is claimed from the server-side store by its id (see rushTake). The body carries the id only.
+  | {
+      game: 'rush';
+      stake: string | number;
+      asset: string;
+      offerId: string;
+      offer?: { marketId: string; expiryMs: number; lowerTick: bigint; higherTick: bigint; lower: string; upper: string; multiplier: number };
+    };
 
 export type CreateResult = { play: PlayDTO };
 
@@ -137,11 +146,26 @@ export async function createPlay(user: User, input: CreatePlayInput): Promise<Cr
     if (cached && Date.now() - cached.at < BAL_TTL_MS && cached.total < stakeRaw) {
       throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that play');
     }
-    return await createPlayReal(user, input.game === 'press' ? await pressContext(user.id, input) : input, stakeRaw);
+    return await createPlayReal(user, await withRoundContext(user.id, input, stakeRaw), stakeRaw);
   } catch (e) {
     clearPlay(user.id); // the play never landed (bad params / no market); don't hold the cooldown
     throw e;
   }
+}
+
+// Two games carry state the client is not allowed to assert: PRESS's depth and parent box, and RUSH's dealt
+// offer. Both are resolved here, from the server's own record, before anything is sized or minted.
+async function withRoundContext(userId: string, input: CreatePlayInput, stakeRaw: bigint): Promise<CreatePlayInput> {
+  if (input.game === 'press') return pressContext(userId, input);
+  if (input.game === 'rush') {
+    // Claiming CONSUMES the offer, so one dealt band can only ever be minted once. Unknown, expired, already
+    // taken, and another player's all fail identically: a probe learns nothing about which it hit.
+    const offer = claimOffer(userId, input.offerId);
+    // The multiple was quoted for one stake, so a take at any other stake is not the deal that was made.
+    if (!offer || offer.stakeRaw !== stakeRaw) throw new PlayError('INVALID_PARAMS', 'That offer is gone');
+    return { ...input, offer };
+  }
+  return input;
 }
 
 // PRESS's round context, read off the player's OWN open boxes rather than trusted from the body. The step is

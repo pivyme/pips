@@ -43,6 +43,7 @@ import { Route as AppMenuAchievementsRouteImport } from './routes/_app/menu/achi
 import { Route as AppMenuAccountRouteImport } from './routes/_app/menu/account'
 import { Route as AppMenuAboutRouteImport } from './routes/_app/menu/about'
 import { Route as AppGamesSnipeRouteImport } from './routes/_app/games/snipe'
+import { Route as AppGamesRushRouteImport } from './routes/_app/games/rush'
 import { Route as AppGamesRangeRouteImport } from './routes/_app/games/range'
 import { Route as AppGamesPressRouteImport } from './routes/_app/games/press'
 import { Route as AppGamesPinRouteImport } from './routes/_app/games/pin'
@@ -220,6 +221,11 @@ const AppGamesSnipeRoute = AppGamesSnipeRouteImport.update({
   path: '/games/snipe',
   getParentRoute: () => AppRoute,
 } as any)
+const AppGamesRushRoute = AppGamesRushRouteImport.update({
+  id: '/games/rush',
+  path: '/games/rush',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppGamesRangeRoute = AppGamesRangeRouteImport.update({
   id: '/games/range',
   path: '/games/range',
@@ -281,6 +287,7 @@ export interface FileRoutesByFullPath {
   '/games/pin': typeof AppGamesPinRoute
   '/games/press': typeof AppGamesPressRoute
   '/games/range': typeof AppGamesRangeRoute
+  '/games/rush': typeof AppGamesRushRoute
   '/games/snipe': typeof AppGamesSnipeRoute
   '/menu/about': typeof AppMenuAboutRoute
   '/menu/account': typeof AppMenuAccountRoute
@@ -322,6 +329,7 @@ export interface FileRoutesByTo {
   '/games/pin': typeof AppGamesPinRoute
   '/games/press': typeof AppGamesPressRoute
   '/games/range': typeof AppGamesRangeRoute
+  '/games/rush': typeof AppGamesRushRoute
   '/games/snipe': typeof AppGamesSnipeRoute
   '/menu/about': typeof AppMenuAboutRoute
   '/menu/account': typeof AppMenuAccountRoute
@@ -366,6 +374,7 @@ export interface FileRoutesById {
   '/_app/games/pin': typeof AppGamesPinRoute
   '/_app/games/press': typeof AppGamesPressRoute
   '/_app/games/range': typeof AppGamesRangeRoute
+  '/_app/games/rush': typeof AppGamesRushRoute
   '/_app/games/snipe': typeof AppGamesSnipeRoute
   '/_app/menu/about': typeof AppMenuAboutRoute
   '/_app/menu/account': typeof AppMenuAccountRoute
@@ -410,6 +419,7 @@ export interface FileRouteTypes {
     | '/games/pin'
     | '/games/press'
     | '/games/range'
+    | '/games/rush'
     | '/games/snipe'
     | '/menu/about'
     | '/menu/account'
@@ -451,6 +461,7 @@ export interface FileRouteTypes {
     | '/games/pin'
     | '/games/press'
     | '/games/range'
+    | '/games/rush'
     | '/games/snipe'
     | '/menu/about'
     | '/menu/account'
@@ -494,6 +505,7 @@ export interface FileRouteTypes {
     | '/_app/games/pin'
     | '/_app/games/press'
     | '/_app/games/range'
+    | '/_app/games/rush'
     | '/_app/games/snipe'
     | '/_app/menu/about'
     | '/_app/menu/account'
@@ -768,6 +780,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppGamesSnipeRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/games/rush': {
+      id: '/_app/games/rush'
+      path: '/games/rush'
+      fullPath: '/games/rush'
+      preLoaderRoute: typeof AppGamesRushRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/games/range': {
       id: '/_app/games/range'
       path: '/games/range'
@@ -829,6 +848,7 @@ interface AppRouteChildren {
   AppGamesPinRoute: typeof AppGamesPinRoute
   AppGamesPressRoute: typeof AppGamesPressRoute
   AppGamesRangeRoute: typeof AppGamesRangeRoute
+  AppGamesRushRoute: typeof AppGamesRushRoute
   AppGamesSnipeRoute: typeof AppGamesSnipeRoute
   AppMenuAboutRoute: typeof AppMenuAboutRoute
   AppMenuAccountRoute: typeof AppMenuAccountRoute
@@ -856,6 +876,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppGamesPinRoute: AppGamesPinRoute,
   AppGamesPressRoute: AppGamesPressRoute,
   AppGamesRangeRoute: AppGamesRangeRoute,
+  AppGamesRushRoute: AppGamesRushRoute,
   AppGamesSnipeRoute: AppGamesSnipeRoute,
   AppMenuAboutRoute: AppMenuAboutRoute,
   AppMenuAccountRoute: AppMenuAccountRoute,

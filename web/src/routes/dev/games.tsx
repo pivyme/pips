@@ -75,7 +75,8 @@ const CONCEPTS: Concept[] = [
     score: [Y, Y, Y, Y],
     mints: '1 per take',
     floor: '$1.50 per take',
-    status: 'building',
+    status: 'playable',
+    to: '/games/rush',
     note: "Fuses Lucky's dealt-to pleasure with Range's stacking engine, and fills ledger #7: round 1 was all deliberate decision games.",
   },
   {
