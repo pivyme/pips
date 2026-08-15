@@ -484,7 +484,8 @@ function SnipeScreen() {
         moveWall(v)
         trackSettled('game.knob_change', { game: 'snipe', tier: String(v) })
       },
-      format: () => wallLabel,
+      // A physical control has no disabled state, so the label carries it: LOCKED, the same word PRESS uses.
+      format: () => (phase === 'idle' || phase === 'placing' ? wallLabel : 'LOCKED'),
     },
     numberWheel: {
       label: 'DUSDC',

@@ -464,7 +464,8 @@ function BreakoutScreen() {
         moveBreak(v)
         trackSettled('game.knob_change', { game: 'breakout', tier: String(v) })
       },
-      format: () => (breakSize == null ? `±${safeBreakIdx + 1}` : `±$${Math.round(breakSize)}`),
+      // A physical control has no disabled state, so the label carries it: LOCKED, the same word PRESS uses.
+      format: () => (!armed ? 'LOCKED' : breakSize == null ? `±${safeBreakIdx + 1}` : `±$${Math.round(breakSize)}`),
     },
     numberWheel: {
       label: 'DUSDC',

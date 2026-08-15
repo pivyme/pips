@@ -462,20 +462,26 @@ function PinScreen() {
   const topUp = useTopUp()
   const goTopUp = useCallback(() => void topUp(), [topUp])
 
+  // Both pickers are live only between rounds. A physical control has no disabled state, so the label is
+  // the affordance: LOCKED, the same word PRESS uses.
+  const armed = phase === 'idle' || phase === 'placing'
+
   // The knob is the game. First turn captures the anchor, so from then on the pin is a price that holds
-  // still while the market moves under it.
+  // still while the market moves under it. Dead once a position is riding: that pin is minted, and a knob
+  // that still moved would disagree with the footer, which reads the recorded one.
   const movePin = useCallback(
     (next: number) => {
+      if (!armed) return
       if (!anchor && spot != null && spot > 0) setAnchor({ price: spot, sigmaFrac })
       setPinIdx(Math.max(0, Math.min(PIN_STEPS - 1, next)))
     },
-    [anchor, spot, sigmaFrac],
+    [armed, anchor, spot, sigmaFrac],
   )
 
   // Each window has its own reach, so the ladder index has to be re-derived rather than carried over: keep the
   // named price where the next window can still reach it, and pull it to that window's edge where it cannot.
   const cycleWindow = useCallback(() => {
-    if (phase !== 'idle' && phase !== 'placing') return
+    if (!armed) return
     const from = windows[winIdx]
     const to = windows[(winIdx + 1) % windows.length]
     if (anchor && from && to) {
@@ -483,7 +489,7 @@ function PinScreen() {
       setPinIdx(pinIdxForOffset(held, anchor.price * to.travelSigma * anchor.sigmaFrac))
     }
     setWindowIdx((i) => (i + 1) % windows.length)
-  }, [phase, setWindowIdx, windows, winIdx, anchor, pinIdx])
+  }, [armed, setWindowIdx, windows, winIdx, anchor, pinIdx])
 
   const rotateInfo = useCallback(() => {
     setOverlay((o) => (o === 'none' ? 'howto' : o === 'howto' ? 'board' : 'none'))
@@ -506,7 +512,7 @@ function PinScreen() {
         movePin(v)
         trackSettled('game.knob_change', { game: 'pin', tier: String(v - PIN_CENTER) })
       },
-      format: () => fmtPrice(pin),
+      format: () => (armed ? fmtPrice(pin) : 'LOCKED'),
     },
     numberWheel: {
       label: 'DUSDC',
@@ -520,7 +526,8 @@ function PinScreen() {
     action1: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
       : { label: infoLabel, color: 'neutral', onPress: rotateInfo },
-    // The window breathes on the chart as you press it. Locked once a position is riding: the band is minted.
+    // The window breathes on the chart as you press it. Locked once a position is riding: the band is minted,
+    // so it keeps showing the width that is actually on chain and stops taking presses.
     action2: isResult
       ? { label: '', color: resultColor, onPress: dismissResult, pulse: true }
       : { label: windowLabel, color: 'neutral', onPress: cycleWindow },
