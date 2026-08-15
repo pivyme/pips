@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
@@ -91,6 +92,12 @@ const config = defineConfig(({ command }) => ({
   },
   // Build only: a strict policy in dev would block Vite's HMR client and eval'd module graph for no gain.
   ...(command === 'build' ? { nitro: { routeRules: { '/**': { headers: securityHeaders } } } } : {}),
+  // Tests must not inherit whoever's .env is on the machine. `VITE_AUTH_MODE=privy` plus jsdom's
+  // insecure context flips isDemo() on, and every analytics assertion then reads zero for the right
+  // reason in the wrong environment.
+  test: {
+    env: { VITE_DEMO_MODE: 'false', VITE_AUTH_MODE: 'dev' },
+  },
   plugins: [
     nitro(),
     // this is the plugin that enables path aliases

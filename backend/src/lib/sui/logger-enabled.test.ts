@@ -43,7 +43,9 @@ describe('PIPS logger command composition', () => {
       env: { ...process.env, PIPS_LOGGER_PACKAGE_ID: PACKAGE },
     });
     expect(child.exitCode).toBe(0);
-    const built = JSON.parse(new TextDecoder().decode(child.stdout)) as { baseline: ReturnType<Transaction['getData']>; tagged: ReturnType<Transaction['getData']> };
+    // The child boots the sui config, which logs endpoint lines to stdout, so read the payload off the last line.
+    const lines = new TextDecoder().decode(child.stdout).trim().split('\n');
+    const built = JSON.parse(lines[lines.length - 1] ?? '') as { baseline: ReturnType<Transaction['getData']>; tagged: ReturnType<Transaction['getData']> };
     expect(built.tagged.commands).toHaveLength(built.baseline.commands.length + 1);
     const commands = built.tagged.commands;
     const loggerIndex = commands.findIndex((command) => command.$kind === 'MoveCall' && command.MoveCall.module === 'activity' && command.MoveCall.function === 'record');
