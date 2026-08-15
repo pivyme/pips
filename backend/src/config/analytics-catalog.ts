@@ -42,6 +42,8 @@ export const EVENT_NAMES = [
   'game.cashout_done', // { game, pnl }
   'game.settled', // { game, result, pnl }
   'game.restore', // { game }
+  'game.press', // { game, step, stake } PRESS: one more box nested inside the last, the moment the game is built on
+  'game.fold', // { game, step, pnl } PRESS: cashing every nested box at once, the other half of the decision
 
   // menu: one event with a prop covers all 14 routes, which is what keeps cardinality bounded
   'menu.open',

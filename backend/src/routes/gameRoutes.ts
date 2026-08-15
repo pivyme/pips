@@ -196,6 +196,15 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
     return { game, stake, asset, wall, side };
   }
 
+  if (game === 'press') {
+    // PRESS: the client picks only the OPENING width, by ladder index. How deep the round already is and
+    // which box a press nests inside are read off the player's own open boxes server-side, never sent.
+    const asset = String(body.asset ?? '');
+    const open = Number(body.open);
+    if (!asset || !Number.isFinite(open)) throw new PlayError('INVALID_PARAMS', 'Pick an opening width');
+    return { game, stake, asset, open };
+  }
+
   if (game === 'pin') {
     // PIN: the player names a price and picks how much slack sits around it. The server owns the window
     // ladder, so the client sends its index, never a dollar width.

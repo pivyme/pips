@@ -83,7 +83,9 @@ export type CreatePlayInput =
   | { game: 'range'; stake: string | number; asset: string; widthPct?: number; tier?: number }
   | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number }
   | { game: 'pin'; stake: string | number; asset: string; pin: number; window: number }
-  | { game: 'snipe'; stake: string | number; asset: string; wall: number; side: Side };
+  | { game: 'snipe'; stake: string | number; asset: string; wall: number; side: Side }
+  // `step` and `inner` are server-filled from the player's own open boxes (see pressContext), never from the body.
+  | { game: 'press'; stake: string | number; asset: string; open: number; step?: number; inner?: { lower: number; upper: number; expiryMs: number } };
 
 export type CreateResult = { play: PlayDTO };
 
@@ -135,11 +137,29 @@ export async function createPlay(user: User, input: CreatePlayInput): Promise<Cr
     if (cached && Date.now() - cached.at < BAL_TTL_MS && cached.total < stakeRaw) {
       throw new PlayError('INSUFFICIENT_DUSDC', 'Not enough chips for that play');
     }
-    return await createPlayReal(user, input, stakeRaw);
+    return await createPlayReal(user, input.game === 'press' ? await pressContext(user.id, input) : input, stakeRaw);
   } catch (e) {
     clearPlay(user.id); // the play never landed (bad params / no market); don't hold the cooldown
     throw e;
   }
+}
+
+// PRESS's round context, read off the player's OWN open boxes rather than trusted from the body. The step is
+// how many boxes are already riding this round and the inner box is the tightest of them, which is the one a
+// press must nest inside. A client that could name its own parent could mint a wide box at a tight box's price.
+async function pressContext(userId: string, input: Extract<CreatePlayInput, { game: 'press' }>): Promise<CreatePlayInput> {
+  const open = await prismaQuery.play.findMany({
+    where: { userId, game: 'press', status: { in: ['pending', 'open'] }, expiry: { gt: BigInt(Date.now()) } },
+    select: { lower: true, upper: true, expiry: true },
+  });
+  const boxes = open
+    .filter((p) => p.lower != null && p.upper != null)
+    .map((p) => ({ lower: parseFloat(p.lower!), upper: parseFloat(p.upper!), expiryMs: Number(p.expiry) }))
+    .filter((b) => Number.isFinite(b.lower) && Number.isFinite(b.upper));
+  if (boxes.length === 0) return { ...input, step: 0 };
+  // The tightest box is the one to nest inside; a pending box counts, or a double-tap opens two siblings.
+  const inner = boxes.reduce((a, b) => (b.upper - b.lower < a.upper - a.lower ? b : a));
+  return { ...input, step: boxes.length, inner };
 }
 
 // Create path: per-owner AccountWrapper, deposit->mint dance in one sponsored PTB, optimistic.

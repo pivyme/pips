@@ -57,7 +57,10 @@ export type CreatePlayInputShape =
   | { game: 'range'; stake: string | number; asset: string; widthPct?: number; tier?: number }
   | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number }
   | { game: 'pin'; stake: string | number; asset: string; pin: number; window: number }
-  | { game: 'snipe'; stake: string | number; asset: string; wall: number; side: Side };
+  | { game: 'snipe'; stake: string | number; asset: string; wall: number; side: Side }
+  // `step` and `inner` are filled by the server from the player's own open boxes, never read off the body:
+  // a client that could name its own parent box could mint a wide box at a tight box's price.
+  | { game: 'press'; stake: string | number; asset: string; open: number; step?: number; inner?: { lower: number; upper: number; expiryMs: number } };
 
 function realMarket(roundMs: number, minRemainingMs: number = EXPIRY_SAFETY_MS): Market {
   const at = now();
@@ -912,11 +915,14 @@ export async function probeSnipeWalls(stepsPerSide: number): Promise<{
   return { marketId: market.oracleId, spot1e9, seconds, sigma, walls };
 }
 
-// Fit the mint inside the stake WITHOUT moving the wall. Fees ride on top of the premium and grow as the
-// strike goes out, so a far wall can bill over its budget; the only lever left is the budget itself.
-const SNIPE_FIT_STEPS = 4;
+// Fit the mint inside the stake WITHOUT moving the strike or the band. Fees ride on top of the premium and
+// grow as the strike goes out, so a far wall (or a tight box) can bill over its budget, and the only lever
+// left is the budget itself. Also hands back the chain's OWN quoted entry probability, which is the only
+// honest source for a pre-mint multiple: the analytic model disagrees with the Block Scholes surface hard
+// enough that a PRESS box modelled at 1.61x really minted at 1.15x.
+const MINT_FIT_STEPS = 4;
 
-async function fitWallBudget(
+async function fitMintBudget(
   marketId: string,
   lowerTick: bigint,
   higherTick: bigint,
@@ -925,9 +931,9 @@ async function fitWallBudget(
   const costTarget = (netRaw * (100n - COST_MARGIN_PCT)) / 100n;
   let budgetRaw = premiumBudget(netRaw);
   let last: { amountRaw: bigint; entryProbability: number } | null = null;
-  for (let step = 0; step < SNIPE_FIT_STEPS; step++) {
+  for (let step = 0; step < MINT_FIT_STEPS; step++) {
     const q = await quoteMint({ marketId, lowerTick, higherTick, maxPremiumRaw: budgetRaw, leverage1e9: LEVERAGE_ONE });
-    if (!q || q.allInCostRaw === 0n) return last; // wall inadmissible; the caller mints anyway and the abort path owns it
+    if (!q || q.allInCostRaw === 0n) return last; // inadmissible; the caller mints anyway and the abort path owns it
     last = { amountRaw: budgetRaw, entryProbability: Number(q.entryProbability1e9) / 1e9 };
     if (q.allInCostRaw <= costTarget) return last;
     const scaled = (budgetRaw * costTarget) / q.allInCostRaw;
@@ -952,7 +958,7 @@ async function resolveRealSnipe(netRaw: bigint, stakeRaw: bigint, input: { wall:
   const strike1e9 = snipeWall({ wall: input.wall, side, spot1e9, sigma, admissionTickSize });
   const { lowerTick, higherTick } = ticksForBinary(side, strike1e9, tickSize, admissionTickSize);
 
-  const fit = await fitWallBudget(market.oracleId, lowerTick, higherTick, netRaw);
+  const fit = await fitMintBudget(market.oracleId, lowerTick, higherTick, netRaw);
   // Signed off the strike that will actually mint, so a crossed wall reads as the better-than-even shot it is.
   const dist = (side === 'up' ? Number(strike1e9 - spot1e9) : Number(spot1e9 - strike1e9)) / Number(spot1e9);
   const p = fit?.entryProbability ?? Math.max(REAL_STRIKE_MIN_PROB, normCdf(-dist / Math.max(sigma, 1e-9)));
@@ -979,6 +985,109 @@ async function resolveRealSnipe(netRaw: bigint, stakeRaw: bigint, input: { wall:
     side,
     strike1e9,
     strikeDisplay: realFmt(strike1e9),
+  };
+}
+
+// === PRESS ===
+// Press your luck: each press is one more mint_range on the SAME expiry market, nested strictly inside the
+// box before it. No new instrument, just a second, third and fourth key, each reading its own multiplier off
+// its own OrderMinted.
+
+/** The opening box, as target win probabilities. Wide and safe first, so the first press is the interesting one. */
+export const PRESS_OPEN_PROBS = [0.72, 0.62, 0.52, 0.42];
+/** Each press halves the win probability, so the multiple roughly doubles. Escalation is priced, not scripted. */
+const PRESS_TIGHTEN = 0.5;
+/** A 4-press round is $6.00 at MIN_STAKE. The cap is the whole reason the greed stays self-inflicted. */
+export const PRESS_MAX = 4;
+
+/**
+ * The box a press mints, nested strictly inside the one before it. Shared by the resolve path and its tests.
+ *
+ * Nesting is the game's promise ("land in the innermost box and all four pay"), so it is enforced here rather
+ * than assumed: the box is sized by target win probability (L-013, never a fixed width), then its CENTRE is
+ * slid to keep it whole inside the previous box instead of clipping its bounds, which would silently reprice
+ * the bet. Both p and sigma shrink each press, so a later box is always tighter in dollars than its parent,
+ * and because time has already run off the clock the later presses genuinely price better.
+ */
+export function pressBand(p: {
+  step: number;
+  openIdx: number;
+  spot1e9: bigint;
+  sigma: number;
+  inner?: { lower1e9: bigint; upper1e9: bigint };
+}): { lower1e9: bigint; upper1e9: bigint; prob: number } {
+  const open = PRESS_OPEN_PROBS[Math.max(0, Math.min(PRESS_OPEN_PROBS.length - 1, Math.round(p.openIdx)))];
+  // Both ends are the chain's, not ours: too wide trips the max entry probability, too tight trips the min.
+  const prob = Math.min(REAL_RANGE_MAX_PROB, Math.max(REAL_STRIKE_MIN_PROB, open * Math.pow(PRESS_TIGHTEN, Math.max(0, p.step))));
+  let half = (p.spot1e9 * BigInt(Math.round(probit((1 + prob) / 2) * p.sigma * 1e9))) / FLOAT_SCALING;
+
+  if (!p.inner) return { lower1e9: p.spot1e9 - half, upper1e9: p.spot1e9 + half, prob };
+
+  const room = (p.inner.upper1e9 - p.inner.lower1e9) / 2n;
+  if (half >= room) half = (room * 9n) / 10n; // guard: a box that cannot fit is pulled inside its parent
+  // Slide the centre, never clip the bounds: a clipped box is a different bet than the one priced.
+  const lo = p.inner.lower1e9 + half;
+  const hi = p.inner.upper1e9 - half;
+  const centre = p.spot1e9 < lo ? lo : p.spot1e9 > hi ? hi : p.spot1e9;
+  return { lower1e9: centre - half, upper1e9: centre + half, prob };
+}
+
+async function resolveRealPress(
+  netRaw: bigint,
+  stakeRaw: bigint,
+  input: { open: number; step?: number; inner?: { lower: number; upper: number; expiryMs: number } },
+): Promise<ResolvedReal> {
+  // AWAITED, unlike RANGE's fire-and-forget. PRESS opens the widest band in the product, so an unfitted vol
+  // does not merely misquote it, it aborts the mint: the 0.55 seed against the surface's ~0.2 implied sizes
+  // the opening box ~2.75x too wide, which prices at ~99% and trips the chain's max entry probability. The
+  // TTL makes this free whenever the cache is warm, which is every press after the first.
+  await ensureRangeCalib();
+  const market = rangeMarket();
+  const { spot1e9: cachedSpot, tickSize, admissionTickSize } = realEcon(market);
+  const spot1e9 = await freshRealSpot(cachedSpot);
+  const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+  const sigma = rangeSigmaFrac(seconds);
+
+  const step = Math.max(0, Math.round(input.step ?? 0));
+  if (step >= PRESS_MAX) throw new PlayError('INVALID_PARAMS', `A round is ${PRESS_MAX} presses at most`);
+
+  let inner: { lower1e9: bigint; upper1e9: bigint } | undefined;
+  if (step > 0) {
+    if (!input.inner) throw new PlayError('INVALID_PARAMS', 'No box to press on');
+    // A press belongs to the round it was opened in. If the market has rolled, that round is over and the
+    // press must die here rather than mint a fresh box against a different buzzer.
+    if (input.inner.expiryMs !== market.expiryMs) throw new PlayError('MARKET_UNAVAILABLE', 'That round has closed');
+    inner = { lower1e9: BigInt(Math.round(input.inner.lower * 1e9)), upper1e9: BigInt(Math.round(input.inner.upper * 1e9)) };
+    // PRESS is only ever armed while the line is inside the innermost box, so this is a race, not a bad
+    // request: the price left the box between the frame the player pressed on and this resolve.
+    if (spot1e9 <= inner.lower1e9 || spot1e9 >= inner.upper1e9) throw new PlayError('INVALID_PARAMS', 'The price left your box');
+  }
+
+  const band = pressBand({ step, openIdx: input.open, spot1e9, sigma, inner });
+  const { lowerTick, higherTick } = ticksForRange(band.lower1e9, band.upper1e9, tickSize, admissionTickSize);
+  // Quote the box the chain's way before minting it: the analytic p is the sizing model, not the price.
+  const fit = await fitMintBudget(market.oracleId, lowerTick, higherTick, netRaw);
+  return {
+    game: 'press',
+    kind: 'range',
+    marketId: market.oracleId,
+    asset: REAL_BTC_GAME_ASSET,
+    spot1e9,
+    tickSize,
+    admissionTickSize,
+    lowerTick,
+    higherTick,
+    leverage1e9: LEVERAGE_ONE,
+    amountRaw: fit?.amountRaw ?? premiumBudget(netRaw),
+    minQuantityRaw: POSITION_LOT_SIZE,
+    expiryMs: market.expiryMs,
+    duration: Math.max(1, Math.round(seconds)),
+    entrySpot: realFmt(spot1e9),
+    // The chain's own quoted probability where it landed one, the sizing model only as a fallback. Still an
+    // estimate, still labelled `est`, still snapped from OrderMinted on mint (L-012).
+    tierMultiplier: tierMultOf(Math.min(REAL_RANGE_MAX_PROB, Math.max(0.005, fit?.entryProbability ?? band.prob))),
+    lowerDisplay: realFmt(band.lower1e9),
+    upperDisplay: realFmt(band.upper1e9),
   };
 }
 
@@ -1057,5 +1166,6 @@ export async function resolveReal(input: CreatePlayInputShape, netRaw: bigint, s
   }
   if (input.game === 'pin') return resolveRealPin(netRaw, stakeRaw, input);
   if (input.game === 'snipe') return resolveRealSnipe(netRaw, stakeRaw, input);
+  if (input.game === 'press') return resolveRealPress(netRaw, stakeRaw, input);
   return resolveRealRange(netRaw, stakeRaw, input);
 }

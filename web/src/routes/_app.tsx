@@ -8,6 +8,7 @@ import { Route as RangeRoute } from './_app/games/range'
 import { Route as MoonshotRoute } from './_app/games/moonshot'
 import { Route as PinRoute } from './_app/games/pin'
 import { Route as SnipeRoute } from './_app/games/snipe'
+import { Route as PressRoute } from './_app/games/press'
 import { Route as LineRiderRoute } from './_app/games/line-rider'
 import { Route as FlappyPiperRoute } from './_app/games/flappy-piper'
 import { AppFrame } from '@/components/console/AppFrame'
@@ -63,6 +64,7 @@ const DEVICE_SCREENS: Record<string, ComponentType> = {
   '/games/moonshot': routeComponent(MoonshotRoute),
   '/games/pin': routeComponent(PinRoute),
   '/games/snipe': routeComponent(SnipeRoute),
+  '/games/press': routeComponent(PressRoute),
   '/games/line-rider': routeComponent(LineRiderRoute),
   '/games/flappy-piper': routeComponent(FlappyPiperRoute),
 }

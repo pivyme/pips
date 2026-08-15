@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { probit, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9, restrikeCloser, snipeWall, SNIPE_MAX_WALL_SIGMA, parseStake, maxStakeFor, type ResolvedReal } from './games.ts';
+import { probit, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9, restrikeCloser, snipeWall, SNIPE_MAX_WALL_SIGMA, pressBand, parseStake, maxStakeFor, type ResolvedReal } from './games.ts';
 import { LEVERAGE_ONE, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
 import type { Side } from '../types/api.ts';
 import { REAL_STRIKE_MIN_PROB, REAL_STRIKE_MAX_OFFSET_FRAC, REAL_BTC_ANNUAL_VOL, REAL_BINARY_MIN_OFFSET_SIGMA, MIN_STAKE, MAX_STAKE, MAX_STAKE_ADMIN } from '../config/main-config.ts';
@@ -312,3 +312,59 @@ describe('snipeWall (a planted wall does not move)', () => {
     expect(usd(at(62_989.6, 'down'))).toBe(62_989); // down pays below, so round it down
   });
 });
+
+// PRESS promises "land in the innermost box and all four pay at once", which is only true if every box is
+// strictly inside its parent. The price drifts between presses, so nesting has to be enforced, not assumed.
+describe('pressBand (every box nests inside the one before it)', () => {
+  const SPOT = 63_000_000_000_000n; // $63,000
+  const SIGMA = 0.000284;
+  const usd = (v: bigint) => Number(v) / 1e9;
+  const open = (openIdx: number, spot1e9 = SPOT, sigma = SIGMA) => pressBand({ step: 0, openIdx, spot1e9, sigma });
+
+  it('opens a band centred on spot, wider for a safer rung', () => {
+    const safe = open(0)
+    const tight = open(3)
+    expect(usd(safe.lower1e9) + usd(safe.upper1e9)).toBeCloseTo(2 * 63_000, 3)
+    expect(safe.upper1e9 - safe.lower1e9).toBeGreaterThan(tight.upper1e9 - tight.lower1e9)
+    expect(safe.prob).toBeGreaterThan(tight.prob)
+  })
+
+  it('halves the win probability per press, so the multiple roughly doubles', () => {
+    const first = open(1)
+    const second = pressBand({ step: 1, openIdx: 1, spot1e9: SPOT, sigma: SIGMA, inner: first })
+    expect(second.prob).toBeCloseTo(first.prob / 2, 6)
+  })
+
+  it('keeps every box strictly inside its parent as the price drifts across it', () => {
+    let inner = open(1)
+    // The player pressed at each of these spots, drifting toward the edge of the box they already hold.
+    const drift = [63_000, 63_004, 63_009, 62_994]
+    for (let step = 1; step < 4; step++) {
+      const spot = BigInt(Math.round(drift[step] * 1e9))
+      // sigma decays as the clock runs off, which is what makes a later press price better.
+      const next = pressBand({ step, openIdx: 1, spot1e9: spot, sigma: SIGMA * Math.sqrt(1 - step / 5), inner })
+      expect(next.lower1e9).toBeGreaterThanOrEqual(inner.lower1e9)
+      expect(next.upper1e9).toBeLessThanOrEqual(inner.upper1e9)
+      expect(next.upper1e9 - next.lower1e9).toBeLessThan(inner.upper1e9 - inner.lower1e9)
+      inner = next
+    }
+  })
+
+  it('slides the centre rather than clipping a bound when the price sits near the edge', () => {
+    const first = open(0)
+    // Hard against the parent's upper edge: the box must move, not lose half its width.
+    const atEdge = first.upper1e9 - 1_000_000_000n
+    const next = pressBand({ step: 1, openIdx: 0, spot1e9: atEdge, sigma: SIGMA, inner: first })
+    const full = pressBand({ step: 1, openIdx: 0, spot1e9: SPOT, sigma: SIGMA, inner: first })
+    // Same bet, moved. Widths differ only by the cent that half-width scaling off a drifted spot costs.
+    expect(usd(next.upper1e9 - next.lower1e9)).toBeCloseTo(usd(full.upper1e9 - full.lower1e9), 1)
+    expect(next.upper1e9).toBeLessThanOrEqual(first.upper1e9)
+  })
+
+  it('pulls a box inside a parent too tight to hold it', () => {
+    const parent = { lower1e9: SPOT - 2_000_000_000n, upper1e9: SPOT + 2_000_000_000n } // $4 wide
+    const next = pressBand({ step: 1, openIdx: 0, spot1e9: SPOT, sigma: SIGMA, inner: parent })
+    expect(next.lower1e9).toBeGreaterThanOrEqual(parent.lower1e9)
+    expect(next.upper1e9).toBeLessThanOrEqual(parent.upper1e9)
+  })
+})

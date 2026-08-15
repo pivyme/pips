@@ -50,6 +50,8 @@ export const EVENT_NAMES = [
   'game.cashout_done',
   'game.settled',
   'game.restore',
+  'game.press',
+  'game.fold',
 
   'menu.open',
   'menu.section',

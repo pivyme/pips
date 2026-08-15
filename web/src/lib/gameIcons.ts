@@ -7,4 +7,5 @@ export const GAME_ICON_SRC: Record<string, string> = {
   moonshot: '/assets/games/icon-moonshot.svg',
   pin: '/assets/games/icon-pin.svg',
   snipe: '/assets/games/icon-snipe.svg',
+  press: '/assets/games/icon-press.svg',
 }

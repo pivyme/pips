@@ -64,8 +64,9 @@ const CONCEPTS: Concept[] = [
     score: [Y, Y, Y, Y],
     mints: '1 to 4',
     floor: '$1.50 per press',
-    status: 'building',
-    note: 'Range plus a decision loop. Escalation is not scripted, it falls out of real time decay in the pricing.',
+    status: 'playable',
+    to: '/games/press',
+    note: 'Range plus a decision loop. Escalation is not scripted, it falls out of real time decay in the pricing. Every box nests strictly inside the last, so the innermost pays all of them.',
   },
   {
     n: 11,
