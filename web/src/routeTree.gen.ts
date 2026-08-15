@@ -18,6 +18,7 @@ import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as RCodeRouteImport } from './routes/r.$code'
 import { Route as DevSoundsRouteImport } from './routes/dev/sounds'
 import { Route as DevHapticsRouteImport } from './routes/dev/haptics'
+import { Route as DevGamesRouteImport } from './routes/dev/games'
 import { Route as DevExportRouteImport } from './routes/dev/export'
 import { Route as DevDesignSystemV2RouteImport } from './routes/dev/design-system-v2'
 import { Route as DevDesignSystemRouteImport } from './routes/dev/design-system'
@@ -89,6 +90,11 @@ const DevSoundsRoute = DevSoundsRouteImport.update({
 const DevHapticsRoute = DevHapticsRouteImport.update({
   id: '/dev/haptics',
   path: '/dev/haptics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevGamesRoute = DevGamesRouteImport.update({
+  id: '/dev/games',
+  path: '/dev/games',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DevExportRoute = DevExportRouteImport.update({
@@ -244,6 +250,7 @@ export interface FileRoutesByFullPath {
   '/dev/design-system': typeof DevDesignSystemRoute
   '/dev/design-system-v2': typeof DevDesignSystemV2Route
   '/dev/export': typeof DevExportRoute
+  '/dev/games': typeof DevGamesRoute
   '/dev/haptics': typeof DevHapticsRoute
   '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
@@ -280,6 +287,7 @@ export interface FileRoutesByTo {
   '/dev/design-system': typeof DevDesignSystemRoute
   '/dev/design-system-v2': typeof DevDesignSystemV2Route
   '/dev/export': typeof DevExportRoute
+  '/dev/games': typeof DevGamesRoute
   '/dev/haptics': typeof DevHapticsRoute
   '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
@@ -320,6 +328,7 @@ export interface FileRoutesById {
   '/dev/design-system': typeof DevDesignSystemRoute
   '/dev/design-system-v2': typeof DevDesignSystemV2Route
   '/dev/export': typeof DevExportRoute
+  '/dev/games': typeof DevGamesRoute
   '/dev/haptics': typeof DevHapticsRoute
   '/dev/sounds': typeof DevSoundsRoute
   '/r/$code': typeof RCodeRoute
@@ -361,6 +370,7 @@ export interface FileRouteTypes {
     | '/dev/design-system'
     | '/dev/design-system-v2'
     | '/dev/export'
+    | '/dev/games'
     | '/dev/haptics'
     | '/dev/sounds'
     | '/r/$code'
@@ -397,6 +407,7 @@ export interface FileRouteTypes {
     | '/dev/design-system'
     | '/dev/design-system-v2'
     | '/dev/export'
+    | '/dev/games'
     | '/dev/haptics'
     | '/dev/sounds'
     | '/r/$code'
@@ -436,6 +447,7 @@ export interface FileRouteTypes {
     | '/dev/design-system'
     | '/dev/design-system-v2'
     | '/dev/export'
+    | '/dev/games'
     | '/dev/haptics'
     | '/dev/sounds'
     | '/r/$code'
@@ -473,6 +485,7 @@ export interface RootRouteChildren {
   DevDesignSystemRoute: typeof DevDesignSystemRoute
   DevDesignSystemV2Route: typeof DevDesignSystemV2Route
   DevExportRoute: typeof DevExportRoute
+  DevGamesRoute: typeof DevGamesRoute
   DevHapticsRoute: typeof DevHapticsRoute
   DevSoundsRoute: typeof DevSoundsRoute
   RCodeRoute: typeof RCodeRoute
@@ -542,6 +555,13 @@ declare module '@tanstack/react-router' {
       path: '/dev/haptics'
       fullPath: '/dev/haptics'
       preLoaderRoute: typeof DevHapticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dev/games': {
+      id: '/dev/games'
+      path: '/dev/games'
+      fullPath: '/dev/games'
+      preLoaderRoute: typeof DevGamesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dev/export': {
@@ -818,6 +838,7 @@ const rootRouteChildren: RootRouteChildren = {
   DevDesignSystemRoute: DevDesignSystemRoute,
   DevDesignSystemV2Route: DevDesignSystemV2Route,
   DevExportRoute: DevExportRoute,
+  DevGamesRoute: DevGamesRoute,
   DevHapticsRoute: DevHapticsRoute,
   DevSoundsRoute: DevSoundsRoute,
   RCodeRoute: RCodeRoute,

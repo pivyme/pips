@@ -13,9 +13,9 @@ import {
   openMinigameRun,
   submitMinigameScore,
 } from '../services/leaderboard.ts';
-import type { Game, Minigame } from '../types/api.ts';
+import { canSeeGame } from '../config/games.ts';
+import type { Minigame } from '../types/api.ts';
 
-const GAMES = new Set<Game>(['lucky', 'range', 'moonshot']);
 const MINIGAMES = new Set<Minigame>(['line-rider', 'flappy-piper']);
 const MAX_SCORE = 100_000_000; // a sane ceiling so a tampered client can't park garbage at #1
 
@@ -33,8 +33,9 @@ export const leaderboardRoutes: FastifyPluginCallback = (app: FastifyInstance, _
 
   // Per-game winners: Lucky or Range, by summed PnL.
   app.get('/game/:game', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const game = (request.params as { game: string }).game as Game;
-    if (!GAMES.has(game)) return handleError(reply, 400, 'Unknown game', 'BAD_GAME');
+    const game = (request.params as { game: string }).game;
+    // Same posture as the play route: a lab game is simply not a game for a non-admin.
+    if (!canSeeGame(game, request.user!.specialRoles)) return handleError(reply, 400, 'Unknown game', 'BAD_GAME');
     try {
       const leaderboard = await gameLeaderboard(game, request.user!.id);
       return reply.code(200).send({ success: true, error: null, data: { leaderboard } });

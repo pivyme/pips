@@ -1,5 +1,5 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { ArrowUpRight, AudioLines, Camera, Gamepad2, LayoutGrid, Palette, Scan, Vibrate } from 'lucide-react'
+import { ArrowUpRight, AudioLines, Camera, FlaskConical, Gamepad2, LayoutGrid, Palette, Scan, Vibrate } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 // Dev hub: every internal tool/playground page in one grid. Adding a dev page? Drop the route
@@ -14,6 +14,7 @@ const PAGES: { to: string; name: string; desc: string; tag: string; Icon: Lucide
   { to: '/dev/export', name: 'Export Studio', desc: 'PNG asset dump: bare device per skin, game screens, screen-only shots.', tag: 'tooling', Icon: Camera, tint: 'text-up', tile: 'bg-up/12' },
   { to: '/dev/sounds', name: 'Sound Lab', desc: 'Every music bed and SFX in one audition bench, grouped per game.', tag: 'audio', Icon: AudioLines, tint: 'text-down', tile: 'bg-down/12' },
   { to: '/dev/haptics', name: 'Haptics Probe', desc: 'Phase 0.5 bench: answer the iOS tick questions by feel on a real phone.', tag: 'device', Icon: Vibrate, tint: 'text-info', tile: 'bg-info/12' },
+  { to: '/dev/games', name: 'Games Lab', desc: 'Every game concept, its verdict, and the reason. Links into the playable ones.', tag: 'games', Icon: FlaskConical, tint: 'text-brand-500', tile: 'bg-brand-500/12' },
 ]
 
 function DevHub() {

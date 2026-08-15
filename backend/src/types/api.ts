@@ -1,7 +1,8 @@
 // Shared API DTOs (the wire shape between backend and web). DUSDC amounts cross the wire
 // as human-readable decimal strings, never raw 6dp integers or JS numbers. See 02-API.md.
 
-export type Game = 'lucky' | 'range' | 'moonshot';
+// The lab half (pin..breakout) is ADMIN-only until promoted; the roster and that gate live in config/games.ts.
+export type Game = 'lucky' | 'range' | 'moonshot' | 'pin' | 'snipe' | 'press' | 'rush' | 'breakout';
 export type PlayStatus = 'pending' | 'open' | 'won' | 'lost' | 'cashed_out' | 'error';
 export type Side = 'up' | 'down'; // up = call/long, down = put/short
 

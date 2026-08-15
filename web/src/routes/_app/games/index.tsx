@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Activity, CandlestickChart } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { CSSProperties } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useConsoleControls } from '@/components/console/controls'
 import { GameIcon } from '@/components/GameIcon'
 import { GameScreen } from '@/components/game/screen'
@@ -12,6 +12,7 @@ import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useLivePresence } from '@/lib/presence'
 import { isDemo } from '@/lib/demo'
+import { LAB_GAMES, useIsLabUser } from '@/lib/lab'
 import { NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { track } from '@/lib/track'
@@ -50,17 +51,23 @@ const MINIGAMES: ReadonlyArray<GameDef> = [
   { to: '/games/line-rider', icon: Activity, name: 'Line Rider', tag: 'Ride the line. Don’t slip.' },
 ]
 
-// One flat order for the knob/PLAY selection; rendered in two separate sections below.
-const ALL: ReadonlyArray<GameDef> = [...GAMES, ...MINIGAMES]
-
 const pad2 = (n: number): string => String(n).padStart(2, '0')
+
+// A play's `game` key is its route's last segment, which is also how the backend names it. Minigame keys
+// never appear in the play ledger, so this reads false for them without a special case.
+const gameKey = (to: string): string => to.slice('/games/'.length)
 
 function GamesConsole() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const reduced = useReducedMotion()
+  // Lab games are ADMIN only and sit in their own section. Everyone else sees no trace of them, and the
+  // server answers 404 for one anyway.
+  const isLabUser = useIsLabUser()
+  // One flat order for the knob/PLAY selection; rendered as separate sections below.
+  const ALL: ReadonlyArray<GameDef> = useMemo(() => [...GAMES, ...(isLabUser ? LAB_GAMES : []), ...MINIGAMES], [isLabUser])
   // Remember the last cartridge the player highlighted, so returning to the hub keeps it selected. Stored by route so it survives a reorder / new game.
-  const [selTo, setSelTo] = useLocalStorage('pips_game_sel', ALL[0].to)
+  const [selTo, setSelTo] = useLocalStorage('pips_game_sel', GAMES[0].to)
   const sel = Math.max(0, ALL.findIndex((g) => g.to === selTo))
 
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: () => api.stats() })
@@ -78,14 +85,7 @@ function GamesConsole() {
   // Past its buzzer the round is over even while the row still reads 'open' (settlement lands a beat later), and
   // the game screens no longer restore one, so the flag would promise a live board that isn't there.
   const openPlays = (openPlaysQ.data?.plays ?? []).filter((p) => roundEndAt(p, ROUND_FALLBACK_SEC) > Date.now())
-  const inPlayFor = (to: string): boolean =>
-    to === '/games/lucky'
-      ? openPlays.some((p) => p.game === 'lucky')
-      : to === '/games/moonshot'
-        ? openPlays.some((p) => p.game === 'moonshot')
-        : to === '/games/range'
-          ? openPlays.some((p) => p.game === 'range')
-          : false
+  const inPlayFor = (to: string): boolean => openPlays.some((p) => p.game === gameKey(to))
   // First-run only: same signal Lucky's idle hint uses, no extra storage, disappears for good after the first play.
   const firstRun = !statsQ.isLoading && (statsQ.data?.stats.gamesPlayed ?? 0) === 0
 
@@ -97,7 +97,7 @@ function GamesConsole() {
       const i = Math.max(0, Math.min(ALL.length - 1, next))
       setSelTo(ALL[i].to)
     },
-    [setSelTo],
+    [ALL, setSelTo],
   )
 
   // The PLAY button lands here. A rigid tick sells picking the cartridge up. Remember what we launched
@@ -105,7 +105,7 @@ function GamesConsole() {
   const launch = useCallback(
     (i: number) => {
       haptic('high')
-      const game = ALL[i].to.replace('/games/', '')
+      const game = gameKey(ALL[i].to)
       // In Play means the tile is resuming a live round rather than starting one, which is a different
       // intent and worth telling apart.
       track(inPlayFor(ALL[i].to) ? 'hub.inplay_resume' : 'hub.game_tile_tap', { game })
@@ -113,7 +113,7 @@ function GamesConsole() {
       void navigate({ to: ALL[i].to })
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- inPlayFor is derived per render from the open-plays query
-    [navigate, setSelTo],
+    [ALL, navigate, setSelTo],
   )
 
   useEffect(() => {
@@ -180,6 +180,28 @@ function GamesConsole() {
         ))}
       </div>
 
+      {/* lab — real plays that are not public yet. ADMIN only, and the server 404s one for anyone else. */}
+      {isLabUser && (
+        <>
+          <div className={cnm('flex items-baseline justify-between pb-0.5 pt-5 font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-text-3', RIM)}>
+            <span className="text-brand-500">Lab</span>
+            <span className="tracking-[0.1em]">Admin only · Real funds</span>
+          </div>
+          <Rule />
+          <div className="flex flex-col">
+            {LAB_GAMES.map((g, j) => {
+              const i = GAMES.length + j
+              return (
+                <div key={g.to}>
+                  {j > 0 && <Rule />}
+                  <MiniRow game={g} selected={i === sel} inPlay={inPlayFor(g.to)} onLaunch={() => launch(i)} />
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+
       {/* minigame — a quieter, lower-hierarchy lane below the real plays. No chain, no funds, just play. */}
       <div className={cnm('flex items-baseline justify-between pb-0.5 pt-5 font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-text-3', RIM)}>
         <span>Minigame</span>
@@ -188,7 +210,7 @@ function GamesConsole() {
       <Rule />
       <div className="flex flex-col">
         {MINIGAMES.map((g, j) => {
-          const i = GAMES.length + j
+          const i = ALL.length - MINIGAMES.length + j
           return (
             <div key={g.to}>
               {j > 0 && <Rule />}
@@ -276,10 +298,12 @@ function GameRow({
 function MiniRow({
   game,
   selected,
+  inPlay = false,
   onLaunch,
 }: {
   game: GameDef
   selected: boolean
+  inPlay?: boolean
   onLaunch: () => void
 }) {
   return (
@@ -297,6 +321,12 @@ function MiniRow({
       <RowIcon icon={game.icon} size={18} className={selected ? 'text-brand-500' : 'text-text-3'} />
       <span className={cnm('shrink-0 text-[15px] font-bold uppercase tracking-[0.04em]', selected ? 'text-text' : 'text-text-2')}>{game.name}</span>
       <MarqueeText text={game.tag} active={selected} className="min-w-0 flex-1 font-mono text-[11px] uppercase tracking-[0.06em] text-text-3" />
+      {inPlay && (
+        <span className="inline-flex shrink-0 items-center gap-1.5 border border-up/60 bg-up/15 px-1.5 py-1 font-mono text-[9px] font-bold uppercase leading-none tracking-[0.12em] text-up">
+          <span className="h-1.5 w-1.5 bg-up motion-safe:animate-pulse" />
+          In Play
+        </span>
+      )}
       {selected && <span className="font-mono text-sm text-brand-500">▶</span>}
     </button>
   )

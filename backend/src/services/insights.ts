@@ -5,6 +5,7 @@
 
 import { EVENT_NAMES } from '../config/analytics-catalog.ts';
 import { getTunable, registerTunable } from '../config/admin-settings.ts';
+import { PUBLIC_GAMES } from '../config/games.ts';
 import { EXPIRY_SAFETY_MS, SUI_NETWORK, TREASURY_MIN_DUSDC } from '../config/main-config.ts';
 import { alert } from '../lib/alert.ts';
 import { prismaQuery } from '../lib/prisma.ts';
@@ -447,7 +448,10 @@ export const FUNNEL_STEPS: Array<{ key: string; label: string; event: string | n
   { key: 'play', label: 'First play', event: null }, // from Play, the only step Event cannot answer
 ];
 
-export const TRADING_GAMES = ['lucky', 'range', 'moonshot'] as const;
+// Seeds the conversion table so a game nobody touched is visible rather than absent. Lab games are
+// deliberately not seeded: they join the moment they have events, and a 0% row for a game nobody can
+// reach reads as broken rather than unreleased.
+export const TRADING_GAMES = PUBLIC_GAMES;
 
 export interface FunnelStepRow {
   key: string;

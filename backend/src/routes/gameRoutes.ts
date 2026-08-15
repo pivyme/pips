@@ -16,9 +16,8 @@ import {
   getPlay,
   type CreatePlayInput,
 } from '../services/plays.ts';
+import { canSeeGame } from '../config/games.ts';
 import type { Game } from '../types/api.ts';
-
-const GAMES: Game[] = ['lucky', 'range', 'moonshot'];
 
 // Funnel any thrown value to the envelope: PlayError is an EXPECTED business outcome (no live market,
 // bad params, a buzzer race), so send its envelope directly and never log it; handleError would bury real faults under routine 4xx noise. Anything else is a 500 with no leaked details.
@@ -97,8 +96,9 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
 
   // One endpoint per game, uniform shape. Body is the game-specific config plus a stake.
   app.post('/games/:game/play', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const game = (request.params as { game: string }).game as Game;
-    if (!GAMES.includes(game)) return handleNotFoundError(reply, 'Game');
+    const game = (request.params as { game: string }).game;
+    // A lab game is 404 for a non-admin, identical to a name that does not exist. Never 403.
+    if (!canSeeGame(game, request.user!.specialRoles)) return handleNotFoundError(reply, 'Game');
 
     const body = (request.body ?? {}) as Record<string, unknown>;
     try {
@@ -169,18 +169,22 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
     return { game, stake, asset, side, reach };
   }
 
-  // range: the round holds to the routed oracle's real expiry, so the client sends no duration.
-  // Two shapes: a payout `tier` (the knob's ladder index, the current game) or a legacy `widthPct` band.
-  const asset = String(body.asset ?? '');
-  if (!asset) throw new PlayError('INVALID_PARAMS', 'Pick an asset');
-  if (body.tier != null) {
-    const tier = Number(body.tier);
-    if (!Number.isFinite(tier)) throw new PlayError('INVALID_PARAMS', 'Pick a payout tier');
-    return { game, stake, asset, tier };
+  if (game === 'range') {
+    // The round holds to the routed oracle's real expiry, so the client sends no duration. Two shapes:
+    // a payout `tier` (the knob's ladder index, the current game) or a legacy `widthPct` band.
+    const asset = String(body.asset ?? '');
+    if (!asset) throw new PlayError('INVALID_PARAMS', 'Pick an asset');
+    if (body.tier != null) {
+      const tier = Number(body.tier);
+      if (!Number.isFinite(tier)) throw new PlayError('INVALID_PARAMS', 'Pick a payout tier');
+      return { game, stake, asset, tier };
+    }
+    const widthPct = Number(body.widthPct);
+    if (!Number.isFinite(widthPct)) {
+      throw new PlayError('INVALID_PARAMS', 'Pick an asset and band width');
+    }
+    return { game, stake, asset, widthPct };
   }
-  const widthPct = Number(body.widthPct);
-  if (!Number.isFinite(widthPct)) {
-    throw new PlayError('INVALID_PARAMS', 'Pick an asset and band width');
-  }
-  return { game, stake, asset, widthPct };
+
+  throw new PlayError('INVALID_PARAMS', 'That game is not playable yet');
 }
