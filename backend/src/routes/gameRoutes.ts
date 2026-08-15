@@ -8,7 +8,7 @@ import { handleError, handleNotFoundError } from '../utils/errorHandler.ts';
 import { buildMarketsPayload } from '../lib/markets-feed.ts';
 import { spotHistory } from '../lib/price-history.ts';
 import { PYTH_FEED_IDS } from '../lib/pyth.ts';
-import { PlayError, httpStatusForPlayError, quoteMoonshotAimReal, quoteRangeBatchReal, quoteRangeTiersReal } from '../services/games.ts';
+import { PlayError, httpStatusForPlayError, quoteMoonshotAimReal, quotePinModelReal, quoteRangeBatchReal, quoteRangeTiersReal } from '../services/games.ts';
 import {
   createPlay,
   cashoutPlay,
@@ -94,6 +94,15 @@ export const gameRoutes: FastifyPluginCallback = (app: FastifyInstance, _opts, d
     return reply.code(200).send({ success: true, error: null, data: payload ?? { levels: [] } });
   });
 
+  // PIN's round model: spot, the calibrated vol, the pin's usable travel, and each WINDOW's half-width, so
+  // the screen can redraw the box and its estimate every frame the knob moves without a call per frame.
+  // Lab-gated like the play route, so the game's existence is not leaked by a probe.
+  app.get('/games/pin/model', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!canSeeGame('pin', request.user!.specialRoles)) return handleNotFoundError(reply, 'Game');
+    const model = await quotePinModelReal();
+    return reply.code(200).send({ success: true, error: null, data: model ?? null });
+  });
+
   // One endpoint per game, uniform shape. Body is the game-specific config plus a stake.
   app.post('/games/:game/play', { preHandler: [authMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const game = (request.params as { game: string }).game;
@@ -167,6 +176,18 @@ function buildCreateInput(game: Game, body: Record<string, unknown>): CreatePlay
       throw new PlayError('INVALID_PARAMS', 'Pick an asset, a direction, and a reach');
     }
     return { game, stake, asset, side, reach };
+  }
+
+  if (game === 'pin') {
+    // PIN: the player names a price and picks how much slack sits around it. The server owns the window
+    // ladder, so the client sends its index, never a dollar width.
+    const asset = String(body.asset ?? '');
+    const pin = Number(body.pin);
+    const window = Number(body.window);
+    if (!asset || !Number.isFinite(pin) || !Number.isFinite(window)) {
+      throw new PlayError('INVALID_PARAMS', 'Name a price and pick a window');
+    }
+    return { game, stake, asset, pin, window };
   }
 
   if (game === 'range') {

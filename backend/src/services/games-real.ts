@@ -55,7 +55,8 @@ export type ResolvedReal = {
 export type CreatePlayInputShape =
   | { game: 'lucky'; stake: string | number }
   | { game: 'range'; stake: string | number; asset: string; widthPct?: number; tier?: number }
-  | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number };
+  | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number }
+  | { game: 'pin'; stake: string | number; asset: string; pin: number; window: number };
 
 function realMarket(roundMs: number, minRemainingMs: number = EXPIRY_SAFETY_MS): Market {
   const at = now();
@@ -256,8 +257,35 @@ function halveToSpot(side: Side, strike1e9: bigint, spot1e9: bigint, admissionTi
 // and re-derived the strike from the nominal tier, which pushed it further OUT and straight through the
 // protocol's 1% min_entry_probability floor, turning a recoverable abort into a dead play.
 // Null when the strike is already on the closest admissible boundary, so the caller errors instead of looping.
+// Slide a band's centre half way to spot, width intact, and re-snap to the grid. Null when the grid puts it
+// nowhere new, so the caller errors with chips safe instead of looping a doomed mint.
+function recentreBandCloser(r: ResolvedReal, leverage1e9: bigint): ResolvedReal | null {
+  const lower1e9 = r.lowerTick * r.tickSize;
+  const higher1e9 = r.higherTick * r.tickSize;
+  const centre1e9 = (lower1e9 + higher1e9) / 2n;
+  const half1e9 = (higher1e9 - lower1e9) / 2n;
+  const next1e9 = centre1e9 + (r.spot1e9 - centre1e9) / 2n;
+  const { lowerTick, higherTick } = ticksForRange(next1e9 - half1e9, next1e9 + half1e9, r.tickSize, r.admissionTickSize);
+  if (lowerTick === r.lowerTick && higherTick === r.higherTick) return null;
+  return {
+    ...r,
+    leverage1e9,
+    lowerTick,
+    higherTick,
+    lowerDisplay: realFmt(lowerTick * r.tickSize),
+    upperDisplay: realFmt(higherTick * r.tickSize),
+    // PIN records its named price here, so it has to travel with the band or the settle reveal states a miss
+    // against a pin that was never bought.
+    ...(r.strikeDisplay !== undefined ? { strikeDisplay: realFmt(next1e9) } : {}),
+  };
+}
+
 export function restrikeCloser(r: ResolvedReal, leverage1e9: bigint): ResolvedReal | null {
-  if (r.kind !== 'binary' || !r.side || r.strike1e9 === undefined) return { ...r, leverage1e9 };
+  // A band gets the same treatment: slide its CENTRE half way to spot, keeping the width, which raises entry
+  // probability the same way. RANGE centres on spot so this is a no-op returning null (its behaviour is
+  // unchanged); it is PIN's off-centre band that has somewhere to move.
+  if (r.kind === 'range') return recentreBandCloser(r, leverage1e9);
+  if (!r.side || r.strike1e9 === undefined) return { ...r, leverage1e9 };
   const strike1e9 = halveToSpot(r.side, r.strike1e9, r.spot1e9, r.admissionTickSize);
   if (strike1e9 === r.strike1e9) return null;
   const { lowerTick, higherTick } = ticksForBinary(r.side, strike1e9, r.tickSize, r.admissionTickSize);
@@ -573,6 +601,218 @@ async function resolveRealRange(netRaw: bigint, stakeRaw: bigint, input: { width
   };
 }
 
+// === PIN ===
+// Range with the band centred on a price the player names instead of on spot. One mint_range at
+// (pin - window, pin + window], same market and the same calibrated vol as RANGE.
+
+// The WINDOW ladder, widest first: target win probabilities for a band centred ON SPOT. Probability-sized,
+// never dollar-sized (L-013), because a hand-picked ±$5 is a fraction of a sigma on a ~26s round and aborts
+// on admission. The screen renders the dollars this resolves to, not the reverse.
+const PIN_WINDOW_PROBS = [0.5, 0.28, 0.14, 0.07];
+
+// The chance a band centred `offsetFrac` away from spot contains the price at expiry. Reduces to
+// rangeWinProb at offset 0, and it is what makes a far pin a genuine long shot rather than a wide one.
+function pinWinProb(offsetFrac: number, halfFrac: number, sigma: number): number {
+  const s = Math.max(sigma, 1e-9);
+  const p = normCdf((offsetFrac + halfFrac) / s) - normCdf((offsetFrac - halfFrac) / s);
+  return Math.min(REAL_RANGE_MAX_PROB, Math.max(0.005, p));
+}
+
+// How far the pin may travel, in sigma, PER WINDOW. A tight window planted far out is a different bet from a
+// wide one: at 2.5 sigma the tightest rung prices at ~0.3%, well under the chain's 1% min_entry_probability,
+// so a flat travel would hand the knob a stretch of dead ground where every mint aborts. Each window instead
+// solves for the furthest offset still pricing above REAL_STRIKE_MIN_PROB, which leaves the whole knob travel
+// mintable by construction: wide windows reach further, tight ones keep you near spot.
+// The chain prices off a Block Scholes surface with visibly thinner tails than the lognormal this solves in:
+// measured on testnet, a band the analytic calls 14% at 1.7 sigma out priced at 2.2% on chain, while the same
+// band centred on spot priced ABOVE the analytic. A single fitted sigma cannot carry both ends, so the solved
+// travel is haircut by a factor measured across all four windows with `scripts/verify-pin-ladder.ts`: at two
+// thirds of the solved travel every window's chain entry probability sat at ~2-3%, right on the admission
+// boundary and flipping to abort on noise, while at half it sat at 5-8% and every rung admitted. Re-run that
+// script if the surface moves; do not tune this by feel.
+const PIN_TRAVEL_SAFETY = 0.5;
+
+const pinTravelSigma = (sigmaMult: number): number => {
+  const p = (z: number): number => normCdf(z + sigmaMult) - normCdf(z - sigmaMult);
+  if (p(0) <= REAL_STRIKE_MIN_PROB) return 0; // window already at the floor centred on spot
+  let lo = 0;
+  let hi = 8;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (p(mid) > REAL_STRIKE_MIN_PROB) lo = mid;
+    else hi = mid;
+  }
+  return lo * PIN_TRAVEL_SAFETY;
+};
+
+// Fixed per window (both terms are in sigma), so it is solved once rather than per quote.
+const PIN_WINDOWS = PIN_WINDOW_PROBS.map((prob, tier) => {
+  const sigmaMult = probit((1 + prob) / 2);
+  return { tier, prob, sigmaMult, travelSigma: pinTravelSigma(sigmaMult) };
+});
+
+// How far the chain's real multiple sits from the analytic 1/p at each probability, measured off the
+// simulated mints RANGE already runs. The gap is spread plus the pricer's own vol view and it widens as the
+// band tightens, so a bare 1/p overstates a tight window badly (measured 13.7x analytic against 8.79x real).
+// Empty until the first calibration lands, and the estimate then reads 1:1 rather than guessing.
+function pinCalibration(): Array<{ prob: number; ratio: number }> {
+  const out: Array<{ prob: number; ratio: number }> = [];
+  RANGE_TIER_PROBS.forEach((prob, i) => {
+    const real = rangeCalib.mults[i];
+    if (real == null || real <= 0) return;
+    const ratio = real / tierMultOf(prob);
+    if (ratio > 0.2 && ratio < 5) out.push({ prob, ratio });
+  });
+  return out;
+}
+
+/** The calibration ratio nearest a probability, in log space so 0.07 is judged against 0.11 not against 0.5. */
+export function pinRatioAt(calibration: Array<{ prob: number; ratio: number }>, p: number): number {
+  if (calibration.length === 0) return 1;
+  let best = calibration[0];
+  for (const c of calibration) {
+    if (Math.abs(Math.log(c.prob / p)) < Math.abs(Math.log(best.prob / p))) best = c;
+  }
+  return best.ratio;
+}
+
+// What PIN's screen needs to draw every frame the knob moves: the round's spot and vol, the pin's usable
+// travel, and each window's half-width. The multiple it derives from these is an ESTIMATE and is labelled
+// as one; the real one is read off OrderMinted (L-012).
+export async function quotePinModelReal(): Promise<{
+  entrySpot: string;
+  duration: number;
+  expiryMs: number;
+  annualVol: number;
+  windows: Array<{ tier: number; prob: number; sigmaMult: number; travelSigma: number; halfPct: number }>;
+  calibration: Array<{ prob: number; ratio: number }>;
+} | null> {
+  try {
+    await ensureRangeCalib();
+    const market = rangeMarket();
+    const { spot1e9 } = realEcon(market);
+    const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+    const sigma = rangeSigmaFrac(seconds);
+    return {
+      entrySpot: realFmt(spot1e9),
+      duration: Math.max(1, Math.round(seconds)),
+      expiryMs: market.expiryMs,
+      annualVol: rangeCalib.sigmaAnnual,
+      calibration: pinCalibration(),
+      // sigmaMult (half-width) and travelSigma (the pin's reach) are both in sigma, so the screen redraws the
+      // box and the ladder as the clock decays sigma between fetches; halfPct is that width at quote time.
+      windows: PIN_WINDOWS.map((w) => ({ ...w, halfPct: w.sigmaMult * sigma * 100 })),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// The band a (pin offset, window) pair resolves to. Shared by the resolve path and the ladder proof below, so
+// what gets verified is exactly what mints. The offset is CLAMPED to the window's travel rather than rejected:
+// the knob's ladder is sigma-scaled off a spot that moves between the frame the player pressed on and this
+// resolve, so a pin one step past the edge is a race, not a bad request.
+function pinBand(p: {
+  spot1e9: bigint;
+  offsetFrac: number;
+  window: number;
+  sigma: number;
+  tickSize: bigint;
+  admissionTickSize: bigint;
+}) {
+  const w = PIN_WINDOWS[Math.max(0, Math.min(PIN_WINDOWS.length - 1, Math.round(p.window)))];
+  const halfFrac = w.sigmaMult * p.sigma;
+  const maxOffset = w.travelSigma * p.sigma;
+  const offsetFrac = Math.max(-maxOffset, Math.min(maxOffset, p.offsetFrac));
+  const pin1e9 = (p.spot1e9 * BigInt(Math.round((1 + offsetFrac) * 1e9))) / FLOAT_SCALING;
+  const half = (p.spot1e9 * BigInt(Math.round(halfFrac * 1e9))) / FLOAT_SCALING;
+  const { lowerTick, higherTick } = ticksForRange(pin1e9 - half, pin1e9 + half, p.tickSize, p.admissionTickSize);
+  return { w, halfFrac, offsetFrac, pin1e9, half, lowerTick, higherTick };
+}
+
+/**
+ * Every corner of PIN's ladder as the band it would really mint, so `scripts/verify-pin-ladder.ts` can
+ * simulate each one and prove the whole knob travel admits before a multiple is offered on screen. Read-only.
+ */
+export async function probePinLadder(stepsPerSide: number): Promise<{
+  marketId: string;
+  spot1e9: bigint;
+  seconds: number;
+  sigma: number;
+  bands: Array<{ window: number; prob: number; offsetSigma: number; pin1e9: bigint; halfUsd: number; lowerTick: bigint; higherTick: bigint }>;
+}> {
+  const market = rangeMarket();
+  const { spot1e9: cachedSpot, tickSize, admissionTickSize } = realEcon(market);
+  // Same fresh read the resolve path takes, so a rung is probed against the spot it would mint at. Sizing a
+  // whole sweep off one snapshot lets BTC drift a sigma underneath it and the marginal rungs flip on noise.
+  const spot1e9 = await freshRealSpot(cachedSpot);
+  const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+  const sigma = rangeSigmaFrac(seconds);
+  const bands = PIN_WINDOWS.flatMap((w) =>
+    Array.from({ length: stepsPerSide * 2 + 1 }, (_, i) => {
+      const offsetSigma = ((i - stepsPerSide) / stepsPerSide) * w.travelSigma;
+      const b = pinBand({ spot1e9, offsetFrac: offsetSigma * sigma, window: w.tier, sigma, tickSize, admissionTickSize });
+      return {
+        window: w.tier,
+        prob: w.prob,
+        offsetSigma,
+        pin1e9: b.pin1e9,
+        halfUsd: (Number(b.half) / 1e9),
+        lowerTick: b.lowerTick,
+        higherTick: b.higherTick,
+      };
+    }),
+  );
+  return { marketId: market.oracleId, spot1e9, seconds, sigma, bands };
+}
+
+async function resolveRealPin(netRaw: bigint, stakeRaw: bigint, input: { pin: number; window: number }): Promise<ResolvedReal> {
+  void ensureRangeCalib(); // shares RANGE's implied vol; never block a tap on it
+  const market = rangeMarket();
+  const { spot1e9: cachedSpot, tickSize, admissionTickSize } = realEcon(market);
+  const spot1e9 = await freshRealSpot(cachedSpot);
+  const seconds = Math.max(1, (market.expiryMs - now()) / 1000);
+  const sigma = rangeSigmaFrac(seconds);
+
+  if (!(input.pin > 0)) throw new PlayError('INVALID_PARAMS', 'Name a price');
+  const spot = Number(spot1e9) / 1e9;
+  const { halfFrac, offsetFrac, pin1e9, half, lowerTick, higherTick } = pinBand({
+    spot1e9,
+    offsetFrac: (input.pin - spot) / spot,
+    window: input.window,
+    sigma,
+    tickSize,
+    admissionTickSize,
+  });
+
+  return {
+    game: 'pin',
+    kind: 'range',
+    marketId: market.oracleId,
+    asset: REAL_BTC_GAME_ASSET,
+    spot1e9,
+    tickSize,
+    admissionTickSize,
+    lowerTick,
+    higherTick,
+    leverage1e9: LEVERAGE_ONE,
+    amountRaw: premiumBudget(netRaw),
+    minQuantityRaw: POSITION_LOT_SIZE,
+    expiryMs: market.expiryMs,
+    duration: Math.max(1, Math.round(seconds)),
+    entrySpot: realFmt(spot1e9),
+    tierMultiplier: (() => {
+      const p = pinWinProb(offsetFrac, halfFrac, sigma);
+      return tierMultOf(p) * pinRatioAt(pinCalibration(), p);
+    })(),
+    // The named price, recorded so the settle reveal can state the miss distance against the truth.
+    strikeDisplay: realFmt(pin1e9),
+    lowerDisplay: realFmt(pin1e9 - half),
+    upperDisplay: realFmt(pin1e9 + half),
+    widthPct: Math.round(halfFrac * 200 * 1e4) / 1e4,
+  };
+}
+
 // Tier quotes: multiplier = the last SIMULATED mint's multiple per tier (chain truth incl. fees/spread,
 // analytic fallback pre-calibration), so the promise holds whenever the tap lands; sigmaMult + expiryMs +
 // the calibrated annualVol let the client redraw the live band width between fetches.
@@ -646,5 +886,6 @@ export async function resolveReal(input: CreatePlayInputShape, netRaw: bigint, s
     if (!Number.isFinite(input.reach)) throw new PlayError('INVALID_PARAMS', 'Pick a reach');
     return resolveRealBinary('moonshot', netRaw, stakeRaw, input.side, Math.max(2, Math.min(25, input.reach)));
   }
+  if (input.game === 'pin') return resolveRealPin(netRaw, stakeRaw, input);
   return resolveRealRange(netRaw, stakeRaw, input);
 }

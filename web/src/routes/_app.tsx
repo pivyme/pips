@@ -6,6 +6,7 @@ import { Route as GamesRoute } from './_app/games/index'
 import { Route as LuckyRoute } from './_app/games/lucky'
 import { Route as RangeRoute } from './_app/games/range'
 import { Route as MoonshotRoute } from './_app/games/moonshot'
+import { Route as PinRoute } from './_app/games/pin'
 import { Route as LineRiderRoute } from './_app/games/line-rider'
 import { Route as FlappyPiperRoute } from './_app/games/flappy-piper'
 import { AppFrame } from '@/components/console/AppFrame'
@@ -59,6 +60,7 @@ const DEVICE_SCREENS: Record<string, ComponentType> = {
   '/games/lucky': routeComponent(LuckyRoute),
   '/games/range': routeComponent(RangeRoute),
   '/games/moonshot': routeComponent(MoonshotRoute),
+  '/games/pin': routeComponent(PinRoute),
   '/games/line-rider': routeComponent(LineRiderRoute),
   '/games/flappy-piper': routeComponent(FlappyPiperRoute),
 }

@@ -81,7 +81,8 @@ export const invalidateBal = (userId: string): void => {
 export type CreatePlayInput =
   | { game: 'lucky'; stake: string | number }
   | { game: 'range'; stake: string | number; asset: string; widthPct?: number; tier?: number }
-  | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number };
+  | { game: 'moonshot'; stake: string | number; asset: string; side: Side; reach: number }
+  | { game: 'pin'; stake: string | number; asset: string; pin: number; window: number };
 
 export type CreateResult = { play: PlayDTO };
 
@@ -170,7 +171,8 @@ function realDeposit(stakeRaw: bigint, wrapperBal: bigint, wallet: bigint): bigi
 function realMarketFieldsOf(r: ResolvedReal) {
   const base = { asset: r.asset, oracleId: r.marketId, durationSec: r.duration, expiry: BigInt(r.expiryMs), entrySpot: r.entrySpot };
   if (r.kind === 'binary') return { ...base, side: r.side, strike: r.strikeDisplay };
-  return { ...base, lower: r.lowerDisplay, upper: r.upperDisplay, widthPct: r.widthPct ?? null };
+  // PIN carries the named price in `strike` so the settle reveal can state the miss; the other range games leave it unset.
+  return { ...base, lower: r.lowerDisplay, upper: r.upperDisplay, widthPct: r.widthPct ?? null, strike: r.strikeDisplay };
 }
 
 function mapRealResolvedToPlay(userId: string, r: ResolvedReal, stakeRaw: bigint, rakeRaw: bigint) {
@@ -317,7 +319,13 @@ async function mintPendingReal(user: User, resolved: ResolvedReal, stakeRaw: big
           if (!closer) throw e;
           cur = closer;
           await prismaQuery.play
-            .update({ where: { id: playId }, data: cur.kind === 'binary' ? { leverage: 1, strike: cur.strikeDisplay } : { leverage: 1 } })
+            .update({
+              where: { id: playId },
+              data:
+                cur.kind === 'binary'
+                  ? { leverage: 1, strike: cur.strikeDisplay }
+                  : { leverage: 1, lower: cur.lowerDisplay, upper: cur.upperDisplay, strike: cur.strikeDisplay },
+            })
             .catch(() => {});
           continue;
         }
@@ -595,7 +603,8 @@ const money = (raw: bigint): string => fromDusdcRaw(raw).toFixed(2);
 
 function paramsDTO(play: Play): PlayDTO['params'] {
   // 'tap' is retired; any legacy tap rows were stored range-style (lower/upper), so render them as range.
-  if (play.game === 'range' || play.game === 'tap') {
+  // Every band game reports range params: PIN also carries its named price in market.strike.
+  if (play.game === 'range' || play.game === 'tap' || play.game === 'pin') {
     return { asset: play.asset, lower: play.lower ?? '', upper: play.upper ?? '', widthPct: play.widthPct ?? 0, duration: play.durationSec };
   }
   return { asset: play.asset, side: (play.side as Side) ?? 'up', multiplier: play.multiplier ?? 0, duration: play.durationSec };

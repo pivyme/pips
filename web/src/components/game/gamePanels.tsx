@@ -1,4 +1,5 @@
 import { motion } from 'motion/react'
+import type { ReactNode } from 'react'
 
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import type { PlayDTO } from '@/lib/api'
@@ -155,12 +156,15 @@ export function ResultOverlay({
   cashoutTitle,
   loseTitle,
   streak = 0,
+  detail,
 }: {
   play: PlayDTO
   winTitle: string
   cashoutTitle: string
   loseTitle: string
   streak?: number
+  // A game-specific line under the payout, e.g. PIN's named price against the truth.
+  detail?: ReactNode
 }) {
   const reduced = useReducedMotion()
   const pnl = parseFloat(play.pnl ?? '0')
@@ -203,6 +207,7 @@ export function ResultOverlay({
         Cost ${formatExactDecimal(play.entryValue)} · Profit {pnl >= 0 ? '+' : '-'}$
         {formatExactDecimal(play.pnl, { absolute: true })}
       </div>
+      {detail}
       {won && streak > 0 && (
         <div className="mt-1 inline-flex items-center border border-brand-500/60 px-2 py-0.5 font-mono text-[12px] font-bold uppercase tracking-[0.1em] text-brand-500">
           Streak {streak}

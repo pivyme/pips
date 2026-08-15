@@ -70,7 +70,8 @@ const discoverMarkets = async (t: number, spot: { spot1e9: bigint } | null): Pro
   );
 };
 
-const sync = async (): Promise<void> => {
+// Exported so an ops script can populate the market cache once without standing up the cron.
+export const syncMarketsOnce = async (): Promise<void> => {
   if (isRunning) return;
   isRunning = true;
   const startedAt = Date.now();
@@ -109,7 +110,7 @@ const sync = async (): Promise<void> => {
 
 export const startMarketSync = (): void => {
   console.log(`[MarketSync] Real-Predict discovery: scheduled ${MARKET_SYNC_CRON}`);
-  const task = cron.schedule(MARKET_SYNC_CRON, sync);
+  const task = cron.schedule(MARKET_SYNC_CRON, syncMarketsOnce);
   registerWorker('market-sync', task, cronIntervalMs(MARKET_SYNC_CRON));
-  sync();
+  syncMarketsOnce();
 };

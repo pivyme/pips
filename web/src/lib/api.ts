@@ -10,7 +10,8 @@ const BASE = env.VITE_API_URL
 
 // === DTOs (mirror the backend) ===
 
-export type Game = 'lucky' | 'range' | 'moonshot'
+// The lab half (pin..breakout) is ADMIN-only and answers 404 for everyone else. See @/lib/lab.
+export type Game = 'lucky' | 'range' | 'moonshot' | 'pin' | 'snipe' | 'press' | 'rush' | 'breakout'
 export type PlayStatus = 'pending' | 'open' | 'won' | 'lost' | 'cashed_out' | 'error'
 export type Side = 'up' | 'down'
 
@@ -99,6 +100,26 @@ export interface RangeQuoteModel {
 export interface MoonshotAim {
   reach: number
   offsetFrac: number
+}
+
+// PIN's round model: everything the screen needs to redraw the box and its estimate every frame the knob
+// moves, without a call per frame. Both are in sigma, so they decay with the clock between fetches:
+// sigmaMult is the window's half-width, travelSigma how far off spot that window's pin can be planted and
+// still mint. Travel is per window because a tight band planted far out prices under the chain's admission
+// floor, so a wide window reaches further than a knife-edge one.
+export interface PinWindow {
+  tier: number
+  prob: number
+  sigmaMult: number
+  travelSigma: number
+  halfPct: number
+}
+export interface PinModel {
+  entrySpot: string
+  duration: number
+  expiryMs: number
+  annualVol: number
+  windows: PinWindow[]
 }
 
 export interface PlayDTO {
@@ -474,6 +495,8 @@ const realApi = {
   // The MOONSHOT aim ladder: the strike offset each reach mints at, so the previewed TARGET equals the drawn strike.
   moonshotAim: (asset: string) =>
     request<{ levels: MoonshotAim[] }>('GET', `/games/moonshot/aim?asset=${encodeURIComponent(asset)}`),
+  // PIN's round model (ADMIN only, 404 otherwise): spot, the calibrated vol, the pin's usable travel, the windows.
+  pinModel: () => request<PinModel | null>('GET', '/games/pin/model'),
   play: (game: Game, body: Record<string, unknown>) => request<PlayResult>('POST', `/games/${game}/play`, body),
   cashout: (playId: string) => request<CashoutResult>('POST', `/plays/${playId}/cashout`, {}),
   plays: (q: { status?: string; limit?: number; network?: string } = {}) => {

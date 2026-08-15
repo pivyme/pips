@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { probit, binaryOffsetFrac, binaryOffsetFloored, otmStrike1e9, restrikeCloser, parseStake, maxStakeFor, type ResolvedReal } from './games.ts';
-import { LEVERAGE_ONE, ticksForBinary } from '../lib/sui/predict-real.ts';
+import { LEVERAGE_ONE, ticksForBinary, ticksForRange } from '../lib/sui/predict-real.ts';
 import type { Side } from '../types/api.ts';
 import { REAL_STRIKE_MIN_PROB, REAL_STRIKE_MAX_OFFSET_FRAC, REAL_BTC_ANNUAL_VOL, REAL_BINARY_MIN_OFFSET_SIGMA, MIN_STAKE, MAX_STAKE, MAX_STAKE_ADMIN } from '../config/main-config.ts';
 
@@ -177,6 +177,67 @@ describe('restrikeCloser (admission fallback)', () => {
       cur = next;
     }
     expect(cur.strike1e9! - SPOT).toBeGreaterThanOrEqual(ADMISSION_TICK);
+  });
+
+  // A band had no fallback at all: it re-minted the identical ticks, burned the retry and died with the play
+  // in error. PIN plants its band off spot, so there is somewhere to move. RANGE centres on spot, so it must
+  // stay exactly as it was.
+  const band = (centre1e9: bigint, half1e9: bigint, game: 'pin' | 'range'): ResolvedReal => ({
+    game,
+    kind: 'range',
+    marketId: '0x1',
+    asset: 'BTC',
+    spot1e9: SPOT,
+    tickSize: TICK,
+    admissionTickSize: ADMISSION_TICK,
+    ...ticksForRange(centre1e9 - half1e9, centre1e9 + half1e9, TICK, ADMISSION_TICK),
+    leverage1e9: LEVERAGE_ONE,
+    amountRaw: 1_320_000n,
+    minQuantityRaw: 10_000n,
+    expiryMs: Date.now() + 20_000,
+    duration: 20,
+    entrySpot: '65000',
+    tierMultiplier: 8,
+    lowerDisplay: String(Number(centre1e9 - half1e9) / 1e9),
+    upperDisplay: String(Number(centre1e9 + half1e9) / 1e9),
+    ...(game === 'pin' ? { strikeDisplay: String(Number(centre1e9) / 1e9) } : {}),
+  });
+
+  const centreOf = (r: ResolvedReal): bigint => (r.lowerTick * r.tickSize + r.higherTick * r.tickSize) / 2n;
+  const widthOf = (r: ResolvedReal): bigint => (r.higherTick - r.lowerTick) * r.tickSize;
+
+  it('slides a pin band toward spot and keeps its width', () => {
+    const cur = band(SPOT + 40_000_000_000n, 5_000_000_000n, 'pin');
+    const next = restrikeCloser(cur, LEVERAGE_ONE);
+    expect(next).not.toBeNull();
+    expect(centreOf(next!)).toBeLessThan(centreOf(cur));
+    expect(centreOf(next!)).toBeGreaterThan(SPOT);
+    expect(widthOf(next!)).toBe(widthOf(cur));
+  });
+
+  it('carries the recorded pin with the band, so the settle reveal cannot state a miss against an unbought pin', () => {
+    const cur = band(SPOT + 40_000_000_000n, 5_000_000_000n, 'pin');
+    const next = restrikeCloser(cur, LEVERAGE_ONE);
+    expect(parseFloat(next!.strikeDisplay!)).toBeLessThan(parseFloat(cur.strikeDisplay!));
+    expect(parseFloat(next!.lowerDisplay!)).toBeLessThan(parseFloat(cur.lowerDisplay!));
+    expect(parseFloat(next!.upperDisplay!)).toBeLessThan(parseFloat(cur.upperDisplay!));
+  });
+
+  it('leaves a spot-centred RANGE band alone: nothing closer exists, so it returns null', () => {
+    expect(restrikeCloser(band(SPOT, 5_000_000_000n, 'range'), LEVERAGE_ONE)).toBeNull();
+  });
+
+  it('terminates: a pin band converges on spot rather than looping', () => {
+    let cur: ResolvedReal = band(SPOT + 40_000_000_000n, 5_000_000_000n, 'pin');
+    let steps = 0;
+    for (; steps < 50; steps++) {
+      const next = restrikeCloser(cur, LEVERAGE_ONE);
+      if (!next) break;
+      expect(centreOf(next)).toBeLessThan(centreOf(cur)); // strictly monotone toward spot
+      cur = next;
+    }
+    expect(steps).toBeLessThan(50);
+    expect(restrikeCloser(cur, LEVERAGE_ONE)).toBeNull();
   });
 });
 

@@ -42,7 +42,8 @@ const CONCEPTS: Concept[] = [
     score: [Y, N, Y, Y],
     mints: '1',
     floor: '$1.50',
-    status: 'building',
+    status: 'playable',
+    to: '/games/pin',
     note: 'The knob scrubs a real price, the most intuitive binding on the device. Miss distance gives a score on a loss, and the closest-call board is a real story.',
   },
   {

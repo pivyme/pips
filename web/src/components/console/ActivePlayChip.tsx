@@ -1,4 +1,4 @@
-import { useMatchRoute, useNavigate, useRouterState } from '@tanstack/react-router'
+import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
 import type { Game, PlayStatus } from '@/lib/api'
@@ -8,7 +8,16 @@ import { haptic, hapticPattern } from '@/lib/haptics'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cnm } from '@/utils/style'
 
-const GAME_LABEL: Record<Game, string> = { lucky: 'Lucky', range: 'Range', moonshot: 'Moonshot' }
+const GAME_LABEL: Record<Game, string> = {
+  lucky: 'Lucky',
+  range: 'Range',
+  moonshot: 'Moonshot',
+  pin: 'Pin',
+  snipe: 'Snipe',
+  press: 'Press',
+  rush: 'Rush',
+  breakout: 'Breakout',
+}
 
 const STATUS_LABEL: Partial<Record<PlayStatus, string>> = {
   pending: 'Opening',
@@ -23,11 +32,12 @@ const STATUS_LABEL: Partial<Record<PlayStatus, string>> = {
 // one, which would just be noise). Still owns the off-screen settle notification everywhere, the one moment worth interrupting for.
 export function ActivePlayChip() {
   const { active } = useActivePlay()
-  const matchRoute = useMatchRoute()
   const navigate = useNavigate()
   const reduced = useReducedMotion()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const onOwnRoute = active != null && Boolean(matchRoute({ to: `/games/${active.game}` }))
+  // Compared against the path rather than matchRoute: a lab game may not be in the route tree yet, and a
+  // typed `to` would then fail the build for a game that simply is not built.
+  const onOwnRoute = active != null && pathname.replace(/\/$/, '') === `/games/${active.game}`
   // Only surface the pill on non-game surfaces (Home hub, menu). While playing any other
   // game, a banner about a different game is just noise, not the one worth interrupting for.
   const onOtherGameRoute = pathname.startsWith('/games/') && !onOwnRoute

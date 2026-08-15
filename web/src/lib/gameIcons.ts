@@ -5,4 +5,5 @@ export const GAME_ICON_SRC: Record<string, string> = {
   lucky: '/assets/games/icon-lucky.svg',
   range: '/assets/games/icon-range.svg',
   moonshot: '/assets/games/icon-moonshot.svg',
+  pin: '/assets/games/icon-pin.svg',
 }
