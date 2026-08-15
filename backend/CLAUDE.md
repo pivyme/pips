@@ -73,6 +73,7 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   │   ├── admin-settings.ts # DB-backed non-secret tunables: default + bounds, clamped on read (L-022)
 │   │   ├── analytics-catalog.ts # EVENT_NAMES, the allowlist. Twin of web/src/lib/track.ts
 │   │   ├── roles.ts         # specialRoles helpers + the last-ADMIN floor (fails closed)
+│   │   ├── games.ts         # The one game roster: GAMES, PUBLIC_GAMES, isLabGame, canSeeGame (lab = 404)
 │   │   └── release.ts       # Build-stamped release string, never hand-typed
 │   ├── routes/              # Fastify plugins, registered in app.ts
 │   │   ├── authRoutes.ts    # /auth: dev login, privy/verify, heal, me
@@ -90,7 +91,8 @@ This is part of a monorepo. Sibling `web/` is the TanStack Start frontend.
 │   ├── services/            # Business logic, called by routes
 │   │   └── auth, games (+ games-base / games-real split), plays, stats, achievements,
 │   │       rng, wallet, leaderboard, referral, insights (dashboard reports + the 13 ops
-│   │       detectors), retention (age-based prune + the destructive confirm gate)
+│   │       detectors), retention (age-based prune + the destructive confirm gate),
+│   │       rush-offers (RUSH's server-authoritative offer stream: a take names an id, never a band)
 │   │       (+ colocated *.test.ts)
 │   ├── workers/             # node-cron jobs (isRunning guard), tracked in worker-registry
 │   │   ├── market-sync.ts   # discovers the live 1m BTC markets from chain

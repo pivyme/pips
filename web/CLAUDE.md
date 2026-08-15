@@ -12,11 +12,11 @@ This is the **PIPS** frontend: the gamified trading console. PIPS makes trading 
 
 **v1 build:** frontend work is planned in [`../bigdev/plans/`](../bigdev/plans/). Read `06-GAMES.md` (the games + the 60fps chart, bound to the existing console controls), `07-DESIGN-SYSTEM.md` (screen states + verbatim copy; `../docs/DESIGN.md` is canonical), `05-SUI-PREDICT.md` (the thin client Predict wrapper), `LUCKY.md` §6 (dev + Privy auth, the current source of truth), `02-API.md` (the backend contract). The console shell, Knob, `useConsoleControls`, and `Illo` are already built, do not rebuild them.
 
-**Predict capability box (read before inventing a game mechanic):** the on-chain vocabulary is exactly two expiry-settled instruments, **binary up/down** and **vertical range**, both with live-bid early cash-out. No barrier/touch, no path-dependent or crash-style payoff, no fixed odds. Real Predict **does** have continuous `leverage: u64` (bounded by `max_admission_leverage`, probability-gated per strike, L-009), so a play's multiple is strike distance × leverage, never clamp it to 1. The three trading games (Lucky, Range, Moonshot) all compose from those two instruments; Line Rider and Flappy Piper are score-based minigames, not plays. Full source-cited box in `../bigdev/plans/05-SUI-PREDICT.md` and the root [`../CLAUDE.md`](../CLAUDE.md).
+**Predict capability box (read before inventing a game mechanic):** the on-chain vocabulary is exactly two expiry-settled instruments, **binary up/down** and **vertical range**, both with live-bid early cash-out. No barrier/touch, no path-dependent or crash-style payoff, no fixed odds. Real Predict **does** have continuous `leverage: u64` (bounded by `max_admission_leverage`, probability-gated per strike, L-009), so a play's multiple is strike distance × leverage, never clamp it to 1. The three public trading games (Lucky, Range, Moonshot) and the five lab games (Pin, Snipe, Press, Rush, Breakout) all compose from those two instruments; Line Rider and Flappy Piper are score-based minigames, not plays. Full source-cited box in `../bigdev/plans/05-SUI-PREDICT.md` and the root [`../CLAUDE.md`](../CLAUDE.md).
 
 ## PIPS frontend specifics
 
-**The UI is a device, not a dashboard.** Everything renders inside a persistent console shell with a swappable **Screen**. The physical controls (Main Action Button, Action Buttons 1/2, Knob, Menu/Games tabs) belong to the shell, but each game binds their behavior via a controls registration (`useConsoleControls()`). The shell exists in two forms: the real 3D **WebGL handheld** `ConsoleCanvas` (Three.js) and a CSS/DOM `ConsoleShell` fallback. The whole `/games` subtree (the hub + Lucky, Range, Moonshot, Line Rider, Flappy Piper) runs on the 3D device, laid out for the L-shaped aperture; `ConsoleShell` is the fallback behind the menu. Use `web-haptics` for tactile feedback. Full spec and layout in [`../docs/DESIGN.md`](../docs/DESIGN.md). If a screen could pass for any other trading app, it is wrong.
+**The UI is a device, not a dashboard.** Everything renders inside a persistent console shell with a swappable **Screen**. The physical controls (Main Action Button, Action Buttons 1/2, Knob, Menu/Games tabs) belong to the shell, but each game binds their behavior via a controls registration (`useConsoleControls()`). The shell exists in two forms: the real 3D **WebGL handheld** `ConsoleCanvas` (Three.js) and a CSS/DOM `ConsoleShell` fallback. The whole `/games` subtree (the hub + Lucky, Range, Moonshot, the five ADMIN-only lab games, Line Rider, Flappy Piper) runs on the 3D device, laid out for the L-shaped aperture; `ConsoleShell` is the fallback behind the menu. Use `web-haptics` for tactile feedback. Full spec and layout in [`../docs/DESIGN.md`](../docs/DESIGN.md). If a screen could pass for any other trading app, it is wrong.
 
 ### Menu drawer page transitions
 
@@ -156,11 +156,13 @@ src/
 │   │   ├── console-transparent.tsx # "Clear" skin showcase (/dev/console-transparent)
 │   │   ├── design-system.tsx / design-system-v2.tsx # Living UI-kit reference
 │   │   ├── export.tsx        # PNG asset dump of device/screens (/dev/export)
+│   │   ├── games.tsx         # The games lab index: every concept, its status, and a link into playable ones
 │   │   └── sounds.tsx        # Sound lab: every bed + SFX audition bench (/dev/sounds)
 │   ├── admin.tsx             # /admin gate + shell route, a SIBLING of _app so no WebGL ever mounts
 │   ├── admin/                # index (overview), errors, usage, perf: thin shells over src/admin/
 │   └── _app/                 # Pathless layout: everything "inside the device"
-│       ├── games/            # index (hub), lucky, range, moonshot (Predict plays)
+│       ├── games/            # index (hub), lucky, range, moonshot (public Predict plays)
+│       │                     #   + pin, snipe, press, rush, breakout (lab plays, ADMIN-gated by lib/lab.ts)
 │       │                     #   + line-rider, flappy-piper (score-only minigames)
 │       └── menu/             # index, account, username, achievements, history, transactions,
 │                             #   leaderboard, share, referrals, deposit, withdraw, customize,
@@ -356,7 +358,7 @@ Two footguns in that list. **`bun build` and `bun test` are Bun's own built-ins,
 
 - Routes are file-based in `src/routes/`; use `createFileRoute`. Root layout is `__root.tsx`.
 - `_app.tsx` is a **pathless layout route**: everything "inside the device" (games + menu) renders through one persistent console shell. The landing `/` lives outside it and owns the full viewport.
-- Games: `/games/{lucky,range,moonshot}` are the Predict plays, `/games/{line-rider,flappy-piper}` are score-only minigames. Menu: `/menu/*` renders as a **drawer over** the device, not a screen inside it.
+- Games: `/games/{lucky,range,moonshot}` are the public Predict plays and `/games/{pin,snipe,press,rush,breakout}` are the lab ones (real plays, ADMIN only: `useLabGate()` bounces everyone else, and the API answers 404 not 403). `/games/{line-rider,flappy-piper}` are score-only minigames. Menu: `/menu/*` renders as a **drawer over** the device, not a screen inside it.
 - A few routes live **outside** `_app` on purpose because they are public and shareable: `/` (the door), `/@handle` (public profile), `/r/$code` (referral landing). That is the only sanctioned reason to add a file at the routes root, everything internal goes under `dev/`.
 - Two shells: the whole `/games` subtree runs on the 3D WebGL handheld (`ConsoleCanvas`); the CSS `ConsoleShell` is the fallback. One `ConsoleCanvas` stays mounted across games↔menu so the WebGL scene builds once.
 
