@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "bun index.ts",
-    "dev": "bun --watch index.ts",
+    "dev": "kill -9 $(lsof -ti tcp:3780) 2>/dev/null; bun --watch index.ts",
     "pips:proof": "bun scripts/pips-volume-proof.ts",
     "pips:post-deploy-check": "bun scripts/post-deploy-check.ts",
     "test:logger:e2e": "PIPS_E2E=1 bun test src/lib/sui/logger.integration.test.ts",

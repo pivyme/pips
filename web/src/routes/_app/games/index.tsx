@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Activity, CandlestickChart } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { CSSProperties } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useConsoleControls } from '@/components/console/controls'
 import { GameIcon } from '@/components/GameIcon'
 import { GameScreen } from '@/components/game/screen'
@@ -12,7 +12,8 @@ import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useLivePresence } from '@/lib/presence'
 import { isDemo } from '@/lib/demo'
-import { LAB_GAMES, useIsLabUser } from '@/lib/lab'
+// Lab section hidden from the menu for now, see docs/games-ideation and bigdev/plans/cont/04-GAMES-LAB.md
+// import { LAB_GAMES, useIsLabUser } from '@/lib/lab'
 import { NETWORK_LABEL } from '@/lib/sui/config'
 import { haptic } from '@/lib/haptics'
 import { track } from '@/lib/track'
@@ -51,6 +52,10 @@ const MINIGAMES: ReadonlyArray<GameDef> = [
   { to: '/games/line-rider', icon: Activity, name: 'Line Rider', tag: 'Ride the line. Don’t slip.' },
 ]
 
+// Lab games (Pin, Snipe, Press, Rush, Breakout) are commented out of this menu for now, dev-only via
+// /dev/games and their direct routes. Restore by re-adding LAB_GAMES to ALL and the "lab" section below.
+const ALL: ReadonlyArray<GameDef> = [...GAMES, ...MINIGAMES]
+
 const pad2 = (n: number): string => String(n).padStart(2, '0')
 
 // A play's `game` key is its route's last segment, which is also how the backend names it. Minigame keys
@@ -61,11 +66,6 @@ function GamesConsole() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const reduced = useReducedMotion()
-  // Lab games are ADMIN only and sit in their own section. Everyone else sees no trace of them, and the
-  // server answers 404 for one anyway.
-  const isLabUser = useIsLabUser()
-  // One flat order for the knob/PLAY selection; rendered as separate sections below.
-  const ALL: ReadonlyArray<GameDef> = useMemo(() => [...GAMES, ...(isLabUser ? LAB_GAMES : []), ...MINIGAMES], [isLabUser])
   // Remember the last cartridge the player highlighted, so returning to the hub keeps it selected. Stored by route so it survives a reorder / new game.
   const [selTo, setSelTo] = useLocalStorage('pips_game_sel', GAMES[0].to)
   const sel = Math.max(0, ALL.findIndex((g) => g.to === selTo))
@@ -180,27 +180,7 @@ function GamesConsole() {
         ))}
       </div>
 
-      {/* lab — real plays that are not public yet. ADMIN only, and the server 404s one for anyone else. */}
-      {isLabUser && (
-        <>
-          <div className={cnm('flex items-baseline justify-between pb-0.5 pt-5 font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-text-3', RIM)}>
-            <span className="text-brand-500">Lab</span>
-            <span className="tracking-[0.1em]">Admin only · Real funds</span>
-          </div>
-          <Rule />
-          <div className="flex flex-col">
-            {LAB_GAMES.map((g, j) => {
-              const i = GAMES.length + j
-              return (
-                <div key={g.to}>
-                  {j > 0 && <Rule />}
-                  <MiniRow game={g} selected={i === sel} inPlay={inPlayFor(g.to)} onLaunch={() => launch(i)} />
-                </div>
-              )
-            })}
-          </div>
-        </>
-      )}
+      {/* lab section commented out for now, see the ALL note above */}
 
       {/* minigame — a quieter, lower-hierarchy lane below the real plays. No chain, no funds, just play. */}
       <div className={cnm('flex items-baseline justify-between pb-0.5 pt-5 font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-text-3', RIM)}>

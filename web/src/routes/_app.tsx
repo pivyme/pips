@@ -40,6 +40,7 @@ import { api } from '@/lib/api'
 import { LivePresenceProvider } from '@/lib/presence'
 import { ActivePlayProvider } from '@/lib/activePlay'
 import { useAuth, loadToken } from '@/lib/auth'
+import { LAB_GAMES, useIsLabUser } from '@/lib/lab'
 import { track } from '@/lib/track'
 import { useInstallGate } from '@/lib/platform'
 import { isDemo } from '@/lib/demo'
@@ -59,7 +60,7 @@ const routeComponent = (route: { options: { component?: ComponentType } }): Comp
   route.options.component as ComponentType
 
 // Aperture games keyed by route path. Mounted directly here (not through the Outlet) so opening /menu never unmounts the live game screen and flashes the device black.
-const DEVICE_SCREENS: Record<string, ComponentType> = {
+const DEVICE_SCREENS = {
   '/games': routeComponent(GamesRoute),
   '/games/lucky': routeComponent(LuckyRoute),
   '/games/range': routeComponent(RangeRoute),
@@ -71,7 +72,15 @@ const DEVICE_SCREENS: Record<string, ComponentType> = {
   '/games/breakout': routeComponent(BreakoutRoute),
   '/games/line-rider': routeComponent(LineRiderRoute),
   '/games/flappy-piper': routeComponent(FlappyPiperRoute),
-}
+} satisfies Record<string, ComponentType>
+
+type DevicePath = keyof typeof DEVICE_SCREENS
+
+// Everything but the hub, which is the fallback. Derived from the map on purpose: a game listed above but
+// missing here used to mount the hub at its own URL, which is how the five lab games shipped unreachable.
+const GAME_SCREEN_PATHS = (Object.keys(DEVICE_SCREENS) as Array<DevicePath>).filter((p) => p !== '/games')
+
+const LAB_PATHS = new Set<string>(LAB_GAMES.map((g) => g.to))
 
 type OnboardingStep = 'username' | 'customize' | 'welcome'
 
@@ -109,11 +118,6 @@ function AppLayout() {
   const matchRoute = useMatchRoute()
   // The menu is a drawer over the device, not a screen inside it; the shell stays mounted behind it for the blur layer.
   const onMenu = Boolean(matchRoute({ to: '/menu', fuzzy: true }))
-  const onRange = Boolean(matchRoute({ to: '/games/range' }))
-  const onLucky = Boolean(matchRoute({ to: '/games/lucky' }))
-  const onMoonshot = Boolean(matchRoute({ to: '/games/moonshot' }))
-  const onLineRider = Boolean(matchRoute({ to: '/games/line-rider' }))
-  const onFlappyPiper = Boolean(matchRoute({ to: '/games/flappy-piper' }))
   const on3D = Boolean(matchRoute({ to: '/games', fuzzy: true }))
   // Customize takes over the device (drawer slides away, workshop studio drops in) on the same persistent 3D branch, so WebGL stays warm.
   const onCustomize = Boolean(matchRoute({ to: '/menu/customize' }))
@@ -189,20 +193,14 @@ function AppLayout() {
   }, [backdrop])
 
   // Tracks which game the device mounts (held across menu open so the chart never blinks) and where Close returns to; mounted by path, not the Outlet.
-  const last3DPath = useRef('/games')
-  if (!onMenu && on3D)
-    last3DPath.current = onRange
-      ? '/games/range'
-      : onLucky
-        ? '/games/lucky'
-        : onMoonshot
-          ? '/games/moonshot'
-          : onLineRider
-            ? '/games/line-rider'
-            : onFlappyPiper
-              ? '/games/flappy-piper'
-              : '/games'
-  const DeviceScreen = DEVICE_SCREENS[last3DPath.current]
+  const last3DPath = useRef<DevicePath>('/games')
+  if (!onMenu && on3D) last3DPath.current = GAME_SCREEN_PATHS.find((p) => matchRoute({ to: p })) ?? '/games'
+  // A screen owns the physical controls from the moment it mounts, and a lab screen renders null until the
+  // gate opens, so mounting one for a caller who cannot play it is a black display with a live PLAY button.
+  // Hold the hub instead; useLabGate() moves the URL a beat later.
+  const canPlayLab = useIsLabUser()
+  const devicePath = !canPlayLab && LAB_PATHS.has(last3DPath.current) ? '/games' : last3DPath.current
+  const DeviceScreen = DEVICE_SCREENS[devicePath]
 
   // Phase machine: landing (door) -> onboarding (new account) -> app, all phases of one persistent shell; `entered` gates the door and onboardedRef latches onboarding done, both reset on sign-out.
   // A stored token means a returning session: skip the door/zoom and hold the settled app pose (unless onboardingDebug, which forces the real first-run arc for QA).
@@ -270,6 +268,14 @@ function AppLayout() {
       void navigate({ to: '/games', replace: true })
     }
   }, [status, phase, onMenu, navigate, matchRoute])
+
+  // Same job for a lab game someone cannot play. The screen mounts by path rather than through the Outlet,
+  // so once we hold the hub its own useLabGate() never runs and the URL would sit on a game the device is
+  // not showing. Waits out the loading veil, or an ADMIN gets bounced before their roles land.
+  useEffect(() => {
+    if (status === 'loading' || phase !== 'app' || canPlayLab) return
+    if (LAB_PATHS.has(last3DPath.current)) void navigate({ to: '/games', replace: true })
+  }, [status, phase, canPlayLab, navigate])
 
   // Welcome dismissed: leave onboarding and refresh here (not at the username step) so the user object stays "not onboarded" through every step, and the phase can't jump to app mid-flow.
   const finishOnboarding = useCallback(() => {

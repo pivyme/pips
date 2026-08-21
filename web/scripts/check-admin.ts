@@ -111,6 +111,27 @@ function compare(label: string, backendFile: string, backendName: string, webFil
 compare('SPECIAL_ROLES', '../backend/src/config/roles.ts', 'SPECIAL_ROLES', 'src/admin/types.ts', 'SPECIAL_ROLES');
 compare('EVENT_NAMES', '../backend/src/config/analytics-catalog.ts', 'EVENT_NAMES', 'src/lib/track.ts', 'EVENT_NAMES');
 
+// A game screen mounts by path out of DEVICE_SCREENS, not through the Outlet, so a route file with no
+// entry there renders the hub at its own URL. That is how all five lab games shipped unreachable: the
+// routes, the console bindings and the API were fine, the shell just never mounted them.
+function checkDeviceScreens(): void {
+  const shell = readFileSync('src/routes/_app.tsx', 'utf8');
+  const map = shell.match(/const DEVICE_SCREENS = \{([\s\S]*?)\n\}/);
+  if (!map) {
+    failures.push('DEVICE_SCREENS: could not parse src/routes/_app.tsx, so the screen map cannot be checked');
+    return;
+  }
+  const mounted = new Set([...map[1].matchAll(/'([^']+)'\s*:/g)].map((m) => m[1]));
+  const missing = readdirSync('src/routes/_app/games')
+    .filter((f) => f.endsWith('.tsx') && f !== 'index.tsx')
+    .map((f) => `/games/${f.replace(/\.tsx$/, '')}`)
+    .filter((p) => !mounted.has(p));
+  if (missing.length) {
+    failures.push(`DEVICE_SCREENS: game routes with no screen entry, so they render the hub: ${missing.join(', ')}`);
+  }
+}
+checkDeviceScreens();
+
 if (failures.length) {
   console.error(`check:admin failed with ${failures.length} problem${failures.length === 1 ? '' : 's'}:\n`);
   for (const f of failures) console.error(`  - ${f}`);
